@@ -6,6 +6,7 @@ const MAX_PAGE_SIZE: u32 = 100;
 const MAX_HOUSEHOLD_ID_LEN: usize = 48;
 const MAX_LOOKUP_ID_LEN: usize = 64;
 const MAX_NAME_LEN: usize = 80;
+const MAX_PLANNING_JPY: i64 = 9_000_000_000_000_000;
 
 #[derive(Debug)]
 pub enum RepositoryError {
@@ -559,6 +560,364 @@ pub fn dashboard_monthly_totals(
     })
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyCategoryBudgetDto {
+    pub household_id: String,
+    pub month: String,
+    pub category_account_id: String,
+    pub category_name: String,
+    pub budget_jpy: i64,
+    pub actual_jpy: i64,
+    pub remaining_jpy: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpsertMonthlyCategoryBudgetInput {
+    pub household_id: String,
+    pub month: String,
+    pub category_account_id: String,
+    pub budget_jpy: i64,
+}
+
+pub fn list_monthly_category_budgets(
+    connection: &Connection,
+    household_id: &str,
+    month: &str,
+) -> Result<Vec<MonthlyCategoryBudgetDto>, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_month(connection, month)?;
+    ensure_household_exists(connection, household_id)?;
+    let month_start = format!("{month}-01");
+    let mut statement = connection
+        .prepare(
+            "WITH actuals AS (
+               SELECT je.account_id,
+                 COALESCE(SUM(CASE je.entry_side
+                   WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END), 0) AS actual_jpy
+               FROM transactions t
+               JOIN journal_entries je ON je.transaction_id = t.id
+               JOIN accounts expense
+                 ON expense.id = je.account_id AND expense.account_kind = 'EXPENSE'
+               WHERE t.household_id = ?1 AND expense.household_id = ?1
+                 AND t.status = 'POSTED'
+                 AND t.occurred_on >= ?3 AND t.occurred_on < date(?3, '+1 month')
+                 AND t.transaction_type != 'CARD_PAYMENT'
+               GROUP BY je.account_id
+             )
+             SELECT b.household_id, b.month, b.category_account_id, a.name,
+                    b.budget_jpy, COALESCE(actuals.actual_jpy, 0),
+                    b.budget_jpy - COALESCE(actuals.actual_jpy, 0)
+             FROM monthly_category_budgets b
+             JOIN accounts a
+               ON a.id = b.category_account_id AND a.household_id = b.household_id
+             LEFT JOIN actuals ON actuals.account_id = b.category_account_id
+             WHERE b.household_id = ?1 AND b.month = ?2
+             ORDER BY a.name ASC, a.id ASC",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map(params![household_id, month, month_start], |row| {
+            Ok(MonthlyCategoryBudgetDto {
+                household_id: row.get(0)?,
+                month: row.get(1)?,
+                category_account_id: row.get(2)?,
+                category_name: row.get(3)?,
+                budget_jpy: row.get(4)?,
+                actual_jpy: row.get(5)?,
+                remaining_jpy: row.get(6)?,
+            })
+        })
+        .map_err(map_database_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
+pub fn upsert_monthly_category_budget(
+    connection: &Connection,
+    input: &UpsertMonthlyCategoryBudgetInput,
+) -> Result<MonthlyCategoryBudgetDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.category_account_id, MAX_LOOKUP_ID_LEN)?;
+    validate_month(connection, &input.month)?;
+    validate_jpy(input.budget_jpy, true)?;
+    ensure_household_exists(connection, &input.household_id)?;
+    let is_active_expense_account = connection
+        .query_row(
+            "SELECT 1 FROM accounts
+             WHERE id = ?1 AND household_id = ?2
+               AND account_kind = 'EXPENSE' AND is_archived = 0",
+            params![input.category_account_id, input.household_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .is_some();
+    if !is_active_expense_account {
+        return Err(RepositoryError::NotFound);
+    }
+
+    connection
+        .execute(
+            "INSERT INTO monthly_category_budgets
+               (household_id, month, category_account_id, budget_jpy)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(household_id, month, category_account_id) DO UPDATE SET
+               budget_jpy = excluded.budget_jpy,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            params![
+                input.household_id,
+                input.month,
+                input.category_account_id,
+                input.budget_jpy
+            ],
+        )
+        .map_err(map_database_error)?;
+
+    list_monthly_category_budgets(connection, &input.household_id, &input.month)?
+        .into_iter()
+        .find(|budget| budget.category_account_id == input.category_account_id)
+        .ok_or(RepositoryError::Unavailable)
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SavingsGoalStatus {
+    Active,
+    Paused,
+    Completed,
+    Cancelled,
+}
+
+impl SavingsGoalStatus {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Paused => "PAUSED",
+            Self::Completed => "COMPLETED",
+            Self::Cancelled => "CANCELLED",
+        }
+    }
+
+    fn from_sql_value(value: &str) -> Result<Self, RepositoryError> {
+        match value {
+            "ACTIVE" => Ok(Self::Active),
+            "PAUSED" => Ok(Self::Paused),
+            "COMPLETED" => Ok(Self::Completed),
+            "CANCELLED" => Ok(Self::Cancelled),
+            _ => Err(RepositoryError::Unavailable),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavingsGoalDto {
+    pub id: String,
+    pub household_id: String,
+    pub name: String,
+    pub target_jpy: i64,
+    pub saved_jpy: i64,
+    pub target_date: String,
+    pub status: SavingsGoalStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSavingsGoalInput {
+    pub id: String,
+    pub household_id: String,
+    pub name: String,
+    pub target_jpy: i64,
+    pub saved_jpy: i64,
+    pub target_date: String,
+    pub status: SavingsGoalStatus,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSavingsGoalInput {
+    pub id: String,
+    pub household_id: String,
+    pub name: String,
+    pub target_jpy: i64,
+    pub saved_jpy: i64,
+    pub target_date: String,
+    pub status: SavingsGoalStatus,
+}
+
+pub fn list_savings_goals(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<SavingsGoalDto>, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, household_id, name, target_jpy, saved_jpy, target_date,
+                    status, created_at, updated_at
+             FROM savings_goals
+             WHERE household_id = ?1
+             ORDER BY CASE status
+               WHEN 'ACTIVE' THEN 0 WHEN 'PAUSED' THEN 1
+               WHEN 'COMPLETED' THEN 2 ELSE 3 END,
+               target_date ASC, name ASC, id ASC",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map([household_id], savings_goal_from_row)
+        .map_err(map_database_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
+pub fn create_savings_goal(
+    connection: &Connection,
+    input: &CreateSavingsGoalInput,
+) -> Result<SavingsGoalDto, RepositoryError> {
+    let name = validate_savings_goal_input(
+        connection,
+        &input.id,
+        &input.household_id,
+        &input.name,
+        input.target_jpy,
+        input.saved_jpy,
+        &input.target_date,
+    )?;
+    ensure_household_exists(connection, &input.household_id)?;
+    connection
+        .execute(
+            "INSERT INTO savings_goals
+               (id, household_id, name, target_jpy, saved_jpy, target_date, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                input.id,
+                input.household_id,
+                name,
+                input.target_jpy,
+                input.saved_jpy,
+                input.target_date,
+                input.status.as_sql_value()
+            ],
+        )
+        .map_err(map_database_error)?;
+    get_savings_goal(connection, &input.household_id, &input.id)
+}
+
+pub fn update_savings_goal(
+    connection: &Connection,
+    input: &UpdateSavingsGoalInput,
+) -> Result<SavingsGoalDto, RepositoryError> {
+    let name = validate_savings_goal_input(
+        connection,
+        &input.id,
+        &input.household_id,
+        &input.name,
+        input.target_jpy,
+        input.saved_jpy,
+        &input.target_date,
+    )?;
+    ensure_household_exists(connection, &input.household_id)?;
+    let changed = connection
+        .execute(
+            "UPDATE savings_goals
+             SET name = ?3, target_jpy = ?4, saved_jpy = ?5,
+                 target_date = ?6, status = ?7,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND household_id = ?2",
+            params![
+                input.id,
+                input.household_id,
+                name,
+                input.target_jpy,
+                input.saved_jpy,
+                input.target_date,
+                input.status.as_sql_value()
+            ],
+        )
+        .map_err(map_database_error)?;
+    if changed == 0 {
+        return Err(RepositoryError::NotFound);
+    }
+    get_savings_goal(connection, &input.household_id, &input.id)
+}
+
+pub fn delete_savings_goal(
+    connection: &Connection,
+    household_id: &str,
+    goal_id: &str,
+) -> Result<(), RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(goal_id, MAX_LOOKUP_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    let changed = connection
+        .execute(
+            "DELETE FROM savings_goals WHERE id = ?1 AND household_id = ?2",
+            params![goal_id, household_id],
+        )
+        .map_err(map_database_error)?;
+    if changed == 0 {
+        return Err(RepositoryError::NotFound);
+    }
+    Ok(())
+}
+
+fn get_savings_goal(
+    connection: &Connection,
+    household_id: &str,
+    goal_id: &str,
+) -> Result<SavingsGoalDto, RepositoryError> {
+    connection
+        .query_row(
+            "SELECT id, household_id, name, target_jpy, saved_jpy, target_date,
+                    status, created_at, updated_at
+             FROM savings_goals WHERE id = ?1 AND household_id = ?2",
+            params![goal_id, household_id],
+            savings_goal_from_row,
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)
+}
+
+fn savings_goal_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavingsGoalDto> {
+    let status: String = row.get(6)?;
+    let status =
+        SavingsGoalStatus::from_sql_value(&status).map_err(|_| rusqlite::Error::InvalidQuery)?;
+    Ok(SavingsGoalDto {
+        id: row.get(0)?,
+        household_id: row.get(1)?,
+        name: row.get(2)?,
+        target_jpy: row.get(3)?,
+        saved_jpy: row.get(4)?,
+        target_date: row.get(5)?,
+        status,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+fn validate_savings_goal_input<'a>(
+    connection: &Connection,
+    goal_id: &str,
+    household_id: &str,
+    name: &'a str,
+    target_jpy: i64,
+    saved_jpy: i64,
+    target_date: &str,
+) -> Result<&'a str, RepositoryError> {
+    validate_id(goal_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    let name = validate_savings_goal_name(name)?;
+    validate_jpy(target_jpy, false)?;
+    validate_jpy(saved_jpy, true)?;
+    validate_optional_date(connection, Some(target_date))?;
+    Ok(name)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportRunCountsDto {
@@ -712,6 +1071,25 @@ fn validate_name(value: &str) -> Result<&str, RepositoryError> {
     Ok(trimmed)
 }
 
+fn validate_savings_goal_name(value: &str) -> Result<&str, RepositoryError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_NAME_LEN
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(RepositoryError::InvalidInput("Invalid savings goal name"));
+    }
+    Ok(trimmed)
+}
+
+fn validate_jpy(value: i64, allow_zero: bool) -> Result<(), RepositoryError> {
+    let minimum = if allow_zero { 0 } else { 1 };
+    if value < minimum || value > MAX_PLANNING_JPY {
+        return Err(RepositoryError::InvalidInput("Invalid JPY amount"));
+    }
+    Ok(())
+}
+
 fn validate_optional_date(
     connection: &Connection,
     value: Option<&str>,
@@ -786,7 +1164,8 @@ mod tests {
                  CREATE TABLE accounts (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
-                   currency TEXT NOT NULL, masked_identifier TEXT, UNIQUE(household_id, name)
+                   currency TEXT NOT NULL, masked_identifier TEXT,
+                   is_archived INTEGER NOT NULL DEFAULT 0, UNIQUE(household_id, name)
                  );
                  CREATE TABLE transactions (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
@@ -814,7 +1193,19 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, statement_id TEXT,
                    bank_transaction_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
                    payment_amount_jpy INTEGER NOT NULL, payment_on TEXT NOT NULL,
-                   match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);",
+                   match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);
+                 CREATE TABLE monthly_category_budgets (
+                   household_id TEXT NOT NULL REFERENCES households(id), month TEXT NOT NULL,
+                   category_account_id TEXT NOT NULL REFERENCES accounts(id), budget_jpy INTEGER NOT NULL,
+                   created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   PRIMARY KEY(household_id, month, category_account_id));
+                 CREATE TABLE savings_goals (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   name TEXT NOT NULL, target_jpy INTEGER NOT NULL, saved_jpy INTEGER NOT NULL,
+                   target_date TEXT NOT NULL, status TEXT NOT NULL,
+                   created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z');",
             )
             .expect("compatible schema");
         connection
@@ -985,6 +1376,268 @@ mod tests {
             .accrual_trend
             .iter()
             .all(|point| point.income_jpy == 0 && point.expense_jpy == 0));
+    }
+
+    #[test]
+    fn monthly_budgets_upsert_and_derive_actuals_from_posted_ledger_entries() {
+        let connection = database();
+        for (id, name) in [("family", "Family"), ("other", "Other")] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.to_owned(),
+                    name: name.to_owned(),
+                },
+            )
+            .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO transactions (id, household_id, occurred_on, transaction_type, status)
+                   VALUES ('july-expense', 'family', '2026-07-03', 'EXPENSE', 'POSTED'),
+                          ('july-refund', 'family', '2026-07-04', 'REFUND', 'POSTED'),
+                          ('june-expense', 'family', '2026-06-30', 'EXPENSE', 'POSTED'),
+                          ('void-expense', 'family', '2026-07-05', 'EXPENSE', 'VOID'),
+                          ('card-payment', 'family', '2026-07-06', 'CARD_PAYMENT', 'POSTED'),
+                          ('other-expense', 'other', '2026-07-03', 'EXPENSE', 'POSTED');
+                 INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                   VALUES ('j1', 'july-expense', 'family-groceries', 'DEBIT', 1200, 1),
+                          ('j2', 'july-expense', 'family-bank', 'CREDIT', 1200, 2),
+                          ('j3', 'july-refund', 'family-groceries', 'CREDIT', 200, 1),
+                          ('j4', 'july-refund', 'family-bank', 'DEBIT', 200, 2),
+                          ('j5', 'june-expense', 'family-groceries', 'DEBIT', 900, 1),
+                          ('j6', 'june-expense', 'family-bank', 'CREDIT', 900, 2),
+                          ('j7', 'void-expense', 'family-groceries', 'DEBIT', 500, 1),
+                          ('j8', 'void-expense', 'family-bank', 'CREDIT', 500, 2),
+                          ('j9', 'card-payment', 'family-groceries', 'DEBIT', 700, 1),
+                          ('j10', 'card-payment', 'family-bank', 'CREDIT', 700, 2),
+                          ('j11', 'other-expense', 'other-groceries', 'DEBIT', 8000, 1),
+                          ('j12', 'other-expense', 'other-bank', 'CREDIT', 8000, 2);",
+            )
+            .unwrap();
+
+        let created = upsert_monthly_category_budget(
+            &connection,
+            &UpsertMonthlyCategoryBudgetInput {
+                household_id: "family".into(),
+                month: "2026-07".into(),
+                category_account_id: "family-groceries".into(),
+                budget_jpy: 3_000,
+            },
+        )
+        .unwrap();
+        assert_eq!(created.actual_jpy, 1_000);
+        assert_eq!(created.remaining_jpy, 2_000);
+
+        let updated = upsert_monthly_category_budget(
+            &connection,
+            &UpsertMonthlyCategoryBudgetInput {
+                budget_jpy: 750,
+                ..UpsertMonthlyCategoryBudgetInput {
+                    household_id: "family".into(),
+                    month: "2026-07".into(),
+                    category_account_id: "family-groceries".into(),
+                    budget_jpy: 0,
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.actual_jpy, 1_000);
+        assert_eq!(updated.remaining_jpy, -250);
+        assert_eq!(
+            list_monthly_category_budgets(&connection, "family", "2026-07").unwrap(),
+            vec![updated]
+        );
+        assert!(
+            list_monthly_category_budgets(&connection, "family", "2026-06")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn planning_repository_enforces_household_and_expense_account_isolation() {
+        let connection = database();
+        for id in ["one", "two"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+
+        let cross_household = upsert_monthly_category_budget(
+            &connection,
+            &UpsertMonthlyCategoryBudgetInput {
+                household_id: "one".into(),
+                month: "2026-07".into(),
+                category_account_id: "two-groceries".into(),
+                budget_jpy: 1_000,
+            },
+        );
+        assert!(matches!(cross_household, Err(RepositoryError::NotFound)));
+        let asset_account = upsert_monthly_category_budget(
+            &connection,
+            &UpsertMonthlyCategoryBudgetInput {
+                household_id: "one".into(),
+                month: "2026-07".into(),
+                category_account_id: "one-bank".into(),
+                budget_jpy: 1_000,
+            },
+        );
+        assert!(matches!(asset_account, Err(RepositoryError::NotFound)));
+
+        create_savings_goal(
+            &connection,
+            &CreateSavingsGoalInput {
+                id: "goal-one".into(),
+                household_id: "one".into(),
+                name: "Emergency fund".into(),
+                target_jpy: 100_000,
+                saved_jpy: 10_000,
+                target_date: "2027-01-31".into(),
+                status: SavingsGoalStatus::Active,
+            },
+        )
+        .unwrap();
+        assert!(list_savings_goals(&connection, "two").unwrap().is_empty());
+        assert!(matches!(
+            delete_savings_goal(&connection, "two", "goal-one"),
+            Err(RepositoryError::NotFound)
+        ));
+        assert_eq!(list_savings_goals(&connection, "one").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn savings_goal_create_update_delete_lifecycle_is_validated() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+
+        let created = create_savings_goal(
+            &connection,
+            &CreateSavingsGoalInput {
+                id: "trip-2027".into(),
+                household_id: "family".into(),
+                name: "  Family trip  ".into(),
+                target_jpy: 1_000_000,
+                saved_jpy: 680_000,
+                target_date: "2027-07-01".into(),
+                status: SavingsGoalStatus::Active,
+            },
+        )
+        .unwrap();
+        assert_eq!(created.name, "Family trip");
+        assert_eq!(created.status, SavingsGoalStatus::Active);
+
+        let updated = update_savings_goal(
+            &connection,
+            &UpdateSavingsGoalInput {
+                id: "trip-2027".into(),
+                household_id: "family".into(),
+                name: "Family trip 2027".into(),
+                target_jpy: 1_200_000,
+                saved_jpy: 1_250_000,
+                target_date: "2027-08-01".into(),
+                status: SavingsGoalStatus::Completed,
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.target_jpy, 1_200_000);
+        assert_eq!(updated.saved_jpy, 1_250_000);
+        assert_eq!(updated.status, SavingsGoalStatus::Completed);
+        assert_eq!(
+            list_savings_goals(&connection, "family").unwrap(),
+            vec![updated]
+        );
+
+        delete_savings_goal(&connection, "family", "trip-2027").unwrap();
+        assert!(list_savings_goals(&connection, "family")
+            .unwrap()
+            .is_empty());
+        assert!(matches!(
+            delete_savings_goal(&connection, "family", "trip-2027"),
+            Err(RepositoryError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn planning_inputs_reject_invalid_names_dates_identifiers_and_jpy() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+
+        for budget_jpy in [-1, MAX_PLANNING_JPY + 1] {
+            assert!(matches!(
+                upsert_monthly_category_budget(
+                    &connection,
+                    &UpsertMonthlyCategoryBudgetInput {
+                        household_id: "family".into(),
+                        month: "2026-07".into(),
+                        category_account_id: "family-groceries".into(),
+                        budget_jpy,
+                    }
+                ),
+                Err(RepositoryError::InvalidInput(_))
+            ));
+        }
+        assert!(matches!(
+            list_monthly_category_budgets(&connection, "family", "2026-13"),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+
+        let valid = CreateSavingsGoalInput {
+            id: "goal".into(),
+            household_id: "family".into(),
+            name: "Goal".into(),
+            target_jpy: 1_000,
+            saved_jpy: 0,
+            target_date: "2027-01-01".into(),
+            status: SavingsGoalStatus::Active,
+        };
+        for invalid in [
+            CreateSavingsGoalInput {
+                name: " \n ".into(),
+                ..valid.clone()
+            },
+            CreateSavingsGoalInput {
+                target_jpy: 0,
+                ..valid.clone()
+            },
+            CreateSavingsGoalInput {
+                saved_jpy: -1,
+                ..valid.clone()
+            },
+            CreateSavingsGoalInput {
+                target_date: "2027-02-30".into(),
+                ..valid.clone()
+            },
+            CreateSavingsGoalInput {
+                id: "bad id".into(),
+                ..valid.clone()
+            },
+        ] {
+            assert!(matches!(
+                create_savings_goal(&connection, &invalid),
+                Err(RepositoryError::InvalidInput(_))
+            ));
+        }
     }
 
     #[test]

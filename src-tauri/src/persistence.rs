@@ -19,6 +19,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0006_import_card_statements.sql"
     )),
+    M::up(include_str!("../migrations/0007_planning.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -350,6 +351,15 @@ fn validate_restored_semantics(
              WHERE scs.household_id != tc.household_id LIMIT 1",
         )?;
     }
+    if schema_version >= 7 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM monthly_category_budgets b \
+             JOIN accounts a ON a.id = b.category_account_id \
+             WHERE b.household_id != a.household_id \
+                OR a.account_kind != 'EXPENSE' LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -411,7 +421,7 @@ mod tests {
         let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
         state
             .with_connection(|connection| {
-                assert_eq!(schema_version(connection)?, 6);
+                assert_eq!(schema_version(connection)?, 7);
                 assert!(integrity_check(connection)?);
                 Ok(())
             })
@@ -458,6 +468,48 @@ mod tests {
                 Ok(())
             })
             .expect("test setup should succeed");
+    }
+
+    #[test]
+    fn planning_schema_enforces_integer_jpy_and_goal_status_constraints() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households (id, name) VALUES ('household', 'Test');
+                     INSERT INTO accounts
+                       (id, household_id, name, account_kind, account_subtype, currency)
+                     VALUES ('expense', 'household', 'Expense', 'EXPENSE', 'OTHER', 'JPY');",
+                )?;
+                assert!(connection
+                    .execute(
+                        "INSERT INTO monthly_category_budgets
+                           (household_id, month, category_account_id, budget_jpy)
+                         VALUES ('household', '2026-07', 'expense', 1.5)",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute(
+                        "INSERT INTO savings_goals
+                           (id, household_id, name, target_jpy, saved_jpy, target_date, status)
+                         VALUES ('real-goal', 'household', 'Goal', 1000.5, 0,
+                                 '2027-01-01', 'ACTIVE')",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute(
+                        "INSERT INTO savings_goals
+                           (id, household_id, name, target_jpy, saved_jpy, target_date, status)
+                         VALUES ('bad-status', 'household', 'Goal', 1000, 0,
+                                 '2027-01-01', 'UNKNOWN')",
+                        [],
+                    )
+                    .is_err());
+                Ok(())
+            })
+            .expect("planning constraints should be queryable");
     }
 
     #[test]
@@ -616,6 +668,36 @@ mod tests {
                              '2026-07-01', '2026-07-31', 100);",
                 )?;
                 assert!(validate_restored_semantics(connection, 6).is_err());
+                Ok(())
+            })
+            .expect("test database should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_planning_account_relations() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households (id, name) VALUES ('one', 'One'), ('two', 'Two');
+                     INSERT INTO accounts
+                       (id, household_id, name, account_kind, account_subtype)
+                     VALUES ('expense-two', 'two', 'Expense', 'EXPENSE', 'OTHER'),
+                            ('bank-one', 'one', 'Bank', 'ASSET', 'BANK');
+                     INSERT INTO monthly_category_budgets
+                       (household_id, month, category_account_id, budget_jpy)
+                     VALUES ('one', '2026-07', 'expense-two', 1000);",
+                )?;
+                assert!(validate_restored_semantics(connection, 7).is_err());
+
+                connection.execute("DELETE FROM monthly_category_budgets", [])?;
+                connection.execute(
+                    "INSERT INTO monthly_category_budgets
+                       (household_id, month, category_account_id, budget_jpy)
+                     VALUES ('one', '2026-07', 'bank-one', 1000)",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 7).is_err());
                 Ok(())
             })
             .expect("test database should remain queryable");
