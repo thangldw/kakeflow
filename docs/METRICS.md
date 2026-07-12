@@ -63,6 +63,20 @@ included once. Import failures and savings-goal actions remain household-wide
 because their records do not identify an account; the UI keeps them visible
 instead of implying that an account filter can classify them.
 
+## Family organization
+
+Household members and account ownership are stable local organization metadata.
+`PERSONAL` does not hide an account, authenticate a person, or restrict another
+user of the same device. Account ownership is independent from sharing: a
+member-owned account may still be `SHARED`; a `PERSONAL` account must have one
+active owner in the same household.
+
+KakeFlow does not derive transaction or source-document visibility from account
+ownership. Transfers and split funding may touch accounts owned by different
+members, so doing so could expose or omit the wrong counterpart. A later member
+reporting/access-control layer must use explicit transaction and document
+audiences.
+
 ## Export
 
 Exports contain posted records only, use UTF-8 with BOM for Japanese Excel
