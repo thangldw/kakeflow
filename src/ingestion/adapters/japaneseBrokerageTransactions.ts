@@ -11,17 +11,17 @@ import type {
 const ALIASES = {
   tradeDate: ['約定日', '取引日', '国内約定日', '現地約定日', '約定年月日', '取引年月日'],
   settlementDate: ['受渡日', '国内受渡日', '受渡年月日'],
-  transactionType: ['取引', '取引区分', '取引種類', '売買区分', '摘要', '取引内容', '明細区分'],
+  transactionType: ['取引', '取引区分', '取引種類', '取引種別', '売買', '売買区分', '摘要', '取引内容', '明細区分'],
   instrumentCode: ['銘柄コード', 'コード', 'ティッカー', 'シンボル', '商品コード'],
-  instrumentName: ['銘柄名', '銘柄', '商品名', 'ファンド名'],
+  instrumentName: ['銘柄名', '銘柄', '商品名', 'ファンド名', 'ティッカー+銘柄名(または通貨名)'],
   accountType: ['口座区分', '預り区分', '預かり区分', '口座', '口座種別'],
-  quantity: ['数量', '約定数量', '口数', '株数', '約定株数'],
-  unitPrice: ['単価', '約定単価', '約定価格', '約定価格(円)'],
-  grossAmount: ['約定金額', '約定代金', '受取金額', '配当金額', '分配金額', '総額', '金額'],
-  fee: ['手数料', '国内手数料', '委託手数料', '取引手数料', '手数料(税込)'],
+  quantity: ['数量', '約定数量', '約定数量[株]', '口数', '株数', '約定株数'],
+  unitPrice: ['単価', '約定単価', '約定価格', '約定価格(円)', '約定値段[ドル]', '約定値段[円]'],
+  grossAmount: ['約定金額', '約定金額[ドル]', '約定金額[円]', '約定代金', '受取金額', '配当金額', '分配金額', '総額', '金額'],
+  fee: ['手数料', '国内手数料', '委託手数料', '取引手数料', '手数料(税込)', '手数料(税込)[ドル]', '手数料(税込)[円]'],
   tax: ['税金', '税額', '源泉徴収税', '源泉税', '所得税・住民税', '譲渡益税', '所得税', '住民税', '外国税', '消費税'],
-  settlementAmount: ['受渡金額', '精算金額', '入出金額', '差引金額'],
-  currency: ['通貨', '通貨コード', '決済通貨', '通貨名'],
+  settlementAmount: ['受渡金額', '受渡金額[ドル]', '受渡金額[円]', '精算金額', '入出金額', '差引金額'],
+  currency: ['通貨', '通貨コード', '決済通貨', '通貨名', '取引通貨'],
   corporateActionRatio: ['分割比率', '併合比率', '交換比率', '割当比率'],
   targetInstrumentCode: ['割当銘柄コード', '新銘柄コード', '交換先コード'],
   targetInstrumentName: ['割当銘柄名', '新銘柄名', '交換先銘柄名'],
@@ -57,6 +57,10 @@ function firstPopulatedValue(values: Readonly<Record<string, string>>, headers: 
   return valueFor(values, headers, key)
 }
 
+function populatedValues(values: Readonly<Record<string, string>>, headers: readonly string[], key: AliasKey): string[] {
+  return ALIASES[key].filter((alias) => headers.includes(alias) && (values[alias] ?? '').trim()).map((alias) => values[alias])
+}
+
 function amount(value: string): number | null {
   const parsed = parseJapaneseAmount(value)
   return parsed == null ? null : Math.abs(parsed)
@@ -74,8 +78,8 @@ function classify(raw: string): BrokerageEventType | null {
   if (/株式分割|STOCK[ _-]?SPLIT|\bSPLIT\b/.test(value)) return 'SPLIT'
   if (/合併|株式交換|MERGER/.test(value)) return 'MERGER'
   if (/配当|分配金|DIVIDEND|DISTRIBUTION/.test(value)) return 'DIVIDEND'
-  if (/買付|買い|購入|BUY/.test(value)) return 'BUY'
-  if (/売却|売り|SELL/.test(value)) return 'SELL'
+  if (/買付|買い|購入|(?:^|\s)買(?:$|\s)|BUY/.test(value)) return 'BUY'
+  if (/売却|売り|(?:^|\s)売(?:$|\s)|SELL/.test(value)) return 'SELL'
   if (/入金|預入|DEPOSIT/.test(value)) return 'DEPOSIT'
   if (/出金|引出|WITHDRAW/.test(value)) return 'WITHDRAWAL'
   if (/手数料|FEE|COMMISSION/.test(value)) return 'FEE'
@@ -198,7 +202,7 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
     const records: BrokerageEventCandidate[] = []
     for (const row of csv.rows.slice(headerIndex + 1)) {
       const values = rowObject(headers, row)
-      const rawTransactionType = normalizeJapaneseText(valueFor(values, headers, 'transactionType'))
+      const rawTransactionType = normalizeJapaneseText(populatedValues(values, headers, 'transactionType').join(' '))
       const eventType = classify(rawTransactionType)
       if (!eventType) {
         issues.push({ code: 'BROKERAGE_EVENT_TYPE_UNKNOWN', message: `Unsupported brokerage event type: ${rawTransactionType || '(empty)'}`, severity: 'warning', row: row.sourceRow })
@@ -208,10 +212,10 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
       const unitPrice = amount(valueFor(values, headers, 'unitPrice'))
       const corporate = ['SPLIT', 'REVERSE_SPLIT', 'MERGER'].includes(eventType)
       const ratio = corporate ? actionRatio(firstPopulatedValue(values, headers, 'corporateActionRatio') || rawTransactionType) : null
-      const rawGross = amount(valueFor(values, headers, 'grossAmount'))
+      const rawGross = amount(firstPopulatedValue(values, headers, 'grossAmount'))
       const fee = summedAmounts(values, headers, 'fee')
       const tax = summedAmounts(values, headers, 'tax')
-      const rawSettlement = amount(valueFor(values, headers, 'settlementAmount'))
+      const rawSettlement = amount(firstPopulatedValue(values, headers, 'settlementAmount'))
       const derivedTradeAmount = quantity != null && unitPrice != null ? quantity * unitPrice : null
       const gross = corporate ? 0 : (rawGross ?? derivedTradeAmount ?? rawSettlement ?? fee) || tax
       if ((!corporate && (!Number.isFinite(gross) || gross <= 0)) || (corporate && ratio == null)) {
@@ -224,8 +228,12 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
       const settlementDateRaw = valueFor(values, headers, 'settlementDate')
       const settlementDate = settlementDateRaw ? parseJapaneseDate(settlementDateRaw) : null
       if (settlementDateRaw && !settlementDate) issues.push({ code: 'BROKERAGE_SETTLEMENT_DATE_INVALID', message: `Invalid settlement date: ${settlementDateRaw}`, severity: 'warning', row: row.sourceRow, column: headerFor(headers, 'settlementDate') })
-      const instrumentCode = normalizeJapaneseText(valueFor(values, headers, 'instrumentCode'))
-      const instrumentName = normalizeJapaneseText(valueFor(values, headers, 'instrumentName'))
+      let instrumentCode = normalizeJapaneseText(valueFor(values, headers, 'instrumentCode'))
+      let instrumentName = normalizeJapaneseText(valueFor(values, headers, 'instrumentName'))
+      if (!instrumentCode) {
+        const combined = instrumentName.match(/^([A-Z0-9][A-Z0-9./-]{0,9})\s+(.+)$/i)
+        if (combined) { instrumentCode = combined[1].toUpperCase(); instrumentName = combined[2].trim() }
+      }
       const targetInstrumentCode = normalizeJapaneseText(valueFor(values, headers, 'targetInstrumentCode'))
       const targetInstrumentName = normalizeJapaneseText(valueFor(values, headers, 'targetInstrumentName'))
       if (eventType === 'MERGER' && !targetInstrumentCode && !targetInstrumentName) {

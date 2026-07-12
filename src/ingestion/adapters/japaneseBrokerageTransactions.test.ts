@@ -85,4 +85,20 @@ describe('Japanese brokerage transaction adapter', () => {
     ]))
     expect(result.issues).toHaveLength(0)
   })
+
+  it('parses the documented Monex US-stock CSV column variants', () => {
+    const monex = [
+      'ティッカー＋銘柄名（または通貨名）,国内約定日,取引種別,売買,口座区分,取引通貨,約定数量[株],約定値段[ドル],約定金額[ドル],受渡金額[ドル],手数料(税込)[ドル]',
+      'AAPL Apple Inc.,2026/07/10,現物,買,特定,USD,10,200,2000,2005,5',
+      'MSFT Microsoft Corp.,2026/07/11,現物,売,NISA,USD,2,500,1000,995,5',
+    ].join('\n')
+
+    const result = japaneseBrokerageTransactionsAdapter.parse({ text: monex, filename: 'monex_us_tradehistory.csv', accountHint: 'マネックス証券' })
+    expect(result.issues).toHaveLength(0)
+    expect(result.records).toEqual([
+      expect.objectContaining({ eventType: 'BUY', instrumentCode: 'AAPL', instrumentName: 'Apple Inc.', currency: 'USD', quantity: 10, unitPrice: 200, grossAmount: 2000, feeAmount: 5, settlementAmount: 2005 }),
+      expect.objectContaining({ eventType: 'SELL', instrumentCode: 'MSFT', instrumentName: 'Microsoft Corp.', currency: 'USD', quantity: 2, unitPrice: 500, grossAmount: 1000, feeAmount: 5, settlementAmount: 995 }),
+    ])
+    result.records.forEach((record) => expect(record.legs.reduce((sum, item) => sum + item.signedAmount, 0)).toBeCloseTo(0, 8))
+  })
 })
