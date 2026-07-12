@@ -32,6 +32,9 @@ describe('platform client', () => {
     await expect(client.createManualTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_manual_create' })
     await expect(client.getTransactionDetail('family', 'tx')).rejects.toMatchObject({ command: 'transaction_detail_get' })
     await expect(client.updateTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_update' })
+    await expect(client.getSourceDocument('family', 'document')).rejects.toMatchObject({ command: 'source_document_get' })
+    await expect(client.querySourceDocumentRecords({ householdId: 'family', sourceDocumentId: 'document', page: 1, pageSize: 20 })).rejects.toMatchObject({ command: 'source_document_records_query' })
+    await expect(client.listTransactionSourceRecords('family', 'tx')).rejects.toMatchObject({ command: 'transaction_source_records_list' })
     await expect(client.listWatchedFolders('family')).resolves.toEqual([])
     await expect(client.selectWatchedFolder('family', 'Inbox')).rejects.toMatchObject({ command: 'watched_folder_select' })
     await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
@@ -77,6 +80,16 @@ describe('platform client', () => {
         sourceEvidence: [{ sourceRecordId: 'record-1', sourceDocumentId: 'document-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }],
       },
       transaction_update: null,
+      source_document_get: {
+        id: 'document-1', householdId: 'family', importRunId: 'run-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv',
+        mediaType: 'text/csv', byteSize: 42, sha256: 'a'.repeat(64), sourceModifiedAt: null, importedAt: '2026-07-12T00:00:00Z',
+        adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', recordCount: 1,
+      },
+      source_document_records_query: {
+        items: [{ id: 'record-1', sourceDocumentId: 'document-1', rowNumber: 2, recordHash: 'b'.repeat(64), payloadJson: '{"rawFields":["STORE","1200"]}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: null }],
+        page: 1, pageSize: 20, totalItems: 1, totalPages: 1,
+      },
+      transaction_source_records_list: [{ id: 'record-1', sourceDocumentId: 'document-1', rowNumber: 2, recordHash: 'b'.repeat(64), payloadJson: '{"rawFields":["STORE","1200"]}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }],
       watched_folders_list: [{ id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }],
       watched_folder_select: { id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' },
       watched_folder_remove: null,
@@ -152,6 +165,10 @@ describe('platform client', () => {
     responses.transaction_update = responses.transaction_detail_get
     const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
     await expect(client.updateTransaction(updateInput)).resolves.toEqual(responses.transaction_detail_get)
+    await expect(client.getSourceDocument('family', 'document-1')).resolves.toEqual(responses.source_document_get)
+    const sourcePage = { householdId: 'family', sourceDocumentId: 'document-1', page: 1, pageSize: 20 }
+    await expect(client.querySourceDocumentRecords(sourcePage)).resolves.toEqual(responses.source_document_records_query)
+    await expect(client.listTransactionSourceRecords('family', 'tx-manual')).resolves.toEqual(responses.transaction_source_records_list)
     await expect(client.listWatchedFolders('family')).resolves.toEqual(responses.watched_folders_list)
     await expect(client.selectWatchedFolder('family', 'Inbox')).resolves.toEqual(responses.watched_folder_select)
     await expect(client.removeWatchedFolder('family', 'folder')).resolves.toBeUndefined()
@@ -175,6 +192,9 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('transaction_manual_create', { input: manualInput })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_detail_get', { householdId: 'family', transactionId: 'tx-manual' })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_update', { input: updateInput })
+    expect(invokeSpy).toHaveBeenCalledWith('source_document_get', { householdId: 'family', sourceDocumentId: 'document-1' })
+    expect(invokeSpy).toHaveBeenCalledWith('source_document_records_query', { request: sourcePage })
+    expect(invokeSpy).toHaveBeenCalledWith('transaction_source_records_list', { householdId: 'family', transactionId: 'tx-manual' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folders_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_select', { householdId: 'family', label: 'Inbox' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_remove', { householdId: 'family', watchedFolderId: 'folder' })
@@ -190,7 +210,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(28)
+    expect(invokeSpy).toHaveBeenCalledTimes(31)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {
@@ -242,6 +262,35 @@ describe('platform client', () => {
     await expect(client.archiveAccount({ householdId: 'family', accountId: 'bank-2' })).resolves.toBeUndefined()
     expect(invokeSpy).toHaveBeenCalledWith('account_create', { input: create })
     expect(invokeSpy).toHaveBeenCalledWith('account_archive', { input: { householdId: 'family', accountId: 'bank-2' } })
+  })
+
+  it('validates classification rule CRUD, preview, and safe apply DTOs', async () => {
+    const rule = {
+      id: 'coffee', householdId: 'family', name: 'Coffee', priority: 10, isEnabled: true,
+      merchantContains: 'coffee', descriptionContains: null, categoryAccountId: 'entertainment', categoryName: 'Entertainment',
+      labels: ['Recurring'], tags: ['#work'], createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z',
+    }
+    const responses: Record<string, unknown> = {
+      classification_rules_list: [rule], classification_rule_create: rule,
+      classification_rule_update: { ...rule, isEnabled: false }, classification_rule_delete: null,
+      classification_rules_preview: { winningRuleId: 'coffee', matches: [rule] },
+      classification_rule_apply: {
+        transactionId: 'tx', ruleId: 'coffee', categoryAccountId: 'entertainment', categoryName: 'Entertainment',
+        labels: ['Recurring'], tags: ['#work'], transactionUpdatedAt: '2026-07-13T00:00:01Z',
+      },
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => { invokeSpy(command, args); return responses[command] as T } })
+    const input = { id: 'coffee', householdId: 'family', name: 'Coffee', priority: 10, isEnabled: true, merchantContains: 'coffee', descriptionContains: null, categoryAccountId: 'entertainment', labels: ['Recurring'], tags: ['#work'] }
+
+    await expect(client.listClassificationRules('family')).resolves.toEqual([rule])
+    await expect(client.createClassificationRule(input)).resolves.toEqual(rule)
+    await expect(client.updateClassificationRule({ ...input, isEnabled: false })).resolves.toMatchObject({ isEnabled: false })
+    await expect(client.previewClassificationRules({ householdId: 'family', merchant: 'Tokyo Coffee', description: null })).resolves.toMatchObject({ winningRuleId: 'coffee' })
+    await expect(client.applyClassificationRule({ householdId: 'family', transactionId: 'tx', ruleId: 'coffee', expectedTransactionUpdatedAt: rule.updatedAt })).resolves.toMatchObject({ transactionId: 'tx' })
+    await expect(client.deleteClassificationRule('family', 'coffee')).resolves.toBeUndefined()
+    expect(invokeSpy).toHaveBeenCalledWith('classification_rules_list', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('classification_rule_delete', { householdId: 'family', ruleId: 'coffee' })
   })
 
   it('does not expose raw invoke errors', async () => {
