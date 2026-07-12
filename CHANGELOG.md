@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.20.0 — 2026-07-13
+
+- Add a dedicated adapter for Money Forward ME's documented ten-column household-ledger CSV export, including reordered columns, quoted fields, UTF-8/CP932 decoding, strict calendar dates, and signed integer JPY amounts.
+- Preserve calculation-target, transfer, financial-institution, major/minor category, memo, external ID, and named source fields through immutable evidence, staging, review, and posting.
+- Require one explicit KakeFlow Asset/Liability account for the exported institution and reject multi-institution files instead of silently assigning every row to one account.
+- Force Money Forward transfers to remain calculation-excluded `TRANSFER` transactions and reject any transfer journal that touches income or expense accounts.
+- Persist provider external IDs with a canonical source-fact hash, reuse identical overlapping-export rows as supporting evidence, and reject changed facts under the same ID atomically.
+- Show Money Forward institution, taxonomy, source ID, calculation-target state, and transfer defaults in the Import Inbox review before ledger posting.
+
 ## 0.19.0 — 2026-07-13
 
 - Add persisted, explicit credit-card-to-bank settlement mappings with strict same-household, active-account, and account-type validation; KakeFlow never infers a payment bank from transaction text.
