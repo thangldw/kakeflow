@@ -128,6 +128,159 @@ struct ImportStartEnvelope {
     file_bytes: Vec<u8>,
 }
 
+const MAX_IMPORT_FILE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_IMPORT_RECORDS: usize = 100_000;
+const MAX_IMPORT_CANDIDATES: usize = 100_000;
+const MAX_IMPORT_CARD_STATEMENTS: usize = 16;
+const MAX_IMPORT_CARD_LINES: usize = 100_000;
+const MAX_IMPORT_EVIDENCE_LINKS: usize = 200_000;
+const MAX_IMPORT_RAW_PAYLOAD_BYTES: usize = 32 * 1024 * 1024;
+const MAX_IMPORT_METADATA_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy)]
+struct ImportEnvelopeMetrics {
+    file_bytes: usize,
+    records: usize,
+    candidates: usize,
+    card_statements: usize,
+    card_lines: usize,
+    evidence_links: usize,
+    raw_payload_bytes: usize,
+    metadata_bytes: usize,
+}
+
+fn validate_import_envelope_bounds(request: &ImportStartEnvelope) -> Result<(), String> {
+    let mut metadata_bytes = 0_usize;
+    let mut raw_payload_bytes = 0_usize;
+    let mut evidence_links = 0_usize;
+    let mut card_lines = 0_usize;
+
+    let mut charge = |bytes: usize| -> Result<(), String> {
+        metadata_bytes = metadata_bytes
+            .checked_add(bytes)
+            .ok_or_else(|| "Import metadata is too large".to_owned())?;
+        Ok(())
+    };
+    for value in [
+        request.import.run_id.as_str(),
+        request.import.document_id.as_str(),
+        request.import.household_id.as_str(),
+        request.import.source_type.as_str(),
+        request.import.original_filename.as_str(),
+        request.import.media_type.as_str(),
+        request.import.sha256.as_str(),
+    ] {
+        charge(value.len())?;
+    }
+    for value in [
+        request.import.source_modified_at.as_deref(),
+        request.import.adapter_id.as_deref(),
+        request.import.adapter_version.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        charge(value.len())?;
+    }
+    for record in &request.import.records {
+        charge(record.id.len())?;
+        charge(record.record_hash.len())?;
+        charge(record.payload_json.len())?;
+        raw_payload_bytes = raw_payload_bytes
+            .checked_add(record.payload_json.len())
+            .ok_or_else(|| "Import source payload is too large".to_owned())?;
+    }
+    for candidate in &request.import.candidates {
+        charge(candidate.id.len())?;
+        for value in [
+            candidate.account_id.as_deref(),
+            Some(candidate.occurred_on.as_str()),
+            candidate.posted_on.as_deref(),
+            Some(candidate.direction.as_str()),
+            candidate.description_raw.as_deref(),
+            candidate.merchant_raw.as_deref(),
+            candidate.external_transaction_id.as_deref(),
+            Some(candidate.review_status.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            charge(value.len())?;
+        }
+        evidence_links = evidence_links
+            .checked_add(candidate.evidence.len())
+            .ok_or_else(|| "Import evidence is too large".to_owned())?;
+        for evidence in &candidate.evidence {
+            charge(evidence.source_record_id.len())?;
+            charge(evidence.role.len())?;
+        }
+    }
+    for statement in &request.import.card_statements {
+        card_lines = card_lines
+            .checked_add(statement.lines.len())
+            .ok_or_else(|| "Import card statement is too large".to_owned())?;
+        for value in [
+            statement.id.as_str(),
+            statement.card_account_id.as_str(),
+            statement.issuer.as_str(),
+            statement.period_start.as_str(),
+            statement.period_end.as_str(),
+        ] {
+            charge(value.len())?;
+        }
+        if let Some(value) = statement.payment_due_on.as_deref() {
+            charge(value.len())?;
+        }
+        for line in &statement.lines {
+            charge(line.candidate_id.len())?;
+        }
+    }
+
+    // Include conservative JSON/container overhead so aggregate validation does
+    // not account only for attacker-controlled string bodies.
+    for (count, overhead) in [
+        (request.import.records.len(), 64_usize),
+        (request.import.candidates.len(), 192),
+        (evidence_links, 48),
+        (request.import.card_statements.len(), 128),
+        (card_lines, 48),
+    ] {
+        charge(
+            count
+                .checked_mul(overhead)
+                .ok_or_else(|| "Import metadata is too large".to_owned())?,
+        )?;
+    }
+
+    validate_import_metrics(ImportEnvelopeMetrics {
+        file_bytes: request.file_bytes.len(),
+        records: request.import.records.len(),
+        candidates: request.import.candidates.len(),
+        card_statements: request.import.card_statements.len(),
+        card_lines,
+        evidence_links,
+        raw_payload_bytes,
+        metadata_bytes,
+    })
+}
+
+fn validate_import_metrics(metrics: ImportEnvelopeMetrics) -> Result<(), String> {
+    if metrics.file_bytes == 0 || metrics.file_bytes > MAX_IMPORT_FILE_BYTES {
+        return Err("Import file size is invalid".to_owned());
+    }
+    if metrics.records > MAX_IMPORT_RECORDS
+        || metrics.candidates > MAX_IMPORT_CANDIDATES
+        || metrics.card_statements > MAX_IMPORT_CARD_STATEMENTS
+        || metrics.card_lines > MAX_IMPORT_CARD_LINES
+        || metrics.evidence_links > MAX_IMPORT_EVIDENCE_LINKS
+        || metrics.raw_payload_bytes > MAX_IMPORT_RAW_PAYLOAD_BYTES
+        || metrics.metadata_bytes > MAX_IMPORT_METADATA_BYTES
+    {
+        return Err("Import request is too large".to_owned());
+    }
+    Ok(())
+}
+
 /// Initializes the frontend with non-sensitive application and database state.
 #[tauri::command]
 fn app_bootstrap(state: tauri::State<'_, AppState>) -> Result<BootstrapResponse, String> {
@@ -303,6 +456,7 @@ fn import_start(
     {
         return Err("Import file size is invalid".to_owned());
     }
+    validate_import_envelope_bounds(&request)?;
     let stored = vault
         .put(&request.file_bytes, &request.import.media_type)
         .map_err(|_| "Import document encryption failed".to_owned())?;
@@ -698,7 +852,11 @@ pub fn run() {
 
 #[cfg(test)]
 mod command_authorization_tests {
-    use super::RestoreCommandAuthorization;
+    use super::{
+        validate_import_metrics, ImportEnvelopeMetrics, RestoreCommandAuthorization,
+        MAX_IMPORT_CARD_LINES, MAX_IMPORT_FILE_BYTES, MAX_IMPORT_METADATA_BYTES,
+        MAX_IMPORT_RAW_PAYLOAD_BYTES,
+    };
 
     #[test]
     fn restore_authorization_is_exact_match_and_one_shot() {
@@ -720,5 +878,47 @@ mod command_authorization_tests {
         authorization.clear().unwrap();
 
         assert!(!authorization.consume_if_matches(Some(fingerprint)).unwrap());
+    }
+
+    fn small_import_metrics() -> ImportEnvelopeMetrics {
+        ImportEnvelopeMetrics {
+            file_bytes: 1024,
+            records: 10,
+            candidates: 10,
+            card_statements: 1,
+            card_lines: 10,
+            evidence_links: 10,
+            raw_payload_bytes: 4096,
+            metadata_bytes: 8192,
+        }
+    }
+
+    #[test]
+    fn import_boundary_accepts_small_envelope() {
+        validate_import_metrics(small_import_metrics()).unwrap();
+    }
+
+    #[test]
+    fn import_boundary_rejects_aggregate_resource_exhaustion() {
+        for oversized in [
+            ImportEnvelopeMetrics {
+                file_bytes: MAX_IMPORT_FILE_BYTES + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                raw_payload_bytes: MAX_IMPORT_RAW_PAYLOAD_BYTES + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                metadata_bytes: MAX_IMPORT_METADATA_BYTES + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                card_lines: MAX_IMPORT_CARD_LINES + 1,
+                ..small_import_metrics()
+            },
+        ] {
+            assert!(validate_import_metrics(oversized).is_err());
+        }
     }
 }
