@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.16 adds a fixed-cost review backed by confirmed ledger history. It compares two complete three-month windows, detects recurring cadence over a bounded history, respects the global account/member scope, and explains its coverage without inventing market savings.
+Version 0.17 adds a fair Annual Household Review and an aggregate asset-history channel for Money Forward ME exports. Incomplete months never enter annual KPIs, and external total assets remain a separate reference series instead of being double-counted as KakeFlow accounts or net worth.
 
 ## Product tour
 
@@ -109,8 +109,11 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.16 capabilities
+## Current v0.17 capabilities
 
+- [Annual Household Review](docs/ANNUAL_REVIEW.md) with twelve explicit month states, equal-window prior-year comparison, driver drill-down, account/member scopes, and deterministic UTF-8 BOM CSV export.
+- [Money Forward aggregate asset history](docs/MONEY_FORWARD_ASSET_HISTORY.md) with official-column parsing, atomic multi-row persistence, overlapping-export reuse, provenance, date filters, trend/composition views, and a strict assets-only/no-ledger contract.
+- Reliable zero-transaction import finalization for portfolio, brokerage, and aggregate reporting data while candidate-bearing imports still require a complete review decision set.
 - Fixed-cost review for housing, insurance, utilities, connectivity, mobile, subscriptions, and other recurring costs with six complete monthly points and transaction drill-down.
 - Cadence-normalized annual estimates for weekly through annual payees, stale-series exclusion, category-first classification, confidence reasons, account/member scopes, and explicit [metric semantics](docs/FIXED_COST_REVIEW.md).
 - Truthful fixed-cost coverage and limitations: the app reports observed confirmed-ledger costs and never claims an external market-saving opportunity without market data.
