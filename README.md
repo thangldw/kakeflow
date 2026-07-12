@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.18 adds an explicit transaction calculation target. Exceptional or reimbursable activity can stay in the immutable ledger and real account/card balances while being excluded consistently from household budgets, dashboards, reports, recurring analysis, and forecasts.
+Version 0.19 adds explicit credit-card-to-bank settlement planning. KakeFlow projects dated card obligations against real posted bank balances, warns about cumulative shortfalls, and keeps unmapped or incomplete statements visible without guessing a payment account or initiating a payment.
 
 ## Product tour
 
@@ -109,8 +109,11 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.18 capabilities
+## Current v0.19 capabilities
 
+- Explicit [card settlement coverage](docs/CARD_SETTLEMENT_COVERAGE.md) with user-selected card-to-bank mappings, cumulative multi-card projections, covered/shortfall/overdue states, and Action Center warnings.
+- Actual bank-balance semantics that include every posted journal entry even when a transaction is excluded from household analytics, while confirmed card payments are applied only when effective by the requested as-of date.
+- Honest disclosure of unmapped obligations and statements missing a due date; neither is silently assigned or folded into a misleading chronological forecast.
 - Per-transaction [calculation targets](docs/CALCULATION_TARGETS.md) with visible included/excluded state, combined ledger filters, card-safe flag-only editing, complete CSV retention, and an explicit analytics-versus-balance boundary.
 - [Annual Household Review](docs/ANNUAL_REVIEW.md) with twelve explicit month states, equal-window prior-year comparison, driver drill-down, account/member scopes, and deterministic UTF-8 BOM CSV export.
 - [Money Forward aggregate asset history](docs/MONEY_FORWARD_ASSET_HISTORY.md) with official-column parsing, atomic multi-row persistence, overlapping-export reuse, provenance, date filters, trend/composition views, and a strict assets-only/no-ledger contract.

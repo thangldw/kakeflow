@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.0 — 2026-07-13
+
+- Add persisted, explicit credit-card-to-bank settlement mappings with strict same-household, active-account, and account-type validation; KakeFlow never infers a payment bank from transaction text.
+- Project every dated outstanding statement cumulatively against the mapped bank's actual posted balance, including transactions excluded from household analytics, across multiple cards sharing one bank account.
+- Respect the requested as-of date when counting confirmed card payments, include old overdue obligations, and cap the bounded projection query without silently truncating debts.
+- Separate unmapped statements and statements missing a payment due date from the chronological projection so incomplete data remains visible instead of producing false confidence.
+- Add covered, shortfall, and overdue states plus current, step-by-step projected, ending, and maximum-shortfall balances to the Cards workspace.
+- Add household-wide Action Center warnings for bank-balance shortfalls, missing card-to-bank mappings, and missing statement due dates.
+- Protect mappings with database triggers, restore validation, and account-archive checks while keeping the entire feature read-only with no payment initiation.
+
 ## 0.18.0 — 2026-07-13
 
 - Add a persisted per-transaction calculation target with a legacy-safe included default and strict boolean storage.
