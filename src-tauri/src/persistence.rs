@@ -49,6 +49,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0020_mixed_currency_mergers.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0021_aggregate_asset_history.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -606,6 +609,18 @@ fn validate_restored_semantics(
             reject_if_exists(connection, query)?;
         }
     }
+    if schema_version >= 21 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM aggregate_asset_snapshots snapshot
+             JOIN source_documents document ON document.id = snapshot.source_document_id
+             LEFT JOIN source_records record
+               ON record.source_document_id = snapshot.source_document_id
+              AND record.row_number = snapshot.source_row
+             WHERE snapshot.household_id != document.household_id
+                OR record.id IS NULL LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -1058,6 +1073,40 @@ mod tests {
                      WHERE household_id = 'one';",
                 )?;
                 assert!(validate_restored_semantics(connection, 17).is_err());
+                Ok(())
+            })
+            .expect("test database should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_cross_household_aggregate_asset_source() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households (id, name) VALUES ('one', 'One'), ('two', 'Two');
+                     INSERT INTO import_runs (id, household_id, status)
+                       VALUES ('run', 'one', 'POSTED');
+                     INSERT INTO source_documents
+                       (id, household_id, import_run_id, source_type, original_filename,
+                        media_type, byte_size, sha256, storage_path)
+                       VALUES ('document', 'one', 'run', 'MANUAL_UPLOAD', 'assets.csv',
+                        'text/csv', 1,
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                        'assets.enc');
+                     INSERT INTO source_records
+                       (id, source_document_id, row_number, record_hash, raw_payload_json)
+                       VALUES ('record', 'document', 2,
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                        '{}');
+                     INSERT INTO aggregate_asset_snapshots
+                       (id, household_id, source_document_id, source_row, as_of, total_assets_jpy)
+                       VALUES ('snapshot', 'one', 'document', 2, '2026-07-31', 100);
+                     DROP TRIGGER aggregate_asset_snapshot_source_owner_update;
+                     UPDATE aggregate_asset_snapshots SET household_id = 'two'
+                       WHERE id = 'snapshot';",
+                )?;
+                assert!(validate_restored_semantics(connection, 21).is_err());
                 Ok(())
             })
             .expect("test database should remain queryable");

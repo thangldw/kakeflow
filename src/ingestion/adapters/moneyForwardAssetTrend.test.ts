@@ -49,7 +49,7 @@ describe('Money Forward ME asset trend adapter', () => {
     expect(result.metadata).toMatchObject({ categoryColumnCount: 2, unknownHeaders: [] })
   })
 
-  it('rejects invalid dates, decimal JPY, missing totals, and invalid category values', () => {
+  it('rejects invalid dates, negative or decimal JPY, missing totals, and invalid category values', () => {
     const text = [
       '日付,合計（円）,預金・現金・暗号資産（円）',
       '2026/02/30,100,100',
@@ -57,6 +57,8 @@ describe('Money Forward ME asset trend adapter', () => {
       '2026/03/31,,100',
       '2026/04/30,100,unknown',
       '2026-05-31,100,100',
+      '2026/06/30,-1,0',
+      '2026/07/31,1,-1',
     ].join('\n')
     const result = moneyForwardAssetTrendAdapter.parse({ text })
 
@@ -67,6 +69,8 @@ describe('Money Forward ME asset trend adapter', () => {
       expect.objectContaining({ code: 'MONEY_FORWARD_ASSET_TOTAL_INVALID', row: 3 }),
       expect.objectContaining({ code: 'MONEY_FORWARD_ASSET_TOTAL_INVALID', row: 4 }),
       expect.objectContaining({ code: 'MONEY_FORWARD_ASSET_CLASS_INVALID', row: 5 }),
+      expect.objectContaining({ code: 'MONEY_FORWARD_ASSET_TOTAL_INVALID', row: 7 }),
+      expect.objectContaining({ code: 'MONEY_FORWARD_ASSET_CLASS_INVALID', row: 8 }),
     ]))
   })
 

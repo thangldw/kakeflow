@@ -1,4 +1,5 @@
 pub mod account_groups_export;
+pub mod aggregate_asset_history;
 pub mod backup;
 pub mod brokerage;
 pub mod document_extract;
@@ -29,6 +30,10 @@ pub mod watched_folders;
 use account_groups_export::{
     AccountGroupDto, CreateAccountGroupInput, ExportCsvDto, ExportCsvRequest, ExportSavedDto,
     ReorderAccountGroupsInput, UpdateAccountGroupInput,
+};
+use aggregate_asset_history::{
+    AggregateAssetSnapshotDto, ImportAggregateAssetSnapshotInput,
+    ImportAggregateAssetSnapshotResultDto, ListAggregateAssetHistoryInput,
 };
 use brokerage::{
     BrokerageHistoryDto, BrokerageHistoryRequest, BrokerageImportSummaryDto,
@@ -671,6 +676,18 @@ fn portfolio_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn aggregate_asset_history_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(
+        &rusqlite::Connection,
+    ) -> Result<T, aggregate_asset_history::AggregateAssetHistoryError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Aggregate asset database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 fn account_group_export_result<T>(
     state: &AppState,
     operation: impl FnOnce(
@@ -1152,6 +1169,26 @@ fn portfolio_snapshot_get(
 ) -> Result<PortfolioSnapshotDetailDto, String> {
     portfolio_result(&state, |connection| {
         portfolio::get_snapshot(connection, &household_id, &snapshot_id)
+    })
+}
+
+#[tauri::command]
+fn aggregate_asset_snapshot_import(
+    state: tauri::State<'_, AppState>,
+    input: ImportAggregateAssetSnapshotInput,
+) -> Result<ImportAggregateAssetSnapshotResultDto, String> {
+    aggregate_asset_history_result(&state, |connection| {
+        aggregate_asset_history::import_snapshot(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn aggregate_asset_history_list(
+    state: tauri::State<'_, AppState>,
+    request: ListAggregateAssetHistoryInput,
+) -> Result<Vec<AggregateAssetSnapshotDto>, String> {
+    aggregate_asset_history_result(&state, |connection| {
+        aggregate_asset_history::list_snapshots(connection, &request)
     })
 }
 
@@ -2107,6 +2144,8 @@ pub fn run() {
             portfolio_snapshot_import,
             portfolio_snapshots_list,
             portfolio_snapshot_get,
+            aggregate_asset_snapshot_import,
+            aggregate_asset_history_list,
             brokerage_events_import,
             brokerage_history_query,
             investment_holdings_query,

@@ -27,7 +27,7 @@ const OFFICIAL_HEADERS = new Set([DATE_HEADER, TOTAL_HEADER, ...ASSET_CLASS_HEAD
 
 function integerJpy(value: string | undefined): number | null {
   const parsed = parseJapaneseAmount(value)
-  return parsed != null && Number.isSafeInteger(parsed) ? parsed : null
+  return parsed != null && parsed >= 0 && Number.isSafeInteger(parsed) ? parsed : null
 }
 
 function headerEvidence(headers: readonly string[]): { required: boolean; categories: number } {
