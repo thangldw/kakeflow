@@ -12,6 +12,7 @@ pub mod investment_market;
 pub mod investment_performance;
 mod key_store;
 pub mod ocr;
+mod parser_profiles;
 mod persistence;
 pub mod portfolio;
 mod private_fs;
@@ -51,6 +52,10 @@ use investment_performance::{
     InvestmentPerformanceRequest,
 };
 use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
+use parser_profiles::{
+    CreateDelimitedParserProfileInput, DeleteDelimitedParserProfileInput,
+    DelimitedParserProfileDto, UpdateDelimitedParserProfileInput,
+};
 use persistence::AppState;
 use portfolio::{
     ImportPortfolioSnapshotInput, PortfolioSnapshotDetailDto, PortfolioSnapshotSummaryDto,
@@ -772,6 +777,56 @@ fn household_member_archive(
 ) -> Result<(), String> {
     repository_result(&state, |connection| {
         read_model::archive_household_member(connection, &household_id, &member_id)
+    })
+}
+
+fn parser_profile_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> Result<T, parser_profiles::ParserProfileError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Parser profile database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
+fn delimited_parser_profiles_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<DelimitedParserProfileDto>, String> {
+    parser_profile_result(&state, |connection| {
+        parser_profiles::list_profiles(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn delimited_parser_profile_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateDelimitedParserProfileInput,
+) -> Result<DelimitedParserProfileDto, String> {
+    parser_profile_result(&state, |connection| {
+        parser_profiles::create_profile(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn delimited_parser_profile_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateDelimitedParserProfileInput,
+) -> Result<DelimitedParserProfileDto, String> {
+    parser_profile_result(&state, |connection| {
+        parser_profiles::update_profile(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn delimited_parser_profile_delete(
+    state: tauri::State<'_, AppState>,
+    input: DeleteDelimitedParserProfileInput,
+) -> Result<(), String> {
+    parser_profile_result(&state, |connection| {
+        parser_profiles::delete_profile(connection, &input)
     })
 }
 
@@ -1975,6 +2030,10 @@ pub fn run() {
             household_member_create,
             household_member_update,
             household_member_archive,
+            delimited_parser_profiles_list,
+            delimited_parser_profile_create,
+            delimited_parser_profile_update,
+            delimited_parser_profile_delete,
             accounts_list,
             account_create,
             account_ownership_update,
