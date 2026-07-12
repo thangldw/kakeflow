@@ -1,7 +1,11 @@
+pub mod document_vault;
+pub mod import_workflow;
 mod key_store;
 mod persistence;
 mod read_model;
 
+use document_vault::DocumentVault;
+use import_workflow::{CommitSummary, ImportPreview, ImportSummary, PostingDecision, StartImport};
 use key_store::OsDatabaseKeyProvider;
 use persistence::AppState;
 use read_model::{
@@ -10,6 +14,7 @@ use read_model::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +50,13 @@ struct DashboardRequest {
     household_id: String,
     month: String,
     accounting_basis: AccountingBasis,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportStartEnvelope {
+    import: StartImport,
+    file_bytes: Vec<u8>,
 }
 
 /// Initializes the frontend with non-sensitive application and database state.
@@ -152,6 +164,112 @@ fn import_summary(
     })
 }
 
+fn workflow_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> import_workflow::Result<T>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Import database access failed".to_owned())?
+        .map_err(|error| {
+            match error {
+                import_workflow::ImportWorkflowError::RunNotFound => "Import run was not found",
+                import_workflow::ImportWorkflowError::AlreadyPosted => {
+                    "Import run is already posted"
+                }
+                import_workflow::ImportWorkflowError::CandidateOutsideRun(_) => {
+                    "Import candidate is invalid"
+                }
+                import_workflow::ImportWorkflowError::UnbalancedJournal(_) => {
+                    "Import journal is not balanced"
+                }
+                import_workflow::ImportWorkflowError::Validation(_) => "Import data is invalid",
+                import_workflow::ImportWorkflowError::Database(_) => {
+                    "Import database operation failed"
+                }
+            }
+            .to_owned()
+        })
+}
+
+#[tauri::command]
+fn import_start(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    request: ImportStartEnvelope,
+) -> Result<ImportSummary, String> {
+    if request.import.byte_size < 0 || request.import.byte_size as usize != request.file_bytes.len()
+    {
+        return Err("Import file size is invalid".to_owned());
+    }
+    let stored = vault
+        .put(&request.file_bytes, &request.import.media_type)
+        .map_err(|_| "Import document encryption failed".to_owned())?;
+    if stored.sha256 != request.import.sha256.to_ascii_lowercase() {
+        if !stored.deduplicated {
+            let _ = vault.delete(&stored.sha256);
+        }
+        return Err("Import document hash does not match".to_owned());
+    }
+
+    let storage_uri = format!("vault://{}", stored.sha256);
+    let result = workflow_result(&state, |connection| {
+        import_workflow::start_import(connection, &request.import, &storage_uri)
+    });
+    if result.is_err() && !stored.deduplicated {
+        let _ = vault.delete(&stored.sha256);
+    }
+    result
+}
+
+#[tauri::command]
+fn import_preview(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+) -> Result<ImportPreview, String> {
+    workflow_result(&state, |connection| {
+        import_workflow::preview_import(connection, &run_id)
+    })
+}
+
+#[tauri::command]
+fn import_commit(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    decisions: Vec<PostingDecision>,
+) -> Result<CommitSummary, String> {
+    workflow_result(&state, |connection| {
+        import_workflow::commit_import(connection, &run_id, &decisions)
+    })
+}
+
+#[tauri::command]
+fn import_rollback(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    run_id: String,
+) -> Result<(), String> {
+    let hash = workflow_result(&state, |connection| {
+        import_workflow::preview_import(connection, &run_id).map(|preview| preview.source.sha256)
+    })?;
+    workflow_result(&state, |connection| {
+        import_workflow::rollback_import(connection, &run_id)
+    })?;
+    let still_referenced = state
+        .with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM source_documents WHERE sha256 = ?1)",
+                [&hash],
+                |row| row.get::<_, bool>(0),
+            )?)
+        })
+        .map_err(|_| "Import cleanup status failed".to_owned())?;
+    if !still_referenced {
+        let _ = vault.delete(&hash);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,8 +280,16 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("database").join("kakeflow.db");
             let key_provider = OsDatabaseKeyProvider::new()?;
+            let master_key = key_provider.key()?;
+            if master_key.len() != 32 {
+                return Err(std::io::Error::other("database key has invalid length").into());
+            }
+            let mut vault_master_key = Zeroizing::new([0_u8; 32]);
+            vault_master_key.copy_from_slice(&master_key);
+            let vault = DocumentVault::new(app_data_dir.join("documents"), &vault_master_key)?;
             let state = AppState::open(database_path, &key_provider)?;
             app.manage(state);
+            app.manage(vault);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -174,7 +300,11 @@ pub fn run() {
             household_create,
             transactions_query,
             dashboard_query,
-            import_summary
+            import_summary,
+            import_start,
+            import_preview,
+            import_commit,
+            import_rollback
         ])
         .run(tauri::generate_context!())
         .expect("KakeFlow failed to start");
