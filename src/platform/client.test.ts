@@ -29,11 +29,12 @@ describe('platform client', () => {
     await expect(client.status()).resolves.toEqual({ schemaVersion: 0, integrity: 'failed' })
     await expect(client.listHouseholds()).resolves.toEqual([])
     await expect(client.listAccounts('family')).resolves.toEqual([])
+    await expect(client.createManualTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_manual_create' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
     await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
     await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
-    await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
+    await expect(client.createBackup('long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
     await expect(client.stageBackupRestore('long secure passphrase')).rejects.toMatchObject({ command: 'backup_restore_stage' })
     await expect(client.restartForRestore()).rejects.toMatchObject({ command: 'app_restart_for_restore' })
     await expect(client.extractDocument(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ command: 'document_extract' })
@@ -59,6 +60,10 @@ describe('platform client', () => {
         expenseCategories: [{ accountId: 'family-groceries', name: 'Groceries', amountJpy: 250000 }],
       },
       transactions_query: { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
+      transaction_manual_create: {
+        id: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null,
+        amountJpy: 1000, status: 'POSTED', debitAccountId: 'expense', debitAccountName: 'Food', creditAccountId: 'bank', creditAccountName: 'Bank', categoryAccountId: 'expense', categoryName: 'Food',
+      },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       import_preview: {
@@ -123,12 +128,14 @@ describe('platform client', () => {
     await expect(client.listAccounts('family')).resolves.toEqual(responses.accounts_list)
     await expect(client.queryDashboard({ householdId: 'family', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
     await expect(client.queryTransactions({ householdId: 'family', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
+    const manualInput = { id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
+    await expect(client.createManualTransaction(manualInput)).resolves.toEqual(responses.transaction_manual_create)
     await expect(client.importSummary('family')).resolves.toEqual(responses.import_summary)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
     await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
-    await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).resolves.toEqual(responses.backup_create)
+    await expect(client.createBackup('long secure passphrase')).resolves.toEqual(responses.backup_create)
     await expect(client.stageBackupRestore('long secure passphrase')).resolves.toEqual(responses.backup_restore_stage)
     await expect(client.restartForRestore()).resolves.toBeUndefined()
     await expect(client.extractDocument(new Uint8Array([37, 80, 68, 70]), 'application/pdf')).resolves.toEqual(responses.document_extract)
@@ -138,17 +145,18 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
     expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
+    expect(invokeSpy).toHaveBeenCalledWith('transaction_manual_create', { input: manualInput })
     expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
-    expect(invokeSpy).toHaveBeenCalledWith('backup_create', { archivePath: '/tmp/family.kakeflow-backup', passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledWith('backup_create', { passphrase: 'long secure passphrase' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_restore_stage', { passphrase: 'long secure passphrase' })
     expect(invokeSpy).toHaveBeenCalledWith('app_restart_for_restore', undefined)
     expect(invokeSpy).toHaveBeenCalledWith('document_extract', { fileBytes: [37, 80, 68, 70], mediaType: 'application/pdf' })
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(20)
+    expect(invokeSpy).toHaveBeenCalledTimes(21)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

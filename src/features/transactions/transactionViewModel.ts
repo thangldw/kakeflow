@@ -48,11 +48,6 @@ function signedAmount(amount: number, sign: TransactionPresentation['sign']): nu
   return amount
 }
 
-/**
- * Converts the intentionally compact ledger read model into the current UI row.
- * Account and detailed category data are not present in TransactionRowDto, so the
- * mapper uses an explicit placeholder and only labels the broad transaction type.
- */
 export function toTransactionViewModel(row: TransactionRowDto): Transaction {
   const type = row.transactionType.trim().toUpperCase()
   const presentation = PRESENTATION_BY_TYPE[type] ?? UNKNOWN_PRESENTATION
@@ -64,8 +59,8 @@ export function toTransactionViewModel(row: TransactionRowDto): Transaction {
     date: formatJapaneseDate(row.occurredOn),
     merchant: payee ?? description ?? presentation.label,
     detail: description ?? presentation.label,
-    category: presentation.category,
-    account: '口座情報なし',
+    category: nonBlank(row.categoryName) ?? presentation.category,
+    account: [nonBlank(row.creditAccountName), nonBlank(row.debitAccountName)].filter(Boolean).join(' → ') || '口座情報なし',
     amount: signedAmount(row.amountJpy, presentation.sign),
     status: row.status.trim().toUpperCase() === 'POSTED' ? 'confirmed' : 'review',
     icon: presentation.icon,

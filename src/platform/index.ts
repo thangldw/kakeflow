@@ -47,4 +47,7 @@ export type {
   TransactionPageDto,
   TransactionPageRequestDto,
   TransactionRowDto,
+  ManualTransactionTypeDto,
+  ManualJournalEntryInputDto,
+  CreateManualTransactionInputDto,
 } from './types'

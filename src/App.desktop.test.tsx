@@ -6,6 +6,7 @@ const desktop = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   queryDashboard: vi.fn(),
   queryTransactions: vi.fn(),
+  createManualTransaction: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
   stageBackupRestore: vi.fn(),
@@ -49,6 +50,7 @@ vi.mock('./platform', async () => {
       updateSavingsGoal: desktop.updateSavingsGoal,
       deleteSavingsGoal: desktop.deleteSavingsGoal,
       queryTransactions: desktop.queryTransactions,
+      createManualTransaction: desktop.createManualTransaction,
       importSummary: vi.fn(),
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
@@ -97,6 +99,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.createAccount.mockReset().mockResolvedValue({ id: 'new-bank', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })
     desktop.renameAccount.mockReset()
     desktop.archiveAccount.mockReset()
+    desktop.createManualTransaction.mockReset().mockResolvedValue({ id: 'manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: '八百屋', description: null, amountJpy: 1500, status: 'POSTED', debitAccountId: 'family-other-expense', debitAccountName: 'その他', creditAccountId: 'family-bank', creditAccountName: '銀行', categoryAccountId: 'family-other-expense', categoryName: 'その他' })
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
@@ -180,6 +183,31 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByText('店舗2')).toBeInTheDocument()
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ page: 2, pageSize: 25 })))
+  })
+
+  it('searches the persisted ledger and posts a balanced manual transaction', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+
+    fireEvent.change(screen.getByPlaceholderText('店舗、カテゴリー、口座を検索'), { target: { value: '八百屋' } })
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ search: '八百屋', page: 1 })))
+
+    fireEvent.click(screen.getByRole('button', { name: '手動取引を追加' }))
+    fireEvent.change(screen.getByLabelText('手動取引の支払先'), { target: { value: '八百屋' } })
+    fireEvent.change(screen.getByLabelText('手動取引の金額'), { target: { value: '1500' } })
+    fireEvent.change(screen.getByLabelText('手動取引の借方口座'), { target: { value: 'family-other-expense' } })
+    fireEvent.change(screen.getByLabelText('手動取引の貸方口座'), { target: { value: 'family-bank' } })
+    fireEvent.click(screen.getByRole('button', { name: '取引を記録' }))
+
+    await waitFor(() => expect(desktop.createManualTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      householdId: 'family', transactionType: 'EXPENSE', payee: '八百屋',
+      entries: expect.arrayContaining([
+        expect.objectContaining({ accountId: 'family-other-expense', side: 'DEBIT', amountJpy: 1500 }),
+        expect.objectContaining({ accountId: 'family-bank', side: 'CREDIT', amountJpy: 1500 }),
+      ]),
+    })))
+    expect(await screen.findByText('手動取引を台帳に記録しました。')).toBeInTheDocument()
   })
 
   it('renders and confirms a persisted card-payment match', async () => {

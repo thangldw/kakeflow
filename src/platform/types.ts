@@ -129,6 +129,7 @@ export interface TransactionPageRequestDto {
   readonly accountingBasis: AccountingBasisDto
   readonly fromDate?: string | null
   readonly toDate?: string | null
+  readonly search?: string | null
   readonly page: number
   readonly pageSize: number
 }
@@ -142,6 +143,20 @@ export interface TransactionRowDto {
   readonly description: string | null
   readonly amountJpy: number
   readonly status: string
+  readonly debitAccountId: string | null
+  readonly debitAccountName: string | null
+  readonly creditAccountId: string | null
+  readonly creditAccountName: string | null
+  readonly categoryAccountId: string | null
+  readonly categoryName: string | null
+}
+
+export type ManualTransactionTypeDto = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'CARD_PURCHASE' | 'CARD_PAYMENT' | 'REFUND' | 'FEE' | 'INTEREST' | 'ADJUSTMENT'
+export interface ManualJournalEntryInputDto { readonly id: string; readonly accountId: string; readonly side: 'DEBIT' | 'CREDIT'; readonly amountJpy: number }
+export interface CreateManualTransactionInputDto {
+  readonly id: string; readonly householdId: string; readonly occurredOn: string; readonly postedOn: string | null
+  readonly transactionType: ManualTransactionTypeDto; readonly payee: string | null; readonly description: string | null
+  readonly entries: readonly ManualJournalEntryInputDto[]
 }
 
 export interface TransactionPageDto {
@@ -184,6 +199,7 @@ export type AppCommand =
   | 'account_rename'
   | 'account_archive'
   | 'transactions_query'
+  | 'transaction_manual_create'
   | 'dashboard_query'
   | 'budgets_query'
   | 'budget_upsert'
@@ -218,6 +234,7 @@ export interface PlatformClient {
   renameAccount(input: RenameAccountInputDto): Promise<AccountDto>
   archiveAccount(input: ArchiveAccountInputDto): Promise<void>
   queryTransactions(request: TransactionPageRequestDto): Promise<TransactionPageDto>
+  createManualTransaction(input: CreateManualTransactionInputDto): Promise<TransactionRowDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
@@ -230,7 +247,7 @@ export interface PlatformClient {
   previewImport(runId: string): Promise<ImportPreviewDto>
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
-  createBackup(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
+  createBackup(passphrase: string): Promise<BackupSummaryDto | null>
   stageBackupRestore(passphrase: string): Promise<BackupSummaryDto | null>
   restartForRestore(): Promise<void>
   extractDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>

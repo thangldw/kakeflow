@@ -1,11 +1,14 @@
 use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 const MAX_PAGE_SIZE: u32 = 100;
 const MAX_HOUSEHOLD_ID_LEN: usize = 48;
 const MAX_LOOKUP_ID_LEN: usize = 64;
 const MAX_NAME_LEN: usize = 80;
+const MAX_SEARCH_LEN: usize = 200;
+const MAX_TRANSACTION_TEXT_LEN: usize = 16_384;
+const MAX_MANUAL_ENTRIES: usize = 128;
 const MAX_PLANNING_JPY: i64 = 9_000_000_000_000_000;
 const CANONICAL_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
     ("bank", "Bank", "ASSET", "BANK"),
@@ -485,6 +488,7 @@ pub struct TransactionPageRequest {
     pub accounting_basis: AccountingBasis,
     pub from_date: Option<String>,
     pub to_date: Option<String>,
+    pub search: Option<String>,
     pub page: u32,
     pub page_size: u32,
 }
@@ -500,6 +504,12 @@ pub struct TransactionRowDto {
     pub description: Option<String>,
     pub amount_jpy: i64,
     pub status: String,
+    pub debit_account_id: Option<String>,
+    pub debit_account_name: Option<String>,
+    pub credit_account_id: Option<String>,
+    pub credit_account_name: Option<String>,
+    pub category_account_id: Option<String>,
+    pub category_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -535,6 +545,7 @@ pub fn list_transactions(
     ensure_household_exists(connection, &request.household_id)?;
 
     let basis = request.accounting_basis.as_sql_value();
+    let search = search_pattern(request.search.as_deref())?;
     let total_items: u64 = connection
         .query_row(
             "SELECT count(*)
@@ -544,12 +555,24 @@ pub fn list_transactions(
                AND (?2 IS NULL OR t.occurred_on >= ?2)
                AND (?3 IS NULL OR t.occurred_on <= ?3)
                AND (?4 != 'ACCRUAL' OR t.transaction_type != 'CARD_PAYMENT')
-               AND (?4 != 'CASH' OR t.transaction_type != 'CARD_PURCHASE')",
+               AND (?4 != 'CASH' OR t.transaction_type != 'CARD_PURCHASE')
+               AND (?5 IS NULL
+                    OR t.id LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    OR t.payee LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    OR t.description LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    OR EXISTS (
+                      SELECT 1 FROM journal_entries search_je
+                      JOIN accounts search_a ON search_a.id = search_je.account_id
+                      WHERE search_je.transaction_id = t.id
+                        AND search_a.household_id = t.household_id
+                        AND search_a.name LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    ))",
             params![
                 request.household_id,
                 request.from_date,
                 request.to_date,
-                basis
+                basis,
+                search
             ],
             |row| row.get(0),
         )
@@ -560,19 +583,47 @@ pub fn list_transactions(
         .prepare(
             "SELECT t.id, t.occurred_on, t.posted_on, t.transaction_type,
                     t.payee, t.description,
-                    COALESCE(SUM(CASE WHEN je.entry_side = 'DEBIT' THEN je.amount_jpy ELSE 0 END), 0),
-                    t.status
+                    COALESCE((SELECT SUM(amount_jpy) FROM journal_entries
+                              WHERE transaction_id = t.id AND entry_side = 'DEBIT'), 0),
+                    t.status,
+                    (SELECT a.id FROM journal_entries je JOIN accounts a ON a.id = je.account_id
+                     WHERE je.transaction_id = t.id AND je.entry_side = 'DEBIT'
+                     ORDER BY je.line_number LIMIT 1),
+                    (SELECT a.name FROM journal_entries je JOIN accounts a ON a.id = je.account_id
+                     WHERE je.transaction_id = t.id AND je.entry_side = 'DEBIT'
+                     ORDER BY je.line_number LIMIT 1),
+                    (SELECT a.id FROM journal_entries je JOIN accounts a ON a.id = je.account_id
+                     WHERE je.transaction_id = t.id AND je.entry_side = 'CREDIT'
+                     ORDER BY je.line_number LIMIT 1),
+                    (SELECT a.name FROM journal_entries je JOIN accounts a ON a.id = je.account_id
+                     WHERE je.transaction_id = t.id AND je.entry_side = 'CREDIT'
+                     ORDER BY je.line_number LIMIT 1),
+                    (SELECT a.id FROM journal_entries je JOIN accounts a ON a.id = je.account_id
+                     WHERE je.transaction_id = t.id AND a.account_kind IN ('EXPENSE', 'INCOME')
+                     ORDER BY je.line_number LIMIT 1),
+                    (SELECT a.name FROM journal_entries je JOIN accounts a ON a.id = je.account_id
+                     WHERE je.transaction_id = t.id AND a.account_kind IN ('EXPENSE', 'INCOME')
+                     ORDER BY je.line_number LIMIT 1)
              FROM transactions t
-             LEFT JOIN journal_entries je ON je.transaction_id = t.id
              WHERE t.household_id = ?1
                AND t.status = 'POSTED'
                AND (?2 IS NULL OR t.occurred_on >= ?2)
                AND (?3 IS NULL OR t.occurred_on <= ?3)
                AND (?4 != 'ACCRUAL' OR t.transaction_type != 'CARD_PAYMENT')
                AND (?4 != 'CASH' OR t.transaction_type != 'CARD_PURCHASE')
-             GROUP BY t.id
+               AND (?5 IS NULL
+                    OR t.id LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    OR t.payee LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    OR t.description LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    OR EXISTS (
+                      SELECT 1 FROM journal_entries search_je
+                      JOIN accounts search_a ON search_a.id = search_je.account_id
+                      WHERE search_je.transaction_id = t.id
+                        AND search_a.household_id = t.household_id
+                        AND search_a.name LIKE ?5 ESCAPE '!' COLLATE NOCASE
+                    ))
              ORDER BY t.occurred_on DESC, t.created_at DESC, t.id DESC
-             LIMIT ?5 OFFSET ?6",
+             LIMIT ?6 OFFSET ?7",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -582,6 +633,7 @@ pub fn list_transactions(
                 request.from_date,
                 request.to_date,
                 basis,
+                search,
                 i64::from(request.page_size),
                 offset as i64
             ],
@@ -595,6 +647,12 @@ pub fn list_transactions(
                     description: row.get(5)?,
                     amount_jpy: row.get(6)?,
                     status: row.get(7)?,
+                    debit_account_id: row.get(8)?,
+                    debit_account_name: row.get(9)?,
+                    credit_account_id: row.get(10)?,
+                    credit_account_name: row.get(11)?,
+                    category_account_id: row.get(12)?,
+                    category_name: row.get(13)?,
                 })
             },
         )
@@ -614,6 +672,215 @@ pub fn list_transactions(
         total_items,
         total_pages,
     })
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ManualTransactionType {
+    Expense,
+    Income,
+    Transfer,
+    CardPurchase,
+    CardPayment,
+    Refund,
+    Fee,
+    Interest,
+    Adjustment,
+}
+
+impl ManualTransactionType {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Expense => "EXPENSE",
+            Self::Income => "INCOME",
+            Self::Transfer => "TRANSFER",
+            Self::CardPurchase => "CARD_PURCHASE",
+            Self::CardPayment => "CARD_PAYMENT",
+            Self::Refund => "REFUND",
+            Self::Fee => "FEE",
+            Self::Interest => "INTEREST",
+            Self::Adjustment => "ADJUSTMENT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ManualEntrySide {
+    Debit,
+    Credit,
+}
+
+impl ManualEntrySide {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Debit => "DEBIT",
+            Self::Credit => "CREDIT",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualJournalEntryInput {
+    pub id: String,
+    pub account_id: String,
+    pub side: ManualEntrySide,
+    pub amount_jpy: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateManualTransactionInput {
+    pub id: String,
+    pub household_id: String,
+    pub occurred_on: String,
+    pub posted_on: Option<String>,
+    pub transaction_type: ManualTransactionType,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub entries: Vec<ManualJournalEntryInput>,
+}
+
+pub fn create_manual_transaction(
+    connection: &Connection,
+    input: &CreateManualTransactionInput,
+) -> Result<TransactionRowDto, RepositoryError> {
+    validate_id(&input.id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_optional_date(connection, Some(&input.occurred_on))?;
+    validate_optional_date(connection, input.posted_on.as_deref())?;
+    validate_optional_transaction_text(input.payee.as_deref())?;
+    validate_optional_transaction_text(input.description.as_deref())?;
+    if input.entries.len() < 2 || input.entries.len() > MAX_MANUAL_ENTRIES {
+        return Err(RepositoryError::InvalidInput(
+            "A transaction requires 2 to 128 entries",
+        ));
+    }
+
+    let mut entry_ids = HashSet::new();
+    let mut debit = 0_i64;
+    let mut credit = 0_i64;
+    for entry in &input.entries {
+        validate_id(&entry.id, MAX_LOOKUP_ID_LEN)?;
+        validate_id(&entry.account_id, MAX_LOOKUP_ID_LEN)?;
+        if !entry_ids.insert(entry.id.as_str())
+            || entry.amount_jpy <= 0
+            || entry.amount_jpy > MAX_PLANNING_JPY
+        {
+            return Err(RepositoryError::InvalidInput("Invalid journal entry"));
+        }
+        let total = match entry.side {
+            ManualEntrySide::Debit => &mut debit,
+            ManualEntrySide::Credit => &mut credit,
+        };
+        *total = total
+            .checked_add(entry.amount_jpy)
+            .ok_or(RepositoryError::InvalidInput("Journal amount is too large"))?;
+    }
+    if debit != credit {
+        return Err(RepositoryError::InvalidInput(
+            "Journal debits and credits must balance",
+        ));
+    }
+
+    ensure_household_exists(connection, &input.household_id)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    for entry in &input.entries {
+        let account_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM accounts
+                 WHERE id = ?1 AND household_id = ?2 AND is_archived = 0 AND currency = 'JPY')",
+                params![entry.account_id, input.household_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if !account_exists {
+            return Err(RepositoryError::NotFound);
+        }
+    }
+
+    transaction
+        .execute(
+            "INSERT INTO transactions
+               (id, household_id, occurred_on, posted_on, transaction_type, payee, description, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED')",
+            params![
+                input.id,
+                input.household_id,
+                input.occurred_on,
+                input.posted_on,
+                input.transaction_type.as_sql_value(),
+                input.payee,
+                input.description
+            ],
+        )
+        .map_err(map_database_error)?;
+    for (index, entry) in input.entries.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    entry.id,
+                    input.id,
+                    entry.account_id,
+                    entry.side.as_sql_value(),
+                    entry.amount_jpy,
+                    i64::try_from(index + 1)
+                        .map_err(|_| RepositoryError::InvalidInput("Too many journal entries"))?
+                ],
+            )
+            .map_err(map_database_error)?;
+    }
+    transaction.commit().map_err(map_database_error)?;
+
+    let page = list_transactions(
+        connection,
+        &TransactionPageRequest {
+            household_id: input.household_id.clone(),
+            accounting_basis: AccountingBasis::Accrual,
+            from_date: Some(input.occurred_on.clone()),
+            to_date: Some(input.occurred_on.clone()),
+            search: Some(input.id.clone()),
+            page: 1,
+            page_size: 1,
+        },
+    )?;
+    page.items
+        .into_iter()
+        .next()
+        .ok_or(RepositoryError::NotFound)
+}
+
+fn search_pattern(search: Option<&str>) -> Result<Option<String>, RepositoryError> {
+    let Some(search) = search.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if search.chars().count() > MAX_SEARCH_LEN || search.chars().any(char::is_control) {
+        return Err(RepositoryError::InvalidInput("Search text is invalid"));
+    }
+    let escaped = search
+        .replace('!', "!!")
+        .replace('%', "!%")
+        .replace('_', "!_");
+    Ok(Some(format!("%{escaped}%")))
+}
+
+fn validate_optional_transaction_text(value: Option<&str>) -> Result<(), RepositoryError> {
+    if value.is_some_and(|value| {
+        value.len() > MAX_TRANSACTION_TEXT_LEN
+            || value.contains('\0')
+            || value
+                .chars()
+                .any(|character| character.is_control() && !matches!(character, '\n' | '\r' | '\t'))
+    }) {
+        return Err(RepositoryError::InvalidInput("Transaction text is invalid"));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1515,6 +1782,36 @@ mod tests {
         .expect("custom account")
     }
 
+    fn manual_expense(
+        id: &str,
+        household_id: &str,
+        amount_jpy: i64,
+    ) -> CreateManualTransactionInput {
+        CreateManualTransactionInput {
+            id: id.into(),
+            household_id: household_id.into(),
+            occurred_on: "2026-07-12".into(),
+            posted_on: None,
+            transaction_type: ManualTransactionType::Expense,
+            payee: Some(format!("Coffee {id}")),
+            description: Some("Manual entry".into()),
+            entries: vec![
+                ManualJournalEntryInput {
+                    id: format!("{id}-debit"),
+                    account_id: format!("{household_id}-groceries"),
+                    side: ManualEntrySide::Debit,
+                    amount_jpy,
+                },
+                ManualJournalEntryInput {
+                    id: format!("{id}-credit"),
+                    account_id: format!("{household_id}-bank"),
+                    side: ManualEntrySide::Credit,
+                    amount_jpy,
+                },
+            ],
+        }
+    }
+
     #[test]
     fn account_lifecycle_validates_types_and_keeps_lists_active_only() {
         let connection = database();
@@ -1799,6 +2096,7 @@ mod tests {
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
+                search: None,
                 page: 1,
                 page_size: 20,
             },
@@ -1813,6 +2111,7 @@ mod tests {
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
+                    search: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -1865,6 +2164,180 @@ mod tests {
         assert_eq!(cash_totals.net_worth_jpy, accrual_totals.net_worth_jpy);
         assert_eq!(cash_totals.accrual_trend.last().unwrap().expense_jpy, 1500);
         assert_eq!(cash_totals.expense_categories.len(), 2);
+    }
+
+    #[test]
+    fn transaction_query_supports_pagination_search_and_account_category_projection() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        for id in ["manual-1", "manual-2", "manual-3"] {
+            create_manual_transaction(&connection, &manual_expense(id, "family", 1_000)).unwrap();
+        }
+
+        let first_page = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                household_id: "family".into(),
+                accounting_basis: AccountingBasis::Accrual,
+                from_date: None,
+                to_date: None,
+                search: None,
+                page: 1,
+                page_size: 2,
+            },
+        )
+        .unwrap();
+        let second_page = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                page: 2,
+                ..TransactionPageRequest {
+                    household_id: "family".into(),
+                    accounting_basis: AccountingBasis::Accrual,
+                    from_date: None,
+                    to_date: None,
+                    search: None,
+                    page: 1,
+                    page_size: 2,
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(first_page.total_items, 3);
+        assert_eq!(first_page.total_pages, 2);
+        assert_eq!(first_page.items.len(), 2);
+        assert_eq!(second_page.items.len(), 1);
+
+        let searched = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                household_id: "family".into(),
+                accounting_basis: AccountingBasis::Accrual,
+                from_date: None,
+                to_date: None,
+                search: Some("Groceries".into()),
+                page: 1,
+                page_size: 20,
+            },
+        )
+        .unwrap();
+        assert_eq!(searched.total_items, 3);
+        let row = &searched.items[0];
+        assert_eq!(row.debit_account_id.as_deref(), Some("family-groceries"));
+        assert_eq!(row.debit_account_name.as_deref(), Some("Groceries"));
+        assert_eq!(row.credit_account_id.as_deref(), Some("family-bank"));
+        assert_eq!(row.credit_account_name.as_deref(), Some("Bank"));
+        assert_eq!(row.category_account_id.as_deref(), Some("family-groceries"));
+        assert_eq!(row.category_name.as_deref(), Some("Groceries"));
+
+        let literal_wildcard = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                search: Some("%".into()),
+                ..TransactionPageRequest {
+                    household_id: "family".into(),
+                    accounting_basis: AccountingBasis::Accrual,
+                    from_date: None,
+                    to_date: None,
+                    search: None,
+                    page: 1,
+                    page_size: 20,
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(literal_wildcard.total_items, 0);
+    }
+
+    #[test]
+    fn manual_transaction_posts_balanced_integer_jpy_atomically() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+
+        let row =
+            create_manual_transaction(&connection, &manual_expense("manual", "family", 1_234))
+                .unwrap();
+        assert_eq!(row.id, "manual");
+        assert_eq!(row.status, "POSTED");
+        assert_eq!(row.amount_jpy, 1_234);
+        let entry_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM journal_entries WHERE transaction_id = 'manual'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(entry_count, 2);
+    }
+
+    #[test]
+    fn manual_transaction_rejects_cross_household_accounts_without_partial_write() {
+        let connection = database();
+        for household_id in ["one", "two"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: household_id.into(),
+                    name: household_id.into(),
+                },
+            )
+            .unwrap();
+        }
+        let mut input = manual_expense("cross", "one", 500);
+        input.entries[1].account_id = "two-bank".into();
+        assert!(matches!(
+            create_manual_transaction(&connection, &input),
+            Err(RepositoryError::NotFound)
+        ));
+        let transaction_count: i64 = connection
+            .query_row("SELECT count(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(transaction_count, 0);
+    }
+
+    #[test]
+    fn manual_transaction_rejects_unbalanced_and_duplicate_entries_atomically() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+
+        let mut unbalanced = manual_expense("unbalanced", "family", 500);
+        unbalanced.entries[1].amount_jpy = 499;
+        assert!(matches!(
+            create_manual_transaction(&connection, &unbalanced),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+
+        let mut duplicate = manual_expense("duplicate", "family", 500);
+        duplicate.entries[1].id = duplicate.entries[0].id.clone();
+        assert!(matches!(
+            create_manual_transaction(&connection, &duplicate),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        let transaction_count: i64 = connection
+            .query_row("SELECT count(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(transaction_count, 0);
     }
 
     #[test]
@@ -2218,6 +2691,7 @@ mod tests {
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
+                search: None,
                 page: 1,
                 page_size: 101,
             },

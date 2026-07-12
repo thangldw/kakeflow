@@ -23,7 +23,6 @@ import {
   Zap,
 } from 'lucide-react'
 import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
-import { save } from '@tauri-apps/plugin-dialog'
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
 import { sha256Text } from './features/import/importService'
@@ -32,7 +31,7 @@ import { buildReceiptImport } from './features/import/receiptText'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, TransactionRowDto } from './platform'
+import type { AccountDto, AppBootstrapDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, TransactionRowDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -243,7 +242,7 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
   </>
 }
 
-function TransactionsPage({ householdId, revision, month }: { householdId: string | null; revision: number; month: string }) {
+function TransactionsPage({ householdId, revision, month, accounts, onChanged }: { householdId: string | null; revision: number; month: string; accounts: readonly AccountDto[]; onChanged: () => void }) {
   const [query, setQuery] = useState('')
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [liveRows, setLiveRows] = useState<readonly TransactionRowDto[]>([])
@@ -252,6 +251,16 @@ function TransactionsPage({ householdId, revision, month }: { householdId: strin
   const [totalPages, setTotalPages] = useState(0)
   const [totalItems, setTotalItems] = useState(0)
   const [loadError, setLoadError] = useState(false)
+  const [showManual, setShowManual] = useState(false)
+  const [manualDate, setManualDate] = useState(`${month}-01`)
+  const [manualType, setManualType] = useState<ManualTransactionTypeDto>('EXPENSE')
+  const [manualPayee, setManualPayee] = useState('')
+  const [manualDescription, setManualDescription] = useState('')
+  const [manualAmount, setManualAmount] = useState('')
+  const [manualDebit, setManualDebit] = useState('')
+  const [manualCredit, setManualCredit] = useState('')
+  const [manualBusy, setManualBusy] = useState(false)
+  const [manualNotice, setManualNotice] = useState('')
   const desktop = platformClient.runtime === 'tauri'
 
   useEffect(() => {
@@ -260,7 +269,7 @@ function TransactionsPage({ householdId, revision, month }: { householdId: strin
     const period = periodFromMonth(month)
     setLoadError(false)
     void Promise.all([
-      platformClient.queryTransactions({ householdId, accountingBasis: basis, fromDate: period.fromDate, toDate: period.toDate, page: ledgerPage, pageSize: 25 }),
+      platformClient.queryTransactions({ householdId, accountingBasis: basis, fromDate: period.fromDate, toDate: period.toDate, search: query.trim() || null, page: ledgerPage, pageSize: 25 }),
       platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: basis }),
     ]).then(([page, totals]) => {
       if (active) { setLiveRows(page.items); setLiveTotals(totals); setTotalPages(page.totalPages); setTotalItems(page.totalItems) }
@@ -268,17 +277,42 @@ function TransactionsPage({ householdId, revision, month }: { householdId: strin
       if (active) { setLiveRows([]); setLiveTotals(null); setTotalPages(0); setTotalItems(0); setLoadError(true) }
     })
     return () => { active = false }
-  }, [basis, desktop, householdId, ledgerPage, month, revision])
+  }, [basis, desktop, householdId, ledgerPage, month, query, revision])
 
-  useEffect(() => { setLedgerPage(1) }, [basis, householdId, month])
+  useEffect(() => { setLedgerPage(1) }, [basis, householdId, month, query])
+  useEffect(() => { setManualDate(`${month}-01`) }, [month])
 
   const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
   const displayRows = desktop ? liveRows.map(toTransactionViewModel) : basisTransactions
-  const visible = displayRows.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
+  const visible = desktop ? displayRows : displayRows.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
   const basisExpense = desktop ? liveTotals?.expenseJpy ?? 0 : basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
   const basisIncome = desktop ? liveTotals?.incomeJpy ?? 0 : currentMonthMetrics.income
+  const createManual = async () => {
+    const amount = Number(manualAmount)
+    if (!householdId || !/^\d+$/.test(manualAmount) || !Number.isSafeInteger(amount) || amount <= 0 || !manualDebit || !manualCredit || manualDebit === manualCredit) {
+      setManualNotice('金額と異なる借方・貸方口座を正しく入力してください。'); return
+    }
+    setManualBusy(true); setManualNotice('')
+    try {
+      await platformClient.createManualTransaction({
+        id: crypto.randomUUID(), householdId, occurredOn: manualDate, postedOn: null, transactionType: manualType,
+        payee: manualPayee.trim() || null, description: manualDescription.trim() || null,
+        entries: [
+          { id: crypto.randomUUID(), accountId: manualDebit, side: 'DEBIT', amountJpy: amount },
+          { id: crypto.randomUUID(), accountId: manualCredit, side: 'CREDIT', amountJpy: amount },
+        ],
+      })
+      setManualPayee(''); setManualDescription(''); setManualAmount(''); setShowManual(false); setLedgerPage(1); onChanged(); setManualNotice('手動取引を台帳に記録しました。')
+    } catch { setManualNotice('取引を記録できませんでした。日付と口座を確認してください。') }
+    finally { setManualBusy(false) }
+  }
+
   return <>
-    <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。" />
+    <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。">
+      {desktop && <button className="primary-btn" onClick={() => setShowManual((value) => !value)}>{showManual ? '入力を閉じる' : '手動取引を追加'}</button>}
+    </PageHeader>
+    {showManual && <section className="panel manual-transaction-form"><div className="panel-head"><div><h2>複式簿記で手動入力</h2><p>同額の借方・貸方を確定台帳へ記録します。</p></div></div><div className="planning-form"><input aria-label="取引日" type="date" value={manualDate} onChange={(event) => setManualDate(event.target.value)} /><select aria-label="手動取引種別" value={manualType} onChange={(event) => setManualType(event.target.value as ManualTransactionTypeDto)}>{['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT'].map((type) => <option key={type}>{type}</option>)}</select><input aria-label="手動取引の支払先" value={manualPayee} onChange={(event) => setManualPayee(event.target.value)} placeholder="店舗・支払先" /><input aria-label="手動取引のメモ" value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} placeholder="メモ（任意）" /><input aria-label="手動取引の金額" inputMode="numeric" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} placeholder="金額 (JPY)" /><select aria-label="手動取引の借方口座" value={manualDebit} onChange={(event) => setManualDebit(event.target.value)}><option value="">借方口座</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label="手動取引の貸方口座" value={manualCredit} onChange={(event) => setManualCredit(event.target.value)}><option value="">貸方口座</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><button className="primary-btn" disabled={manualBusy} onClick={() => void createManual()}>{manualBusy ? '記録中…' : '取引を記録'}</button></div>{manualNotice && <p role="status">{manualNotice}</p>}</section>}
+    {!showManual && manualNotice && <div className="import-notice" role="status">{manualNotice}</div>}
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
       <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{desktop ? `${totalItems}件中 ${visible.length}件` : `${visible.length}件を表示`}</em></div>
@@ -621,9 +655,8 @@ function SettingsPage({ householdId, accounts, onAccountsChanged }: { householdI
     if (passphrase !== confirmation) { setNotice('パスフレーズが一致しません。'); return }
     setBusy(true); setNotice('')
     try {
-      const archivePath = await save({ defaultPath: `kakeflow-${currentTokyoPeriod().month}.kakeflow-backup`, filters: [{ name: 'KakeFlow Backup', extensions: ['kakeflow-backup'] }] })
-      if (!archivePath) return
-      const result = await platformClient.createBackup(archivePath, passphrase)
+      const result = await platformClient.createBackup(passphrase)
+      if (!result) return
       setPassphrase(''); setConfirmation('')
       setNotice(`Portable v${result.formatVersion} ・ ${result.entryCount}件・${(result.plaintextBytes / 1024 / 1024).toFixed(1)} MB の暗号化バックアップを作成しました。`)
     } catch {
@@ -774,7 +807,7 @@ function App() {
 
   const pageContent = {
     overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
-    transactions: <TransactionsPage householdId={activeHouseholdId} revision={ledgerRevision} month={selectedMonth} />,
+    transactions: <TransactionsPage householdId={activeHouseholdId} revision={ledgerRevision} month={selectedMonth} accounts={accounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} />,

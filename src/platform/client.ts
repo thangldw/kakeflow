@@ -97,6 +97,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       renameAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_rename') },
       archiveAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_archive') },
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
+      createManualTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_manual_create') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
@@ -131,6 +132,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     renameAccount: (input) => invokeValidated(invoke, 'account_rename', parseAccount, { input }),
     archiveAccount: async (input) => { await invokeValidated(invoke, 'account_archive', parseVoid, { input }) },
     queryTransactions: (request) => invokeValidated(invoke, 'transactions_query', parseTransactionPage, { request }),
+    createManualTransaction: (input) => invokeValidated(invoke, 'transaction_manual_create', parseTransactionRow, { input }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
     upsertBudget: (input) => invokeValidated(invoke, 'budget_upsert', parseBudget, { input }),
@@ -143,7 +145,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
     commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
-    createBackup: (archivePath, passphrase) => invokeValidated(invoke, 'backup_create', parseBackupSummary, { archivePath, passphrase }),
+    createBackup: (passphrase) => invokeValidated(invoke, 'backup_create', parseNullableBackupSummary, { passphrase }),
     stageBackupRestore: (passphrase) => invokeValidated(invoke, 'backup_restore_stage', parseNullableBackupSummary, { passphrase }),
     restartForRestore: async () => { await invokeValidated(invoke, 'app_restart_for_restore', parseVoid) },
     extractDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_extract', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
@@ -354,24 +356,32 @@ function parseTransactionPage(value: unknown): TransactionPageDto {
   const record = asRecord(value)
   if (!Array.isArray(record.items)) throw new TypeError('transactions')
   return {
-    items: record.items.map((item) => {
-      const row = asRecord(item)
-      if (typeof row.id !== 'string' || typeof row.occurredOn !== 'string' || typeof row.transactionType !== 'string' || typeof row.status !== 'string') throw new TypeError('transaction')
-      return {
-        id: row.id,
-        occurredOn: row.occurredOn,
-        postedOn: asNullableString(row.postedOn),
-        transactionType: row.transactionType,
-        payee: asNullableString(row.payee),
-        description: asNullableString(row.description),
-        amountJpy: asSafeSignedInteger(row.amountJpy),
-        status: row.status,
-      }
-    }),
+    items: record.items.map(parseTransactionRow),
     page: asSafeInteger(record.page),
     pageSize: asSafeInteger(record.pageSize),
     totalItems: asSafeInteger(record.totalItems),
     totalPages: asSafeInteger(record.totalPages),
+  }
+}
+
+function parseTransactionRow(value: unknown): TransactionPageDto['items'][number] {
+  const row = asRecord(value)
+  if (typeof row.id !== 'string' || typeof row.occurredOn !== 'string' || typeof row.transactionType !== 'string' || typeof row.status !== 'string') throw new TypeError('transaction')
+  return {
+    id: row.id,
+    occurredOn: row.occurredOn,
+    postedOn: asNullableString(row.postedOn),
+    transactionType: row.transactionType,
+    payee: asNullableString(row.payee),
+    description: asNullableString(row.description),
+    amountJpy: asSafeSignedInteger(row.amountJpy),
+    status: row.status,
+    debitAccountId: asNullableString(row.debitAccountId),
+    debitAccountName: asNullableString(row.debitAccountName),
+    creditAccountId: asNullableString(row.creditAccountId),
+    creditAccountName: asNullableString(row.creditAccountName),
+    categoryAccountId: asNullableString(row.categoryAccountId),
+    categoryName: asNullableString(row.categoryName),
   }
 }
 

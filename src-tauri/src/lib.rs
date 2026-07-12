@@ -18,10 +18,10 @@ use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
 use read_model::{
     AccountDto, AccountingBasis, ArchiveAccountInput, CardSettlementDto, CreateAccountInput,
-    CreateHouseholdInput, CreateSavingsGoalInput, DashboardMonthlyTotalsDto, HouseholdDto,
-    ImportRunCountsDto, MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto,
-    TransactionPageDto, TransactionPageRequest, UpdateSavingsGoalInput,
-    UpsertMonthlyCategoryBudgetInput,
+    CreateHouseholdInput, CreateManualTransactionInput, CreateSavingsGoalInput,
+    DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, MonthlyCategoryBudgetDto,
+    RenameAccountInput, SavingsGoalDto, TransactionPageDto, TransactionPageRequest,
+    TransactionRowDto, UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -404,6 +404,16 @@ fn transactions_query(
 }
 
 #[tauri::command]
+fn transaction_manual_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateManualTransactionInput,
+) -> Result<TransactionRowDto, String> {
+    repository_result(&state, |connection| {
+        read_model::create_manual_transaction(connection, &input)
+    })
+}
+
+#[tauri::command]
 fn dashboard_query(
     state: tauri::State<'_, AppState>,
     request: DashboardRequest,
@@ -620,13 +630,26 @@ fn import_rollback(
 }
 
 #[tauri::command]
-fn backup_create(
+async fn backup_create(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     paths: tauri::State<'_, BackupPaths>,
     backup_key: tauri::State<'_, BackupMasterKey>,
-    archive_path: String,
     passphrase: String,
-) -> Result<BackupSummaryDto, String> {
+) -> Result<Option<BackupSummaryDto>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Backup", &["kakeflow-backup"])
+        .set_file_name("kakeflow-backup.kakeflow-backup")
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let archive_path = selected
+        .into_path()
+        .map_err(|_| "Selected backup destination is unavailable".to_owned())?;
+    let passphrase = Zeroizing::new(passphrase);
     let mut backup_result = None;
     state
         .with_connection(|connection| {
@@ -636,8 +659,8 @@ fn backup_create(
             backup_result = Some(backup::create_portable_backup(
                 &paths.database,
                 &paths.vault,
-                std::path::Path::new(&archive_path),
-                &passphrase,
+                &archive_path,
+                passphrase.as_str(),
                 &backup_key.0,
             ));
             Ok(())
@@ -650,11 +673,11 @@ fn backup_create(
             backup::BackupError::InvalidInput => "Backup input is invalid",
             _ => "Backup could not be created",
         })?;
-    Ok(BackupSummaryDto {
+    Ok(Some(BackupSummaryDto {
         format_version: 2,
         entry_count: summary.entry_count,
         plaintext_bytes: summary.plaintext_bytes,
-    })
+    }))
 }
 
 #[tauri::command]
@@ -929,6 +952,7 @@ pub fn run() {
             account_rename,
             account_archive,
             transactions_query,
+            transaction_manual_create,
             dashboard_query,
             budgets_query,
             budget_upsert,
