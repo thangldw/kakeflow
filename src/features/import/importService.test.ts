@@ -30,4 +30,13 @@ describe('import preview service', () => {
 
     expect(excelRowsToCsv(rows)).toBe('日付,摘要,支払い金額\n2026/07/27,"SHOP, ""TOKYO""",204987')
   })
+
+  it('keeps PDF bytes for explicit local extraction without auto-posting', async () => {
+    const result = await previewImportFile(new File(['%PDF-1.4\n'], 'receipt.pdf', { type: 'application/pdf' }))
+
+    expect(result.status).toBe('extractable')
+    expect(result.adapterId).toBe('pdf-embedded-text-v1')
+    expect(result.fileBytes).toBeInstanceOf(Uint8Array)
+    expect(result.issues[0].code).toBe('DOCUMENT_EXTRACTION_REQUIRED')
+  })
 })

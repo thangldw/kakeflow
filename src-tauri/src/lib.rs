@@ -1,4 +1,5 @@
 pub mod backup;
+pub mod document_extract;
 pub mod document_vault;
 pub mod import_workflow;
 mod key_store;
@@ -328,6 +329,22 @@ fn backup_create(
     })
 }
 
+#[tauri::command]
+fn document_extract(
+    file_bytes: Vec<u8>,
+    media_type: String,
+) -> Result<document_extract::ExtractedDocument, String> {
+    document_extract::extract_document(&file_bytes, &media_type).map_err(|error| {
+        match error {
+            document_extract::ExtractError::InvalidInput => "Document input is invalid",
+            document_extract::ExtractError::Unsupported => "Document format is unsupported",
+            document_extract::ExtractError::OcrRequired => "Document requires OCR",
+            document_extract::ExtractError::Extraction => "Document extraction failed",
+        }
+        .to_owned()
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -369,7 +386,8 @@ pub fn run() {
             import_preview,
             import_commit,
             import_rollback,
-            backup_create
+            backup_create,
+            document_extract
         ])
         .run(tauri::generate_context!())
         .expect("KakeFlow failed to start");

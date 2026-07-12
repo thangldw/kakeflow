@@ -10,6 +10,7 @@ import type {
   CommitSummaryDto,
   DashboardMonthlyTotalsDto,
   DatabaseStatusDto,
+  ExtractedDocumentDto,
   HouseholdDto,
   ImportPreviewDto,
   ImportRunCountsDto,
@@ -95,6 +96,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       commitImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_commit') },
       rollbackImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_rollback') },
       createBackup: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'backup_create') },
+      extractDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'document_extract') },
     }
   }
 
@@ -114,6 +116,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
     createBackup: (archivePath, passphrase) => invokeValidated(invoke, 'backup_create', parseBackupSummary, { archivePath, passphrase }),
+    extractDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_extract', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
   }
 }
 
@@ -210,6 +213,14 @@ function parseCommitSummary(value: unknown): CommitSummaryDto {
 function parseBackupSummary(value: unknown): BackupSummaryDto {
   const record = asRecord(value)
   return { entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
+}
+
+function parseExtractedDocument(value: unknown): ExtractedDocumentDto {
+  const record = asRecord(value)
+  if ((record.method !== 'EMBEDDED_TEXT' && record.method !== 'OCR') || typeof record.text !== 'string' || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('extracted document')
+  const confidenceBps = asSafeInteger(record.confidenceBps)
+  if (confidenceBps > 10_000) throw new TypeError('confidence')
+  return { method: record.method, text: record.text, confidenceBps, issues: record.issues }
 }
 
 function parseVoid(value: unknown): void {
