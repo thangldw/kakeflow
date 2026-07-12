@@ -43,6 +43,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0018_transaction_source_audience.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0019_delimited_parser_profiles.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -460,6 +463,42 @@ fn validate_restored_semantics(
             reject_if_exists(connection, query)?;
         }
     }
+    if schema_version >= 19 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM delimited_parser_profiles p
+             WHERE p.delimiter NOT IN ('AUTO', 'COMMA', 'TAB', 'SEMICOLON')
+                OR p.encoding NOT IN ('AUTO', 'UTF8', 'CP932')
+                OR p.date_format NOT IN (
+                    'AUTO', 'YYYY_MM_DD', 'YYYYMMDD', 'MM_DD_YYYY', 'DD_MM_YYYY'
+                )
+                OR p.amount_mode NOT IN ('SIGNED', 'DEBIT_CREDIT')
+                OR p.header_row NOT BETWEEN 1 AND 1000
+                OR p.priority NOT BETWEEN 0 AND 10000
+                OR p.version <= 0
+                OR p.is_enabled NOT IN (0, 1)
+                OR length(trim(p.name)) NOT BETWEEN 1 AND 120
+                OR length(trim(p.date_column)) NOT BETWEEN 1 AND 120
+                OR (p.description_column IS NULL AND p.payee_column IS NULL)
+                OR (p.amount_mode = 'SIGNED' AND (
+                    p.signed_amount_column IS NULL OR p.debit_column IS NOT NULL
+                    OR p.credit_column IS NOT NULL))
+                OR (p.amount_mode = 'DEBIT_CREDIT' AND (
+                    p.signed_amount_column IS NOT NULL OR p.debit_column IS NULL
+                    OR p.credit_column IS NULL))
+                OR p.updated_at < p.created_at
+                OR EXISTS (
+                    SELECT 1 FROM json_each(json_array(
+                        p.date_column, p.description_column, p.payee_column,
+                        p.signed_amount_column, p.debit_column, p.credit_column,
+                        p.external_id_column, p.account_hint_column
+                    )) mapped
+                    WHERE mapped.value IS NOT NULL
+                    GROUP BY trim(mapped.value) HAVING count(*) > 1
+                )
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -778,6 +817,41 @@ mod tests {
                     [],
                 )?;
                 assert!(validate_restored_semantics(connection, 18).is_err());
+                Ok(())
+            })
+            .expect("test database should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_delimited_parser_profiles() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households (id, name) VALUES ('family', 'Family');
+                     INSERT INTO delimited_parser_profiles
+                       (id, household_id, name, delimiter, encoding, header_row,
+                        date_column, date_format, description_column, amount_mode,
+                        signed_amount_column, is_enabled, priority)
+                     VALUES ('profile', 'family', 'Profile', 'AUTO', 'AUTO', 1,
+                        'Date', 'AUTO', 'Description', 'SIGNED', 'Amount', 1, 10);",
+                )?;
+                assert!(validate_restored_semantics(connection, 19).is_ok());
+
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints = ON;
+                     UPDATE delimited_parser_profiles SET payee_column = ' Date '
+                     WHERE id = 'profile';",
+                )?;
+                assert!(validate_restored_semantics(connection, 19).is_err());
+
+                connection.execute_batch(
+                    "UPDATE delimited_parser_profiles
+                       SET payee_column = NULL, debit_column = 'Debit'
+                     WHERE id = 'profile';",
+                )?;
+                assert!(validate_restored_semantics(connection, 19).is_err());
+                connection.execute_batch("PRAGMA ignore_check_constraints = OFF;")?;
                 Ok(())
             })
             .expect("test database should remain queryable");
