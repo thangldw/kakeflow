@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0 — 2026-07-13
+
+- Import Monex U.S. stock transaction-history CSV columns and preserve the source row, currency, ticker, and transaction semantics.
+- Allocate spin-off cost basis from an explicit source-provided ratio, create rights-subscription lots from confirmed terms, and treat cash in lieu as an auditable FIFO disposal with realized P&L.
+- Explain corporate-action allocations in the annual investment report down to the action and originating purchase source rows; incomplete terms are rejected instead of guessed.
+- Unlock supported password-protected PDFs for the current extraction or page-render request, with explicit required, invalid, and unsupported-password states and no persisted password.
+- Mount the produced macOS DMG read-only and validate its versioned app bundle, executable, resources, signature structure, and clean detach separately from the packaged-WebView smoke test.
+- Harden packaged-app smoke cleanup so a timed-out child is terminated and reaped before temporary data is removed.
+
 ## 0.8.0 — 2026-07-13
 
 - Add immutable dated investment market-price observations with provider, document, row, and observation provenance.
