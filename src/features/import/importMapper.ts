@@ -261,7 +261,8 @@ async function mapMoneyForward(record: MoneyForwardHouseholdTransactionCandidate
   if (!evidence || !date || amount == null) return []
   const factHash = record.externalTransactionId ? await context.hash(JSON.stringify({
     date, amount, direction: record.signedAmountJpy! < 0 ? 'OUT' : 'IN', content: record.content,
-    institution: record.institution, isTransfer: record.isTransfer,
+    institution: record.institution, isTransfer: record.isTransfer, calculationTarget: record.calculationTarget,
+    majorCategory: record.majorCategory, minorCategory: record.minorCategory, memo: record.memo,
   })) : null
   return [candidate(context, {
     occurredOn: date, postedOn: null, amountJpy: amount, direction: record.signedAmountJpy! < 0 ? 'OUT' : 'IN',

@@ -15,6 +15,15 @@ describe('import preview service', () => {
     expect(result.status).toBe('ready')
   })
 
+  it('detects the official Money Forward ME household-ledger export', async () => {
+    const file = new File([
+      '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID\n' +
+      '1,2026/07/27,給与,300000,MUFG,収入,給与,7月分,0,mf-1',
+    ], 'money-forward.csv', { type: 'text/csv' })
+    const result = await previewImportFile(file)
+    expect(result).toMatchObject({ adapterId: 'money-forward-me-household-ledger-v1', recordCount: 1, status: 'ready' })
+  })
+
   it('keeps unsupported files in review instead of silently dropping them', async () => {
     const result = await previewImportFile(new File(['unknown,data\n1,2'], 'unknown.csv'))
 

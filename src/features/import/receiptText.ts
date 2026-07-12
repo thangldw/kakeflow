@@ -153,6 +153,8 @@ export async function buildReceiptImport(
         id: id(), accountId: file.accountId, occurredOn: fields.occurredOn, postedOn: null,
         amountJpy: fields.amountJpy, direction: 'OUT', descriptionRaw: 'Receipt document', merchantRaw: fields.merchant,
         externalTransactionId: null, extractionConfidenceBps: extracted.confidenceBps,
+        externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+        institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
         normalizationConfidenceBps: fields.confidenceBps,
         attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
         reviewStatus: Math.min(extracted.confidenceBps, fields.confidenceBps) >= 7500 ? 'READY' : 'PENDING',

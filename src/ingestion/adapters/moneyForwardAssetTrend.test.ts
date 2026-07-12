@@ -74,12 +74,12 @@ describe('Money Forward ME asset trend adapter', () => {
     ]))
   })
 
-  it('does not claim unrelated date/total CSVs or accept transaction exports', () => {
+  it('does not claim unrelated date/total CSVs or misparse transaction exports as asset history', () => {
     const generic = '日付,合計（円）\n2026/07/01,100'
     const transaction = '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID\n1,2026/07/01,給与,100,銀行,収入,給与,,,1'
 
     expect(detectImportAdapter({ text: generic })).toBeNull()
-    expect(detectImportAdapter({ text: transaction })).toBeNull()
+    expect(detectImportAdapter({ text: transaction })?.adapter.id).toBe('money-forward-me-household-ledger-v1')
     const parsed = moneyForwardAssetTrendAdapter.parse({ text: transaction })
     expect(parsed.records).toHaveLength(0)
     expect(parsed.issues).toContainEqual(expect.objectContaining({ code: 'MONEY_FORWARD_ASSET_HEADERS_MISSING', severity: 'error' }))
