@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.19 adds explicit credit-card-to-bank settlement planning. KakeFlow projects dated card obligations against real posted bank balances, warns about cumulative shortfalls, and keeps unmapped or incomplete statements visible without guessing a payment account or initiating a payment.
+Version 0.20 adds a faithful Money Forward ME household-ledger migration path. Its official ten-column CSV can enter KakeFlow without losing calculation-target, transfer, institution, category, memo, source-ID, or evidence semantics.
 
 ## Product tour
 
@@ -109,8 +109,10 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.19 capabilities
+## Current v0.20 capabilities
 
+- Dedicated [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) with strict official-column parsing, explicit institution-to-account selection, transfer-safe posting, named source provenance, and stable external-ID deduplication.
+- Calculation-target and transfer semantics carried through preview and posting; a Money Forward transfer can never silently become household income or expense.
 - Explicit [card settlement coverage](docs/CARD_SETTLEMENT_COVERAGE.md) with user-selected card-to-bank mappings, cumulative multi-card projections, covered/shortfall/overdue states, and Action Center warnings.
 - Actual bank-balance semantics that include every posted journal entry even when a transaction is excluded from household analytics, while confirmed card payments are applied only when effective by the requested as-of date.
 - Honest disclosure of unmapped obligations and statements missing a due date; neither is silently assigned or folded into a misleading chronological forecast.
