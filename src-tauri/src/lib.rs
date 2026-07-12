@@ -8,6 +8,7 @@ mod persistence;
 mod private_fs;
 mod read_model;
 pub mod restore;
+mod source_viewer;
 pub mod watched_folders;
 
 use document_vault::DocumentVault;
@@ -28,6 +29,9 @@ use read_model::{
     UpsertMonthlyCategoryBudgetInput,
 };
 use serde::{Deserialize, Serialize};
+use source_viewer::{
+    SourceDocumentViewDto, SourceRecordPageDto, SourceRecordPageRequest, SourceRecordViewDto,
+};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use zeroize::Zeroizing;
@@ -425,6 +429,38 @@ fn transaction_detail_get(
 ) -> Result<TransactionDetailDto, String> {
     repository_result(&state, |connection| {
         read_model::get_transaction_detail(connection, &household_id, &transaction_id)
+    })
+}
+
+#[tauri::command]
+fn source_document_get(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    source_document_id: String,
+) -> Result<SourceDocumentViewDto, String> {
+    repository_result(&state, |connection| {
+        source_viewer::get_source_document(connection, &household_id, &source_document_id)
+    })
+}
+
+#[tauri::command]
+fn source_document_records_query(
+    state: tauri::State<'_, AppState>,
+    request: SourceRecordPageRequest,
+) -> Result<SourceRecordPageDto, String> {
+    repository_result(&state, |connection| {
+        source_viewer::list_source_document_records(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn transaction_source_records_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    transaction_id: String,
+) -> Result<Vec<SourceRecordViewDto>, String> {
+    repository_result(&state, |connection| {
+        source_viewer::list_transaction_source_records(connection, &household_id, &transaction_id)
     })
 }
 
@@ -1119,6 +1155,9 @@ pub fn run() {
             transaction_manual_create,
             transaction_detail_get,
             transaction_update,
+            source_document_get,
+            source_document_records_query,
+            transaction_source_records_list,
             dashboard_query,
             budgets_query,
             budget_upsert,
