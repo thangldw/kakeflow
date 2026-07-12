@@ -102,6 +102,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       stageBackupRestore: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'backup_restore_stage') },
       restartForRestore: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'app_restart_for_restore') },
       extractDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'document_extract') },
+      ocrDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'document_ocr') },
       listCardSettlements: async () => [],
       confirmCardMatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_match_confirm') },
     }
@@ -126,6 +127,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     stageBackupRestore: (archivePath, passphrase) => invokeValidated(invoke, 'backup_restore_stage', parseBackupSummary, { archivePath, passphrase }),
     restartForRestore: async () => { await invokeValidated(invoke, 'app_restart_for_restore', parseVoid) },
     extractDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_extract', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
+    ocrDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_ocr', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
     listCardSettlements: (householdId) => invokeValidated(invoke, 'cards_list', parseCardSettlements, { householdId }),
     confirmCardMatch: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_match_confirm', parseCardMatchConfirmation, { householdId, statementId, paymentId }),
   }

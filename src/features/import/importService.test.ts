@@ -39,4 +39,31 @@ describe('import preview service', () => {
     expect(result.fileBytes).toBeInstanceOf(Uint8Array)
     expect(result.issues[0].code).toBe('DOCUMENT_EXTRACTION_REQUIRED')
   })
+
+  it.each([
+    ['receipt.png', 'image/png', 'image/png'],
+    ['receipt.jpg', 'image/jpeg', 'image/jpeg'],
+    ['receipt.jpeg', '', 'image/jpeg'],
+  ])('keeps %s bytes for explicit local OCR', async (filename, inputType, expectedType) => {
+    const result = await previewImportFile(new File([new Uint8Array([1, 2, 3])], filename, { type: inputType }))
+
+    expect(result).toMatchObject({
+      status: 'extractable',
+      adapterId: 'receipt-image-ocr-v1',
+      mediaType: expectedType,
+      encoding: 'binary',
+    })
+    expect(result.fileBytes).toBeInstanceOf(Uint8Array)
+    expect(result.issues[0].message).toContain('OCR')
+  })
+
+  it('enforces the OCR backend image size limit before reading bytes', async () => {
+    const file = new File([], 'large.png', { type: 'image/png' })
+    Object.defineProperty(file, 'size', { value: 20 * 1024 * 1024 + 1 })
+
+    const result = await previewImportFile(file)
+
+    expect(result.status).toBe('error')
+    expect(result.issues[0]).toMatchObject({ code: 'FILE_TOO_LARGE', message: 'レシート画像は20MB以下にしてください。' })
+  })
 })
