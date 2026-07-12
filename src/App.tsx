@@ -175,11 +175,11 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
   )
 }
 
-function Topbar({ openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId }: { openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void }) {
+function Topbar({ openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, showAccountScope }: { openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; showAccountScope: boolean }) {
   return (
     <header className="topbar">
       <button className="icon-btn menu-btn" aria-label="メニューを開く" onClick={openMenu}><Menu size={21} /></button>
-      <div className="top-actions"><label className="scope-picker"><span>口座スコープ</span><select aria-label="口座スコープ" value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">すべての口座</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="period-picker"><span>対象月</span><input aria-label="対象月" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="top-avatar">TK</div></div>
+      <div className="top-actions">{showAccountScope && <label className="scope-picker"><span>口座スコープ</span><select aria-label="口座スコープ" value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">すべての口座</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>}<label className="period-picker"><span>対象月</span><input aria-label="対象月" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="top-avatar">TK</div></div>
     </header>
   )
 }
@@ -1341,6 +1341,10 @@ function App() {
 
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? null
   const activeAccountGroup = accountGroups.find((group) => group.id === activeAccountGroupId) ?? null
+  const scopeAppliesToPage = page === 'overview' || page === 'transactions' || page === 'reports'
+  const scopedCards = activeAccountGroup
+    ? liveCards.filter((card) => activeAccountGroup.accountIds.includes(card.cardAccountId))
+    : liveCards
   const selectAccountGroup = (groupId: string | null) => {
     const selected = groupId && accountGroups.some((group) => group.id === groupId) ? groupId : null
     setActiveAccountGroupId(selected)
@@ -1360,7 +1364,7 @@ function App() {
   }
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} revision={ledgerRevision} month={selectedMonth} accounts={accounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} backgroundChanges={backgroundFolderChanges} clearBackgroundChanges={() => setBackgroundFolderChanges(0)} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
@@ -1370,7 +1374,7 @@ function App() {
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     settings: <SettingsPage householdId={activeHouseholdId} accounts={accounts} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} /><main>{pageContent}<p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p></main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} showAccountScope={scopeAppliesToPage} /><main>{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App
