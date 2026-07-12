@@ -66,6 +66,7 @@ use read_model::{
     UpdateClassificationRuleInput, UpdateHouseholdMemberInput, UpdatePostedTransactionInput,
     UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
 };
+use record_scope::AttributionScope;
 use recurring_analytics::{FinancialIntelligenceDto, FinancialIntelligenceRequest};
 use serde::{Deserialize, Serialize};
 use source_viewer::{
@@ -251,6 +252,8 @@ impl PackagedSmokeConfig {
 struct DashboardRequest {
     household_id: String,
     account_group_id: Option<String>,
+    #[serde(default)]
+    attribution_scope: AttributionScope,
     month: String,
     accounting_basis: AccountingBasis,
 }
@@ -984,6 +987,7 @@ fn dashboard_query(
             &request.month,
             request.accounting_basis,
             request.account_group_id.as_deref(),
+            &request.attribution_scope,
         )
     })
 }

@@ -2,6 +2,10 @@ use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::record_scope::{
+    validate_attribution_scope, AttributionScope, AttributionScopeValidationError,
+};
+
 const MAX_ID_LEN: usize = 64;
 const MAX_NAME_LEN: usize = 120;
 const MAX_GROUPS: usize = 1_000;
@@ -545,6 +549,8 @@ pub struct ExportCsvRequest {
     pub export_kind: ExportKind,
     pub accounting_basis: ExportAccountingBasis,
     pub group_id: Option<String>,
+    #[serde(default)]
+    pub attribution_scope: AttributionScope,
     pub from_date: String,
     pub to_date: String,
 }
@@ -592,6 +598,8 @@ pub fn generate_csv(
                 "category_name",
                 "accounting_basis",
                 "account_group_id",
+                "attribution_scope",
+                "attribution_member_id",
             ],
             export_transaction_rows(connection, request)?,
         ),
@@ -662,6 +670,20 @@ fn validate_export_request(
         &request.household_id,
         request.group_id.as_deref(),
     )?;
+    if request.export_kind == ExportKind::Transactions {
+        validate_attribution_scope(
+            connection,
+            &request.household_id,
+            &request.attribution_scope,
+        )
+        .map_err(|error| match error {
+            AttributionScopeValidationError::InvalidMemberId => {
+                AccountGroupExportError::InvalidInput("Attribution member is invalid")
+            }
+            AttributionScopeValidationError::MemberNotFound => AccountGroupExportError::NotFound,
+            AttributionScopeValidationError::Database => AccountGroupExportError::Unavailable,
+        })?;
+    }
     Ok(())
 }
 
@@ -755,8 +777,12 @@ fn export_transaction_rows(
                       ON scope_gm.account_id = scope_je.account_id
                      AND scope_gm.household_id = t.household_id
                     WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?5))
+               AND (?6 = 'ALL'
+                    OR (?6 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                    OR (?6 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                        AND t.attributed_member_id = ?7))
              ORDER BY t.occurred_on, t.created_at, t.id
-             LIMIT ?6",
+             LIMIT ?8",
         )
         .map_err(db_error)?;
     let rows = statement
@@ -767,11 +793,13 @@ fn export_transaction_rows(
                 request.to_date,
                 basis,
                 request.group_id,
+                request.attribution_scope.sql_kind(),
+                request.attribution_scope.member_id(),
                 (MAX_EXPORT_ROWS + 1) as i64
             ],
             |row| {
                 let amount: i64 = row.get(6)?;
-                let mut values = Vec::with_capacity(16);
+                let mut values = Vec::with_capacity(18);
                 for index in 0..6 {
                     values.push(row.get(index)?);
                 }
@@ -781,6 +809,14 @@ fn export_transaction_rows(
                 }
                 values.push(basis.to_owned());
                 values.push(request.group_id.clone().unwrap_or_default());
+                values.push(request.attribution_scope.sql_kind().to_owned());
+                values.push(
+                    request
+                        .attribution_scope
+                        .member_id()
+                        .unwrap_or_default()
+                        .to_owned(),
+                );
                 Ok(values)
             },
         )
@@ -900,6 +936,10 @@ mod tests {
         connection.execute_batch(
             "PRAGMA foreign_keys=ON;
              CREATE TABLE households(id TEXT PRIMARY KEY) STRICT;
+             CREATE TABLE household_members(
+               id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
+               display_name TEXT NOT NULL, status TEXT NOT NULL
+             ) STRICT;
              CREATE TABLE accounts(
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                name TEXT NOT NULL, account_kind TEXT NOT NULL, is_archived INTEGER NOT NULL
@@ -907,7 +947,8 @@ mod tests {
              CREATE TABLE transactions(
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                occurred_on TEXT NOT NULL, posted_on TEXT, transaction_type TEXT NOT NULL,
-               payee TEXT, description TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL
+               payee TEXT, description TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL,
+               attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT
              ) STRICT;
              CREATE TABLE journal_entries(
                id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id),
@@ -929,6 +970,9 @@ mod tests {
         connection
             .execute_batch(
                 "INSERT INTO households VALUES ('home'), ('other');
+             INSERT INTO household_members VALUES
+               ('home-member', 'home', 'Home member', 'ARCHIVED'),
+               ('other-member', 'other', 'Other member', 'ARCHIVED');
              INSERT INTO accounts VALUES
                ('bank', 'home', 'Bank', 'ASSET', 0),
                ('food', 'home', 'Food', 'EXPENSE', 0),
@@ -1025,9 +1069,9 @@ mod tests {
         connection.execute_batch(
             "INSERT INTO transactions VALUES
                ('purchase', 'home', '2026-07-01', NULL, 'CARD_PURCHASE', 'Shop, \"Tokyo\"', 'line 1
-line 2', 'POSTED', '2026-07-01T00:00:00Z'),
-               ('payment', 'home', '2026-07-10', NULL, 'CARD_PAYMENT', 'Card', NULL, 'POSTED', '2026-07-10T00:00:00Z'),
-               ('outside', 'other', '2026-07-01', NULL, 'EXPENSE', 'Other', NULL, 'POSTED', '2026-07-01T00:00:00Z');
+line 2', 'POSTED', '2026-07-01T00:00:00Z', 'MEMBER', 'home-member'),
+               ('payment', 'home', '2026-07-10', NULL, 'CARD_PAYMENT', 'Card', NULL, 'POSTED', '2026-07-10T00:00:00Z', 'HOUSEHOLD', NULL),
+               ('outside', 'other', '2026-07-01', NULL, 'EXPENSE', 'Other', NULL, 'POSTED', '2026-07-01T00:00:00Z', 'HOUSEHOLD', NULL);
              INSERT INTO journal_entries VALUES
                ('p1', 'purchase', 'food', 'DEBIT', 1200, 1), ('p2', 'purchase', 'card', 'CREDIT', 1200, 2),
                ('c1', 'payment', 'card', 'DEBIT', 1200, 1), ('c2', 'payment', 'bank', 'CREDIT', 1200, 2),
@@ -1040,6 +1084,7 @@ line 2', 'POSTED', '2026-07-01T00:00:00Z'),
                 export_kind: ExportKind::Transactions,
                 accounting_basis: ExportAccountingBasis::Accrual,
                 group_id: Some("daily".into()),
+                attribution_scope: AttributionScope::All,
                 from_date: "2026-07-01".into(),
                 to_date: "2026-07-31".into(),
             },
@@ -1051,6 +1096,39 @@ line 2', 'POSTED', '2026-07-01T00:00:00Z'),
         assert!(export.utf8_bom_csv.contains("\"line 1\nline 2\""));
         assert!(!export.utf8_bom_csv.contains("payment,2026"));
         assert!(!export.utf8_bom_csv.contains("outside,2026"));
+        let member_export = generate_csv(
+            &connection,
+            &ExportCsvRequest {
+                household_id: "home".into(),
+                export_kind: ExportKind::Transactions,
+                accounting_basis: ExportAccountingBasis::Accrual,
+                group_id: Some("daily".into()),
+                attribution_scope: AttributionScope::Member {
+                    member_id: "home-member".into(),
+                },
+                from_date: "2026-07-01".into(),
+                to_date: "2026-07-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(member_export.row_count, 1);
+        assert!(member_export
+            .utf8_bom_csv
+            .contains(",MEMBER,home-member\r\n"));
+        let common_export = generate_csv(
+            &connection,
+            &ExportCsvRequest {
+                household_id: "home".into(),
+                export_kind: ExportKind::Transactions,
+                accounting_basis: ExportAccountingBasis::Accrual,
+                group_id: Some("daily".into()),
+                attribution_scope: AttributionScope::HouseholdCommon,
+                from_date: "2026-07-01".into(),
+                to_date: "2026-07-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(common_export.row_count, 0);
     }
 
     #[test]
@@ -1070,6 +1148,9 @@ line 2', 'POSTED', '2026-07-01T00:00:00Z'),
                 export_kind: ExportKind::PortfolioSnapshots,
                 accounting_basis: ExportAccountingBasis::Accrual,
                 group_id: Some("invest".into()),
+                attribution_scope: AttributionScope::Member {
+                    member_id: "missing".into(),
+                },
                 from_date: "2026-07-01".into(),
                 to_date: "2026-07-31".into(),
             },
@@ -1088,6 +1169,7 @@ line 2', 'POSTED', '2026-07-01T00:00:00Z'),
             export_kind: ExportKind::Transactions,
             accounting_basis: ExportAccountingBasis::Cash,
             group_id: Some("daily".into()),
+            attribution_scope: AttributionScope::All,
             from_date: "2026-02-30".into(),
             to_date: "2026-03-01".into(),
         };
