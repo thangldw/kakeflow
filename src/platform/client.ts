@@ -219,7 +219,8 @@ function parseCommitSummary(value: unknown): CommitSummaryDto {
 
 function parseBackupSummary(value: unknown): BackupSummaryDto {
   const record = asRecord(value)
-  return { entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
+  if (record.formatVersion !== 2) throw new TypeError('backup version')
+  return { formatVersion: record.formatVersion, entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
 }
 
 function parseExtractedDocument(value: unknown): ExtractedDocumentDto {

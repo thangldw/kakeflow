@@ -526,7 +526,7 @@ function SettingsPage() {
       if (!archivePath) return
       const result = await platformClient.createBackup(archivePath, passphrase)
       setPassphrase(''); setConfirmation('')
-      setNotice(`${result.entryCount}件・${(result.plaintextBytes / 1024 / 1024).toFixed(1)} MB の暗号化バックアップを作成しました。`)
+      setNotice(`Portable v${result.formatVersion} ・ ${result.entryCount}件・${(result.plaintextBytes / 1024 / 1024).toFixed(1)} MB の暗号化バックアップを作成しました。`)
     } catch {
       setNotice('バックアップを作成できませんでした。保存先とパスフレーズを確認してください。')
     } finally { setBusy(false) }

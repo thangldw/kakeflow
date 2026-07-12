@@ -27,9 +27,12 @@ struct BackupPaths {
     vault: std::path::PathBuf,
 }
 
+struct BackupMasterKey(Zeroizing<[u8; 32]>);
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BackupSummaryDto {
+    format_version: u16,
     entry_count: u64,
     plaintext_bytes: u64,
 }
@@ -324,6 +327,7 @@ fn import_rollback(
 fn backup_create(
     state: tauri::State<'_, AppState>,
     paths: tauri::State<'_, BackupPaths>,
+    backup_key: tauri::State<'_, BackupMasterKey>,
     archive_path: String,
     passphrase: String,
 ) -> Result<BackupSummaryDto, String> {
@@ -333,11 +337,12 @@ fn backup_create(
             // Keep the application-wide database lock from checkpoint through
             // the final archive fsync so no writer can race the snapshot.
             connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
-            backup_result = Some(backup::create_backup(
+            backup_result = Some(backup::create_portable_backup(
                 &paths.database,
                 &paths.vault,
                 std::path::Path::new(&archive_path),
                 &passphrase,
+                &backup_key.0,
             ));
             Ok(())
         })
@@ -350,6 +355,7 @@ fn backup_create(
             _ => "Backup could not be created",
         })?;
     Ok(BackupSummaryDto {
+        format_version: 2,
         entry_count: summary.entry_count,
         plaintext_bytes: summary.plaintext_bytes,
     })
@@ -392,10 +398,13 @@ pub fn run() {
             }
             let mut vault_master_key = Zeroizing::new([0_u8; 32]);
             vault_master_key.copy_from_slice(&master_key);
+            let mut portable_backup_key = Zeroizing::new([0_u8; 32]);
+            portable_backup_key.copy_from_slice(&master_key);
             let vault = DocumentVault::new(&vault_path, &vault_master_key)?;
             let state = AppState::open(database_path.clone(), &key_provider)?;
             app.manage(state);
             app.manage(vault);
+            app.manage(BackupMasterKey(portable_backup_key));
             app.manage(BackupPaths {
                 database: database_path,
                 vault: vault_path,
