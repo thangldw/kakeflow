@@ -28,6 +28,8 @@ describe('platform client', () => {
     })
     await expect(client.status()).resolves.toEqual({ schemaVersion: 0, integrity: 'failed' })
     await expect(client.listHouseholds()).resolves.toEqual([])
+    await expect(client.listHouseholdMembers('family')).resolves.toEqual([])
+    await expect(client.createHouseholdMember({} as never)).rejects.toMatchObject({ command: 'household_member_create' })
     await expect(client.listAccounts('family')).resolves.toEqual([])
     await expect(client.createManualTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_manual_create' })
     await expect(client.getTransactionDetail('family', 'tx')).rejects.toMatchObject({ command: 'transaction_detail_get' })
@@ -62,7 +64,12 @@ describe('platform client', () => {
       app_status: { schemaVersion: 5, integrity: 'ok' },
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
       household_create: { id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' },
-      accounts_list: [{ id: 'family-bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' }],
+      household_members_list: [{ id: 'member-1', householdId: 'family', displayName: 'Taro', relationshipLabel: 'Father', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }],
+      household_member_create: { id: 'member-1', householdId: 'family', displayName: 'Taro', relationshipLabel: null, status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' },
+      household_member_update: { id: 'member-1', householdId: 'family', displayName: 'Taro Updated', relationshipLabel: null, status: 'ACTIVE', sortOrder: 1, createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' },
+      household_member_archive: null,
+      accounts_list: [{ id: 'family-bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' }],
+      account_ownership_update: { id: 'family-bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'MEMBER', ownerMemberId: 'member-1', ownerMemberName: 'Taro', visibility: 'PERSONAL' },
       dashboard_query: {
         month: '2026-07', accountingBasis: 'ACCRUAL', incomeJpy: 650000, expenseJpy: 250000, savingsJpy: 400000, postedTransactionCount: 10,
         netWorthAsOf: '2026-07-31', assetsJpy: 8_500_000, liabilitiesJpy: 250_000, netWorthJpy: 8_250_000,
@@ -156,6 +163,12 @@ describe('platform client', () => {
     await expect(client.status()).resolves.toEqual(responses.app_status)
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
     await expect(client.createHousehold({ id: 'family', name: 'Family' })).resolves.toEqual(responses.household_create)
+    await expect(client.listHouseholdMembers('family')).resolves.toEqual(responses.household_members_list)
+    const memberCreate = { id: 'member-1', householdId: 'family', displayName: 'Taro', relationshipLabel: null }
+    await expect(client.createHouseholdMember(memberCreate)).resolves.toEqual(responses.household_member_create)
+    const memberUpdate = { householdId: 'family', memberId: 'member-1', displayName: 'Taro Updated', relationshipLabel: null, sortOrder: 1 }
+    await expect(client.updateHouseholdMember(memberUpdate)).resolves.toEqual(responses.household_member_update)
+    await expect(client.archiveHouseholdMember('family', 'member-1')).resolves.toBeUndefined()
     await expect(client.listAccounts('family')).resolves.toEqual(responses.accounts_list)
     await expect(client.queryDashboard({ householdId: 'family', accountGroupId: 'daily', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
     await expect(client.queryTransactions({ householdId: 'family', accountGroupId: 'daily', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
@@ -187,6 +200,10 @@ describe('platform client', () => {
     await expect(client.listCardSettlements('family')).resolves.toEqual(responses.cards_list)
     await expect(client.confirmCardMatch('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_match_confirm)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
+    expect(invokeSpy).toHaveBeenCalledWith('household_members_list', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('household_member_create', { input: memberCreate })
+    expect(invokeSpy).toHaveBeenCalledWith('household_member_update', { input: memberUpdate })
+    expect(invokeSpy).toHaveBeenCalledWith('household_member_archive', { householdId: 'family', memberId: 'member-1' })
     expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_manual_create', { input: manualInput })
@@ -210,7 +227,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(31)
+    expect(invokeSpy).toHaveBeenCalledTimes(35)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {
@@ -251,15 +268,16 @@ describe('platform client', () => {
   })
 
   it('validates account mutations and preserves household ownership inputs', async () => {
-    const account = { id: 'bank-2', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' }
-    const responses: Record<string, unknown> = { account_create: account, account_rename: { ...account, name: '生活口座' }, account_archive: null }
+    const account = { id: 'bank-2', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' }
+    const responses: Record<string, unknown> = { account_create: account, account_rename: { ...account, name: '生活口座' }, account_archive: null, account_ownership_update: { ...account, ownershipKind: 'MEMBER', ownerMemberId: 'member-1', ownerMemberName: 'Taro', visibility: 'PERSONAL' } }
     const invokeSpy = vi.fn()
     const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => { invokeSpy(command, args); return responses[command] as T } })
-    const create = { id: 'bank-2', householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET' as const, accountSubtype: 'BANK' as const, currency: 'JPY' as const }
+    const create = { id: 'bank-2', householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET' as const, accountSubtype: 'BANK' as const, currency: 'JPY' as const, ownershipKind: 'HOUSEHOLD' as const, ownerMemberId: null, visibility: 'SHARED' as const }
 
     await expect(client.createAccount(create)).resolves.toEqual(account)
     await expect(client.renameAccount({ householdId: 'family', accountId: 'bank-2', name: '生活口座' })).resolves.toMatchObject({ name: '生活口座' })
     await expect(client.archiveAccount({ householdId: 'family', accountId: 'bank-2' })).resolves.toBeUndefined()
+    await expect(client.updateAccountOwnership({ householdId: 'family', accountId: 'bank-2', ownershipKind: 'MEMBER', ownerMemberId: 'member-1', visibility: 'PERSONAL' })).resolves.toMatchObject({ ownerMemberName: 'Taro', visibility: 'PERSONAL' })
     expect(invokeSpy).toHaveBeenCalledWith('account_create', { input: create })
     expect(invokeSpy).toHaveBeenCalledWith('account_archive', { input: { householdId: 'family', accountId: 'bank-2' } })
   })
@@ -319,5 +337,16 @@ describe('platform client', () => {
 
     await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+  })
+
+  it('rejects invalid member and account-ownership response contracts', async () => {
+    const invoke: Invoke = async <T>(command: AppCommand) => {
+      if (command === 'household_members_list') return [{ id: 'member', householdId: 'family', displayName: 'Taro', relationshipLabel: null, status: 'ADMIN', sortOrder: 0, createdAt: 'x', updatedAt: 'x' }] as T
+      return [{ id: 'bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: 'member', ownerMemberName: 'Taro', visibility: 'PERSONAL' }] as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.listHouseholdMembers('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'household_members_list' })
+    await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
   })
 })

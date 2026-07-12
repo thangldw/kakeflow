@@ -79,4 +79,14 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByRole('button', { name: 'バックアップを作成' })).toBeDisabled()
     expect(screen.getByText('デスクトップ版で利用できます。')).toBeInTheDocument()
   })
+
+  it('presents Family Space as local organization rather than access control', async () => {
+    await renderApp()
+    fireEvent.click(screen.getByRole('button', { name: '家族スペース' }))
+
+    expect(screen.getByRole('heading', { name: '家族スペース' })).toBeInTheDocument()
+    expect(screen.getByText(/ログイン、閲覧制限、アクセス制御ではありません/)).toBeInTheDocument()
+    expect(screen.getByText('家族メンバーの管理はデスクトップ版で利用できます。')).toBeInTheDocument()
+    expect(screen.queryByText('TK')).not.toBeInTheDocument()
+  })
 })

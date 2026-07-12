@@ -30,16 +30,48 @@ export interface CreateHouseholdInputDto {
   readonly name: string
 }
 
+export type HouseholdMemberStatusDto = 'ACTIVE' | 'ARCHIVED'
+export interface HouseholdMemberDto {
+  readonly id: string
+  readonly householdId: string
+  readonly displayName: string
+  readonly relationshipLabel: string | null
+  readonly status: HouseholdMemberStatusDto
+  readonly sortOrder: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+export interface CreateHouseholdMemberInputDto {
+  readonly id: string
+  readonly householdId: string
+  readonly displayName: string
+  readonly relationshipLabel: string | null
+}
+export interface UpdateHouseholdMemberInputDto {
+  readonly householdId: string
+  readonly memberId: string
+  readonly displayName: string
+  readonly relationshipLabel: string | null
+  readonly sortOrder: number
+}
+
+export type AccountOwnershipKindDto = 'HOUSEHOLD' | 'MEMBER'
+export type AccountVisibilityDto = 'SHARED' | 'PERSONAL'
 export interface AccountDto {
   readonly id: string
   readonly name: string
   readonly accountKind: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE'
   readonly accountSubtype: 'BANK' | 'CASH' | 'WALLET' | 'SECURITIES' | 'CREDIT_CARD' | 'RECEIVABLE' | 'OTHER'
   readonly currency: 'JPY'
+  readonly ownershipKind: AccountOwnershipKindDto
+  readonly ownerMemberId: string | null
+  readonly ownerMemberName: string | null
+  readonly visibility: AccountVisibilityDto
 }
-export interface CreateAccountInputDto { readonly id: string; readonly householdId: string; readonly name: string; readonly accountKind: AccountDto['accountKind']; readonly accountSubtype: AccountDto['accountSubtype']; readonly currency: 'JPY' }
+export interface CreateAccountInputDto { readonly id: string; readonly householdId: string; readonly name: string; readonly accountKind: AccountDto['accountKind']; readonly accountSubtype: AccountDto['accountSubtype']; readonly currency: 'JPY'; readonly ownershipKind: AccountOwnershipKindDto; readonly ownerMemberId: string | null; readonly visibility: AccountVisibilityDto }
 export interface RenameAccountInputDto { readonly householdId: string; readonly accountId: string; readonly name: string }
 export interface ArchiveAccountInputDto { readonly householdId: string; readonly accountId: string }
+export interface UpdateAccountOwnershipInputDto { readonly householdId: string; readonly accountId: string; readonly ownershipKind: AccountOwnershipKindDto; readonly ownerMemberId: string | null; readonly visibility: AccountVisibilityDto }
 
 export interface ImportSourceRecordDto { readonly id: string; readonly rowNumber: number; readonly recordHash: string; readonly payloadJson: string }
 export interface ImportEvidenceDto { readonly sourceRecordId: string; readonly role: 'PRIMARY' | 'FUNDING_LEG' | 'REWARD_LEG' | 'CONTINUATION' | 'SUPPORTING' }
@@ -261,10 +293,15 @@ export type AppCommand =
   | 'app_status'
   | 'households_list'
   | 'household_create'
+  | 'household_members_list'
+  | 'household_member_create'
+  | 'household_member_update'
+  | 'household_member_archive'
   | 'accounts_list'
   | 'account_create'
   | 'account_rename'
   | 'account_archive'
+  | 'account_ownership_update'
   | 'transactions_query'
   | 'transaction_manual_create'
   | 'transaction_detail_get'
@@ -312,10 +349,15 @@ export interface PlatformClient {
   status(): Promise<AppStatusDto>
   listHouseholds(): Promise<readonly HouseholdDto[]>
   createHousehold(input: CreateHouseholdInputDto): Promise<HouseholdDto>
+  listHouseholdMembers(householdId: string): Promise<readonly HouseholdMemberDto[]>
+  createHouseholdMember(input: CreateHouseholdMemberInputDto): Promise<HouseholdMemberDto>
+  updateHouseholdMember(input: UpdateHouseholdMemberInputDto): Promise<HouseholdMemberDto>
+  archiveHouseholdMember(householdId: string, memberId: string): Promise<void>
   listAccounts(householdId: string): Promise<readonly AccountDto[]>
   createAccount(input: CreateAccountInputDto): Promise<AccountDto>
   renameAccount(input: RenameAccountInputDto): Promise<AccountDto>
   archiveAccount(input: ArchiveAccountInputDto): Promise<void>
+  updateAccountOwnership(input: UpdateAccountOwnershipInputDto): Promise<AccountDto>
   queryTransactions(request: TransactionPageRequestDto): Promise<TransactionPageDto>
   createManualTransaction(input: CreateManualTransactionInputDto): Promise<TransactionRowDto>
   getTransactionDetail(householdId: string, transactionId: string): Promise<TransactionDetailDto>

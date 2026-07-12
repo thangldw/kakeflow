@@ -15,6 +15,7 @@ import type {
   DatabaseStatusDto,
   ExtractedDocumentDto,
   HouseholdDto,
+  HouseholdMemberDto,
   ImportPreviewDto,
   ImportRunCountsDto,
   ImportSummaryDto,
@@ -101,10 +102,15 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       status: async () => WEB_STATUS,
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
+      listHouseholdMembers: async () => [],
+      createHouseholdMember: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'household_member_create') },
+      updateHouseholdMember: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'household_member_update') },
+      archiveHouseholdMember: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'household_member_archive') },
       listAccounts: async () => [],
       createAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_create') },
       renameAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_rename') },
       archiveAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_archive') },
+      updateAccountOwnership: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_ownership_update') },
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
       createManualTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_manual_create') },
       getTransactionDetail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_detail_get') },
@@ -152,10 +158,15 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     status: () => invokeValidated(invoke, 'app_status', parseStatus),
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
+    listHouseholdMembers: (householdId) => invokeValidated(invoke, 'household_members_list', parseHouseholdMembers, { householdId }),
+    createHouseholdMember: (input) => invokeValidated(invoke, 'household_member_create', parseHouseholdMember, { input }),
+    updateHouseholdMember: (input) => invokeValidated(invoke, 'household_member_update', parseHouseholdMember, { input }),
+    archiveHouseholdMember: async (householdId, memberId) => { await invokeValidated(invoke, 'household_member_archive', parseVoid, { householdId, memberId }) },
     listAccounts: (householdId) => invokeValidated(invoke, 'accounts_list', parseAccounts, { householdId }),
     createAccount: (input) => invokeValidated(invoke, 'account_create', parseAccount, { input }),
     renameAccount: (input) => invokeValidated(invoke, 'account_rename', parseAccount, { input }),
     archiveAccount: async (input) => { await invokeValidated(invoke, 'account_archive', parseVoid, { input }) },
+    updateAccountOwnership: (input) => invokeValidated(invoke, 'account_ownership_update', parseAccount, { input }),
     queryTransactions: (request) => invokeValidated(invoke, 'transactions_query', parseTransactionPage, { request }),
     createManualTransaction: (input) => invokeValidated(invoke, 'transaction_manual_create', parseTransactionRow, { input }),
     getTransactionDetail: (householdId, transactionId) => invokeValidated(invoke, 'transaction_detail_get', parseTransactionDetail, { householdId, transactionId }),
@@ -231,6 +242,21 @@ function parseHousehold(value: unknown): HouseholdDto {
   return { id: record.id, name: record.name, baseCurrency: record.baseCurrency, createdAt: record.createdAt }
 }
 
+function parseHouseholdMembers(value: unknown): readonly HouseholdMemberDto[] {
+  if (!Array.isArray(value)) throw new TypeError('household members')
+  return value.map(parseHouseholdMember)
+}
+
+function parseHouseholdMember(value: unknown): HouseholdMemberDto {
+  const record = asRecord(value)
+  if ((record.status !== 'ACTIVE' && record.status !== 'ARCHIVED') || (record.relationshipLabel !== null && typeof record.relationshipLabel !== 'string')) throw new TypeError('household member')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), displayName: asRequiredString(record.displayName),
+    relationshipLabel: record.relationshipLabel, status: record.status, sortOrder: asSafeInteger(record.sortOrder),
+    createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
 function parseAccounts(value: unknown): readonly AccountDto[] {
   if (!Array.isArray(value)) throw new TypeError('accounts')
   return value.map(parseAccount)
@@ -241,10 +267,17 @@ function parseAccount(value: unknown): AccountDto {
   const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
   const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
   if (!accountKinds.includes(record.accountKind as typeof accountKinds[number]) || !accountSubtypes.includes(record.accountSubtype as typeof accountSubtypes[number]) || record.currency !== 'JPY') throw new TypeError('account')
+  if ((record.ownershipKind !== 'HOUSEHOLD' && record.ownershipKind !== 'MEMBER') || (record.visibility !== 'SHARED' && record.visibility !== 'PERSONAL')) throw new TypeError('account ownership')
+  if (!Object.hasOwn(record, 'ownerMemberId') || !Object.hasOwn(record, 'ownerMemberName')) throw new TypeError('account owner fields')
+  const ownerMemberId = asNullableString(record.ownerMemberId)
+  const ownerMemberName = asNullableString(record.ownerMemberName)
+  if ((record.ownershipKind === 'HOUSEHOLD' && ownerMemberId !== null) || (record.ownershipKind === 'MEMBER' && ownerMemberId === null)) throw new TypeError('account owner')
+  if ((record.ownershipKind === 'HOUSEHOLD' && ownerMemberName !== null) || (record.ownershipKind === 'MEMBER' && ownerMemberName === null)) throw new TypeError('account owner name')
   return {
     id: asRequiredString(record.id), name: asRequiredString(record.name),
     accountKind: record.accountKind as AccountDto['accountKind'],
     accountSubtype: record.accountSubtype as AccountDto['accountSubtype'], currency: 'JPY',
+    ownershipKind: record.ownershipKind, ownerMemberId, ownerMemberName, visibility: record.visibility,
   }
 }
 
