@@ -9,7 +9,7 @@ use import_workflow::{CommitSummary, ImportPreview, ImportSummary, PostingDecisi
 use key_store::OsDatabaseKeyProvider;
 use persistence::AppState;
 use read_model::{
-    AccountingBasis, CreateHouseholdInput, DashboardMonthlyTotalsDto, HouseholdDto,
+    AccountDto, AccountingBasis, CreateHouseholdInput, DashboardMonthlyTotalsDto, HouseholdDto,
     ImportRunCountsDto, TransactionPageDto, TransactionPageRequest,
 };
 use serde::{Deserialize, Serialize};
@@ -126,6 +126,16 @@ fn household_create(
 ) -> Result<HouseholdDto, String> {
     repository_result(&state, |connection| {
         read_model::create_household(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn accounts_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<AccountDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::list_accounts(connection, &household_id)
     })
 }
 
@@ -298,6 +308,7 @@ pub fn run() {
             app_status,
             households_list,
             household_create,
+            accounts_list,
             transactions_query,
             dashboard_query,
             import_summary,

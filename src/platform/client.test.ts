@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { createPlatformClient, isTauriRuntime, PlatformIpcError } from './client'
-import type { AppCommand, Invoke } from './types'
+import type { AppCommand, Invoke, PostingDecisionDto, StartImportDto } from './types'
 
 describe('platform client', () => {
   it('detects the Tauri v2 runtime without assuming window exists', () => {
@@ -28,6 +28,11 @@ describe('platform client', () => {
     })
     await expect(client.status()).resolves.toEqual({ schemaVersion: 0, integrity: 'failed' })
     await expect(client.listHouseholds()).resolves.toEqual([])
+    await expect(client.listAccounts('family')).resolves.toEqual([])
+    await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
+    await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
+    await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
+    await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
     expect(client.runtime).toBe('web')
     expect(invokeSpy).not.toHaveBeenCalled()
   })
@@ -39,9 +44,23 @@ describe('platform client', () => {
       app_status: { schemaVersion: 5, integrity: 'ok' },
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
       household_create: { id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' },
+      accounts_list: [{ id: 'family-bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' }],
       dashboard_query: { month: '2026-07', accountingBasis: 'ACCRUAL', incomeJpy: 650000, expenseJpy: 250000, savingsJpy: 400000, postedTransactionCount: 10 },
       transactions_query: { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
+      import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      import_preview: {
+        summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123' },
+        candidates: [{
+          id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
+          amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
+          externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000,
+          reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
+        }],
+      },
+      import_commit: { runId: 'run-1', postedCount: 1 },
+      import_rollback: null,
     }
     const invokeSpy = vi.fn()
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -49,17 +68,47 @@ describe('platform client', () => {
       return responses[command] as T
     }
     const client = createPlatformClient({ tauri: true, invoke })
+    const importRequest: StartImportDto = {
+      runId: 'run-1', documentId: 'document-1', householdId: 'family', sourceType: 'MANUAL_UPLOAD',
+      originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123',
+      sourceModifiedAt: null, adapterId: 'japanese-bank-ledger', adapterVersion: '1',
+      records: [{ id: 'record-1', rowNumber: 1, recordHash: 'record-hash', payloadJson: '{}' }],
+      candidates: [{
+        id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
+        amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
+        externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000,
+        reviewStatus: 'READY', evidence: [{ sourceRecordId: 'record-1', role: 'PRIMARY' }],
+      }],
+    }
+    const decisions: readonly PostingDecisionDto[] = [{
+      candidateId: 'candidate-1', transactionId: 'transaction-1', transactionType: 'EXPENSE',
+      payee: 'STORE', description: null,
+      entries: [
+        { id: 'entry-1', accountId: 'family-expense-other', side: 'DEBIT', amountJpy: 1200 },
+        { id: 'entry-2', accountId: 'family-bank', side: 'CREDIT', amountJpy: 1200 },
+      ],
+    }]
 
     await expect(client.bootstrap()).resolves.toEqual(responses.app_bootstrap)
     await expect(client.health()).resolves.toEqual(responses.app_health)
     await expect(client.status()).resolves.toEqual(responses.app_status)
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
     await expect(client.createHousehold({ id: 'family', name: 'Family' })).resolves.toEqual(responses.household_create)
+    await expect(client.listAccounts('family')).resolves.toEqual(responses.accounts_list)
     await expect(client.queryDashboard({ householdId: 'family', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
     await expect(client.queryTransactions({ householdId: 'family', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
     await expect(client.importSummary('family')).resolves.toEqual(responses.import_summary)
+    await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
+    await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
+    await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
+    await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
-    expect(invokeSpy).toHaveBeenCalledTimes(8)
+    expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
+    expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
+    expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
+    expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
+    expect(invokeSpy).toHaveBeenCalledTimes(13)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

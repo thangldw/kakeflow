@@ -52,7 +52,7 @@ describe('import mapper', () => {
 
     expect(result.request.records).toHaveLength(2)
     expect(result.request.candidates).toHaveLength(1)
-    expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['PRIMARY', 'SPLIT_FUNDING', 'SUPPORTING'])
+    expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['FUNDING_LEG', 'SUPPORTING'])
     expect(result.request.candidates[0]).toMatchObject({ amountJpy: 998, direction: 'OUT', externalTransactionId: 'pay-1' })
   })
 
@@ -67,7 +67,7 @@ describe('import mapper', () => {
     const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
 
     expect(result.request.candidates[0]).toMatchObject({ amountJpy: 3666, direction: 'IN', merchantRaw: 'ANTHROPIC' })
-    expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['PRIMARY', 'CONTINUATION'])
+    expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['CONTINUATION'])
   })
 
   it.each([

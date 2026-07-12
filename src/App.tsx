@@ -32,9 +32,11 @@ import {
 import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
+import { sha256Text } from './features/import/importService'
+import { mapParsedImportToStartImport } from './features/import/importMapper'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AppBootstrapDto, HouseholdDto } from './platform'
+import type { AccountDto, AppBootstrapDto, HouseholdDto, ImportPreviewDto, PostingDecisionDto, PreviewCandidateDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -235,9 +237,48 @@ function TransactionsPage() {
   </>
 }
 
-function ImportPage({ previews, setPreviews }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>> }) {
+function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDecisionDto {
+  const source = accounts.find((account) => account.id === candidate.accountId)
+  if (!source) throw new Error('Candidate source account is missing')
+  const expenseAccount = accounts.find((account) => account.id === `${householdId}-other-expense` && account.accountKind === 'EXPENSE')
+  const incomeAccount = accounts.find((account) => account.id === `${householdId}-income` && account.accountKind === 'INCOME')
+  const cardAccount = accounts.find((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
+  const text = `${candidate.merchantRaw ?? ''} ${candidate.descriptionRaw ?? ''}`
+  const looksLikeCardPayment = source.accountSubtype === 'BANK' && /(カード|CARD|JCB|AMEX|アメックス)/i.test(text)
+  const looksLikeRefund = /(返金|返品|REFUND|REVERSAL)/i.test(text)
+  let transactionType: string
+  let debitAccount: AccountDto | undefined
+  let creditAccount: AccountDto | undefined
+  if (looksLikeCardPayment && candidate.direction === 'OUT') {
+    transactionType = 'CARD_PAYMENT'; debitAccount = cardAccount; creditAccount = source
+  } else if (candidate.direction === 'OUT') {
+    transactionType = source.accountSubtype === 'CREDIT_CARD' ? 'CARD_PURCHASE' : 'EXPENSE'
+    debitAccount = expenseAccount; creditAccount = source
+  } else if (looksLikeRefund) {
+    transactionType = 'REFUND'; debitAccount = source; creditAccount = expenseAccount
+  } else {
+    transactionType = 'INCOME'; debitAccount = source; creditAccount = incomeAccount
+  }
+  if (!debitAccount || !creditAccount) throw new Error('Required ledger account is missing')
+  return {
+    candidateId: candidate.id,
+    transactionId: globalThis.crypto.randomUUID(),
+    transactionType,
+    payee: candidate.merchantRaw,
+    description: candidate.descriptionRaw,
+    entries: [
+      { id: globalThis.crypto.randomUUID(), accountId: debitAccount.id, side: 'DEBIT', amountJpy: candidate.amountJpy },
+      { id: globalThis.crypto.randomUUID(), accountId: creditAccount.id, side: 'CREDIT', amountJpy: candidate.amountJpy },
+    ],
+  }
+}
+
+function ImportPage({ previews, setPreviews, householdId, accounts }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[] }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const [activeRun, setActiveRun] = useState<string | null>(null)
+  const [staged, setStaged] = useState<Record<string, ImportPreviewDto>>({})
+  const [notice, setNotice] = useState('')
 
   const processFiles = async (files: FileList | readonly File[]) => {
     if (files.length === 0) return
@@ -249,6 +290,70 @@ function ImportPage({ previews, setPreviews }: { previews: ImportPreview[]; setP
       return Array.from(merged.values()).reverse()
     })
     setBusy(false)
+  }
+
+  const stageImport = async (item: ImportPreview) => {
+    if (!householdId || !item.fileBytes || !item.parsed || !item.detectedAdapterId) return
+    setActiveRun(item.id)
+    setNotice('')
+    try {
+      const defaultAccount = item.detectedAdapterId === 'japanese-bank-ledger-v1'
+        ? `${householdId}-bank`
+        : item.detectedAdapterId === 'paypay-history-v1' ? `${householdId}-wallet` : `${householdId}-card`
+      const mapping = await mapParsedImportToStartImport({
+        file: {
+          householdId, sourceType: 'MANUAL_UPLOAD', originalFilename: item.filename,
+          mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength,
+          sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null,
+          accountId: defaultAccount, adapterVersion: '1',
+        },
+        detectedAdapterId: item.detectedAdapterId,
+        parsed: item.parsed,
+      }, { next: () => globalThis.crypto.randomUUID() }, sha256Text)
+      if (mapping.issues.some((issue) => issue.severity === 'error') || mapping.request.candidates.length === 0) {
+        setPreviews((current) => current.map((preview) => preview.id === item.id ? {
+          ...preview, status: 'error', issues: [...preview.issues, ...mapping.issues.map((issue) => ({ code: issue.code, message: issue.message, severity: issue.severity, row: issue.sourceRow }))],
+        } : preview))
+        setNotice('正規化できない行があります。ファイル内容を確認してください。')
+        return
+      }
+      const summary = await platformClient.startImport(mapping.request, item.fileBytes)
+      const backendPreview = await platformClient.previewImport(summary.runId)
+      setStaged((current) => ({ ...current, [item.id]: backendPreview }))
+      setNotice(summary.reusedExisting ? '同じファイルの既存インポートを開きました。' : '原本を暗号化し、取引候補をステージングしました。')
+    } catch {
+      setNotice('インポートを開始できませんでした。データベースの状態を確認してください。')
+    } finally {
+      setActiveRun(null)
+    }
+  }
+
+  const commitRun = async (previewId: string, stagedImport: ImportPreviewDto) => {
+    setActiveRun(stagedImport.summary.runId)
+    setNotice('')
+    try {
+      const decisions = stagedImport.candidates.map((candidate) => suggestedPosting(candidate, accounts, householdId!))
+      const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
+      setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      setNotice(`${result.postedCount}件の取引を台帳へ反映しました。`)
+    } catch {
+      setNotice('台帳へ反映できませんでした。候補の口座と仕訳を確認してください。')
+    } finally {
+      setActiveRun(null)
+    }
+  }
+
+  const rollbackRun = async (previewId: string, runId: string) => {
+    setActiveRun(runId)
+    try {
+      await platformClient.rollbackImport(runId)
+      setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      setNotice('未確定のインポートを取り消しました。')
+    } catch {
+      setNotice('インポートを取り消せませんでした。')
+    } finally {
+      setActiveRun(null)
+    }
   }
 
   return <>
@@ -263,10 +368,12 @@ function ImportPage({ previews, setPreviews }: { previews: ImportPreview[]; setP
       <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルの「家計簿 Inbox」から自動検出</p></div><button className="text-btn">処理履歴</button></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSVをここにドロップ</span><small>PayPay・銀行・Rakuten・Amazon Mastercard</small></button>
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b><button className="icon-btn" aria-label={`${item.filename}の解析結果`} title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button></div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b>{item.status === 'ready' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : <button className="icon-btn" aria-label={`${item.filename}の解析結果`} title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button>}</div>)}
         {importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn" aria-label={`${item.file}のメニュー`}><MoreHorizontal size={18} /></button></div>)}
       </div>
     </section>
+    {notice && <div className="import-notice" role="status">{notice}</div>}
+    {Object.entries(staged).map(([previewId, stagedImport]) => <section className="panel review-panel" key={stagedImport.summary.runId}><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const suggestion = suggestedPosting(candidate, accounts, householdId!); return <div className="candidate-review-row" key={candidate.id}><div><strong>{candidate.merchantRaw ?? candidate.descriptionRaw ?? '名称未設定'}</strong><span>{candidate.occurredOn} ・ {candidate.direction}</span></div><span>{suggestion.transactionType}</span><strong>{yen(candidate.amountJpy)}</strong>{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><button className="secondary-btn" disabled={activeRun === stagedImport.summary.runId} onClick={() => void rollbackRun(previewId, stagedImport.summary.runId)}>取り消す</button><button className="primary-btn" disabled={activeRun === stagedImport.summary.runId || stagedImport.candidates.length === 0} onClick={() => void commitRun(previewId, stagedImport)}>{activeRun === stagedImport.summary.runId ? '処理中…' : '確認して台帳へ反映'}</button></div></section>)}
   </>
 }
 
@@ -325,6 +432,7 @@ function App() {
   const [importPreviews, setImportPreviews] = useState<ImportPreview[]>([])
   const [bootstrap, setBootstrap] = useState<AppBootstrapDto | null>(null)
   const [households, setHouseholds] = useState<readonly HouseholdDto[]>([])
+  const [accounts, setAccounts] = useState<readonly AccountDto[]>([])
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
 
   useEffect(() => {
@@ -343,10 +451,26 @@ function App() {
     })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    const householdId = households[0]?.id
+    if (!householdId || platformClient.runtime !== 'tauri') {
+      setAccounts([])
+      return
+    }
+    let active = true
+    void platformClient.listAccounts(householdId).then((result) => {
+      if (active) setAccounts(result)
+    }).catch(() => {
+      if (active) setAccounts([])
+    })
+    return () => { active = false }
+  }, [households])
+
   const pageContent = {
     overview: <Overview setPage={setPage} />,
     transactions: <TransactionsPage />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} />,
     cards: <CardsPage />,
     budgets: <BudgetsPage />,
   }[page]

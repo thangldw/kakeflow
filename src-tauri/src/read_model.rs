@@ -128,6 +128,7 @@ pub fn create_household(
     const ACCOUNTS: &[(&str, &str, &str, &str)] = &[
         ("bank", "Bank", "ASSET", "BANK"),
         ("cash", "Cash", "ASSET", "CASH"),
+        ("wallet", "Wallet", "ASSET", "WALLET"),
         ("card", "Credit Card", "LIABILITY", "CREDIT_CARD"),
         ("income", "Income", "INCOME", "OTHER"),
         ("groceries", "Groceries", "EXPENSE", "OTHER"),
@@ -166,6 +167,44 @@ pub fn create_household(
         .map_err(map_database_error)?;
     transaction.commit().map_err(map_database_error)?;
     Ok(household)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountDto {
+    pub id: String,
+    pub name: String,
+    pub account_kind: String,
+    pub account_subtype: String,
+    pub currency: String,
+}
+
+pub fn list_accounts(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<AccountDto>, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, account_kind, account_subtype, currency
+             FROM accounts WHERE household_id = ?1 AND is_archived = 0
+             ORDER BY account_kind, account_subtype, name, id",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map([household_id], |row| {
+            Ok(AccountDto {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                account_kind: row.get(2)?,
+                account_subtype: row.get(3)?,
+                currency: row.get(4)?,
+            })
+        })
+        .map_err(map_database_error)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(map_database_error)
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -596,7 +635,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 11);
+        assert_eq!(count, 12);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { decodeCsvBytes, detectImportAdapter } from '../../ingestion'
-import type { ParseIssue } from '../../ingestion'
+import type { AdapterId, ParsedImport, ParseIssue } from '../../ingestion'
 
 export interface ImportPreview {
   id: string
@@ -10,6 +10,11 @@ export interface ImportPreview {
   issues: readonly ParseIssue[]
   status: 'ready' | 'unsupported' | 'error'
   parsedAt: string
+  fileBytes?: Uint8Array
+  parsed?: ParsedImport<unknown>
+  detectedAdapterId?: AdapterId
+  mediaType?: string
+  sourceModifiedAt?: string
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -19,6 +24,10 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   if (!globalThis.crypto?.subtle) throw new Error('Secure file hashing is unavailable')
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes.slice().buffer)
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export function sha256Text(value: string): Promise<string> {
+  return sha256Hex(new TextEncoder().encode(value))
 }
 
 async function readFileBytes(file: File): Promise<Uint8Array> {
@@ -61,7 +70,9 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
       id, filename: file.name, adapterId: detected.adapter.id, encoding,
       recordCount: parsed.records.length, issues: parsed.issues,
       status: parsed.issues.some((issue) => issue.severity === 'error') ? 'error' : 'ready',
-      parsedAt: new Date().toISOString(),
+      parsedAt: new Date().toISOString(), fileBytes: bytes, parsed,
+      detectedAdapterId: detected.adapter.id, mediaType: file.type || 'text/csv',
+      sourceModifiedAt: new Date(file.lastModified).toISOString(),
     }
   } catch (error) {
     return {
