@@ -10,6 +10,12 @@ const allocation = {
   soldOn: '2026-03-01', acquiredOn: '2026-01-01', quantity: 1, allocatedCostBasis: 100, allocatedNetProceeds: 150, realizedPnl: 50,
   buySourceDocumentId: 'doc-buy', buySourceRow: 1, sellSourceDocumentId: 'doc-sell', sellSourceRow: 2,
 }
+const mergerAllocation = {
+  actionEventId: 'merger', actionType: 'MERGER_STOCK', actionOn: '2026-05-01', actionSourceDocumentId: 'merger-doc', actionSourceRow: 8,
+  sourceBuyEventId: 'buy', sourceBuySourceDocumentId: 'buy-doc', sourceBuySourceRow: 1,
+  fromInstrumentCode: 'ABC', targetInstrumentCode: 'XYZ', sourceCurrency: 'USD', sourceCostBasis: 100,
+  conversionRate: 0.92, currency: 'EUR', quantity: 0.5, allocatedCostBasis: 92, cashAmount: 0, realizedPnl: null,
+}
 
 describe('investment performance platform boundary', () => {
   it('queries and validates FIFO holdings with auditable event IDs', async () => {
@@ -31,14 +37,22 @@ describe('investment performance platform boundary', () => {
       totalsByCurrency: [
         { currency: 'JPY', buyGross: 100, sellGross: 150, realizedPnl: 50, dividendGross: 0, fees: 0, taxes: 0 },
         { currency: 'USD', buyGross: 0, sellGross: 0, realizedPnl: 0, dividendGross: 10, fees: 1, taxes: 2 },
-      ], realizedAllocations: [allocation], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [],
+      ], realizedAllocations: [allocation], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: ['merger'], corporateActionAllocations: [mergerAllocation],
     })) as unknown as InvestmentPerformanceInvoke
     const result = await createInvestmentPerformancePlatform(invoke).queryPerformance({ householdId: 'home', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
     expect(result.totalsByCurrency.map((item) => item.currency)).toEqual(['JPY', 'USD'])
+    expect(result.corporateActionAllocations[0]).toMatchObject({ actionType: 'MERGER_STOCK', sourceCurrency: 'USD', currency: 'EUR', conversionRate: 0.92 })
   })
 
   it('rejects malformed native responses instead of coercing them', async () => {
     const invoke = vi.fn(async () => ({ asOf: '2026-12-31', costBasisMethod: 'AVERAGE', positions: [], openLots: [], realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [] })) as unknown as InvestmentPerformanceInvoke
     await expect(createInvestmentPerformancePlatform(invoke).queryHoldings({ householdId: 'home', asOf: '2026-12-31' })).rejects.toThrow('costBasisMethod')
+  })
+
+  it('rejects merger allocations without source provenance or a positive explicit rate', async () => {
+    const response = { dateFrom: null, dateTo: null, costBasisMethod: 'FIFO', totalsByCurrency: [], realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: ['merger'], corporateActionAllocations: [{ ...mergerAllocation, sourceBuySourceRow: null }] }
+    await expect(createInvestmentPerformancePlatform(async () => response).queryPerformance({ householdId: 'home' })).rejects.toThrow('merger source')
+    await expect(createInvestmentPerformancePlatform(async () => ({ ...response, corporateActionAllocations: [{ ...mergerAllocation, conversionRate: 0 }] })).queryPerformance({ householdId: 'home' })).rejects.toThrow('conversionRate')
+    await expect(createInvestmentPerformancePlatform(async () => ({ ...response, corporateActionAllocations: [{ ...mergerAllocation, conversionRate: null }] })).queryPerformance({ householdId: 'home' })).rejects.toThrow('conversion rate')
   })
 })

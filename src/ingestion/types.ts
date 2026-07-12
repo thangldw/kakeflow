@@ -237,4 +237,9 @@ export interface BrokerageEventCandidate {
   subscriptionAmount?: number
   cashInLieuAmount?: number
   cashInLieuQuantity?: number
+  mergerCashAmount?: number
+  mergerCashCurrency?: string
+  mergerStockCostBasisRatio?: number
+  sourceToTargetFxRate?: number
+  sourceToCashFxRate?: number
 }

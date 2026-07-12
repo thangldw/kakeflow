@@ -22,13 +22,21 @@ describe('brokerage platform boundary', () => {
     expect(input.events[0].legs.map((leg) => leg.id)).toEqual(['batch-e-1-l-1', 'batch-e-1-l-2', 'batch-e-1-l-3'])
   })
 
+  it('forwards explicit mixed-currency merger allocation fields', () => {
+    const merger: BrokerageEventCandidate = { ...candidate, eventType: 'MERGER', grossAmount: 0, feeAmount: 0, settlementAmount: 0, corporateActionRatio: 0.5, targetInstrumentCode: 'XYZ', targetInstrumentName: 'Combined', targetCurrency: 'EUR', mergerCashAmount: 300, mergerCashCurrency: 'JPY', mergerStockCostBasisRatio: 0.75, sourceToTargetFxRate: 0.92, sourceToCashFxRate: 150, legs: [{ kind: 'SECURITY', signedAmount: 0, signedQuantity: -1, currency: 'USD', description: 'Surrender' }, { kind: 'SECURITY', signedAmount: 0, signedQuantity: 0.5, currency: 'EUR', description: 'Receive' }, { kind: 'CASH', signedAmount: 300, currency: 'JPY', description: 'Cash' }, { kind: 'ADJUSTMENT', signedAmount: -300, currency: 'JPY', description: 'Allocation' }], currency: 'USD' }
+    const input = mapBrokerageEventsImport([merger], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' })
+    expect(input.events[0]).toMatchObject({ mergerCashAmount: 300, mergerCashCurrency: 'JPY', mergerStockCostBasisRatio: 0.75, sourceToTargetFxRate: 0.92, sourceToCashFxRate: 150 })
+  })
+
   it('rejects an unbalanced candidate before native persistence', () => {
     const invalid = { ...candidate, legs: candidate.legs.slice(0, 2) }
     expect(() => mapBrokerageEventsImport([invalid], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' })).toThrow('balance')
+    const crossCurrencyNetZero = { ...candidate, legs: [{ kind: 'CASH' as const, signedAmount: 100, currency: 'USD', description: 'USD' }, { kind: 'CASH' as const, signedAmount: -100, currency: 'JPY', description: 'JPY' }] }
+    expect(() => mapBrokerageEventsImport([crossCurrencyNetZero], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' })).toThrow('per currency')
   })
 
   it('strictly validates native history responses', async () => {
-    const event = { ...mapBrokerageEventsImport([candidate], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' }).events[0], accountId: 'broker', accountName: 'Broker', sourceDocumentId: 'doc', corporateActionRatio: null, targetInstrumentCode: null, targetInstrumentName: null, targetCurrency: null, costBasisAllocationRatio: null, subscriptionAmount: null, cashInLieuAmount: null, cashInLieuQuantity: null, legs: [{ id: 'leg', lineNumber: 1, kind: 'CASH', signedAmount: 1, currency: 'JPY', description: 'Cash' }] }
+    const event = { ...mapBrokerageEventsImport([candidate], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' }).events[0], accountId: 'broker', accountName: 'Broker', sourceDocumentId: 'doc', corporateActionRatio: null, targetInstrumentCode: null, targetInstrumentName: null, targetCurrency: null, costBasisAllocationRatio: null, subscriptionAmount: null, cashInLieuAmount: null, cashInLieuQuantity: null, mergerCashAmount: null, mergerCashCurrency: null, mergerStockCostBasisRatio: null, sourceToTargetFxRate: null, sourceToCashFxRate: null, legs: [{ id: 'leg', lineNumber: 1, kind: 'CASH', signedAmount: 1, currency: 'JPY', description: 'Cash' }] }
     const invoke = vi.fn(async (command: string) => command === 'brokerage_events_import'
       ? { sourceDocumentId: 'doc', importedEventCount: 1, importedLegCount: 3 }
       : { events: [event], totalsByCurrency: [{ currency: 'JPY', buyGross: 10000, sellGross: 0, dividendGross: 0, fees: 100, taxes: 0, deposits: 0, withdrawals: 0, netCashMovement: -10100 }] }) as unknown as BrokerageInvoke
