@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt};
 
 use crate::record_scope::{
-    attribution_shape_is_valid, audience_shape_is_valid, AttributionKind, AudienceVisibility,
+    attribution_shape_is_valid, audience_shape_is_valid, validate_attribution_scope,
+    AttributionKind, AttributionScope, AttributionScopeValidationError, AudienceVisibility,
 };
 
 const MAX_PAGE_SIZE: u32 = 100;
@@ -105,6 +106,20 @@ fn validate_account_group_scope(
             }
             _ => RepositoryError::Unavailable,
         })
+}
+
+fn validate_read_attribution_scope(
+    connection: &Connection,
+    household_id: &str,
+    scope: &AttributionScope,
+) -> Result<(), RepositoryError> {
+    validate_attribution_scope(connection, household_id, scope).map_err(|error| match error {
+        AttributionScopeValidationError::InvalidMemberId => {
+            RepositoryError::InvalidInput("Invalid attribution member")
+        }
+        AttributionScopeValidationError::MemberNotFound => RepositoryError::NotFound,
+        AttributionScopeValidationError::Database => RepositoryError::Unavailable,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -812,6 +827,8 @@ impl AccountingBasis {
 pub struct TransactionPageRequest {
     pub household_id: String,
     pub account_group_id: Option<String>,
+    #[serde(default)]
+    pub attribution_scope: AttributionScope,
     pub accounting_basis: AccountingBasis,
     pub from_date: Option<String>,
     pub to_date: Option<String>,
@@ -881,6 +898,11 @@ pub fn list_transactions(
         &request.household_id,
         request.account_group_id.as_deref(),
     )?;
+    validate_read_attribution_scope(
+        connection,
+        &request.household_id,
+        &request.attribution_scope,
+    )?;
 
     let basis = request.accounting_basis.as_sql_value();
     let search = search_pattern(request.search.as_deref())?;
@@ -911,14 +933,20 @@ pub fn list_transactions(
                       ON scope_gm.account_id = scope_je.account_id
                      AND scope_gm.household_id = t.household_id
                     WHERE scope_je.transaction_id = t.id
-                      AND scope_gm.account_group_id = ?6))",
+                      AND scope_gm.account_group_id = ?6))
+               AND (?7 = 'ALL'
+                    OR (?7 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                    OR (?7 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                        AND t.attributed_member_id = ?8))",
             params![
                 request.household_id,
                 request.from_date,
                 request.to_date,
                 basis,
                 search,
-                request.account_group_id
+                request.account_group_id,
+                request.attribution_scope.sql_kind(),
+                request.attribution_scope.member_id()
             ],
             |row| row.get(0),
         )
@@ -979,8 +1007,12 @@ pub fn list_transactions(
                      AND scope_gm.household_id = t.household_id
                     WHERE scope_je.transaction_id = t.id
                       AND scope_gm.account_group_id = ?6))
+               AND (?7 = 'ALL'
+                    OR (?7 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                    OR (?7 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                        AND t.attributed_member_id = ?8))
              ORDER BY t.occurred_on DESC, t.created_at DESC, t.id DESC
-             LIMIT ?7 OFFSET ?8",
+             LIMIT ?9 OFFSET ?10",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -992,6 +1024,8 @@ pub fn list_transactions(
                 basis,
                 search,
                 request.account_group_id,
+                request.attribution_scope.sql_kind(),
+                request.attribution_scope.member_id(),
                 i64::from(request.page_size),
                 offset as i64
             ],
@@ -1432,6 +1466,7 @@ pub fn create_manual_transaction(
         &TransactionPageRequest {
             household_id: input.household_id.clone(),
             account_group_id: None,
+            attribution_scope: AttributionScope::All,
             accounting_basis: if input.transaction_type == ManualTransactionType::CardPayment {
                 AccountingBasis::Cash
             } else {
@@ -1712,11 +1747,13 @@ pub fn dashboard_monthly_totals(
     month: &str,
     accounting_basis: AccountingBasis,
     account_group_id: Option<&str>,
+    attribution_scope: &AttributionScope,
 ) -> Result<DashboardMonthlyTotalsDto, RepositoryError> {
     validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
     validate_month(connection, month)?;
     ensure_household_exists(connection, household_id)?;
     validate_account_group_scope(connection, household_id, account_group_id)?;
+    validate_read_attribution_scope(connection, household_id, attribution_scope)?;
     let start = format!("{month}-01");
 
     let (income_jpy, expense_jpy, posted_transaction_count): (i64, i64, u64) =
@@ -1739,8 +1776,13 @@ pub fn dashboard_monthly_totals(
                    AND (?3 IS NULL OR EXISTS (
                      SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
                        ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
-                     WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))",
-                params![household_id, start, account_group_id],
+                     WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
+                   AND (?4 = 'ALL'
+                     OR (?4 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                     OR (?4 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                       AND t.attributed_member_id = ?5))",
+                params![household_id, start, account_group_id,
+                    attribution_scope.sql_kind(), attribution_scope.member_id()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ),
             AccountingBasis::Cash => connection.query_row(
@@ -1760,6 +1802,10 @@ pub fn dashboard_monthly_totals(
                        SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
                          ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
                        WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
+                     AND (?4 = 'ALL'
+                       OR (?4 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                       OR (?4 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                         AND t.attributed_member_id = ?5))
                    GROUP BY t.id
                  )
                  SELECT
@@ -1767,7 +1813,8 @@ pub fn dashboard_monthly_totals(
                    COALESCE(SUM(CASE WHEN asset_delta < 0 THEN -asset_delta ELSE 0 END), 0),
                    count(*)
                  FROM cash_by_transaction",
-                params![household_id, start, account_group_id],
+                params![household_id, start, account_group_id,
+                    attribution_scope.sql_kind(), attribution_scope.member_id()],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ),
         }
@@ -1821,6 +1868,10 @@ pub fn dashboard_monthly_totals(
                 SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
                   ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
                 WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
+              AND (?4 = 'ALL'
+                OR (?4 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                OR (?4 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                  AND t.attributed_member_id = ?5))
              LEFT JOIN journal_entries je ON je.transaction_id = t.id
              LEFT JOIN accounts a ON a.id = je.account_id
              GROUP BY months.month_start
@@ -1828,13 +1879,22 @@ pub fn dashboard_monthly_totals(
         )
         .map_err(map_database_error)?;
     let accrual_trend = trend_statement
-        .query_map(params![household_id, start, account_group_id], |row| {
-            Ok(DashboardAccrualTrendPointDto {
-                month: row.get(0)?,
-                income_jpy: row.get(1)?,
-                expense_jpy: row.get(2)?,
-            })
-        })
+        .query_map(
+            params![
+                household_id,
+                start,
+                account_group_id,
+                attribution_scope.sql_kind(),
+                attribution_scope.member_id()
+            ],
+            |row| {
+                Ok(DashboardAccrualTrendPointDto {
+                    month: row.get(0)?,
+                    income_jpy: row.get(1)?,
+                    expense_jpy: row.get(2)?,
+                })
+            },
+        )
         .map_err(map_database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_database_error)?;
@@ -1853,19 +1913,32 @@ pub fn dashboard_monthly_totals(
                  SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
                    ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
                  WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
+               AND (?4 = 'ALL'
+                 OR (?4 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
+                 OR (?4 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
+                   AND t.attributed_member_id = ?5))
              GROUP BY a.id, a.name
              HAVING SUM(CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END) != 0
              ORDER BY 3 DESC, a.name ASC, a.id ASC",
         )
         .map_err(map_database_error)?;
     let expense_categories = categories_statement
-        .query_map(params![household_id, start, account_group_id], |row| {
-            Ok(DashboardExpenseCategoryDto {
-                account_id: row.get(0)?,
-                name: row.get(1)?,
-                amount_jpy: row.get(2)?,
-            })
-        })
+        .query_map(
+            params![
+                household_id,
+                start,
+                account_group_id,
+                attribution_scope.sql_kind(),
+                attribution_scope.member_id()
+            ],
+            |row| {
+                Ok(DashboardExpenseCategoryDto {
+                    account_id: row.get(0)?,
+                    name: row.get(1)?,
+                    amount_jpy: row.get(2)?,
+                })
+            },
+        )
         .map_err(map_database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_database_error)?;
@@ -3789,6 +3862,7 @@ mod tests {
             &TransactionPageRequest {
                 household_id: "family".to_owned(),
                 account_group_id: None,
+                attribution_scope: AttributionScope::All,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -3805,6 +3879,7 @@ mod tests {
                 ..TransactionPageRequest {
                     household_id: "family".to_owned(),
                     account_group_id: None,
+                    attribution_scope: AttributionScope::All,
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
@@ -3826,6 +3901,7 @@ mod tests {
             "2026-07",
             AccountingBasis::Accrual,
             None,
+            &AttributionScope::All,
         )
         .unwrap();
         let cash_totals = dashboard_monthly_totals(
@@ -3834,6 +3910,7 @@ mod tests {
             "2026-07",
             AccountingBasis::Cash,
             None,
+            &AttributionScope::All,
         )
         .unwrap();
         assert_eq!(accrual_totals.income_jpy, 3000);
@@ -3887,6 +3964,7 @@ mod tests {
             &TransactionPageRequest {
                 household_id: "family".into(),
                 account_group_id: Some("purchase-scope".into()),
+                attribution_scope: AttributionScope::All,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -3904,6 +3982,7 @@ mod tests {
             "2026-07",
             AccountingBasis::Accrual,
             Some("purchase-scope"),
+            &AttributionScope::All,
         )
         .unwrap();
         assert_eq!(scoped_totals.posted_transaction_count, 1);
@@ -3914,7 +3993,8 @@ mod tests {
                 "family",
                 "2026-07",
                 AccountingBasis::Accrual,
-                Some("foreign-scope")
+                Some("foreign-scope"),
+                &AttributionScope::All,
             ),
             Err(RepositoryError::NotFound)
         ));
@@ -3940,6 +4020,7 @@ mod tests {
             &TransactionPageRequest {
                 household_id: "family".into(),
                 account_group_id: None,
+                attribution_scope: AttributionScope::All,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -3956,6 +4037,7 @@ mod tests {
                 ..TransactionPageRequest {
                     household_id: "family".into(),
                     account_group_id: None,
+                    attribution_scope: AttributionScope::All,
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
@@ -3976,6 +4058,7 @@ mod tests {
             &TransactionPageRequest {
                 household_id: "family".into(),
                 account_group_id: None,
+                attribution_scope: AttributionScope::All,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -4001,6 +4084,7 @@ mod tests {
                 ..TransactionPageRequest {
                     household_id: "family".into(),
                     account_group_id: None,
+                    attribution_scope: AttributionScope::All,
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
@@ -4012,6 +4096,141 @@ mod tests {
         )
         .unwrap();
         assert_eq!(literal_wildcard.total_items, 0);
+    }
+
+    #[test]
+    fn attribution_scope_filters_transactions_and_dashboard_but_not_net_worth() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        create_household_member(
+            &connection,
+            &CreateHouseholdMemberInput {
+                id: "family-alice".into(),
+                household_id: "family".into(),
+                display_name: "Alice".into(),
+                relationship_label: None,
+            },
+        )
+        .unwrap();
+        archive_household_member(&connection, "family", "family-alice").unwrap();
+        create_manual_transaction(&connection, &manual_expense("common", "family", 100)).unwrap();
+        let mut alice_grocery = manual_expense("alice-grocery", "family", 200);
+        alice_grocery.attribution_kind = AttributionKind::Member;
+        alice_grocery.attributed_member_id = Some("family-alice".into());
+        create_manual_transaction(&connection, &alice_grocery).unwrap();
+        let mut alice_housing = manual_expense("alice-housing", "family", 300);
+        alice_housing.attribution_kind = AttributionKind::Member;
+        alice_housing.attributed_member_id = Some("family-alice".into());
+        alice_housing.entries[0].account_id = "family-housing".into();
+        create_manual_transaction(&connection, &alice_housing).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO account_groups VALUES ('groceries','family','Groceries','CUSTOM',0);
+                 INSERT INTO account_group_members VALUES
+                   ('family','groceries','family-groceries',0);",
+            )
+            .unwrap();
+
+        let alice_scope = AttributionScope::Member {
+            member_id: "family-alice".into(),
+        };
+        let alice = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: alice_scope.clone(),
+                accounting_basis: AccountingBasis::Accrual,
+                from_date: None,
+                to_date: None,
+                search: None,
+                page: 1,
+                page_size: 20,
+            },
+        )
+        .unwrap();
+        assert_eq!(alice.total_items, 2);
+        let common = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                attribution_scope: AttributionScope::HouseholdCommon,
+                ..TransactionPageRequest {
+                    household_id: "family".into(),
+                    account_group_id: None,
+                    attribution_scope: AttributionScope::All,
+                    accounting_basis: AccountingBasis::Accrual,
+                    from_date: None,
+                    to_date: None,
+                    search: None,
+                    page: 1,
+                    page_size: 20,
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(common.total_items, 1);
+        let intersected = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                household_id: "family".into(),
+                account_group_id: Some("groceries".into()),
+                attribution_scope: alice_scope.clone(),
+                accounting_basis: AccountingBasis::Accrual,
+                from_date: None,
+                to_date: None,
+                search: None,
+                page: 1,
+                page_size: 20,
+            },
+        )
+        .unwrap();
+        assert_eq!(intersected.total_items, 1);
+        assert_eq!(intersected.items[0].id, "alice-grocery");
+
+        let dashboard = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Accrual,
+            None,
+            &alice_scope,
+        )
+        .unwrap();
+        assert_eq!(dashboard.expense_jpy, 500);
+        assert_eq!(dashboard.posted_transaction_count, 2);
+        assert_eq!(dashboard.net_worth_jpy, -600);
+        assert_eq!(dashboard.accrual_trend.last().unwrap().expense_jpy, 500);
+        assert_eq!(dashboard.expense_categories.len(), 2);
+
+        assert!(matches!(
+            list_transactions(
+                &connection,
+                &TransactionPageRequest {
+                    attribution_scope: AttributionScope::Member {
+                        member_id: "foreign-member".into()
+                    },
+                    ..TransactionPageRequest {
+                        household_id: "family".into(),
+                        account_group_id: None,
+                        attribution_scope: AttributionScope::All,
+                        accounting_basis: AccountingBasis::Accrual,
+                        from_date: None,
+                        to_date: None,
+                        search: None,
+                        page: 1,
+                        page_size: 20,
+                    }
+                }
+            ),
+            Err(RepositoryError::NotFound)
+        ));
     }
 
     #[test]
@@ -4477,6 +4696,7 @@ mod tests {
             "2026-02",
             AccountingBasis::Accrual,
             None,
+            &AttributionScope::All,
         )
         .unwrap();
 
@@ -4813,6 +5033,7 @@ mod tests {
             &TransactionPageRequest {
                 household_id: "family".to_owned(),
                 account_group_id: None,
+                attribution_scope: AttributionScope::All,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
