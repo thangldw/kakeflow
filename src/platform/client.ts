@@ -24,9 +24,15 @@ import type {
   PreviewCandidateDto,
   TransactionPageDto,
   TransactionDetailDto,
+  SourceDocumentViewDto,
+  SourceRecordPageDto,
+  SourceRecordViewDto,
   WatchedFolderDto,
   WatchedFileMetadataDto,
   SavingsGoalDto,
+  AppliedClassificationDto,
+  ClassificationPreviewDto,
+  ClassificationRuleDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -103,6 +109,9 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       createManualTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_manual_create') },
       getTransactionDetail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_detail_get') },
       updateTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_update') },
+      getSourceDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_get') },
+      querySourceDocumentRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_records_query') },
+      listTransactionSourceRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_source_records_list') },
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
       removeWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_remove') },
@@ -115,6 +124,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       createSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_create') },
       updateSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_update') },
       deleteSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_delete') },
+      listClassificationRules: async () => [],
+      createClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_create') },
+      updateClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_update') },
+      deleteClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_delete') },
+      previewClassificationRules: async () => ({ winningRuleId: null, matches: [] }),
+      applyClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_apply') },
       importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 }),
       startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
@@ -145,6 +160,9 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     createManualTransaction: (input) => invokeValidated(invoke, 'transaction_manual_create', parseTransactionRow, { input }),
     getTransactionDetail: (householdId, transactionId) => invokeValidated(invoke, 'transaction_detail_get', parseTransactionDetail, { householdId, transactionId }),
     updateTransaction: (input) => invokeValidated(invoke, 'transaction_update', parseTransactionDetail, { input }),
+    getSourceDocument: (householdId, sourceDocumentId) => invokeValidated(invoke, 'source_document_get', parseSourceDocument, { householdId, sourceDocumentId }),
+    querySourceDocumentRecords: (request) => invokeValidated(invoke, 'source_document_records_query', parseSourceRecordPage, { request }),
+    listTransactionSourceRecords: (householdId, transactionId) => invokeValidated(invoke, 'transaction_source_records_list', parseSourceRecords, { householdId, transactionId }),
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
     selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
     removeWatchedFolder: async (householdId, watchedFolderId) => { await invokeValidated(invoke, 'watched_folder_remove', parseVoid, { householdId, watchedFolderId }) },
@@ -157,6 +175,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     createSavingsGoal: (input) => invokeValidated(invoke, 'savings_goal_create', parseSavingsGoal, { input }),
     updateSavingsGoal: (input) => invokeValidated(invoke, 'savings_goal_update', parseSavingsGoal, { input }),
     deleteSavingsGoal: async (householdId, goalId) => { await invokeValidated(invoke, 'savings_goal_delete', parseVoid, { householdId, goalId }) },
+    listClassificationRules: (householdId) => invokeValidated(invoke, 'classification_rules_list', parseClassificationRules, { householdId }),
+    createClassificationRule: (input) => invokeValidated(invoke, 'classification_rule_create', parseClassificationRule, { input }),
+    updateClassificationRule: (input) => invokeValidated(invoke, 'classification_rule_update', parseClassificationRule, { input }),
+    deleteClassificationRule: async (householdId, ruleId) => { await invokeValidated(invoke, 'classification_rule_delete', parseVoid, { householdId, ruleId }) },
+    previewClassificationRules: (input) => invokeValidated(invoke, 'classification_rules_preview', parseClassificationPreview, { input }),
+    applyClassificationRule: (input) => invokeValidated(invoke, 'classification_rule_apply', parseAppliedClassification, { input }),
     importSummary: (householdId) => invokeValidated(invoke, 'import_summary', parseImportSummary, { householdId }),
     startImport: (request, fileBytes) => invokeValidated(invoke, 'import_start', parseImportSummaryDto, { request: { import: request, fileBytes: Array.from(fileBytes) } }),
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
@@ -344,6 +368,44 @@ function parseSavingsGoals(value: unknown): readonly SavingsGoalDto[] {
   return value.map(parseSavingsGoal)
 }
 
+function parseStringList(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.length > 0)) throw new TypeError('string list')
+  return value
+}
+
+function parseClassificationRule(value: unknown): ClassificationRuleDto {
+  const record = asRecord(value)
+  if (typeof record.isEnabled !== 'boolean') throw new TypeError('classification rule')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), name: asRequiredString(record.name),
+    priority: asSafeInteger(record.priority), isEnabled: record.isEnabled,
+    merchantContains: asNullableString(record.merchantContains), descriptionContains: asNullableString(record.descriptionContains),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
+    labels: parseStringList(record.labels), tags: parseStringList(record.tags),
+    createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+function parseClassificationRules(value: unknown): readonly ClassificationRuleDto[] {
+  if (!Array.isArray(value)) throw new TypeError('classification rules')
+  return value.map(parseClassificationRule)
+}
+
+function parseClassificationPreview(value: unknown): ClassificationPreviewDto {
+  const record = asRecord(value)
+  return { winningRuleId: asNullableString(record.winningRuleId), matches: parseClassificationRules(record.matches) }
+}
+
+function parseAppliedClassification(value: unknown): AppliedClassificationDto {
+  const record = asRecord(value)
+  return {
+    transactionId: asRequiredString(record.transactionId), ruleId: asRequiredString(record.ruleId),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
+    labels: parseStringList(record.labels), tags: parseStringList(record.tags),
+    transactionUpdatedAt: asRequiredString(record.transactionUpdatedAt),
+  }
+}
+
 function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
   const record = asRecord(value)
   if (typeof record.month !== 'string' || typeof record.netWorthAsOf !== 'string' || (record.accountingBasis !== 'ACCRUAL' && record.accountingBasis !== 'CASH') || !Array.isArray(record.accrualTrend) || !Array.isArray(record.expenseCategories)) throw new TypeError('dashboard')
@@ -412,6 +474,40 @@ function parseTransactionDetail(value: unknown): TransactionDetailDto {
     status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable,
     entries: record.entries.map((item) => { const entry = asRecord(item); if (entry.side !== 'DEBIT' && entry.side !== 'CREDIT') throw new TypeError('journal entry'); return { id: asRequiredString(entry.id), accountId: asRequiredString(entry.accountId), accountName: asRequiredString(entry.accountName), accountKind: asRequiredString(entry.accountKind), side: entry.side, amountJpy: asSafeSignedInteger(entry.amountJpy), lineNumber: asSafeInteger(entry.lineNumber) } }),
     sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole) } }),
+  }
+}
+
+function parseSourceDocument(value: unknown): SourceDocumentViewDto {
+  const record = asRecord(value)
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), importRunId: asRequiredString(record.importRunId),
+    sourceType: asRequiredString(record.sourceType), originalFilename: asRequiredString(record.originalFilename), mediaType: asRequiredString(record.mediaType),
+    byteSize: asSafeInteger(record.byteSize), sha256: asRequiredString(record.sha256), sourceModifiedAt: asNullableString(record.sourceModifiedAt),
+    importedAt: asRequiredString(record.importedAt), adapterId: asNullableString(record.adapterId), adapterVersion: asNullableString(record.adapterVersion),
+    recordCount: asSafeInteger(record.recordCount),
+  }
+}
+
+function parseSourceRecord(value: unknown): SourceRecordViewDto {
+  const record = asRecord(value)
+  const payloadJson = asRequiredString(record.payloadJson)
+  try { JSON.parse(payloadJson) } catch { throw new TypeError('source record payload') }
+  return {
+    id: asRequiredString(record.id), sourceDocumentId: asRequiredString(record.sourceDocumentId), rowNumber: asSafeInteger(record.rowNumber),
+    recordHash: asRequiredString(record.recordHash), payloadJson, createdAt: asRequiredString(record.createdAt), evidenceRole: asNullableString(record.evidenceRole),
+  }
+}
+
+function parseSourceRecords(value: unknown): readonly SourceRecordViewDto[] {
+  if (!Array.isArray(value)) throw new TypeError('source records')
+  return value.map(parseSourceRecord)
+}
+
+function parseSourceRecordPage(value: unknown): SourceRecordPageDto {
+  const record = asRecord(value)
+  return {
+    items: parseSourceRecords(record.items), page: asSafeInteger(record.page), pageSize: asSafeInteger(record.pageSize),
+    totalItems: asSafeInteger(record.totalItems), totalPages: asSafeInteger(record.totalPages),
   }
 }
 

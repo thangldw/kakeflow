@@ -167,6 +167,21 @@ export interface TransactionDetailDto {
   readonly entries: readonly TransactionJournalEntryDto[]; readonly sourceEvidence: readonly TransactionSourceEvidenceDto[]
 }
 export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string }
+export interface SourceDocumentViewDto {
+  readonly id: string; readonly householdId: string; readonly importRunId: string; readonly sourceType: string
+  readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
+  readonly sourceModifiedAt: string | null; readonly importedAt: string; readonly adapterId: string | null
+  readonly adapterVersion: string | null; readonly recordCount: number
+}
+export interface SourceRecordViewDto {
+  readonly id: string; readonly sourceDocumentId: string; readonly rowNumber: number; readonly recordHash: string
+  readonly payloadJson: string; readonly createdAt: string; readonly evidenceRole: string | null
+}
+export interface SourceRecordPageRequestDto { readonly householdId: string; readonly sourceDocumentId: string; readonly page: number; readonly pageSize: number }
+export interface SourceRecordPageDto {
+  readonly items: readonly SourceRecordViewDto[]; readonly page: number; readonly pageSize: number
+  readonly totalItems: number; readonly totalPages: number
+}
 export interface WatchedFolderDto { readonly id: string; readonly householdId: string; readonly label: string; readonly displayName: string; readonly isEnabled: boolean; readonly createdAt: string }
 export interface WatchedFileMetadataDto { readonly relativePath: string; readonly fileName: string; readonly mediaType: string; readonly byteSize: number; readonly modifiedUnixMs: number | null }
 export interface WatchedFolderScanDto { readonly watchedFolderId: string; readonly files: readonly WatchedFileMetadataDto[] }
@@ -201,6 +216,28 @@ export interface SavingsGoalDto { readonly id: string; readonly householdId: str
 export interface CreateSavingsGoalInputDto { readonly id: string; readonly householdId: string; readonly name: string; readonly targetJpy: number; readonly savedJpy: number; readonly targetDate: string; readonly status: SavingsGoalStatusDto }
 export type UpdateSavingsGoalInputDto = CreateSavingsGoalInputDto
 
+export interface ClassificationRuleDto {
+  readonly id: string; readonly householdId: string; readonly name: string; readonly priority: number; readonly isEnabled: boolean
+  readonly merchantContains: string | null; readonly descriptionContains: string | null
+  readonly categoryAccountId: string; readonly categoryName: string; readonly labels: readonly string[]; readonly tags: readonly string[]
+  readonly createdAt: string; readonly updatedAt: string
+}
+export interface CreateClassificationRuleInputDto {
+  readonly id: string; readonly householdId: string; readonly name: string; readonly priority: number; readonly isEnabled: boolean
+  readonly merchantContains: string | null; readonly descriptionContains: string | null; readonly categoryAccountId: string
+  readonly labels: readonly string[]; readonly tags: readonly string[]
+}
+export type UpdateClassificationRuleInputDto = CreateClassificationRuleInputDto
+export interface ClassificationPreviewInputDto { readonly householdId: string; readonly merchant: string | null; readonly description: string | null }
+export interface ClassificationPreviewDto { readonly winningRuleId: string | null; readonly matches: readonly ClassificationRuleDto[] }
+export interface ApplyClassificationRuleInputDto {
+  readonly householdId: string; readonly transactionId: string; readonly ruleId: string; readonly expectedTransactionUpdatedAt: string
+}
+export interface AppliedClassificationDto {
+  readonly transactionId: string; readonly ruleId: string; readonly categoryAccountId: string; readonly categoryName: string
+  readonly labels: readonly string[]; readonly tags: readonly string[]; readonly transactionUpdatedAt: string
+}
+
 export type AppCommand =
   | 'app_bootstrap'
   | 'app_health'
@@ -215,6 +252,9 @@ export type AppCommand =
   | 'transaction_manual_create'
   | 'transaction_detail_get'
   | 'transaction_update'
+  | 'source_document_get'
+  | 'source_document_records_query'
+  | 'transaction_source_records_list'
   | 'watched_folders_list'
   | 'watched_folder_select'
   | 'watched_folder_remove'
@@ -227,6 +267,12 @@ export type AppCommand =
   | 'savings_goal_create'
   | 'savings_goal_update'
   | 'savings_goal_delete'
+  | 'classification_rules_list'
+  | 'classification_rule_create'
+  | 'classification_rule_update'
+  | 'classification_rule_delete'
+  | 'classification_rules_preview'
+  | 'classification_rule_apply'
   | 'import_summary'
   | 'import_start'
   | 'import_preview'
@@ -257,6 +303,9 @@ export interface PlatformClient {
   createManualTransaction(input: CreateManualTransactionInputDto): Promise<TransactionRowDto>
   getTransactionDetail(householdId: string, transactionId: string): Promise<TransactionDetailDto>
   updateTransaction(input: UpdatePostedTransactionInputDto): Promise<TransactionDetailDto>
+  getSourceDocument(householdId: string, sourceDocumentId: string): Promise<SourceDocumentViewDto>
+  querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>
+  listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   removeWatchedFolder(householdId: string, watchedFolderId: string): Promise<void>
@@ -269,6 +318,12 @@ export interface PlatformClient {
   createSavingsGoal(input: CreateSavingsGoalInputDto): Promise<SavingsGoalDto>
   updateSavingsGoal(input: UpdateSavingsGoalInputDto): Promise<SavingsGoalDto>
   deleteSavingsGoal(householdId: string, goalId: string): Promise<void>
+  listClassificationRules(householdId: string): Promise<readonly ClassificationRuleDto[]>
+  createClassificationRule(input: CreateClassificationRuleInputDto): Promise<ClassificationRuleDto>
+  updateClassificationRule(input: UpdateClassificationRuleInputDto): Promise<ClassificationRuleDto>
+  deleteClassificationRule(householdId: string, ruleId: string): Promise<void>
+  previewClassificationRules(input: ClassificationPreviewInputDto): Promise<ClassificationPreviewDto>
+  applyClassificationRule(input: ApplyClassificationRuleInputDto): Promise<AppliedClassificationDto>
   importSummary(householdId: string): Promise<ImportRunCountsDto>
   startImport(request: StartImportDto, fileBytes: Uint8Array): Promise<ImportSummaryDto>
   previewImport(runId: string): Promise<ImportPreviewDto>
