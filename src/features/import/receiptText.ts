@@ -45,11 +45,14 @@ function isoDate(year: string, month: string, day: string): string | null {
 }
 
 export function parseReceiptText(text: string): ReceiptTextFields {
-  const lines = text.split(/\r?\n/).map((line, index) => ({ text: line.trim(), lineNumber: index + 1 })).filter((line) => Boolean(line.text))
+  const normalizedText = text.normalize('NFKC')
+  const lines = normalizedText.split(/\r?\n/).map((line, index) => ({ text: line.trim(), lineNumber: index + 1 })).filter((line) => Boolean(line.text))
   const lineTexts = lines.map((line) => line.text)
-  const dateMatches = Array.from(text.matchAll(/(20\d{2})[/.年-]\s*(\d{1,2})[/.月-]\s*(\d{1,2})(?:日)?/g))
-  const occurredOn = dateMatches[0] ? isoDate(dateMatches[0][1], dateMatches[0][2], dateMatches[0][3]) : null
-  const totalLines = lineTexts.filter((line) => /(?:合計|お買上|ご請求|GRAND\s*TOTAL|TOTAL)/i.test(line))
+  const dateMatches = Array.from(normalizedText.matchAll(/(20\d{2})[/.年-]\s*(\d{1,2})[/.月-]\s*(\d{1,2})(?:日)?/g))
+  const eraMatches = Array.from(normalizedText.matchAll(/(令和|平成)\s*(元|\d{1,2})年\s*(\d{1,2})月\s*(\d{1,2})日/g))
+  const eraDate = eraMatches[0] ? isoDate(String((eraMatches[0][1] === '令和' ? 2018 : 1988) + (eraMatches[0][2] === '元' ? 1 : Number(eraMatches[0][2]))), eraMatches[0][3], eraMatches[0][4]) : null
+  const occurredOn = dateMatches[0] ? isoDate(dateMatches[0][1], dateMatches[0][2], dateMatches[0][3]) : eraDate
+  const totalLines = lineTexts.filter((line) => /(?:合計|お買上|ご請求|お支払額|GRAND\s*TOTAL|TOTAL)/i.test(line))
   const amounts = totalLines.flatMap((line) => Array.from(line.matchAll(/(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)/g), (match) => Number(match[1].replaceAll(',', '')))).filter((amount) => Number.isSafeInteger(amount) && amount > 0)
   const amountJpy = amounts.length > 0 ? Math.max(...amounts) : null
   const merchant = lineTexts.find((line) => !/(?:レシート|RECEIPT|合計|TOTAL)/i.test(line) && !/(20\d{2})[/.年-]/.test(line)) ?? null
@@ -82,12 +85,12 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   const pointsUsedJpy = adjustmentAmount(/(?:ポイント利用|ポイント使用|POINTS?\s*(?:USED|REDEEMED))/i)
   const subtotalJpy = adjustmentAmount(/(?:小計|税抜合計|SUBTOTAL)/i)
   const changeJpy = adjustmentAmount(/(?:お釣り|おつり|釣銭|CHANGE)/i)
-  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
-  const paymentMethod = paymentLine.match(/(PayPay|楽天ペイ|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金)/i)?.[1] ?? null
+  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
+  const paymentMethod = paymentLine.match(/(PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金)/i)?.[1] ?? null
   const hasIncludedTax = lines.some(({ text: value }) => /(?:内税|税込)/.test(value))
   const hasExcludedTax = lines.some(({ text: value }) => /(?:外税|税抜)/.test(value))
   const taxMode = hasIncludedTax && hasExcludedTax ? 'MIXED' : hasIncludedTax ? 'INCLUDED' : hasExcludedTax ? 'EXCLUDED' : null
-  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り|おつり|釣銭|CHANGE|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|QUICPay|交通系|領収|レシート|登録番号|TEL|電話)/i
+  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り|おつり|釣銭|CHANGE|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|交通系|領収|レシート|登録番号|TEL|電話)/i
   const items: ReceiptItemEvidence[] = lines.flatMap(({ text: line, lineNumber }) => {
     if (nonItem.test(line) || /(20\d{2})[/.年-]/.test(line)) return []
     const match = line.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?(?:\s*[*※])?$/)
@@ -111,7 +114,7 @@ export function parseReceiptText(text: string): ReceiptTextFields {
     }]
   })
   const issues: string[] = []
-  if (dateMatches.length > 3 || totalLines.length > 3) issues.push('STATEMENT_LIKELY')
+  if (dateMatches.length + eraMatches.length > 3 || totalLines.length > 3) issues.push('STATEMENT_LIKELY')
   if (!merchant) issues.push('MERCHANT_MISSING')
   if (!occurredOn) issues.push('DATE_MISSING')
   if (!amountJpy) issues.push('TOTAL_MISSING')
