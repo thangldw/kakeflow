@@ -10,6 +10,8 @@ const RECENT_ANOMALY_DAYS: i64 = 31;
 pub struct FinancialIntelligenceRequest {
     pub household_id: String,
     pub as_of: String,
+    #[serde(default)]
+    pub account_group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -71,6 +73,12 @@ pub fn query_financial_intelligence(
     }
     let as_of_day = parse_iso_day(&request.as_of).ok_or_else(|| "Invalid as-of date".to_owned())?;
     let history_from = format_iso_day(as_of_day - HISTORY_DAYS);
+    crate::account_groups_export::validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+    )
+    .map_err(|error| error.public_message().to_owned())?;
 
     let mut statement = connection
         .prepare(
@@ -82,6 +90,13 @@ pub fn query_financial_intelligence(
              WHERE t.household_id = ?1 AND t.status = 'POSTED' \
                AND t.transaction_type IN ('EXPENSE', 'CARD_PURCHASE') \
                AND t.occurred_on >= ?2 AND t.occurred_on <= ?3 \
+               AND (?4 IS NULL OR EXISTS ( \
+                    SELECT 1 FROM journal_entries scope_je \
+                    JOIN account_group_members scope_gm \
+                      ON scope_gm.account_id = scope_je.account_id \
+                     AND scope_gm.household_id = t.household_id \
+                    WHERE scope_je.transaction_id = t.id \
+                      AND scope_gm.account_group_id = ?4)) \
              GROUP BY t.id, t.occurred_on, t.payee, t.description \
              HAVING SUM(e.amount_jpy) > 0 \
              ORDER BY t.occurred_on, t.id",
@@ -89,7 +104,12 @@ pub fn query_financial_intelligence(
         .map_err(|_| "Financial intelligence is temporarily unavailable".to_owned())?;
     let rows = statement
         .query_map(
-            params![request.household_id, history_from, request.as_of],
+            params![
+                request.household_id,
+                history_from,
+                request.as_of,
+                request.account_group_id
+            ],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -543,9 +563,14 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE transactions (id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, \
                     transaction_type TEXT, payee TEXT, description TEXT, status TEXT); \
-                 CREATE TABLE accounts (id TEXT PRIMARY KEY, account_kind TEXT); \
+                 CREATE TABLE accounts (id TEXT PRIMARY KEY, household_id TEXT, account_kind TEXT); \
                  CREATE TABLE journal_entries (transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER); \
-                 INSERT INTO accounts VALUES ('expense', 'EXPENSE'), ('bank', 'ASSET');",
+                 CREATE TABLE account_groups (id TEXT PRIMARY KEY, household_id TEXT); \
+                 CREATE TABLE account_group_members (household_id TEXT, account_group_id TEXT, account_id TEXT); \
+                 INSERT INTO accounts VALUES ('expense', 'family', 'EXPENSE'), ('bank', 'family', 'ASSET'), \
+                    ('excluded-expense', 'family', 'EXPENSE'), ('excluded-bank', 'family', 'ASSET'); \
+                 INSERT INTO account_groups VALUES ('daily', 'family'), ('foreign', 'other'); \
+                 INSERT INTO account_group_members VALUES ('family', 'daily', 'expense');",
             )
             .unwrap();
         connection
@@ -572,12 +597,72 @@ mod tests {
             &FinancialIntelligenceRequest {
                 household_id: "family".into(),
                 as_of: "2026-07-31".into(),
+                account_group_id: None,
             },
         )
         .unwrap();
         assert_eq!(result.recurring_items.len(), 1);
         assert_eq!(result.recurring_items[0].occurrence_count, 3);
         assert!(result.anomalies.is_empty());
+    }
+
+    #[test]
+    fn account_group_uses_any_entry_membership_without_duplicate_observations() {
+        let connection = test_connection();
+        connection.execute_batch(
+            "INSERT INTO account_group_members VALUES ('family','daily','bank');
+             INSERT INTO transactions VALUES
+                ('included-1','family','2026-05-01','EXPENSE','Rent',NULL,'POSTED'),
+                ('included-2','family','2026-06-01','EXPENSE','Rent',NULL,'POSTED'),
+                ('included-3','family','2026-07-01','EXPENSE','Rent',NULL,'POSTED'),
+                ('excluded','family','2026-07-02','EXPENSE','Other',NULL,'POSTED');
+             INSERT INTO journal_entries VALUES
+                ('included-1','expense','DEBIT',1000),('included-1','bank','CREDIT',1000),
+                ('included-2','expense','DEBIT',1000),('included-2','bank','CREDIT',1000),
+                ('included-3','expense','DEBIT',1000),('included-3','bank','CREDIT',1000),
+                ('excluded','excluded-expense','DEBIT',9000),('excluded','excluded-bank','CREDIT',9000);",
+        ).unwrap();
+
+        let result = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: Some("daily".into()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.recurring_items.len(), 1);
+        assert_eq!(result.recurring_items[0].occurrence_count, 3);
+        assert!(result.anomalies.is_empty());
+    }
+
+    #[test]
+    fn account_group_scope_rejects_cross_household_group_and_null_is_legacy() {
+        let connection = test_connection();
+        let missing = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: Some("foreign".into()),
+            },
+        );
+        assert_eq!(
+            missing.unwrap_err(),
+            "The requested account group was not found"
+        );
+
+        let legacy = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: None,
+            },
+        );
+        assert!(legacy.is_ok());
     }
 
     #[test]

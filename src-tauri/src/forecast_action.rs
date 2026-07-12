@@ -14,6 +14,8 @@ const MAX_ACTION_ITEMS: usize = 100;
 pub struct ForecastActionRequest {
     pub household_id: String,
     pub as_of: String,
+    #[serde(default)]
+    pub account_group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -117,11 +119,18 @@ pub fn query_forecast_action(
     let history_end = end_of_month(&history_through)?;
 
     ensure_household(connection, &request.household_id)?;
+    crate::account_groups_export::validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+    )
+    .map_err(|error| error.public_message().to_owned())?;
     let intelligence = query_financial_intelligence(
         connection,
         &FinancialIntelligenceRequest {
             household_id: request.household_id.clone(),
             as_of: request.as_of.clone(),
+            account_group_id: request.account_group_id.clone(),
         },
     )?;
     let recurring_monthly_expense = intelligence
@@ -134,6 +143,7 @@ pub fn query_forecast_action(
         &request.household_id,
         &history_start,
         &history_end,
+        request.account_group_id.as_deref(),
     )?;
     let average_income = historical.income / HISTORY_MONTHS;
     let average_expense = historical.expense / HISTORY_MONTHS;
@@ -141,14 +151,23 @@ pub fn query_forecast_action(
         .saturating_sub(recurring_monthly_expense)
         .max(0);
     let average_cash_change = historical.cash_change_before_card_payments / HISTORY_MONTHS;
-    let opening_cash = cash_balance(connection, &request.household_id, &request.as_of)?;
+    let opening_cash = cash_balance(
+        connection,
+        &request.household_id,
+        &request.as_of,
+        request.account_group_id.as_deref(),
+    )?;
 
     let mut months = Vec::with_capacity(FORECAST_MONTHS as usize);
     let mut cash = opening_cash;
     for offset in 0..FORECAST_MONTHS {
         let forecast_month = shift_month(&forecast_from, offset)?;
-        let known_card_payments =
-            known_card_payments(connection, &request.household_id, &forecast_month)?;
+        let known_card_payments = known_card_payments(
+            connection,
+            &request.household_id,
+            &forecast_month,
+            request.account_group_id.as_deref(),
+        )?;
         let projected_savings = average_income
             .saturating_sub(average_non_recurring)
             .saturating_sub(recurring_monthly_expense);
@@ -235,6 +254,7 @@ fn historical_totals(
     household_id: &str,
     from: &str,
     through: &str,
+    account_group_id: Option<&str>,
 ) -> Result<HistoricalTotals, String> {
     connection
         .query_row(
@@ -253,8 +273,15 @@ fn historical_totals(
              JOIN journal_entries e ON e.transaction_id = t.id
              JOIN accounts a ON a.id = e.account_id AND a.household_id = t.household_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
-               AND t.occurred_on BETWEEN ?2 AND ?3",
-            params![household_id, from, through],
+               AND t.occurred_on BETWEEN ?2 AND ?3
+               AND (?4 IS NULL OR EXISTS (
+                    SELECT 1 FROM journal_entries scope_je
+                    JOIN account_group_members scope_gm
+                      ON scope_gm.account_id = scope_je.account_id
+                     AND scope_gm.household_id = t.household_id
+                    WHERE scope_je.transaction_id = t.id
+                      AND scope_gm.account_group_id = ?4))",
+            params![household_id, from, through, account_group_id],
             |row| {
                 Ok(HistoricalTotals {
                     income: row.get(0)?,
@@ -266,7 +293,12 @@ fn historical_totals(
         .map_err(unavailable)
 }
 
-fn cash_balance(connection: &Connection, household_id: &str, as_of: &str) -> Result<i64, String> {
+fn cash_balance(
+    connection: &Connection,
+    household_id: &str,
+    as_of: &str,
+    account_group_id: Option<&str>,
+) -> Result<i64, String> {
     connection
         .query_row(
             "SELECT COALESCE(SUM(CASE e.entry_side WHEN 'DEBIT' THEN e.amount_jpy ELSE -e.amount_jpy END), 0)
@@ -274,8 +306,15 @@ fn cash_balance(connection: &Connection, household_id: &str, as_of: &str) -> Res
              JOIN transactions t ON t.id = e.transaction_id AND t.status = 'POSTED'
              JOIN accounts a ON a.id = e.account_id AND a.household_id = t.household_id
              WHERE t.household_id = ?1 AND t.occurred_on <= ?2
-               AND a.account_kind = 'ASSET' AND a.account_subtype IN ('BANK','CASH','WALLET')",
-            params![household_id, as_of],
+               AND a.account_kind = 'ASSET' AND a.account_subtype IN ('BANK','CASH','WALLET')
+               AND (?3 IS NULL OR EXISTS (
+                    SELECT 1 FROM journal_entries scope_je
+                    JOIN account_group_members scope_gm
+                      ON scope_gm.account_id = scope_je.account_id
+                     AND scope_gm.household_id = t.household_id
+                    WHERE scope_je.transaction_id = t.id
+                      AND scope_gm.account_group_id = ?3))",
+            params![household_id, as_of, account_group_id],
             |row| row.get(0),
         )
         .map_err(unavailable)
@@ -285,6 +324,7 @@ fn known_card_payments(
     connection: &Connection,
     household_id: &str,
     month: &str,
+    account_group_id: Option<&str>,
 ) -> Result<i64, String> {
     connection
         .query_row(
@@ -295,8 +335,13 @@ fn known_card_payments(
                FROM card_payments WHERE statement_id IS NOT NULL GROUP BY statement_id
              ) p ON p.statement_id = cs.id
              WHERE cs.household_id = ?1 AND substr(cs.payment_due_on, 1, 7) = ?2
-               AND cs.reconciliation_status <> 'FULLY_RECONCILED'",
-            params![household_id, month],
+               AND cs.reconciliation_status <> 'FULLY_RECONCILED'
+               AND (?3 IS NULL OR EXISTS (
+                    SELECT 1 FROM account_group_members scope_gm
+                    WHERE scope_gm.household_id = cs.household_id
+                      AND scope_gm.account_group_id = ?3
+                      AND scope_gm.account_id = cs.card_account_id))",
+            params![household_id, month, account_group_id],
             |row| row.get(0),
         )
         .map_err(unavailable)
@@ -321,11 +366,20 @@ fn action_items(
     intelligence: &crate::recurring_analytics::FinancialIntelligenceDto,
 ) -> Result<Vec<ActionItemDto>, String> {
     let mut actions = Vec::new();
+    // Import runs and savings goals are household-level entities without an account
+    // association, so their warnings remain visible while an account group is selected.
     append_import_actions(connection, &request.household_id, &mut actions)?;
-    append_card_actions(connection, &request.household_id, as_of_day, &mut actions)?;
+    append_card_actions(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+        as_of_day,
+        &mut actions,
+    )?;
     append_budget_actions(
         connection,
         &request.household_id,
+        request.account_group_id.as_deref(),
         current_month,
         &mut actions,
     )?;
@@ -436,6 +490,7 @@ fn append_import_actions(
 fn append_card_actions(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     as_of_day: i64,
     actions: &mut Vec<ActionItemDto>,
 ) -> Result<(), String> {
@@ -447,11 +502,16 @@ fn append_card_actions(
          LEFT JOIN card_payments cp ON cp.statement_id = cs.id
          WHERE cs.household_id = ?1 AND cs.reconciliation_status <> 'FULLY_RECONCILED'
            AND (cs.payment_due_on IS NULL OR cs.payment_due_on <= ?2)
+           AND (?3 IS NULL OR EXISTS (
+                SELECT 1 FROM account_group_members scope_gm
+                WHERE scope_gm.household_id = cs.household_id
+                  AND scope_gm.account_group_id = ?3
+                  AND scope_gm.account_id = cs.card_account_id))
          GROUP BY cs.id, a.name, cs.payment_due_on, cs.statement_amount_jpy, cs.reconciliation_status
          ORDER BY cs.payment_due_on, cs.id"
     ).map_err(unavailable)?;
     let rows = statement
-        .query_map(params![household_id, through], |row| {
+        .query_map(params![household_id, through, account_group_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -487,6 +547,7 @@ fn append_card_actions(
 fn append_budget_actions(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     month: &str,
     actions: &mut Vec<ActionItemDto>,
 ) -> Result<(), String> {
@@ -497,11 +558,16 @@ fn append_budget_actions(
          LEFT JOIN journal_entries e ON e.account_id = b.category_account_id
          LEFT JOIN transactions t ON t.id = e.transaction_id AND t.household_id = b.household_id AND substr(t.occurred_on,1,7) = b.month
          WHERE b.household_id = ?1 AND b.month = ?2
+           AND (?3 IS NULL OR EXISTS (
+                SELECT 1 FROM account_group_members scope_gm
+                WHERE scope_gm.household_id = b.household_id
+                  AND scope_gm.account_group_id = ?3
+                  AND scope_gm.account_id = b.category_account_id))
          GROUP BY b.category_account_id, a.name, b.budget_jpy HAVING actual > b.budget_jpy
          ORDER BY actual - b.budget_jpy DESC"
     ).map_err(unavailable)?;
     let rows = statement
-        .query_map(params![household_id, month], |row| {
+        .query_map(params![household_id, month, account_group_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -686,8 +752,12 @@ mod tests {
              CREATE TABLE card_payments(id TEXT, household_id TEXT, statement_id TEXT, payment_amount_jpy INTEGER);
              CREATE TABLE monthly_category_budgets(household_id TEXT, month TEXT, category_account_id TEXT, budget_jpy INTEGER);
              CREATE TABLE savings_goals(id TEXT, household_id TEXT, name TEXT, target_jpy INTEGER, saved_jpy INTEGER, target_date TEXT, status TEXT);
+             CREATE TABLE account_groups(id TEXT PRIMARY KEY, household_id TEXT);
+             CREATE TABLE account_group_members(household_id TEXT, account_group_id TEXT, account_id TEXT);
              INSERT INTO households VALUES ('family'), ('other');
-             INSERT INTO accounts VALUES ('bank','family','Bank','ASSET','BANK'),('income','family','Salary','INCOME','OTHER'),('expense','family','Food','EXPENSE','OTHER'),('card','family','Card','LIABILITY','CREDIT_CARD'),('other-expense','other','Other','EXPENSE','OTHER');"
+             INSERT INTO accounts VALUES ('bank','family','Bank','ASSET','BANK'),('income','family','Salary','INCOME','OTHER'),('expense','family','Food','EXPENSE','OTHER'),('card','family','Card','LIABILITY','CREDIT_CARD'),('excluded-bank','family','Other Bank','ASSET','BANK'),('excluded-income','family','Other Income','INCOME','OTHER'),('excluded-expense','family','Other Expense','EXPENSE','OTHER'),('excluded-card','family','Other Card','LIABILITY','CREDIT_CARD'),('other-expense','other','Other','EXPENSE','OTHER');
+             INSERT INTO account_groups VALUES ('daily','family'),('foreign','other');
+             INSERT INTO account_group_members VALUES ('family','daily','bank'),('family','daily','expense'),('family','daily','card');"
         ).unwrap();
         connection
     }
@@ -717,6 +787,7 @@ mod tests {
             &ForecastActionRequest {
                 household_id: "family".into(),
                 as_of: "2026-07-13".into(),
+                account_group_id: None,
             },
         )
         .unwrap();
@@ -752,6 +823,7 @@ mod tests {
             &ForecastActionRequest {
                 household_id: "family".into(),
                 as_of: "2026-07-13".into(),
+                account_group_id: None,
             },
         )
         .unwrap();
@@ -768,6 +840,59 @@ mod tests {
     }
 
     #[test]
+    fn account_group_scopes_forecast_and_account_actions_without_join_duplication() {
+        let connection = connection();
+        for month in 4..=6 {
+            add_month(&connection, month, 300_000, 100_000);
+            connection.execute_batch(&format!(
+                "INSERT INTO transactions VALUES ('excluded-income-{month}','family','2026-{month:02}-02','INCOME','Other Employer',NULL,'POSTED');
+                 INSERT INTO journal_entries VALUES ('excluded-income-{month}','excluded-bank','DEBIT',900000),('excluded-income-{month}','excluded-income','CREDIT',900000);
+                 INSERT INTO transactions VALUES ('excluded-expense-{month}','family','2026-{month:02}-11','EXPENSE','Other Merchant',NULL,'POSTED');
+                 INSERT INTO journal_entries VALUES ('excluded-expense-{month}','excluded-expense','DEBIT',800000),('excluded-expense-{month}','excluded-bank','CREDIT',800000);"
+            )).unwrap();
+        }
+        connection.execute_batch(
+            "INSERT INTO card_statements VALUES ('included-statement','family','card','2026-08-27',60000,'UNMATCHED'),('excluded-statement','family','excluded-card','2026-08-27',900000,'UNMATCHED');
+             INSERT INTO monthly_category_budgets VALUES ('family','2026-07','expense',1000),('family','2026-07','excluded-expense',1000);
+             INSERT INTO transactions VALUES ('included-july','family','2026-07-02','EXPENSE','Grocer',NULL,'POSTED'),('excluded-july','family','2026-07-02','EXPENSE','Other',NULL,'POSTED');
+             INSERT INTO journal_entries VALUES ('included-july','expense','DEBIT',5000),('included-july','bank','CREDIT',5000),('excluded-july','excluded-expense','DEBIT',9000),('excluded-july','excluded-bank','CREDIT',9000);",
+        ).unwrap();
+
+        let scoped = query_forecast_action(
+            &connection,
+            &ForecastActionRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-13".into(),
+                account_group_id: Some("daily".into()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(scoped.assumptions.average_monthly_income_jpy, 300_000);
+        assert_eq!(scoped.assumptions.average_monthly_expense_jpy, 100_000);
+        assert_eq!(scoped.months[0].known_card_payments_jpy, 60_000);
+        assert!(scoped.actions.iter().any(|item| {
+            item.kind == ActionKind::BudgetOverrun && item.entity_id.as_deref() == Some("expense")
+        }));
+        assert!(scoped.actions.iter().all(|item| {
+            item.entity_id.as_deref() != Some("excluded-expense")
+                && item.entity_id.as_deref() != Some("excluded-statement")
+        }));
+
+        let legacy = query_forecast_action(
+            &connection,
+            &ForecastActionRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-13".into(),
+                account_group_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(legacy.assumptions.average_monthly_income_jpy, 1_200_000);
+        assert_eq!(legacy.months[0].known_card_payments_jpy, 960_000);
+    }
+
+    #[test]
     fn rejects_invalid_or_cross_household_requests() {
         let connection = connection();
         assert_eq!(
@@ -775,7 +900,8 @@ mod tests {
                 &connection,
                 &ForecastActionRequest {
                     household_id: "missing".into(),
-                    as_of: "2026-07-13".into()
+                    as_of: "2026-07-13".into(),
+                    account_group_id: None,
                 }
             )
             .unwrap_err(),
@@ -786,11 +912,24 @@ mod tests {
                 &connection,
                 &ForecastActionRequest {
                     household_id: "family".into(),
-                    as_of: "2026-02-29".into()
+                    as_of: "2026-02-29".into(),
+                    account_group_id: None,
                 }
             )
             .unwrap_err(),
             "Invalid as-of date"
+        );
+        assert_eq!(
+            query_forecast_action(
+                &connection,
+                &ForecastActionRequest {
+                    household_id: "family".into(),
+                    as_of: "2026-07-13".into(),
+                    account_group_id: Some("foreign".into()),
+                }
+            )
+            .unwrap_err(),
+            "The requested account group was not found"
         );
     }
 }
