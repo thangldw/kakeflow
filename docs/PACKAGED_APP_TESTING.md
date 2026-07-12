@@ -33,6 +33,11 @@ directory and passes it as `KAKEFLOW_SMOKE_ROOT`. In this mode KakeFlow:
 `KAKEFLOW_SMOKE_ROOT` is required. The smoke-only IPC endpoint rejects calls in
 normal application mode.
 
+On macOS the harness also launches with `ApplePersistenceIgnoreState` so an
+AppKit crash-history or window-restoration prompt from an earlier interrupted
+development run cannot block Tauri setup. This changes only the smoke process;
+it does not delete or modify the user's saved application state.
+
 Set `KAKEFLOW_SMOKE_ARTIFACT_DIR` to copy the evidence JSON out of the temporary
 directory before cleanup.
 

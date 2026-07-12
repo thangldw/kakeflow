@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { spawn } from 'node:child_process'
 
-import { executableForPlatform, terminateChild, validateSmokeResult } from './packaged-app-smoke.mjs'
+import {
+  executableForPlatform,
+  launchArgumentsForPlatform,
+  terminateChild,
+  validateSmokeResult,
+} from './packaged-app-smoke.mjs'
 
 describe('packaged app smoke harness', () => {
   it('terminates a timed-out child before returning control to cleanup', async () => {
@@ -16,6 +21,8 @@ describe('packaged app smoke harness', () => {
     )
     expect(executableForPlatform('win32', 'C:\\repo')).toMatch(/kakeflow\.exe$/)
     expect(() => executableForPlatform('linux', '/repo')).toThrow(/macOS and Windows/)
+    expect(launchArgumentsForPlatform('darwin')).toEqual(['-ApplePersistenceIgnoreState', 'YES'])
+    expect(launchArgumentsForPlatform('win32')).toEqual([])
   })
 
   it('accepts only a complete successful boot, IPC, and migration result', () => {

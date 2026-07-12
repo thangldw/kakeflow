@@ -18,6 +18,14 @@ export function executableForPlatform(platform = process.platform, repositoryRoo
   throw new Error(`Packaged app smoke is supported only on macOS and Windows, not ${platform}`)
 }
 
+export function launchArgumentsForPlatform(platform = process.platform) {
+  // A previous interrupted GUI run can make AppKit show a modal crash-history
+  // prompt before Tauri setup or the WebView starts. Packaged smoke is already
+  // isolated and intentionally stateless, so suppress restoration for this
+  // process instead of depending on machine-global saved application state.
+  return platform === 'darwin' ? ['-ApplePersistenceIgnoreState', 'YES'] : []
+}
+
 export function validateSmokeResult(result) {
   const requiredPages = new Map([
     ['ホーム', 'Packaged Smoke Householdの家計'],
@@ -71,7 +79,7 @@ export async function terminateChild(child, graceMs = 2_000) {
 
 function launch(executable, dataRoot, timeoutMs) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, [], {
+    const child = spawn(executable, launchArgumentsForPlatform(), {
       cwd: path.dirname(executable),
       env: {
         ...process.env,
