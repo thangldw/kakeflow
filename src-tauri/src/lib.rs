@@ -162,8 +162,7 @@ struct PackagedSmokeConfig {
 
 impl PackagedSmokeConfig {
     fn from_environment() -> Result<Option<Self>, std::io::Error> {
-        if std::env::var_os("KAKEFLOW_PACKAGED_SMOKE").as_deref()
-            != Some(std::ffi::OsStr::new("1"))
+        if std::env::var_os("KAKEFLOW_PACKAGED_SMOKE").as_deref() != Some(std::ffi::OsStr::new("1"))
         {
             return Ok(None);
         }
