@@ -43,6 +43,9 @@ import { createInvestmentPerformancePlatform } from './features/investments/inve
 import type { InvestmentHoldingsDto, InvestmentPerformanceDto } from './features/investments/investmentPerformancePlatform'
 import { InvestmentFxSummary } from './features/investments/InvestmentFxSummary'
 import { InvestmentPeriodReport } from './features/investments/InvestmentPeriodReport'
+import { InvestmentValuationSummary } from './features/investments/InvestmentValuationSummary'
+import { createInvestmentMarketPlatform } from './features/investments/investmentMarketPlatform'
+import type { InvestmentValuationDto } from './features/investments/investmentMarketPlatform'
 import { createWatchedFolderDiscoveryPlatform } from './features/import/watchedFolderDiscoveryPlatform'
 import { queryFinancialIntelligence } from './features/financial-intelligence/platform'
 import type { FinancialIntelligenceDto } from './features/financial-intelligence/platform'
@@ -78,6 +81,7 @@ const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toL
 const portfolioPlatform = createPortfolioPlatform()
 const brokeragePlatform = createBrokeragePlatform()
 const investmentPerformancePlatform = createInvestmentPerformancePlatform()
+const investmentMarketPlatform = createInvestmentMarketPlatform()
 const watchedFolderDiscoveryPlatform = createWatchedFolderDiscoveryPlatform()
 const sourceImagePreviewPlatform = createSourceImagePreviewPlatform()
 const accountGroupExportPlatform = createAccountGroupExportPlatform()
@@ -842,6 +846,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
   const [brokerage, setBrokerage] = useState<BrokerageHistoryDto | null>(null)
   const [holdings, setHoldings] = useState<InvestmentHoldingsDto | null>(null)
   const [performance, setPerformance] = useState<InvestmentPerformanceDto | null>(null)
+  const [valuation, setValuation] = useState<InvestmentValuationDto | null>(null)
   useEffect(() => {
     if (!householdId || platformClient.runtime !== 'tauri') return
     let active = true
@@ -853,6 +858,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
     void brokeragePlatform.queryHistory({ householdId }).then((history) => { if (active) setBrokerage(history) }).catch(() => { if (active) setBrokerage(null) })
     const asOf = periodFromMonth(currentTokyoPeriod().month).toDate
     void Promise.all([investmentPerformancePlatform.queryHoldings({ householdId, asOf }), investmentPerformancePlatform.queryPerformance({ householdId })]).then(([nextHoldings, nextPerformance]) => { if (active) { setHoldings(nextHoldings); setPerformance(nextPerformance) } }).catch(() => { if (active) { setHoldings(null); setPerformance(null) } })
+    void investmentMarketPlatform.queryValuation({ householdId, asOf }).then((nextValuation) => { if (active) setValuation(nextValuation) }).catch(() => { if (active) setValuation(null) })
     return () => { active = false }
   }, [householdId, revision])
   const selectSnapshot = async (snapshotId: string) => {
@@ -868,6 +874,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
       <section className="panel positions-table"><div className="panel-head"><div><h2>保有商品</h2><p>原本の行番号まで追跡可能</p></div></div><div className="position-row position-head"><span>銘柄</span><span>口座</span><span>数量</span><span>現在値</span><span>評価額</span><span>評価損益</span></div>{detail.positions.map((position) => <div className="position-row" key={position.id}><span><strong>{position.instrumentName}</strong><small>{position.instrumentCode || position.productType} ・ 行 {position.sourceRow}</small></span><span>{position.accountType}</span><span>{position.quantity?.toLocaleString('ja-JP') ?? '—'}</span><span>{position.marketPrice == null ? '—' : `${position.currency} ${position.marketPrice.toLocaleString('ja-JP')}`}</span><strong>{position.marketValueJpy == null ? '—' : yen(position.marketValueJpy)}</strong><em className={(position.unrealizedPnlJpy ?? 0) >= 0 ? 'amount-positive' : ''}>{position.unrealizedPnlJpy == null ? '—' : yen(position.unrealizedPnlJpy)}</em></div>)}</section></> : <section className="panel investment-empty"><TrendingUp size={32} /><h2>資産スナップショットはまだありません</h2><p>設定で証券口座を追加し、`assetbalance(all)_*.csv` をインポートしてください。</p><button className="primary-btn" onClick={openImport}>インポート Inboxを開く</button></section>}
     {brokerage && brokerage.events.length > 0 && <section className="panel brokerage-history"><div className="panel-head"><div><h2>証券取引履歴</h2><p>売買・配当・手数料・税金・入出金（家計支出には含めません）</p></div><strong>{brokerage.events.length}件</strong></div><div className="brokerage-totals">{brokerage.totalsByCurrency.map((total) => <article key={total.currency}><span>{total.currency} 純資金移動</span><strong>{total.netCashMovement.toLocaleString('ja-JP')}</strong><small>配当 {total.dividendGross.toLocaleString('ja-JP')} ・ 手数料 {total.fees.toLocaleString('ja-JP')} ・ 税 {total.taxes.toLocaleString('ja-JP')}</small></article>)}</div><div className="brokerage-event-list">{brokerage.events.slice(0, 20).map((event) => <div key={event.id}><span><strong>{event.instrumentName || event.rawTransactionType}</strong><small>{event.tradeDate ?? event.settlementDate} ・ {event.accountName} ・ 行 {event.sourceRow}</small></span><b>{event.eventType}</b><em>{event.currency} {event.settlementAmount.toLocaleString('ja-JP')}</em></div>)}</div></section>}
     {holdings && (holdings.positions.length > 0 || (performance?.totalsByCurrency.length ?? 0) > 0) && <section className="panel investment-performance"><div className="panel-head"><div><h2>投資パフォーマンス</h2><p>{holdings.costBasisMethod} 原価法・通貨ごとに集計（自動換算なし）</p></div><span>{holdings.asOf} 現在</span></div>{performance && <div className="performance-currency-grid">{performance.totalsByCurrency.map((total) => <article key={total.currency}><span>{total.currency}</span><strong className={total.realizedPnl >= 0 ? 'amount-positive' : ''}>{total.realizedPnl.toLocaleString('ja-JP')} 実現損益</strong><small>配当 {total.dividendGross.toLocaleString('ja-JP')} ・ 手数料 {total.fees.toLocaleString('ja-JP')} ・ 税 {total.taxes.toLocaleString('ja-JP')}</small></article>)}</div>}<div className="performance-position-list">{holdings.positions.map((position) => <div key={`${position.accountId}-${position.instrumentCode}-${position.currency}`}><span><strong>{position.instrumentName}</strong><small>{position.instrumentCode} ・ {position.accountName} ・ {position.openLotCount}ロット</small></span><em>{position.quantity.toLocaleString('ja-JP')} 株</em><b>{position.currency} {position.costBasis.toLocaleString('ja-JP')} 原価</b></div>)}</div>{(holdings.uncoveredSales.length > 0 || holdings.skippedEventIds.length > 0) && <p className="performance-warning">原価未確認の売却 {holdings.uncoveredSales.length}件・計算対象外 {holdings.skippedEventIds.length}件。原本取引を確認してください。</p>}</section>}
+    <InvestmentValuationSummary valuation={valuation} />
     {holdings && performance && performance.totalsByCurrency.length > 0 && <InvestmentFxSummary householdId={householdId} fxAsOf={holdings.asOf} revision={revision} />}
     {(brokerage?.events.length ?? 0) > 0 && <InvestmentPeriodReport householdId={householdId} revision={revision} />}
   </>
