@@ -15,6 +15,8 @@ export type {
   CreateHouseholdInputDto,
   CommitSummaryDto,
   DashboardMonthlyTotalsDto,
+  DashboardAccrualTrendPointDto,
+  DashboardExpenseCategoryDto,
   DashboardRequestDto,
   DatabaseStatusDto,
   HouseholdDto,

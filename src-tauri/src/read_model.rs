@@ -363,6 +363,22 @@ pub fn list_transactions(
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DashboardAccrualTrendPointDto {
+    pub month: String,
+    pub income_jpy: i64,
+    pub expense_jpy: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardExpenseCategoryDto {
+    pub account_id: String,
+    pub name: String,
+    pub amount_jpy: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardMonthlyTotalsDto {
     pub month: String,
     pub accounting_basis: AccountingBasis,
@@ -370,6 +386,12 @@ pub struct DashboardMonthlyTotalsDto {
     pub expense_jpy: i64,
     pub savings_jpy: i64,
     pub posted_transaction_count: u64,
+    pub net_worth_as_of: String,
+    pub assets_jpy: i64,
+    pub liabilities_jpy: i64,
+    pub net_worth_jpy: i64,
+    pub accrual_trend: Vec<DashboardAccrualTrendPointDto>,
+    pub expense_categories: Vec<DashboardExpenseCategoryDto>,
 }
 
 pub fn dashboard_monthly_totals(
@@ -429,6 +451,91 @@ pub fn dashboard_monthly_totals(
         }
         .map_err(map_database_error)?;
 
+    let (net_worth_as_of, assets_jpy, liabilities_jpy): (String, i64, i64) = connection
+        .query_row(
+            "SELECT date(?2, '+1 month', '-1 day'),
+               COALESCE(SUM(CASE WHEN a.account_kind = 'ASSET'
+                 THEN CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END
+                 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN a.account_kind = 'LIABILITY'
+                 THEN CASE je.entry_side WHEN 'CREDIT' THEN je.amount_jpy ELSE -je.amount_jpy END
+                 ELSE 0 END), 0)
+             FROM transactions t
+             LEFT JOIN journal_entries je ON je.transaction_id = t.id
+             LEFT JOIN accounts a ON a.id = je.account_id
+             WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.occurred_on < date(?2, '+1 month')",
+            params![household_id, start],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(map_database_error)?;
+
+    let mut trend_statement = connection
+        .prepare(
+            "WITH RECURSIVE months(month_start) AS (
+               SELECT date(?2, '-5 months')
+               UNION ALL
+               SELECT date(month_start, '+1 month') FROM months
+                 WHERE month_start < date(?2)
+             )
+             SELECT strftime('%Y-%m', months.month_start),
+               COALESCE(SUM(CASE WHEN a.account_kind = 'INCOME'
+                 THEN CASE je.entry_side WHEN 'CREDIT' THEN je.amount_jpy ELSE -je.amount_jpy END
+                 ELSE 0 END), 0),
+               COALESCE(SUM(CASE WHEN a.account_kind = 'EXPENSE'
+                 THEN CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END
+                 ELSE 0 END), 0)
+             FROM months
+             LEFT JOIN transactions t
+               ON t.household_id = ?1 AND t.status = 'POSTED'
+              AND t.occurred_on >= months.month_start
+              AND t.occurred_on < date(months.month_start, '+1 month')
+              AND t.transaction_type != 'CARD_PAYMENT'
+             LEFT JOIN journal_entries je ON je.transaction_id = t.id
+             LEFT JOIN accounts a ON a.id = je.account_id
+             GROUP BY months.month_start
+             ORDER BY months.month_start",
+        )
+        .map_err(map_database_error)?;
+    let accrual_trend = trend_statement
+        .query_map(params![household_id, start], |row| {
+            Ok(DashboardAccrualTrendPointDto {
+                month: row.get(0)?,
+                income_jpy: row.get(1)?,
+                expense_jpy: row.get(2)?,
+            })
+        })
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+
+    let mut categories_statement = connection
+        .prepare(
+            "SELECT a.id, a.name,
+               SUM(CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END)
+             FROM transactions t
+             JOIN journal_entries je ON je.transaction_id = t.id
+             JOIN accounts a ON a.id = je.account_id AND a.account_kind = 'EXPENSE'
+             WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
+               AND t.transaction_type != 'CARD_PAYMENT'
+             GROUP BY a.id, a.name
+             HAVING SUM(CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END) != 0
+             ORDER BY 3 DESC, a.name ASC, a.id ASC",
+        )
+        .map_err(map_database_error)?;
+    let expense_categories = categories_statement
+        .query_map(params![household_id, start], |row| {
+            Ok(DashboardExpenseCategoryDto {
+                account_id: row.get(0)?,
+                name: row.get(1)?,
+                amount_jpy: row.get(2)?,
+            })
+        })
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+
     Ok(DashboardMonthlyTotalsDto {
         month: month.to_owned(),
         accounting_basis,
@@ -436,6 +543,12 @@ pub fn dashboard_monthly_totals(
         expense_jpy,
         savings_jpy: income_jpy - expense_jpy,
         posted_transaction_count,
+        net_worth_as_of,
+        assets_jpy,
+        liabilities_jpy,
+        net_worth_jpy: assets_jpy - liabilities_jpy,
+        accrual_trend,
+        expense_categories,
     })
 }
 
@@ -653,12 +766,18 @@ mod tests {
             .execute_batch(
                 "INSERT INTO transactions (id, household_id, occurred_on, transaction_type, status)
                    VALUES ('purchase', 'family', '2026-07-01', 'CARD_PURCHASE', 'POSTED'),
-                          ('payment', 'family', '2026-07-27', 'CARD_PAYMENT', 'POSTED');
+                          ('payment', 'family', '2026-07-27', 'CARD_PAYMENT', 'POSTED'),
+                          ('salary', 'family', '2026-07-25', 'INCOME', 'POSTED'),
+                          ('rent', 'family', '2026-07-03', 'EXPENSE', 'POSTED');
                  INSERT INTO journal_entries (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
                    VALUES ('j1', 'purchase', 'family-groceries', 'DEBIT', 1000, 1),
                           ('j2', 'purchase', 'family-card', 'CREDIT', 1000, 2),
                           ('j3', 'payment', 'family-card', 'DEBIT', 1000, 1),
-                          ('j4', 'payment', 'family-bank', 'CREDIT', 1000, 2);",
+                          ('j4', 'payment', 'family-bank', 'CREDIT', 1000, 2),
+                          ('j5', 'salary', 'family-bank', 'DEBIT', 3000, 1),
+                          ('j6', 'salary', 'family-income', 'CREDIT', 3000, 2),
+                          ('j7', 'rent', 'family-housing', 'DEBIT', 500, 1),
+                          ('j8', 'rent', 'family-bank', 'CREDIT', 500, 2);",
             )
             .unwrap();
 
@@ -689,8 +808,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(accrual.items[0].id, "purchase");
-        assert_eq!(cash.items[0].id, "payment");
+        assert_eq!(accrual.total_items, 3);
+        assert!(accrual.items.iter().all(|item| item.id != "payment"));
+        assert_eq!(cash.total_items, 3);
+        assert!(cash.items.iter().all(|item| item.id != "purchase"));
 
         let accrual_totals =
             dashboard_monthly_totals(&connection, "family", "2026-07", AccountingBasis::Accrual)
@@ -698,8 +819,81 @@ mod tests {
         let cash_totals =
             dashboard_monthly_totals(&connection, "family", "2026-07", AccountingBasis::Cash)
                 .unwrap();
-        assert_eq!(accrual_totals.expense_jpy, 1000);
-        assert_eq!(cash_totals.expense_jpy, 1000);
+        assert_eq!(accrual_totals.income_jpy, 3000);
+        assert_eq!(accrual_totals.expense_jpy, 1500);
+        assert_eq!(accrual_totals.savings_jpy, 1500);
+        assert_eq!(accrual_totals.posted_transaction_count, 3);
+        assert_eq!(cash_totals.income_jpy, 3000);
+        assert_eq!(cash_totals.expense_jpy, 1500);
+        assert_eq!(cash_totals.savings_jpy, 1500);
+        assert_eq!(cash_totals.posted_transaction_count, 3);
+
+        assert_eq!(accrual_totals.net_worth_as_of, "2026-07-31");
+        assert_eq!(accrual_totals.assets_jpy, 1500);
+        assert_eq!(accrual_totals.liabilities_jpy, 0);
+        assert_eq!(accrual_totals.net_worth_jpy, 1500);
+        assert_eq!(accrual_totals.accrual_trend.len(), 6);
+        let july = accrual_totals.accrual_trend.last().unwrap();
+        assert_eq!(july.month, "2026-07");
+        assert_eq!(july.income_jpy, 3000);
+        assert_eq!(july.expense_jpy, 1500);
+        assert_eq!(accrual_totals.expense_categories.len(), 2);
+        assert_eq!(
+            accrual_totals.expense_categories[0].account_id,
+            "family-groceries"
+        );
+        assert_eq!(accrual_totals.expense_categories[0].amount_jpy, 1000);
+        assert_eq!(
+            accrual_totals.expense_categories[1].account_id,
+            "family-housing"
+        );
+        assert_eq!(accrual_totals.expense_categories[1].amount_jpy, 500);
+
+        // The new analytical fields have accrual/as-of semantics regardless of
+        // which basis is selected for the headline monthly cash-flow totals.
+        assert_eq!(cash_totals.net_worth_jpy, accrual_totals.net_worth_jpy);
+        assert_eq!(cash_totals.accrual_trend.last().unwrap().expense_jpy, 1500);
+        assert_eq!(cash_totals.expense_categories.len(), 2);
+    }
+
+    #[test]
+    fn dashboard_returns_complete_zero_series_for_empty_household() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "empty".to_owned(),
+                name: "Empty".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let totals =
+            dashboard_monthly_totals(&connection, "empty", "2026-02", AccountingBasis::Accrual)
+                .unwrap();
+
+        assert_eq!(totals.income_jpy, 0);
+        assert_eq!(totals.expense_jpy, 0);
+        assert_eq!(totals.savings_jpy, 0);
+        assert_eq!(totals.posted_transaction_count, 0);
+        assert_eq!(totals.net_worth_as_of, "2026-02-28");
+        assert_eq!(totals.assets_jpy, 0);
+        assert_eq!(totals.liabilities_jpy, 0);
+        assert_eq!(totals.net_worth_jpy, 0);
+        assert_eq!(totals.expense_categories.len(), 0);
+        let months = totals
+            .accrual_trend
+            .iter()
+            .map(|point| point.month.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            months,
+            vec!["2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02"]
+        );
+        assert!(totals
+            .accrual_trend
+            .iter()
+            .all(|point| point.income_jpy == 0 && point.expense_jpy == 0));
     }
 
     #[test]

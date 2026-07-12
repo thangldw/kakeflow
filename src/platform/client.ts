@@ -54,6 +54,11 @@ const WEB_STATUS: AppStatusDto = Object.freeze({
   integrity: 'failed',
 })
 
+const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
+  netWorthAsOf: '1970-01-31', assetsJpy: 0, liabilitiesJpy: 0, netWorthJpy: 0,
+  accrualTrend: Object.freeze([]), expenseCategories: Object.freeze([]),
+})
+
 type TauriGlobal = typeof globalThis & {
   __TAURI_INTERNALS__?: unknown
 }
@@ -82,7 +87,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listAccounts: async () => [],
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
-      queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0 }),
+      queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 }),
       startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
@@ -205,7 +210,7 @@ function parseVoid(value: unknown): void {
 
 function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
   const record = asRecord(value)
-  if (typeof record.month !== 'string' || (record.accountingBasis !== 'ACCRUAL' && record.accountingBasis !== 'CASH')) throw new TypeError('dashboard')
+  if (typeof record.month !== 'string' || typeof record.netWorthAsOf !== 'string' || (record.accountingBasis !== 'ACCRUAL' && record.accountingBasis !== 'CASH') || !Array.isArray(record.accrualTrend) || !Array.isArray(record.expenseCategories)) throw new TypeError('dashboard')
   return {
     month: record.month,
     accountingBasis: record.accountingBasis,
@@ -213,6 +218,18 @@ function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
     expenseJpy: asSafeSignedInteger(record.expenseJpy),
     savingsJpy: asSafeSignedInteger(record.savingsJpy),
     postedTransactionCount: asSafeInteger(record.postedTransactionCount),
+    netWorthAsOf: record.netWorthAsOf,
+    assetsJpy: asSafeSignedInteger(record.assetsJpy),
+    liabilitiesJpy: asSafeSignedInteger(record.liabilitiesJpy),
+    netWorthJpy: asSafeSignedInteger(record.netWorthJpy),
+    accrualTrend: record.accrualTrend.map((item) => {
+      const point = asRecord(item)
+      return { month: asRequiredString(point.month), incomeJpy: asSafeSignedInteger(point.incomeJpy), expenseJpy: asSafeSignedInteger(point.expenseJpy) }
+    }),
+    expenseCategories: record.expenseCategories.map((item) => {
+      const category = asRecord(item)
+      return { accountId: asRequiredString(category.accountId), name: asRequiredString(category.name), amountJpy: asSafeSignedInteger(category.amountJpy) }
+    }),
   }
 }
 

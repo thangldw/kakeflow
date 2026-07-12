@@ -83,6 +83,24 @@ export interface DashboardMonthlyTotalsDto {
   readonly expenseJpy: number
   readonly savingsJpy: number
   readonly postedTransactionCount: number
+  readonly netWorthAsOf: string
+  readonly assetsJpy: number
+  readonly liabilitiesJpy: number
+  readonly netWorthJpy: number
+  readonly accrualTrend: readonly DashboardAccrualTrendPointDto[]
+  readonly expenseCategories: readonly DashboardExpenseCategoryDto[]
+}
+
+export interface DashboardAccrualTrendPointDto {
+  readonly month: string
+  readonly incomeJpy: number
+  readonly expenseJpy: number
+}
+
+export interface DashboardExpenseCategoryDto {
+  readonly accountId: string
+  readonly name: string
+  readonly amountJpy: number
 }
 
 export interface TransactionPageRequestDto {

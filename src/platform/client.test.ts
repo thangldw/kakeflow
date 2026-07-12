@@ -45,7 +45,12 @@ describe('platform client', () => {
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
       household_create: { id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' },
       accounts_list: [{ id: 'family-bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' }],
-      dashboard_query: { month: '2026-07', accountingBasis: 'ACCRUAL', incomeJpy: 650000, expenseJpy: 250000, savingsJpy: 400000, postedTransactionCount: 10 },
+      dashboard_query: {
+        month: '2026-07', accountingBasis: 'ACCRUAL', incomeJpy: 650000, expenseJpy: 250000, savingsJpy: 400000, postedTransactionCount: 10,
+        netWorthAsOf: '2026-07-31', assetsJpy: 8_500_000, liabilitiesJpy: 250_000, netWorthJpy: 8_250_000,
+        accrualTrend: [{ month: '2026-07', incomeJpy: 650000, expenseJpy: 250000 }],
+        expenseCategories: [{ accountId: 'family-groceries', name: 'Groceries', amountJpy: 250000 }],
+      },
       transactions_query: { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
