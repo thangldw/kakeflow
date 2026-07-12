@@ -1,4 +1,5 @@
 use crate::read_model::RepositoryError;
+use crate::record_scope::{audience_shape_is_valid, AudienceVisibility};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +23,20 @@ pub struct SourceDocumentViewDto {
     pub adapter_id: Option<String>,
     pub adapter_version: Option<String>,
     pub record_count: u64,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
+    pub audience_member_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateSourceDocumentAudienceInput {
+    pub household_id: String,
+    pub source_document_id: String,
+    #[serde(default)]
+    pub audience_visibility: AudienceVisibility,
+    #[serde(default)]
+    pub audience_member_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -71,9 +86,11 @@ pub fn get_source_document(
                     sd.source_modified_at, sd.imported_at, ir.adapter_id,
                     ir.adapter_version,
                     (SELECT count(*) FROM source_records sr
-                     WHERE sr.source_document_id = sd.id)
+                     WHERE sr.source_document_id = sd.id),
+                    sd.audience_visibility, sd.audience_member_id, audience.display_name
              FROM source_documents sd
              JOIN import_runs ir ON ir.id = sd.import_run_id
+             LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
              WHERE sd.id = ?1 AND sd.household_id = ?2",
             params![document_id, household_id],
             |row| {
@@ -93,12 +110,62 @@ pub fn get_source_document(
                     adapter_id: row.get(10)?,
                     adapter_version: row.get(11)?,
                     record_count: u64::try_from(record_count).unwrap_or(0),
+                    audience_visibility: row.get(13)?,
+                    audience_member_id: row.get(14)?,
+                    audience_member_name: row.get(15)?,
                 })
             },
         )
         .optional()
         .map_err(|_| RepositoryError::Unavailable)?
         .ok_or(RepositoryError::NotFound)
+}
+
+pub fn update_source_document_audience(
+    connection: &Connection,
+    input: &UpdateSourceDocumentAudienceInput,
+) -> Result<SourceDocumentViewDto, RepositoryError> {
+    validate_id(&input.household_id)?;
+    validate_id(&input.source_document_id)?;
+    if !audience_shape_is_valid(
+        input.audience_visibility,
+        input.audience_member_id.as_deref(),
+    ) {
+        return Err(RepositoryError::InvalidInput("Source audience is invalid"));
+    }
+    if let Some(member_id) = input.audience_member_id.as_deref() {
+        validate_id(member_id)?;
+        let belongs: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM household_members
+                 WHERE id = ?1 AND household_id = ?2)",
+                params![member_id, input.household_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| RepositoryError::Unavailable)?;
+        if !belongs {
+            return Err(RepositoryError::InvalidInput(
+                "Source audience member is invalid",
+            ));
+        }
+    }
+    let changed = connection
+        .execute(
+            "UPDATE source_documents
+             SET audience_visibility = ?1, audience_member_id = ?2
+             WHERE id = ?3 AND household_id = ?4",
+            params![
+                input.audience_visibility.as_sql(),
+                input.audience_member_id,
+                input.source_document_id,
+                input.household_id
+            ],
+        )
+        .map_err(|_| RepositoryError::Unavailable)?;
+    if changed != 1 {
+        return Err(RepositoryError::NotFound);
+    }
+    get_source_document(connection, &input.household_id, &input.source_document_id)
 }
 
 pub fn list_source_document_records(
@@ -267,6 +334,9 @@ mod tests {
         connection
             .execute_batch(
                 "CREATE TABLE households (id TEXT PRIMARY KEY);
+                 CREATE TABLE household_members (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
+                   display_name TEXT NOT NULL, status TEXT NOT NULL);
                  CREATE TABLE import_runs (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, adapter_id TEXT,
                    adapter_version TEXT);
@@ -274,7 +344,8 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, import_run_id TEXT NOT NULL,
                    source_type TEXT NOT NULL, original_filename TEXT NOT NULL,
                    media_type TEXT NOT NULL, byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL,
-                   storage_path TEXT NOT NULL, source_modified_at TEXT, imported_at TEXT NOT NULL);
+                   storage_path TEXT NOT NULL, source_modified_at TEXT, imported_at TEXT NOT NULL,
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT);
                  CREATE TABLE source_records (
                    id TEXT PRIMARY KEY, source_document_id TEXT NOT NULL, row_number INTEGER NOT NULL,
                    record_hash TEXT NOT NULL, raw_payload_json TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -286,8 +357,14 @@ mod tests {
                    candidate_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
                    evidence_role TEXT NOT NULL, PRIMARY KEY(candidate_id, source_record_id));
                  INSERT INTO households VALUES ('family'), ('other');
+                 INSERT INTO household_members VALUES
+                   ('family-primary', 'family', 'Family member', 'ARCHIVED'),
+                   ('other-primary', 'other', 'Other member', 'ARCHIVED');
                  INSERT INTO import_runs VALUES ('run', 'family', 'bank-v1', '1');
-                 INSERT INTO source_documents VALUES
+                 INSERT INTO source_documents
+                   (id, household_id, import_run_id, source_type, original_filename,
+                    media_type, byte_size, sha256, storage_path, source_modified_at, imported_at)
+                 VALUES
                    ('document', 'family', 'run', 'MANUAL_UPLOAD', 'bank.csv', 'text/csv', 42,
                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
                     'vault://hidden', NULL, '2026-07-13T00:00:00Z');
@@ -314,6 +391,50 @@ mod tests {
         assert_eq!(document.original_filename, "bank.csv");
         assert_eq!(document.adapter_id.as_deref(), Some("bank-v1"));
         assert_eq!(document.record_count, 2);
+    }
+
+    #[test]
+    fn source_audience_update_is_explicit_scoped_and_allows_archived_history() {
+        let connection = database();
+        let updated = update_source_document_audience(
+            &connection,
+            &UpdateSourceDocumentAudienceInput {
+                household_id: "family".into(),
+                source_document_id: "document".into(),
+                audience_visibility: AudienceVisibility::Personal,
+                audience_member_id: Some("family-primary".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.audience_visibility, "PERSONAL");
+        assert_eq!(
+            updated.audience_member_name.as_deref(),
+            Some("Family member")
+        );
+        assert!(matches!(
+            update_source_document_audience(
+                &connection,
+                &UpdateSourceDocumentAudienceInput {
+                    household_id: "family".into(),
+                    source_document_id: "document".into(),
+                    audience_visibility: AudienceVisibility::Personal,
+                    audience_member_id: Some("other-primary".into()),
+                }
+            ),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            update_source_document_audience(
+                &connection,
+                &UpdateSourceDocumentAudienceInput {
+                    household_id: "other".into(),
+                    source_document_id: "document".into(),
+                    audience_visibility: AudienceVisibility::Shared,
+                    audience_member_id: None,
+                }
+            ),
+            Err(RepositoryError::NotFound)
+        ));
     }
 
     #[test]

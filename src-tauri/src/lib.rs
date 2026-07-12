@@ -16,6 +16,7 @@ mod persistence;
 pub mod portfolio;
 mod private_fs;
 mod read_model;
+mod record_scope;
 pub mod recurring_analytics;
 pub mod restore;
 pub mod source_pdf_preview;
@@ -69,6 +70,7 @@ use recurring_analytics::{FinancialIntelligenceDto, FinancialIntelligenceRequest
 use serde::{Deserialize, Serialize};
 use source_viewer::{
     SourceDocumentViewDto, SourceRecordPageDto, SourceRecordPageRequest, SourceRecordViewDto,
+    UpdateSourceDocumentAudienceInput,
 };
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
@@ -859,6 +861,16 @@ fn source_document_get(
 ) -> Result<SourceDocumentViewDto, String> {
     repository_result(&state, |connection| {
         source_viewer::get_source_document(connection, &household_id, &source_document_id)
+    })
+}
+
+#[tauri::command]
+fn source_document_audience_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateSourceDocumentAudienceInput,
+) -> Result<SourceDocumentViewDto, String> {
+    repository_result(&state, |connection| {
+        source_viewer::update_source_document_audience(connection, &input)
     })
 }
 
@@ -1969,6 +1981,7 @@ pub fn run() {
             transaction_detail_get,
             transaction_update,
             source_document_get,
+            source_document_audience_update,
             source_document_records_query,
             source_image_preview_get,
             source_pdf_page_preview_get,

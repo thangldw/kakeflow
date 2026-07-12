@@ -40,6 +40,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0017_household_members_account_ownership.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0018_transaction_source_audience.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -423,6 +426,40 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 18 {
+        for query in [
+            "SELECT 1 FROM transactions r
+             LEFT JOIN household_members attributed ON attributed.id = r.attributed_member_id
+             LEFT JOIN household_members audience ON audience.id = r.audience_member_id
+             WHERE r.attribution_kind NOT IN ('HOUSEHOLD', 'MEMBER')
+                OR r.audience_visibility NOT IN ('SHARED', 'PERSONAL')
+                OR (r.attribution_kind = 'HOUSEHOLD' AND r.attributed_member_id IS NOT NULL)
+                OR (r.attribution_kind = 'MEMBER' AND (attributed.id IS NULL
+                    OR attributed.household_id != r.household_id))
+                OR (r.audience_visibility = 'SHARED' AND r.audience_member_id IS NOT NULL)
+                OR (r.audience_visibility = 'PERSONAL' AND (audience.id IS NULL
+                    OR audience.household_id != r.household_id)) LIMIT 1",
+            "SELECT 1 FROM transaction_candidates r
+             LEFT JOIN household_members attributed ON attributed.id = r.attributed_member_id
+             LEFT JOIN household_members audience ON audience.id = r.audience_member_id
+             WHERE r.attribution_kind NOT IN ('HOUSEHOLD', 'MEMBER')
+                OR r.audience_visibility NOT IN ('SHARED', 'PERSONAL')
+                OR (r.attribution_kind = 'HOUSEHOLD' AND r.attributed_member_id IS NOT NULL)
+                OR (r.attribution_kind = 'MEMBER' AND (attributed.id IS NULL
+                    OR attributed.household_id != r.household_id))
+                OR (r.audience_visibility = 'SHARED' AND r.audience_member_id IS NOT NULL)
+                OR (r.audience_visibility = 'PERSONAL' AND (audience.id IS NULL
+                    OR audience.household_id != r.household_id)) LIMIT 1",
+            "SELECT 1 FROM source_documents r
+             LEFT JOIN household_members audience ON audience.id = r.audience_member_id
+             WHERE r.audience_visibility NOT IN ('SHARED', 'PERSONAL')
+                OR (r.audience_visibility = 'SHARED' AND r.audience_member_id IS NOT NULL)
+                OR (r.audience_visibility = 'PERSONAL' AND (audience.id IS NULL
+                    OR audience.household_id != r.household_id)) LIMIT 1",
+        ] {
+            reject_if_exists(connection, query)?;
+        }
+    }
     Ok(())
 }
 
@@ -600,6 +637,150 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cascaded_members, 0);
+    }
+
+    #[test]
+    fn migration_eighteen_backfills_scopes_and_allows_archived_history() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 17)
+            .expect("schema seventeen");
+        let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO households (id, name) VALUES ('family', 'Family');
+                 INSERT INTO household_members
+                   (id, household_id, display_name, status, sort_order)
+                 VALUES ('family-active', 'family', 'Active', 'ACTIVE', 1);
+                 UPDATE household_members SET status = 'ARCHIVED'
+                   WHERE id = 'family-member-primary';
+                 INSERT INTO import_runs (id, household_id, status)
+                   VALUES ('run', 'family', 'REVIEW_REQUIRED');
+                 INSERT INTO source_documents
+                   (id, household_id, import_run_id, source_type, original_filename,
+                    media_type, byte_size, sha256, storage_path)
+                 VALUES ('document', 'family', 'run', 'MANUAL_UPLOAD', 'source.csv',
+                    'text/csv', 1, '{hash}', 'vault://{hash}');
+                 INSERT INTO transaction_candidates
+                   (id, household_id, occurred_on, amount_jpy, direction)
+                 VALUES ('candidate', 'family', '2026-07-13', 100, 'OUT');
+                 INSERT INTO transactions
+                   (id, household_id, occurred_on, transaction_type)
+                 VALUES ('transaction', 'family', '2026-07-13', 'EXPENSE');"
+            ))
+            .expect("schema seventeen rows");
+
+        migrations
+            .to_version(&mut connection, 18)
+            .expect("schema eighteen");
+        for table in ["transactions", "transaction_candidates"] {
+            let scope: (String, Option<String>, String, Option<String>) = connection
+                .query_row(
+                    &format!(
+                        "SELECT attribution_kind, attributed_member_id,
+                                audience_visibility, audience_member_id FROM {table}"
+                    ),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+            assert_eq!(scope, ("HOUSEHOLD".into(), None, "SHARED".into(), None));
+            assert!(connection
+                .execute(
+                    &format!("UPDATE {table} SET attribution_kind = 'MEMBER'"),
+                    [],
+                )
+                .is_err());
+        }
+        assert!(connection
+            .execute(
+                "UPDATE source_documents SET audience_member_id = 'family-member-primary'",
+                [],
+            )
+            .is_err());
+        connection
+            .execute_batch(
+                "UPDATE transactions SET attribution_kind = 'MEMBER',
+                    attributed_member_id = 'family-member-primary';
+                 UPDATE transaction_candidates SET audience_visibility = 'PERSONAL',
+                    audience_member_id = 'family-member-primary';
+                 UPDATE source_documents SET audience_visibility = 'PERSONAL',
+                    audience_member_id = 'family-member-primary';",
+            )
+            .expect("archived members remain valid historical references");
+        assert!(validate_restored_semantics(&connection, 18).is_ok());
+        let transaction_audience: String = connection
+            .query_row("SELECT audience_visibility FROM transactions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let source_audience: String = connection
+            .query_row(
+                "SELECT audience_visibility FROM source_documents",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(transaction_audience, "SHARED");
+        assert_eq!(source_audience, "PERSONAL");
+    }
+
+    #[test]
+    fn restored_semantics_reject_cross_household_transaction_and_source_scopes() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+                connection.execute_batch(&format!(
+                    "INSERT INTO households (id, name) VALUES ('one', 'One'), ('two', 'Two');
+                     INSERT INTO import_runs (id, household_id, status)
+                       VALUES ('run', 'one', 'REVIEW_REQUIRED');
+                     INSERT INTO source_documents
+                       (id, household_id, import_run_id, source_type, original_filename,
+                        media_type, byte_size, sha256, storage_path)
+                     VALUES ('document', 'one', 'run', 'MANUAL_UPLOAD', 'source.csv',
+                        'text/csv', 1, '{hash}', 'vault://{hash}');
+                     INSERT INTO transaction_candidates
+                       (id, household_id, occurred_on, amount_jpy, direction)
+                     VALUES ('candidate', 'one', '2026-07-13', 100, 'OUT');
+                     INSERT INTO transactions
+                       (id, household_id, occurred_on, transaction_type)
+                     VALUES ('transaction', 'one', '2026-07-13', 'EXPENSE');
+                     DROP TRIGGER trg_transactions_scope_update;
+                     DROP TRIGGER trg_candidates_scope_update;
+                     DROP TRIGGER trg_source_documents_audience_update;
+                     UPDATE transactions SET attribution_kind = 'MEMBER',
+                        attributed_member_id = 'two-member-primary';"
+                ))?;
+                assert!(validate_restored_semantics(connection, 18).is_err());
+                connection.execute(
+                    "UPDATE transactions SET attribution_kind = 'HOUSEHOLD',
+                     attributed_member_id = NULL",
+                    [],
+                )?;
+                connection.execute(
+                    "UPDATE transaction_candidates SET audience_visibility = 'PERSONAL',
+                     audience_member_id = 'two-member-primary'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 18).is_err());
+                connection.execute(
+                    "UPDATE transaction_candidates SET audience_visibility = 'SHARED',
+                     audience_member_id = NULL",
+                    [],
+                )?;
+                connection.execute(
+                    "UPDATE source_documents SET audience_visibility = 'PERSONAL',
+                     audience_member_id = 'two-member-primary'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 18).is_err());
+                Ok(())
+            })
+            .expect("test database should remain queryable");
     }
 
     #[test]

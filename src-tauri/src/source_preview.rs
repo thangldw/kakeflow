@@ -89,8 +89,8 @@ mod tests {
         let vault = DocumentVault::new(temp.path().join("vault"), &[7_u8; 32]).unwrap();
         let stored = vault.put(bytes, media_type).unwrap();
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch("CREATE TABLE import_runs(id TEXT PRIMARY KEY, household_id TEXT, adapter_id TEXT, adapter_version TEXT); CREATE TABLE source_documents(id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT, source_type TEXT, original_filename TEXT, media_type TEXT, byte_size INTEGER, sha256 TEXT, storage_path TEXT, source_modified_at TEXT, imported_at TEXT); CREATE TABLE source_records(id TEXT PRIMARY KEY,source_document_id TEXT,row_number INTEGER,record_hash TEXT,raw_payload_json TEXT,created_at TEXT); INSERT INTO import_runs VALUES('run','family','receipt','2');").unwrap();
-        connection.execute("INSERT INTO source_documents VALUES('image','family','run','MANUAL_UPLOAD','receipt.png',?1,?2,?3,'vault://object',NULL,'2026-07-13T00:00:00Z')", params![media_type, bytes.len() as i64, stored.sha256]).unwrap();
+        connection.execute_batch("CREATE TABLE household_members(id TEXT PRIMARY KEY, household_id TEXT, display_name TEXT); CREATE TABLE import_runs(id TEXT PRIMARY KEY, household_id TEXT, adapter_id TEXT, adapter_version TEXT); CREATE TABLE source_documents(id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT, source_type TEXT, original_filename TEXT, media_type TEXT, byte_size INTEGER, sha256 TEXT, storage_path TEXT, source_modified_at TEXT, imported_at TEXT, audience_visibility TEXT, audience_member_id TEXT); CREATE TABLE source_records(id TEXT PRIMARY KEY,source_document_id TEXT,row_number INTEGER,record_hash TEXT,raw_payload_json TEXT,created_at TEXT); INSERT INTO import_runs VALUES('run','family','receipt','2');").unwrap();
+        connection.execute("INSERT INTO source_documents VALUES('image','family','run','MANUAL_UPLOAD','receipt.png',?1,?2,?3,'vault://object',NULL,'2026-07-13T00:00:00Z','SHARED',NULL)", params![media_type, bytes.len() as i64, stored.sha256]).unwrap();
         (connection, vault, temp)
     }
 
