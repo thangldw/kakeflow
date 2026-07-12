@@ -89,8 +89,7 @@ export const EMPTY_IMPORT_STATE: ImportReviewState = Object.freeze({
   candidates: Object.freeze([]),
 })
 
-export const ALLOWED_IMPORT_TRANSITIONS: Readonly<Record<ImportStatus, readonly ImportStatus[]>> =
-  Object.freeze({
+export const ALLOWED_IMPORT_TRANSITIONS = Object.freeze({
     detected: Object.freeze(['parsing', 'failed']),
     parsing: Object.freeze(['review', 'ready', 'failed']),
     review: Object.freeze(['ready', 'failed', 'rolled_back']),
@@ -101,7 +100,7 @@ export const ALLOWED_IMPORT_TRANSITIONS: Readonly<Record<ImportStatus, readonly 
     posted: Object.freeze([]),
     failed: Object.freeze(['parsing', 'rolled_back']),
     rolled_back: Object.freeze([]),
-  })
+  }) as Readonly<Record<ImportStatus, readonly ImportStatus[]>>
 
 function assertNonEmptyId(id: string, label: string): void {
   if (id.trim().length === 0) throw new Error(`${label} ID must not be empty`)
