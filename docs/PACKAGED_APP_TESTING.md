@@ -46,6 +46,10 @@ the harness:
 APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac
 npm run test:packaged
 
+# Mount the built DMG read-only and validate its bundle integrity
+npm run desktop:build:mac:dmg
+npm run test:dmg
+
 # Windows
 npm run desktop:build:windows
 npm run test:packaged
@@ -53,6 +57,27 @@ npm run test:packaged
 
 Set `KAKEFLOW_KEEP_SMOKE_DATA=1` only while debugging to retain the temporary
 directory. `KAKEFLOW_SMOKE_EXECUTABLE` can point at another compatible build.
+
+## macOS DMG validation
+
+`npm run test:dmg` validates the distribution image rather than the build-tree
+app. On macOS it:
+
+- mounts the versioned DMG with `hdiutil -readonly -nobrowse` at an isolated
+  mountpoint and verifies the OS reports that mount as read-only;
+- locates `KakeFlow.app` on the mounted volume;
+- reads `Info.plist` with `plutil` and requires the expected product version,
+  bundle identifier `app.kakeflow.desktop`, and executable `kakeflow`;
+- verifies the executable is a non-empty executable file whose resolved path
+  remains inside the mounted volume;
+- verifies the bundle Resources directory and validates the bundle's complete
+  code-signature structure with `codesign --verify --deep --strict`; and
+- detaches the volume in a `finally` path on both success and failure.
+
+When `KAKEFLOW_SMOKE_ARTIFACT_DIR` is set, CI retains both the packaged UI JSON
+and `dmg-install-smoke-darwin.json` containing the image, bundle metadata,
+executable size and bundle-integrity result. `KAKEFLOW_DMG_PATH`
+can select a specific compatible image for local diagnosis.
 
 ## Scope and limitations
 
@@ -67,3 +92,10 @@ It also does not exercise OS file-picker dialogs, install the NSIS
 package, or validate signing,
 notarization, Gatekeeper, and SmartScreen behavior. Those checks need signed
 release credentials and/or a dedicated interactive runner.
+
+The DMG harness is macOS-only. It proves mount-level and bundle integrity but
+does not launch from the read-only volume: macOS LaunchServices and Tauri startup
+from a mounted unsigned CI image are not deterministic on unattended runners.
+Launch/UI behavior remains enforced by the separate packaged app-bundle smoke.
+The DMG gate also does not write to `/Applications`, bypass Gatekeeper, or claim
+Windows NSIS/MSI installation coverage.

@@ -59,7 +59,7 @@ jobs:
           - name: macOS
             runner: macos-14
             perl: perl
-            package-script: desktop:build:mac
+            package-script: desktop:build:mac:ci
           - name: Windows
             runner: windows-2022
             perl: C:\Strawberry\perl\bin\perl.exe
@@ -119,6 +119,12 @@ jobs:
         env:
           KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/${{ matrix.name }}
         run: npm run test:packaged
+
+      - name: Mount and validate macOS DMG
+        if: runner.os == 'macOS'
+        env:
+          KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/${{ matrix.name }}
+        run: npm run test:dmg
 
       - name: Upload packaged UI evidence
         if: always()
