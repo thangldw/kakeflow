@@ -1,3 +1,4 @@
+use crate::record_scope::{validate_attribution_scope, AttributionScope};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -12,6 +13,8 @@ pub struct FinancialIntelligenceRequest {
     pub as_of: String,
     #[serde(default)]
     pub account_group_id: Option<String>,
+    #[serde(default)]
+    pub attribution_scope: AttributionScope,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -79,6 +82,12 @@ pub fn query_financial_intelligence(
         request.account_group_id.as_deref(),
     )
     .map_err(|error| error.public_message().to_owned())?;
+    validate_attribution_scope(
+        connection,
+        &request.household_id,
+        &request.attribution_scope,
+    )
+    .map_err(|error| error.to_string())?;
 
     let mut statement = connection
         .prepare(
@@ -97,6 +106,10 @@ pub fn query_financial_intelligence(
                      AND scope_gm.household_id = t.household_id \
                     WHERE scope_je.transaction_id = t.id \
                       AND scope_gm.account_group_id = ?4)) \
+               AND (?5 = 'ALL' \
+                    OR (?5 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD') \
+                    OR (?5 = 'MEMBER' AND t.attribution_kind = 'MEMBER' \
+                        AND t.attributed_member_id = ?6)) \
              GROUP BY t.id, t.occurred_on, t.payee, t.description \
              HAVING SUM(e.amount_jpy) > 0 \
              ORDER BY t.occurred_on, t.id",
@@ -108,7 +121,9 @@ pub fn query_financial_intelligence(
                 request.household_id,
                 history_from,
                 request.as_of,
-                request.account_group_id
+                request.account_group_id,
+                request.attribution_scope.sql_kind(),
+                request.attribution_scope.member_id()
             ],
             |row| {
                 Ok((
@@ -562,15 +577,19 @@ mod tests {
         connection
             .execute_batch(
                 "CREATE TABLE transactions (id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, \
-                    transaction_type TEXT, payee TEXT, description TEXT, status TEXT); \
+                    transaction_type TEXT, payee TEXT, description TEXT, status TEXT, \
+                    attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT); \
                  CREATE TABLE accounts (id TEXT PRIMARY KEY, household_id TEXT, account_kind TEXT); \
                  CREATE TABLE journal_entries (transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER); \
                  CREATE TABLE account_groups (id TEXT PRIMARY KEY, household_id TEXT); \
                  CREATE TABLE account_group_members (household_id TEXT, account_group_id TEXT, account_id TEXT); \
+                 CREATE TABLE household_members (id TEXT PRIMARY KEY, household_id TEXT, status TEXT); \
                  INSERT INTO accounts VALUES ('expense', 'family', 'EXPENSE'), ('bank', 'family', 'ASSET'), \
                     ('excluded-expense', 'family', 'EXPENSE'), ('excluded-bank', 'family', 'ASSET'); \
                  INSERT INTO account_groups VALUES ('daily', 'family'), ('foreign', 'other'); \
-                 INSERT INTO account_group_members VALUES ('family', 'daily', 'expense');",
+                 INSERT INTO account_group_members VALUES ('family', 'daily', 'expense'); \
+                 INSERT INTO household_members VALUES ('alice', 'family', 'ACTIVE'), \
+                    ('archived', 'family', 'ARCHIVED'), ('foreign-member', 'other', 'ACTIVE');",
             )
             .unwrap();
         connection
@@ -580,7 +599,7 @@ mod tests {
     fn query_excludes_refunds_transfers_void_rows_and_non_expense_legs() {
         let connection = test_connection();
         connection.execute_batch(
-            "INSERT INTO transactions VALUES
+            "INSERT INTO transactions (id,household_id,occurred_on,transaction_type,payee,description,status) VALUES
                 ('e1','family','2026-05-01','EXPENSE','Rent',NULL,'POSTED'),
                 ('e2','family','2026-06-01','EXPENSE','Rent',NULL,'POSTED'),
                 ('e3','family','2026-07-01','CARD_PURCHASE','Rent',NULL,'POSTED'),
@@ -598,6 +617,7 @@ mod tests {
                 household_id: "family".into(),
                 as_of: "2026-07-31".into(),
                 account_group_id: None,
+                attribution_scope: AttributionScope::default(),
             },
         )
         .unwrap();
@@ -611,7 +631,7 @@ mod tests {
         let connection = test_connection();
         connection.execute_batch(
             "INSERT INTO account_group_members VALUES ('family','daily','bank');
-             INSERT INTO transactions VALUES
+             INSERT INTO transactions (id,household_id,occurred_on,transaction_type,payee,description,status) VALUES
                 ('included-1','family','2026-05-01','EXPENSE','Rent',NULL,'POSTED'),
                 ('included-2','family','2026-06-01','EXPENSE','Rent',NULL,'POSTED'),
                 ('included-3','family','2026-07-01','EXPENSE','Rent',NULL,'POSTED'),
@@ -629,6 +649,7 @@ mod tests {
                 household_id: "family".into(),
                 as_of: "2026-07-31".into(),
                 account_group_id: Some("daily".into()),
+                attribution_scope: AttributionScope::default(),
             },
         )
         .unwrap();
@@ -647,6 +668,7 @@ mod tests {
                 household_id: "family".into(),
                 as_of: "2026-07-31".into(),
                 account_group_id: Some("foreign".into()),
+                attribution_scope: AttributionScope::default(),
             },
         );
         assert_eq!(
@@ -660,9 +682,73 @@ mod tests {
                 household_id: "family".into(),
                 as_of: "2026-07-31".into(),
                 account_group_id: None,
+                attribution_scope: AttributionScope::default(),
             },
         );
         assert!(legacy.is_ok());
+    }
+
+    #[test]
+    fn attribution_scope_separates_common_and_member_history_and_accepts_archived_members() {
+        let connection = test_connection();
+        connection.execute_batch(
+            "INSERT INTO transactions
+                (id,household_id,occurred_on,transaction_type,payee,description,status,attribution_kind,attributed_member_id)
+              VALUES
+                ('common-1','family','2026-05-01','EXPENSE','Common Rent',NULL,'POSTED','HOUSEHOLD',NULL),
+                ('common-2','family','2026-06-01','EXPENSE','Common Rent',NULL,'POSTED','HOUSEHOLD',NULL),
+                ('common-3','family','2026-07-01','EXPENSE','Common Rent',NULL,'POSTED','HOUSEHOLD',NULL),
+                ('member-1','family','2026-05-02','EXPENSE','Archived Plan',NULL,'POSTED','MEMBER','archived'),
+                ('member-2','family','2026-06-02','EXPENSE','Archived Plan',NULL,'POSTED','MEMBER','archived'),
+                ('member-3','family','2026-07-02','EXPENSE','Archived Plan',NULL,'POSTED','MEMBER','archived');
+             INSERT INTO journal_entries VALUES
+                ('common-1','expense','DEBIT',1000),('common-2','expense','DEBIT',1000),('common-3','expense','DEBIT',1000),
+                ('member-1','expense','DEBIT',2000),('member-2','expense','DEBIT',2000),('member-3','expense','DEBIT',2000);",
+        ).unwrap();
+
+        let common = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::HouseholdCommon,
+            },
+        )
+        .unwrap();
+        assert_eq!(common.recurring_items.len(), 1);
+        assert_eq!(common.recurring_items[0].display_payee, "Common Rent");
+
+        let archived = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::Member {
+                    member_id: "archived".into(),
+                },
+            },
+        )
+        .unwrap();
+        assert_eq!(archived.recurring_items.len(), 1);
+        assert_eq!(archived.recurring_items[0].display_payee, "Archived Plan");
+
+        let foreign = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::Member {
+                    member_id: "foreign-member".into(),
+                },
+            },
+        );
+        assert_eq!(
+            foreign.unwrap_err(),
+            "Attribution member was not found in the household"
+        );
     }
 
     #[test]
