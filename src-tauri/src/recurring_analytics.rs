@@ -77,7 +77,7 @@ pub fn query_financial_intelligence(
             "SELECT t.id, t.occurred_on, COALESCE(NULLIF(TRIM(t.payee), ''), \
                     NULLIF(TRIM(t.description), ''), 'Unknown'), SUM(e.amount_jpy) \
              FROM transactions t \
-             JOIN journal_entries e ON e.transaction_id = t.id AND e.side = 'DEBIT' \
+             JOIN journal_entries e ON e.transaction_id = t.id AND e.entry_side = 'DEBIT' \
              JOIN accounts a ON a.id = e.account_id AND a.account_kind = 'EXPENSE' \
              WHERE t.household_id = ?1 AND t.status = 'POSTED' \
                AND t.transaction_type IN ('EXPENSE', 'CARD_PURCHASE') \
@@ -544,7 +544,7 @@ mod tests {
                 "CREATE TABLE transactions (id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, \
                     transaction_type TEXT, payee TEXT, description TEXT, status TEXT); \
                  CREATE TABLE accounts (id TEXT PRIMARY KEY, account_kind TEXT); \
-                 CREATE TABLE journal_entries (transaction_id TEXT, account_id TEXT, side TEXT, amount_jpy INTEGER); \
+                 CREATE TABLE journal_entries (transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER); \
                  INSERT INTO accounts VALUES ('expense', 'EXPENSE'), ('bank', 'ASSET');",
             )
             .unwrap();
