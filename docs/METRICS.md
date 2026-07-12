@@ -56,6 +56,13 @@ group when one of its journal accounts belongs to that group. Group-filtered
 cards, charts, reports, and exports must all use the same membership rule and
 must not change the underlying journal entries.
 
+KakeFlow validates the group against the active household before running a
+scoped query. Missing or foreign-household groups fail rather than widening to
+all accounts. A transaction that touches several member accounts is still
+included once. Import failures and savings-goal actions remain household-wide
+because their records do not identify an account; the UI keeps them visible
+instead of implying that an account filter can classify them.
+
 ## Export
 
 Exports contain posted records only, use UTF-8 with BOM for Japanese Excel

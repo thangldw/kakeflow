@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0 — 2026-07-13
+
+- Add a saved account-scope selector to Overview, Transactions, and Reports, restore the selection per household, and reset it safely when the household changes or the group is deleted.
+- Apply one canonical any-journal-entry membership rule to dashboard KPIs and trends, ledger pagination, financial calendar, monthly/yearly reports, recurring/anomaly analysis, forecasts, and account-derived Action Center items.
+- Reject missing or cross-household groups instead of silently returning whole-household data; an omitted group preserves the previous all-account result.
+- Keep household-level import and goal actions visible inside scoped reports because those records have no account association.
+- Default CSV export to the active analytical scope and display the selected group beside scoped results.
+
 ## 0.9.0 — 2026-07-13
 
 - Import Monex U.S. stock transaction-history CSV columns and preserve the source row, currency, ticker, and transaction semantics.

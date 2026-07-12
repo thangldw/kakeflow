@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "0.9.0"
+version = "0.10.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "MIT"
