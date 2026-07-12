@@ -10,6 +10,8 @@ const MAX_SEARCH_LEN: usize = 200;
 const MAX_TRANSACTION_TEXT_LEN: usize = 16_384;
 const MAX_MANUAL_ENTRIES: usize = 128;
 const MAX_TRANSACTION_EVIDENCE: usize = 1_024;
+const MAX_RULE_VALUES: usize = 32;
+const MAX_RULE_TEXT_LEN: usize = 200;
 const MAX_PLANNING_JPY: i64 = 9_000_000_000_000_000;
 const CANONICAL_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
     ("bank", "Bank", "ASSET", "BANK"),
@@ -1737,6 +1739,547 @@ pub fn delete_savings_goal(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationRuleDto {
+    pub id: String,
+    pub household_id: String,
+    pub name: String,
+    pub priority: i64,
+    pub is_enabled: bool,
+    pub merchant_contains: Option<String>,
+    pub description_contains: Option<String>,
+    pub category_account_id: String,
+    pub category_name: String,
+    pub labels: Vec<String>,
+    pub tags: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateClassificationRuleInput {
+    pub id: String,
+    pub household_id: String,
+    pub name: String,
+    pub priority: i64,
+    pub is_enabled: bool,
+    pub merchant_contains: Option<String>,
+    pub description_contains: Option<String>,
+    pub category_account_id: String,
+    pub labels: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+pub type UpdateClassificationRuleInput = CreateClassificationRuleInput;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationPreviewInput {
+    pub household_id: String,
+    pub merchant: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationPreviewDto {
+    pub winning_rule_id: Option<String>,
+    pub matches: Vec<ClassificationRuleDto>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyClassificationRuleInput {
+    pub household_id: String,
+    pub transaction_id: String,
+    pub rule_id: String,
+    /// Optimistic concurrency token returned by transaction_detail_get.
+    pub expected_transaction_updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppliedClassificationDto {
+    pub transaction_id: String,
+    pub rule_id: String,
+    pub category_account_id: String,
+    pub category_name: String,
+    pub labels: Vec<String>,
+    pub tags: Vec<String>,
+    pub transaction_updated_at: String,
+}
+
+pub fn list_classification_rules(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<ClassificationRuleDto>, RepositoryError> {
+    validate_id(household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT r.id, r.household_id, r.name, r.priority, r.is_enabled,
+                    r.merchant_contains, r.description_contains, r.category_account_id,
+                    a.name, r.created_at, r.updated_at
+             FROM classification_rules r
+             JOIN accounts a ON a.id = r.category_account_id
+             WHERE r.household_id = ?1
+             ORDER BY r.priority ASC, r.id ASC",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map([household_id], rule_from_row)
+        .map_err(map_database_error)?;
+    let mut rules = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    for rule in &mut rules {
+        rule.labels = rule_values(connection, "classification_rule_labels", "label", &rule.id)?;
+        rule.tags = rule_values(connection, "classification_rule_tags", "tag", &rule.id)?;
+    }
+    Ok(rules)
+}
+
+pub fn create_classification_rule(
+    connection: &Connection,
+    input: &CreateClassificationRuleInput,
+) -> Result<ClassificationRuleDto, RepositoryError> {
+    let normalized = validate_classification_rule(connection, input)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO classification_rules
+             (id, household_id, name, priority, is_enabled, merchant_contains,
+              description_contains, category_account_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                input.id,
+                input.household_id,
+                normalized.name,
+                input.priority,
+                input.is_enabled,
+                normalized.merchant,
+                normalized.description,
+                input.category_account_id
+            ],
+        )
+        .map_err(map_database_error)?;
+    replace_rule_values(
+        &transaction,
+        &input.id,
+        &normalized.labels,
+        &normalized.tags,
+    )?;
+    transaction.commit().map_err(map_database_error)?;
+    get_classification_rule(connection, &input.household_id, &input.id)
+}
+
+pub fn update_classification_rule(
+    connection: &Connection,
+    input: &UpdateClassificationRuleInput,
+) -> Result<ClassificationRuleDto, RepositoryError> {
+    let normalized = validate_classification_rule(connection, input)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    let changed = transaction
+        .execute(
+            "UPDATE classification_rules
+             SET name = ?3, priority = ?4, is_enabled = ?5, merchant_contains = ?6,
+                 description_contains = ?7, category_account_id = ?8,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND household_id = ?2",
+            params![
+                input.id,
+                input.household_id,
+                normalized.name,
+                input.priority,
+                input.is_enabled,
+                normalized.merchant,
+                normalized.description,
+                input.category_account_id
+            ],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(RepositoryError::NotFound);
+    }
+    replace_rule_values(
+        &transaction,
+        &input.id,
+        &normalized.labels,
+        &normalized.tags,
+    )?;
+    transaction.commit().map_err(map_database_error)?;
+    get_classification_rule(connection, &input.household_id, &input.id)
+}
+
+pub fn delete_classification_rule(
+    connection: &Connection,
+    household_id: &str,
+    rule_id: &str,
+) -> Result<(), RepositoryError> {
+    validate_id(household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    validate_id(rule_id, MAX_LOOKUP_ID_LEN)?;
+    let changed = connection
+        .execute(
+            "DELETE FROM classification_rules WHERE id = ?1 AND household_id = ?2",
+            params![rule_id, household_id],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(RepositoryError::NotFound);
+    }
+    Ok(())
+}
+
+pub fn preview_classification_rules(
+    connection: &Connection,
+    input: &ClassificationPreviewInput,
+) -> Result<ClassificationPreviewDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    validate_optional_rule_text(input.merchant.as_deref())?;
+    validate_optional_rule_text(input.description.as_deref())?;
+    let matches = list_classification_rules(connection, &input.household_id)?
+        .into_iter()
+        .filter(|rule| {
+            rule.is_enabled
+                && rule_matches(
+                    rule,
+                    input.merchant.as_deref(),
+                    input.description.as_deref(),
+                )
+        })
+        .collect::<Vec<_>>();
+    Ok(ClassificationPreviewDto {
+        winning_rule_id: matches.first().map(|rule| rule.id.clone()),
+        matches,
+    })
+}
+
+/// Applies only an enabled rule that still matches a posted transaction. The
+/// caller must provide the exact updated_at value it reviewed; stale writes and
+/// split expense entries are rejected rather than guessed.
+pub fn apply_classification_rule(
+    connection: &Connection,
+    input: &ApplyClassificationRuleInput,
+) -> Result<AppliedClassificationDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    validate_id(&input.transaction_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.rule_id, MAX_LOOKUP_ID_LEN)?;
+    let rule = get_classification_rule(connection, &input.household_id, &input.rule_id)?;
+    if !rule.is_enabled {
+        return Err(RepositoryError::Conflict);
+    }
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    let (merchant, description, updated_at): (Option<String>, Option<String>, String) = transaction
+        .query_row(
+            "SELECT payee, description, updated_at FROM transactions
+             WHERE id = ?1 AND household_id = ?2 AND status = 'POSTED'",
+            params![input.transaction_id, input.household_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    if updated_at != input.expected_transaction_updated_at
+        || !rule_matches(&rule, merchant.as_deref(), description.as_deref())
+    {
+        return Err(RepositoryError::Conflict);
+    }
+    let expense_entries = transaction
+        .query_row(
+            "SELECT count(*) FROM journal_entries e JOIN accounts a ON a.id = e.account_id
+             WHERE e.transaction_id = ?1 AND a.account_kind = 'EXPENSE'",
+            [&input.transaction_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(map_database_error)?;
+    if expense_entries != 1 {
+        return Err(RepositoryError::Conflict);
+    }
+    let previous_category: String = transaction
+        .query_row(
+            "SELECT e.account_id FROM journal_entries e JOIN accounts a ON a.id = e.account_id
+             WHERE e.transaction_id = ?1 AND a.account_kind = 'EXPENSE'",
+            [&input.transaction_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "UPDATE journal_entries SET account_id = ?2 WHERE transaction_id = ?1
+         AND account_id = ?3",
+            params![
+                input.transaction_id,
+                rule.category_account_id,
+                previous_category
+            ],
+        )
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "DELETE FROM transaction_labels WHERE transaction_id = ?1",
+            [&input.transaction_id],
+        )
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "DELETE FROM transaction_tags WHERE transaction_id = ?1",
+            [&input.transaction_id],
+        )
+        .map_err(map_database_error)?;
+    for label in &rule.labels {
+        transaction
+            .execute(
+                "INSERT INTO transaction_labels (transaction_id, label) VALUES (?1, ?2)",
+                params![input.transaction_id, label],
+            )
+            .map_err(map_database_error)?;
+    }
+    for tag in &rule.tags {
+        transaction
+            .execute(
+                "INSERT INTO transaction_tags (transaction_id, tag) VALUES (?1, ?2)",
+                params![input.transaction_id, tag],
+            )
+            .map_err(map_database_error)?;
+    }
+    transaction.execute(
+        "INSERT INTO classification_rule_applications
+         (household_id, transaction_id, rule_id, previous_category_account_id, applied_category_account_id)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![input.household_id, input.transaction_id, input.rule_id, previous_category, rule.category_account_id],
+    ).map_err(map_database_error)?;
+    transaction
+        .execute(
+            "UPDATE transactions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?1 AND household_id = ?2 AND updated_at = ?3",
+            params![
+                input.transaction_id,
+                input.household_id,
+                input.expected_transaction_updated_at
+            ],
+        )
+        .map_err(map_database_error)?;
+    let transaction_updated_at = transaction
+        .query_row(
+            "SELECT updated_at FROM transactions WHERE id = ?1",
+            [&input.transaction_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    transaction.commit().map_err(map_database_error)?;
+    Ok(AppliedClassificationDto {
+        transaction_id: input.transaction_id.clone(),
+        rule_id: input.rule_id.clone(),
+        category_account_id: rule.category_account_id,
+        category_name: rule.category_name,
+        labels: rule.labels,
+        tags: rule.tags,
+        transaction_updated_at,
+    })
+}
+
+struct NormalizedRuleInput<'a> {
+    name: &'a str,
+    merchant: Option<&'a str>,
+    description: Option<&'a str>,
+    labels: Vec<String>,
+    tags: Vec<String>,
+}
+
+fn validate_classification_rule<'a>(
+    connection: &Connection,
+    input: &'a CreateClassificationRuleInput,
+) -> Result<NormalizedRuleInput<'a>, RepositoryError> {
+    validate_id(&input.id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    let name = validate_name(&input.name)?;
+    if !(0..=1_000_000).contains(&input.priority) {
+        return Err(RepositoryError::InvalidInput("Invalid rule priority"));
+    }
+    let merchant = trim_optional_rule_text(input.merchant_contains.as_deref())?;
+    let description = trim_optional_rule_text(input.description_contains.as_deref())?;
+    if merchant.is_none() && description.is_none() {
+        return Err(RepositoryError::InvalidInput(
+            "A rule match condition is required",
+        ));
+    }
+    ensure_household_exists(connection, &input.household_id)?;
+    let category_kind: Option<String> = connection.query_row(
+        "SELECT account_kind FROM accounts WHERE id = ?1 AND household_id = ?2 AND is_archived = 0",
+        params![input.category_account_id, input.household_id], |row| row.get(0)
+    ).optional().map_err(map_database_error)?;
+    if category_kind.as_deref() != Some("EXPENSE") {
+        return Err(RepositoryError::InvalidInput(
+            "Rule category must be an active expense account",
+        ));
+    }
+    Ok(NormalizedRuleInput {
+        name,
+        merchant,
+        description,
+        labels: normalize_rule_values(&input.labels)?,
+        tags: normalize_rule_values(&input.tags)?,
+    })
+}
+
+fn validate_optional_rule_text(value: Option<&str>) -> Result<(), RepositoryError> {
+    trim_optional_rule_text(value).map(|_| ())
+}
+fn trim_optional_rule_text(value: Option<&str>) -> Result<Option<&str>, RepositoryError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_RULE_TEXT_LEN
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(RepositoryError::InvalidInput("Invalid rule match text"));
+    }
+    Ok(Some(trimmed))
+}
+
+fn normalize_rule_values(values: &[String]) -> Result<Vec<String>, RepositoryError> {
+    if values.len() > MAX_RULE_VALUES {
+        return Err(RepositoryError::InvalidInput(
+            "Too many rule labels or tags",
+        ));
+    }
+    let mut normalized = Vec::with_capacity(values.len());
+    for value in values {
+        let value = value.trim();
+        if value.is_empty()
+            || value.chars().count() > MAX_NAME_LEN
+            || value.chars().any(char::is_control)
+        {
+            return Err(RepositoryError::InvalidInput("Invalid rule label or tag"));
+        }
+        if !normalized.iter().any(|existing| existing == value) {
+            normalized.push(value.to_owned());
+        }
+    }
+    normalized.sort();
+    Ok(normalized)
+}
+
+fn rule_matches(
+    rule: &ClassificationRuleDto,
+    merchant: Option<&str>,
+    description: Option<&str>,
+) -> bool {
+    fn contains(value: Option<&str>, needle: Option<&str>) -> bool {
+        match needle {
+            None => true,
+            Some(needle) => value
+                .map(|value| value.to_lowercase().contains(&needle.to_lowercase()))
+                .unwrap_or(false),
+        }
+    }
+    contains(merchant, rule.merchant_contains.as_deref())
+        && contains(description, rule.description_contains.as_deref())
+}
+
+fn get_classification_rule(
+    connection: &Connection,
+    household_id: &str,
+    rule_id: &str,
+) -> Result<ClassificationRuleDto, RepositoryError> {
+    let mut rule = connection
+        .query_row(
+            "SELECT r.id, r.household_id, r.name, r.priority, r.is_enabled,
+                r.merchant_contains, r.description_contains, r.category_account_id,
+                a.name, r.created_at, r.updated_at
+         FROM classification_rules r JOIN accounts a ON a.id = r.category_account_id
+         WHERE r.id = ?1 AND r.household_id = ?2",
+            params![rule_id, household_id],
+            rule_from_row,
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    rule.labels = rule_values(connection, "classification_rule_labels", "label", rule_id)?;
+    rule.tags = rule_values(connection, "classification_rule_tags", "tag", rule_id)?;
+    Ok(rule)
+}
+
+fn rule_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClassificationRuleDto> {
+    Ok(ClassificationRuleDto {
+        id: row.get(0)?,
+        household_id: row.get(1)?,
+        name: row.get(2)?,
+        priority: row.get(3)?,
+        is_enabled: row.get(4)?,
+        merchant_contains: row.get(5)?,
+        description_contains: row.get(6)?,
+        category_account_id: row.get(7)?,
+        category_name: row.get(8)?,
+        labels: vec![],
+        tags: vec![],
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+fn rule_values(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    rule_id: &str,
+) -> Result<Vec<String>, RepositoryError> {
+    let sql = format!("SELECT {column} FROM {table} WHERE rule_id = ?1 ORDER BY {column}");
+    let mut statement = connection.prepare(&sql).map_err(map_database_error)?;
+    let rows = statement
+        .query_map([rule_id], |row| row.get(0))
+        .map_err(map_database_error)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
+fn replace_rule_values(
+    connection: &Connection,
+    rule_id: &str,
+    labels: &[String],
+    tags: &[String],
+) -> Result<(), RepositoryError> {
+    connection
+        .execute(
+            "DELETE FROM classification_rule_labels WHERE rule_id = ?1",
+            [rule_id],
+        )
+        .map_err(map_database_error)?;
+    connection
+        .execute(
+            "DELETE FROM classification_rule_tags WHERE rule_id = ?1",
+            [rule_id],
+        )
+        .map_err(map_database_error)?;
+    for label in labels {
+        connection
+            .execute(
+                "INSERT INTO classification_rule_labels (rule_id, label) VALUES (?1, ?2)",
+                params![rule_id, label],
+            )
+            .map_err(map_database_error)?;
+    }
+    for tag in tags {
+        connection
+            .execute(
+                "INSERT INTO classification_rule_tags (rule_id, tag) VALUES (?1, ?2)",
+                params![rule_id, tag],
+            )
+            .map_err(map_database_error)?;
+    }
+    Ok(())
+}
+
 fn get_savings_goal(
     connection: &Connection,
     household_id: &str,
@@ -2116,6 +2659,9 @@ mod tests {
                    updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z');",
             )
             .expect("compatible schema");
+        connection
+            .execute_batch(include_str!("../migrations/0009_classification_rules.sql"))
+            .expect("classification rule schema");
         connection
     }
 
@@ -3363,5 +3909,127 @@ mod tests {
             },
         );
         assert!(matches!(result, Err(RepositoryError::InvalidInput(_))));
+    }
+
+    fn grocery_rule(household_id: &str) -> CreateClassificationRuleInput {
+        CreateClassificationRuleInput {
+            id: format!("{household_id}-coffee-rule"),
+            household_id: household_id.into(),
+            name: "Coffee shops".into(),
+            priority: 10,
+            is_enabled: true,
+            merchant_contains: Some("coffee".into()),
+            description_contains: None,
+            category_account_id: format!("{household_id}-entertainment"),
+            labels: vec!["Recurring".into()],
+            tags: vec!["#work".into(), "#work".into()],
+        }
+    }
+
+    #[test]
+    fn classification_rule_lifecycle_and_preview_are_ordered_and_scoped() {
+        let connection = database();
+        for id in ["family", "other"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        let created = create_classification_rule(&connection, &grocery_rule("family")).unwrap();
+        assert_eq!(created.labels, vec!["Recurring"]);
+        assert_eq!(created.tags, vec!["#work"]);
+        assert!(list_classification_rules(&connection, "other")
+            .unwrap()
+            .is_empty());
+
+        let preview = preview_classification_rules(
+            &connection,
+            &ClassificationPreviewInput {
+                household_id: "family".into(),
+                merchant: Some("TOKYO COFFEE BAR".into()),
+                description: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            preview.winning_rule_id.as_deref(),
+            Some("family-coffee-rule")
+        );
+
+        let mut updated = grocery_rule("family");
+        updated.name = "Cafe".into();
+        updated.is_enabled = false;
+        let updated = update_classification_rule(&connection, &updated).unwrap();
+        assert_eq!(updated.name, "Cafe");
+        assert!(preview_classification_rules(
+            &connection,
+            &ClassificationPreviewInput {
+                household_id: "family".into(),
+                merchant: Some("Coffee".into()),
+                description: None,
+            }
+        )
+        .unwrap()
+        .matches
+        .is_empty());
+        assert!(matches!(
+            delete_classification_rule(&connection, "other", &updated.id),
+            Err(RepositoryError::NotFound)
+        ));
+        delete_classification_rule(&connection, "family", &updated.id).unwrap();
+    }
+
+    #[test]
+    fn classification_apply_requires_match_fresh_version_and_single_expense_entry() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        create_manual_transaction(&connection, &manual_expense("coffee-tx", "family", 800))
+            .unwrap();
+        create_classification_rule(&connection, &grocery_rule("family")).unwrap();
+        let detail = get_transaction_detail(&connection, "family", "coffee-tx").unwrap();
+        let applied = apply_classification_rule(
+            &connection,
+            &ApplyClassificationRuleInput {
+                household_id: "family".into(),
+                transaction_id: "coffee-tx".into(),
+                rule_id: "family-coffee-rule".into(),
+                expected_transaction_updated_at: detail.updated_at.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(applied.category_account_id, "family-entertainment");
+        assert_eq!(applied.labels, vec!["Recurring"]);
+        let category: String = connection
+            .query_row(
+                "SELECT e.account_id FROM journal_entries e JOIN accounts a ON a.id=e.account_id
+             WHERE e.transaction_id='coffee-tx' AND a.account_kind='EXPENSE'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(category, "family-entertainment");
+        assert!(matches!(
+            apply_classification_rule(
+                &connection,
+                &ApplyClassificationRuleInput {
+                    household_id: "family".into(),
+                    transaction_id: "coffee-tx".into(),
+                    rule_id: "family-coffee-rule".into(),
+                    expected_transaction_updated_at: detail.updated_at,
+                }
+            ),
+            Err(RepositoryError::Conflict)
+        ));
     }
 }

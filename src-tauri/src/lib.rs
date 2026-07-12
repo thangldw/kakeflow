@@ -18,12 +18,14 @@ use import_workflow::{
 use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
 use read_model::{
-    AccountDto, AccountingBasis, ArchiveAccountInput, CardSettlementDto, CreateAccountInput,
-    CreateHouseholdInput, CreateManualTransactionInput, CreateSavingsGoalInput,
-    DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, MonthlyCategoryBudgetDto,
-    RenameAccountInput, SavingsGoalDto, TransactionDetailDto, TransactionPageDto,
-    TransactionPageRequest, TransactionRowDto, UpdatePostedTransactionInput,
-    UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
+    AccountDto, AccountingBasis, AppliedClassificationDto, ApplyClassificationRuleInput,
+    ArchiveAccountInput, CardSettlementDto, ClassificationPreviewDto, ClassificationPreviewInput,
+    ClassificationRuleDto, CreateAccountInput, CreateClassificationRuleInput, CreateHouseholdInput,
+    CreateManualTransactionInput, CreateSavingsGoalInput, DashboardMonthlyTotalsDto, HouseholdDto,
+    ImportRunCountsDto, MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto,
+    TransactionDetailDto, TransactionPageDto, TransactionPageRequest, TransactionRowDto,
+    UpdateClassificationRuleInput, UpdatePostedTransactionInput, UpdateSavingsGoalInput,
+    UpsertMonthlyCategoryBudgetInput,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -510,6 +512,67 @@ fn savings_goal_delete(
 ) -> Result<(), String> {
     repository_result(&state, |connection| {
         read_model::delete_savings_goal(connection, &household_id, &goal_id)
+    })
+}
+
+#[tauri::command]
+fn classification_rules_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<ClassificationRuleDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::list_classification_rules(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn classification_rule_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateClassificationRuleInput,
+) -> Result<ClassificationRuleDto, String> {
+    repository_result(&state, |connection| {
+        read_model::create_classification_rule(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn classification_rule_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateClassificationRuleInput,
+) -> Result<ClassificationRuleDto, String> {
+    repository_result(&state, |connection| {
+        read_model::update_classification_rule(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn classification_rule_delete(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    rule_id: String,
+) -> Result<(), String> {
+    repository_result(&state, |connection| {
+        read_model::delete_classification_rule(connection, &household_id, &rule_id)
+    })
+}
+
+#[tauri::command]
+fn classification_rules_preview(
+    state: tauri::State<'_, AppState>,
+    input: ClassificationPreviewInput,
+) -> Result<ClassificationPreviewDto, String> {
+    repository_result(&state, |connection| {
+        read_model::preview_classification_rules(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn classification_rule_apply(
+    state: tauri::State<'_, AppState>,
+    input: ApplyClassificationRuleInput,
+) -> Result<AppliedClassificationDto, String> {
+    repository_result(&state, |connection| {
+        read_model::apply_classification_rule(connection, &input)
     })
 }
 
@@ -1063,6 +1126,12 @@ pub fn run() {
             savings_goal_create,
             savings_goal_update,
             savings_goal_delete,
+            classification_rules_list,
+            classification_rule_create,
+            classification_rule_update,
+            classification_rule_delete,
+            classification_rules_preview,
+            classification_rule_apply,
             watched_folders_list,
             watched_folder_select,
             watched_folder_remove,
