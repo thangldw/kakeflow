@@ -420,6 +420,7 @@ mod tests {
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
             include_str!("../migrations/0015_investment_market_prices.sql"),
             include_str!("../migrations/0016_complex_corporate_actions.sql"),
+            include_str!("../migrations/0020_mixed_currency_mergers.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
