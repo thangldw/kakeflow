@@ -22,6 +22,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0007_planning.sql")),
     M::up(include_str!("../migrations/0008_watched_folders.sql")),
     M::up(include_str!("../migrations/0009_classification_rules.sql")),
+    M::up(include_str!("../migrations/0010_portfolio_snapshots.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
