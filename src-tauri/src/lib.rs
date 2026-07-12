@@ -8,6 +8,7 @@ mod folder_discovery;
 pub mod forecast_action;
 pub mod import_workflow;
 pub mod investment_fx;
+pub mod investment_market;
 pub mod investment_performance;
 mod key_store;
 pub mod ocr;
@@ -38,6 +39,11 @@ use import_workflow::{
 use investment_fx::{
     ImportInvestmentFxRatesInput, InvestmentFxImportSummaryDto, InvestmentFxRateDto,
     InvestmentFxRatesRequest, InvestmentReportingDto, InvestmentReportingRequest,
+};
+use investment_market::{
+    ImportInvestmentMarketPricesInput, InvestmentMarketPriceDto,
+    InvestmentMarketPriceImportSummaryDto, InvestmentMarketPricesRequest, InvestmentValuationDto,
+    InvestmentValuationRequest,
 };
 use investment_performance::{
     InvestmentHoldingsDto, InvestmentHoldingsRequest, InvestmentPerformanceDto,
@@ -525,6 +531,16 @@ fn investment_fx_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn investment_market_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> Result<T, investment_market::InvestmentMarketError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Investment market database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 #[tauri::command]
 fn households_list(state: tauri::State<'_, AppState>) -> Result<Vec<HouseholdDto>, String> {
     repository_result(&state, read_model::list_households)
@@ -884,6 +900,36 @@ fn investment_reporting_query(
 ) -> Result<InvestmentReportingDto, String> {
     investment_fx_result(&state, |connection| {
         investment_fx::query_reporting(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn investment_market_prices_import(
+    state: tauri::State<'_, AppState>,
+    input: ImportInvestmentMarketPricesInput,
+) -> Result<InvestmentMarketPriceImportSummaryDto, String> {
+    investment_market_result(&state, |connection| {
+        investment_market::import_prices(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn investment_market_prices_query(
+    state: tauri::State<'_, AppState>,
+    request: InvestmentMarketPricesRequest,
+) -> Result<Vec<InvestmentMarketPriceDto>, String> {
+    investment_market_result(&state, |connection| {
+        investment_market::query_prices(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn investment_valuation_query(
+    state: tauri::State<'_, AppState>,
+    request: InvestmentValuationRequest,
+) -> Result<InvestmentValuationDto, String> {
+    investment_market_result(&state, |connection| {
+        investment_market::query_valuation(connection, &request)
     })
 }
 
@@ -1665,6 +1711,9 @@ pub fn run() {
             investment_fx_rates_import,
             investment_fx_rates_query,
             investment_reporting_query,
+            investment_market_prices_import,
+            investment_market_prices_query,
+            investment_valuation_query,
             account_groups_list,
             account_group_create,
             account_group_update,

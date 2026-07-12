@@ -1,0 +1,45 @@
+.investment-valuation__totals {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.investment-valuation__totals article {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--cream);
+}
+
+.investment-valuation__totals em,
+.investment-valuation__missing {
+  color: var(--orange);
+  font-style: normal;
+}
+
+.investment-valuation__positions {
+  display: grid;
+  gap: 8px;
+}
+
+.investment-valuation__positions > div {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) auto minmax(190px, auto);
+  gap: 14px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.investment-valuation__positions span,
+.investment-valuation__positions span small {
+  display: block;
+}
+
+@media (max-width: 860px) {
+  .investment-valuation__positions > div { grid-template-columns: 1fr auto; }
+  .investment-valuation__positions > div > small { grid-column: 1 / -1; }
+}
