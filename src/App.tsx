@@ -45,6 +45,9 @@ import type { InvestmentHoldingsDto, InvestmentPerformanceDto } from './features
 import { InvestmentFxSummary } from './features/investments/InvestmentFxSummary'
 import { InvestmentPeriodReport } from './features/investments/InvestmentPeriodReport'
 import { InvestmentValuationSummary } from './features/investments/InvestmentValuationSummary'
+import { AggregateAssetHistoryView } from './features/investments/AggregateAssetHistoryView'
+import { createAggregateAssetHistoryPlatform, mapAggregateAssetSnapshotImport } from './features/investments/aggregateAssetHistoryPlatform'
+import type { AggregateAssetSnapshotDto } from './features/investments/aggregateAssetHistoryPlatform'
 import { createInvestmentMarketPlatform } from './features/investments/investmentMarketPlatform'
 import type { InvestmentValuationDto } from './features/investments/investmentMarketPlatform'
 import { createWatchedFolderDiscoveryPlatform } from './features/import/watchedFolderDiscoveryPlatform'
@@ -69,7 +72,7 @@ import type { SourceImagePreviewDto } from './features/source-viewer/sourceImage
 import { PdfPasswordPrompt } from './features/source-viewer/PdfPasswordPrompt'
 import { createProtectedPdfPlatform } from './features/source-viewer/protectedPdfPlatform'
 import type { PdfPasswordStatus } from './features/source-viewer/protectedPdfPlatform'
-import type { BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
+import type { AggregateAssetSnapshotCandidate, BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
 import {
   DEFAULT_FOLDER_SCAN_INTERVAL_MS,
   discoverWatchedFiles,
@@ -96,6 +99,7 @@ const portfolioPlatform = createPortfolioPlatform()
 const brokeragePlatform = createBrokeragePlatform()
 const investmentPerformancePlatform = createInvestmentPerformancePlatform()
 const investmentMarketPlatform = createInvestmentMarketPlatform()
+const aggregateAssetHistoryPlatform = createAggregateAssetHistoryPlatform()
 const watchedFolderDiscoveryPlatform = createWatchedFolderDiscoveryPlatform()
 const sourceImagePreviewPlatform = createSourceImagePreviewPlatform()
 const protectedPdfPlatform = createProtectedPdfPlatform()
@@ -629,6 +633,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [checkpoints, setCheckpoints] = useState<WatchedFileCheckpoints>({})
   const checkpointsRef = useRef<WatchedFileCheckpoints>({})
   const [portfolioImported, setPortfolioImported] = useState<ReadonlySet<string>>(() => new Set())
+  const [aggregateAssetImported, setAggregateAssetImported] = useState<ReadonlySet<string>>(() => new Set())
   const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
   const [selectedParserProfiles, setSelectedParserProfiles] = useState<Record<string, string>>({})
   const [customParserPreviews, setCustomParserPreviews] = useState<Record<string, CustomDelimitedPreview>>({})
@@ -873,8 +878,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       }, item.fileBytes)
       if (!started.reusedExisting) {
         await portfolioPlatform.importSnapshot(mapPortfolioSnapshotImport(snapshot, { snapshotId: crypto.randomUUID(), householdId, accountId: securitiesAccount.id, sourceDocumentId: started.documentId }))
-        await platformClient.commitImport(started.runId, [])
       }
+      if (started.status !== 'POSTED') await platformClient.commitImport(started.runId, [])
       setPortfolioImported((current) => new Set([...current, item.id])); onChanged()
       setNotice(started.reusedExisting ? 'この資産スナップショットはすでに取り込み済みです。' : `${snapshot.positions.length}銘柄の資産スナップショットを保存しました。`)
     } catch { setNotice('資産スナップショットを保存できませんでした。証券口座と原本を確認してください。') }
@@ -894,11 +899,35 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       const started = await platformClient.startImport({ runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
       if (!started.reusedExisting) {
         await brokeragePlatform.importEvents(mapBrokerageEventsImport(events, { householdId, accountId: securitiesAccount.id, sourceDocumentId: started.documentId, idPrefix: runId }))
-        await platformClient.commitImport(started.runId, [])
       }
+      if (started.status !== 'POSTED') await platformClient.commitImport(started.runId, [])
       setPortfolioImported((current) => new Set([...current, item.id])); onChanged()
       setNotice(started.reusedExisting ? 'この証券取引ファイルはすでに取り込み済みです。' : `${events.length}件の証券取引を保存しました。`)
     } catch { setNotice('証券取引を保存できませんでした。口座、通貨、原本の合計を確認してください。') }
+    finally { setActiveRun(null) }
+  }
+
+  const importAggregateAssetHistory = async (item: ImportPreview) => {
+    if (!householdId || !item.fileBytes || item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' || !item.parsed) return
+    const snapshots = item.parsed.records.filter((record): record is AggregateAssetSnapshotCandidate => typeof record === 'object' && record !== null && (record as { kind?: unknown }).kind === 'aggregate-asset-snapshot')
+    if (snapshots.length === 0) { setNotice('Money Forwardの総資産履歴を正規化できませんでした。'); return }
+    setActiveRun(item.id); setNotice('')
+    let newRunId: string | null = null
+    let batchPersisted = false
+    try {
+      const runId = crypto.randomUUID(); const documentId = crypto.randomUUID()
+      const records = await Promise.all(snapshots.map(async (snapshot) => { const payloadJson = JSON.stringify(snapshot); return { id: crypto.randomUUID(), rowNumber: snapshot.lineage.sourceRow, recordHash: await sha256Text(payloadJson), payloadJson } }))
+      const started = await platformClient.startImport({ runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
+      if (!started.reusedExisting) newRunId = started.runId
+      const result = await aggregateAssetHistoryPlatform.importHistory({ householdId, snapshots: snapshots.map((snapshot) => mapAggregateAssetSnapshotImport(snapshot, { id: crypto.randomUUID(), householdId, sourceDocumentId: started.documentId })) })
+      batchPersisted = true
+      if (started.status !== 'POSTED') await platformClient.commitImport(started.runId, [])
+      setAggregateAssetImported((current) => new Set([...current, item.id])); onChanged()
+      setNotice(result.reusedCount === snapshots.length ? 'このMoney Forward総資産履歴はすでに取り込み済みです。' : `${result.createdCount}時点の総資産履歴を保存しました。台帳と純資産には加算しません。`)
+    } catch {
+      if (newRunId && !batchPersisted) { try { await platformClient.rollbackImport(newRunId) } catch { /* retain the primary import error */ } }
+      setNotice('Money Forward総資産履歴を保存できませんでした。同じ日付の値と原本行を確認してください。')
+    }
     finally { setActiveRun(null) }
   }
 
@@ -971,7 +1000,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         })}
       </div>}
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
@@ -1022,6 +1051,8 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
   const [holdings, setHoldings] = useState<InvestmentHoldingsDto | null>(null)
   const [performance, setPerformance] = useState<InvestmentPerformanceDto | null>(null)
   const [valuation, setValuation] = useState<InvestmentValuationDto | null>(null)
+  const [aggregateAssets, setAggregateAssets] = useState<readonly AggregateAssetSnapshotDto[]>([])
+  const [aggregateRange, setAggregateRange] = useState<{ from: string | null; to: string | null }>({ from: null, to: null })
   useEffect(() => {
     if (!householdId || platformClient.runtime !== 'tauri') return
     let active = true
@@ -1034,6 +1065,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
     const asOf = periodFromMonth(currentTokyoPeriod().month).toDate
     void Promise.all([investmentPerformancePlatform.queryHoldings({ householdId, asOf }), investmentPerformancePlatform.queryPerformance({ householdId })]).then(([nextHoldings, nextPerformance]) => { if (active) { setHoldings(nextHoldings); setPerformance(nextPerformance) } }).catch(() => { if (active) { setHoldings(null); setPerformance(null) } })
     void investmentMarketPlatform.queryValuation({ householdId, asOf }).then((nextValuation) => { if (active) setValuation(nextValuation) }).catch(() => { if (active) setValuation(null) })
+    void aggregateAssetHistoryPlatform.listHistory({ householdId, limit: 240 }).then((items) => { if (active) setAggregateAssets(items) }).catch(() => { if (active) { setAggregateAssets([]); setNotice('Money Forward総資産履歴を読み込めませんでした。') } })
     return () => { active = false }
   }, [householdId, revision])
   const selectSnapshot = async (snapshotId: string) => {
@@ -1042,11 +1074,17 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
     catch { setNotice('選択した資産スナップショットを読み込めませんでした。') }
   }
   const maxAssetClass = Math.max(1, ...(detail?.assetClasses.map((item) => item.marketValueJpy) ?? [1]))
+  const applyAggregateRange = async (from: string | null, to: string | null) => {
+    if (!householdId) return
+    try { setAggregateAssets(await aggregateAssetHistoryPlatform.listHistory({ householdId, dateFrom: from, dateTo: to, limit: 240 })); setAggregateRange({ from, to }) }
+    catch { setNotice('総資産履歴の期間を読み込めませんでした。開始日と終了日を確認してください。') }
+  }
   return <><PageHeader eyebrow="資産形成" title="資産・投資" description="証券会社の資産残高ファイルを、家計取引とは分離した時点スナップショットとして管理します。"><button className="primary-btn" onClick={openImport}><Import size={17} /> 残高ファイルを取り込む</button></PageHeader>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {detail ? <><section className="kpi-grid investment-kpis"><KpiCard label="評価額" value={yen(detail.marketValueJpy)} meta={`${detail.asOf.slice(0, 10)} 現在`} icon={TrendingUp} accent="#e4edda" /><KpiCard label="証券口座内の現金" value={yen(detail.cashValueJpy)} meta={detail.accountName} icon={CircleDollarSign} accent="#dce9e6" /><KpiCard label="評価損益" value={yen(detail.unrealizedPnlJpy ?? 0)} meta="未実現損益" icon={ArrowUpRight} accent="#eee5cf" /><KpiCard label="保有銘柄" value={`${detail.positionCount}銘柄`} meta={`${detail.fxRateCount}通貨レート`} icon={WalletCards} accent="#f7e3d9" /></section>
       <section className="investment-grid"><article className="panel"><div className="panel-head"><div><h2>資産配分</h2><p>評価額ベース</p></div></div><div className="asset-allocation">{detail.assetClasses.map((item) => <div key={item.id}><span><strong>{item.name}</strong><em>{yen(item.marketValueJpy)}</em></span><div className="progress"><span style={{ width: `${item.marketValueJpy / maxAssetClass * 100}%` }} /></div></div>)}</div></article><article className="panel snapshot-history"><div className="panel-head"><div><h2>スナップショット履歴</h2><p>{snapshots.length}件</p></div></div>{snapshots.map((snapshot) => <button key={snapshot.id} className={snapshot.id === detail.id ? 'active' : ''} onClick={() => void selectSnapshot(snapshot.id)}><span>{snapshot.asOf.slice(0, 10)} ・ {snapshot.accountName}</span><strong>{yen(snapshot.marketValueJpy)}</strong></button>)}</article></section>
       <section className="panel positions-table"><div className="panel-head"><div><h2>保有商品</h2><p>原本の行番号まで追跡可能</p></div></div><div className="position-row position-head"><span>銘柄</span><span>口座</span><span>数量</span><span>現在値</span><span>評価額</span><span>評価損益</span></div>{detail.positions.map((position) => <div className="position-row" key={position.id}><span><strong>{position.instrumentName}</strong><small>{position.instrumentCode || position.productType} ・ 行 {position.sourceRow}</small></span><span>{position.accountType}</span><span>{position.quantity?.toLocaleString('ja-JP') ?? '—'}</span><span>{position.marketPrice == null ? '—' : `${position.currency} ${position.marketPrice.toLocaleString('ja-JP')}`}</span><strong>{position.marketValueJpy == null ? '—' : yen(position.marketValueJpy)}</strong><em className={(position.unrealizedPnlJpy ?? 0) >= 0 ? 'amount-positive' : ''}>{position.unrealizedPnlJpy == null ? '—' : yen(position.unrealizedPnlJpy)}</em></div>)}</section></> : <section className="panel investment-empty"><TrendingUp size={32} /><h2>資産スナップショットはまだありません</h2><p>設定で証券口座を追加し、`assetbalance(all)_*.csv` をインポートしてください。</p><button className="primary-btn" onClick={openImport}>インポート Inboxを開く</button></section>}
+    <AggregateAssetHistoryView snapshots={aggregateAssets} initialDateFrom={aggregateRange.from ?? ''} initialDateTo={aggregateRange.to ?? ''} onApplyRange={(from, to) => void applyAggregateRange(from, to)} />
     {brokerage && brokerage.events.length > 0 && <section className="panel brokerage-history"><div className="panel-head"><div><h2>証券取引履歴</h2><p>売買・配当・手数料・税金・入出金（家計支出には含めません）</p></div><strong>{brokerage.events.length}件</strong></div><div className="brokerage-totals">{brokerage.totalsByCurrency.map((total) => <article key={total.currency}><span>{total.currency} 純資金移動</span><strong>{total.netCashMovement.toLocaleString('ja-JP')}</strong><small>配当 {total.dividendGross.toLocaleString('ja-JP')} ・ 手数料 {total.fees.toLocaleString('ja-JP')} ・ 税 {total.taxes.toLocaleString('ja-JP')}</small></article>)}</div><div className="brokerage-event-list">{brokerage.events.slice(0, 20).map((event) => <div key={event.id}><span><strong>{event.instrumentName || event.rawTransactionType}</strong><small>{event.tradeDate ?? event.settlementDate} ・ {event.accountName} ・ 行 {event.sourceRow}</small></span><b>{event.eventType}</b><em>{event.currency} {event.settlementAmount.toLocaleString('ja-JP')}</em></div>)}</div></section>}
     {holdings && (holdings.positions.length > 0 || (performance?.totalsByCurrency.length ?? 0) > 0) && <section className="panel investment-performance"><div className="panel-head"><div><h2>投資パフォーマンス</h2><p>{holdings.costBasisMethod} 原価法・通貨ごとに集計（自動換算なし）</p></div><span>{holdings.asOf} 現在</span></div>{performance && <div className="performance-currency-grid">{performance.totalsByCurrency.map((total) => <article key={total.currency}><span>{total.currency}</span><strong className={total.realizedPnl >= 0 ? 'amount-positive' : ''}>{total.realizedPnl.toLocaleString('ja-JP')} 実現損益</strong><small>配当 {total.dividendGross.toLocaleString('ja-JP')} ・ 手数料 {total.fees.toLocaleString('ja-JP')} ・ 税 {total.taxes.toLocaleString('ja-JP')}</small></article>)}</div>}<div className="performance-position-list">{holdings.positions.map((position) => <div key={`${position.accountId}-${position.instrumentCode}-${position.currency}`}><span><strong>{position.instrumentName}</strong><small>{position.instrumentCode} ・ {position.accountName} ・ {position.openLotCount}ロット</small></span><em>{position.quantity.toLocaleString('ja-JP')} 株</em><b>{position.currency} {position.costBasis.toLocaleString('ja-JP')} 原価</b></div>)}</div>{(holdings.uncoveredSales.length > 0 || holdings.skippedEventIds.length > 0) && <p className="performance-warning">原価未確認の売却 {holdings.uncoveredSales.length}件・計算対象外 {holdings.skippedEventIds.length}件。原本取引を確認してください。</p>}</section>}
     <InvestmentValuationSummary valuation={valuation} />

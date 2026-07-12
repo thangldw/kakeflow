@@ -33,6 +33,7 @@ const desktop = vi.hoisted(() => ({
   startImport: vi.fn(),
   previewImport: vi.fn(),
   commitImport: vi.fn(),
+  rollbackImport: vi.fn(),
   createAccount: vi.fn(),
   renameAccount: vi.fn(),
   archiveAccount: vi.fn(),
@@ -92,7 +93,7 @@ vi.mock('./platform', async () => {
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
       commitImport: desktop.commitImport,
-      rollbackImport: vi.fn(),
+      rollbackImport: desktop.rollbackImport,
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
       createBackup: vi.fn(),
@@ -144,6 +145,7 @@ describe('KakeFlow desktop read models', () => {
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
     desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
+    desktop.rollbackImport.mockReset().mockResolvedValue(undefined)
     desktop.createAccount.mockReset().mockResolvedValue({ id: 'new-bank', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' })
     desktop.renameAccount.mockReset()
     desktop.archiveAccount.mockReset()
@@ -166,7 +168,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.readWatchedFile.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
-    nativeInvoke.mockReset().mockImplementation(async (command: string, args?: { groupId?: string }) => {
+    nativeInvoke.mockReset().mockImplementation(async (command: string, args?: Record<string, unknown>) => {
       const quality = { totalImports: 1, postedImports: 1, reviewRequiredImports: 0, failedImports: 0, inProgressImports: 0, importCompletionBps: 10000, latestImportedAt: '2026-07-12T00:00:00Z', staleDays: 1, hasUnresolvedImports: false }
       const budget = { budgetJpy: 150000, actualJpy: 120000, remainingJpy: 30000, utilizationBps: 8000, categoryCount: 4, overBudgetCount: 0 }
       const goals = { activeCount: 1, targetJpy: 1000000, savedJpy: 400000, remainingJpy: 600000, dueWithinPeriodCount: 0 }
@@ -189,6 +191,11 @@ describe('KakeFlow desktop read models', () => {
       }
       if (command === 'export_csv_save') return { fileName: 'transactions.csv', rowCount: 1, byteSize: 100 }
       if (command === 'annual_household_review_csv_save') return { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
+      if (command === 'aggregate_asset_history_list') return [{ id: 'aggregate-jul', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 3, asOf: '2026-07-31', totalAssetsJpy: 8700000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2100000 }, { assetClass: 'LISTED_STOCKS', officialHeader: '株式(現物)(円)', valueJpy: 3100000 }] }, { id: 'aggregate-jun', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 2, asOf: '2026-06-30', totalAssetsJpy: 8500000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2000000 }] }]
+      if (command === 'aggregate_asset_history_import') {
+        const input = args?.input as { snapshots: Array<Record<string, unknown>> }
+        return { createdCount: input.snapshots.length, reusedCount: 0, snapshots: input.snapshots }
+      }
       if (command === 'delimited_parser_profiles_list') return [{ id: 'custom-bank', householdId: 'family', name: 'Local bank CSV', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: 'Account', isEnabled: true, priority: 50, version: 2, createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }]
       if (command === 'account_groups_list') return accountGroupState.groups
       if (command === 'account_group_delete') {
@@ -487,6 +494,18 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('請求と口座引落を照合済みにしました。')).toBeInTheDocument()
   })
 
+  it('shows Money Forward total-assets history without treating it as net worth', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '資産・投資' }))
+
+    expect(await screen.findByRole('heading', { name: '総資産履歴（Money Forward）' })).toBeInTheDocument()
+    expect(screen.getByText('資産のみ・純資産ではありません')).toBeInTheDocument()
+    expect(screen.getByText(/台帳、収支、口座残高、現在の純資産には加算しません/)).toBeInTheDocument()
+    expect(screen.getByText('+¥200,000')).toBeInTheDocument()
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('aggregate_asset_history_list', { request: { householdId: 'family', limit: 240 } }))
+  })
+
   it('delegates restore selection and destructive confirmation to the native backend', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')
@@ -537,6 +556,78 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(commit)
 
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
+  })
+
+  it('imports a Money Forward asset-history file as one source and one atomic non-ledger batch', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['日付,合計（円）,預金・現金・暗号資産（円）,株式(現物)（円）\n2026/06/30,"8,500,000","2,000,000","3,000,000"\n2026/07/31,"8,700,000","2,100,000","3,100,000"'], 'moneyforward-assets.csv', { type: 'text/csv' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    fireEvent.click(await screen.findByRole('button', { name: '総資産履歴に保存' }))
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'money-forward-me-asset-trend-v1', records: expect.arrayContaining([expect.objectContaining({ rowNumber: 2 }), expect.objectContaining({ rowNumber: 3 })]), candidates: [], cardStatements: [],
+    }), expect.any(Uint8Array)))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('aggregate_asset_history_import', { input: expect.objectContaining({ householdId: 'family', snapshots: [expect.objectContaining({ sourceDocumentId: 'document-1', sourceRow: 2, asOf: '2026-06-30' }), expect.objectContaining({ sourceDocumentId: 'document-1', sourceRow: 3, asOf: '2026-07-31' })] }) }))
+    expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [])
+    expect(desktop.previewImport).not.toHaveBeenCalled()
+    expect(await screen.findByText(/2時点の総資産履歴を保存しました。台帳と純資産には加算しません/)).toBeInTheDocument()
+  })
+
+  it('rolls back a newly staged Money Forward source when the atomic batch fails', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'aggregate_asset_history_import' ? Promise.reject(new Error('conflict')) : fallback(command, args))
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['日付,合計（円）,預金・現金・暗号資産（円）\n2026/07/31,8700000,2100000'], 'moneyforward-assets.csv', { type: 'text/csv' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: '総資産履歴に保存' }))
+
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('run-1'))
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    expect(await screen.findByText(/総資産履歴を保存できませんでした/)).toBeInTheDocument()
+  })
+
+  it('reuses an already imported Money Forward source without committing transactions again', async () => {
+    desktop.startImport.mockResolvedValue({ runId: 'existing-run', documentId: 'existing-document', status: 'POSTED', recordCount: 1, candidateCount: 0, reusedExisting: true })
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command !== 'aggregate_asset_history_import') return fallback(command, args)
+      const input = args?.input as { snapshots: Array<Record<string, unknown>> }
+      return { createdCount: 0, reusedCount: input.snapshots.length, snapshots: input.snapshots }
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['日付,合計（円）,預金・現金・暗号資産（円）\n2026/07/31,8700000,2100000'], 'moneyforward-assets.csv', { type: 'text/csv' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: '総資産履歴に保存' }))
+
+    expect(await screen.findByText('このMoney Forward総資産履歴はすでに取り込み済みです。')).toBeInTheDocument()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    expect(desktop.rollbackImport).not.toHaveBeenCalled()
+  })
+
+  it('finalizes a reused nontransaction run left incomplete by an earlier commit failure', async () => {
+    desktop.startImport.mockResolvedValue({ runId: 'retry-run', documentId: 'retry-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 0, reusedExisting: true })
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command !== 'aggregate_asset_history_import') return fallback(command, args)
+      const input = args?.input as { snapshots: Array<Record<string, unknown>> }
+      return { createdCount: 0, reusedCount: 1, snapshots: input.snapshots }
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['日付,合計（円）,預金・現金・暗号資産（円）\n2026/07/31,8700000,2100000'], 'moneyforward-assets.csv', { type: 'text/csv' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: '総資産履歴に保存' }))
+
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('retry-run', []))
+    expect(desktop.rollbackImport).not.toHaveBeenCalled()
   })
 
   it('explicitly previews an unsupported CSV with a saved profile before staging it for review', async () => {
