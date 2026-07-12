@@ -58,6 +58,17 @@ export function validateSmokeResult(result) {
   return result
 }
 
+export async function terminateChild(child, graceMs = 2_000) {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const exited = new Promise((resolve) => child.once('exit', resolve))
+  child.kill('SIGTERM')
+  await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, graceMs))])
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGKILL')
+    await exited
+  }
+}
+
 function launch(executable, dataRoot, timeoutMs) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, [], {
@@ -79,9 +90,13 @@ function launch(executable, dataRoot, timeoutMs) {
       stderr = `${stderr}${chunk}`.slice(-16_384)
     })
 
+    let timedOut = false
     const timer = setTimeout(() => {
-      child.kill()
-      reject(new Error(`Packaged app did not finish within ${timeoutMs}ms`))
+      timedOut = true
+      void terminateChild(child).then(
+        () => reject(new Error(`Packaged app did not finish within ${timeoutMs}ms`)),
+        (error) => reject(new Error(`Packaged app timeout cleanup failed: ${error instanceof Error ? error.message : error}`)),
+      )
     }, timeoutMs)
 
     child.once('error', (error) => {
@@ -90,6 +105,7 @@ function launch(executable, dataRoot, timeoutMs) {
     })
     child.once('exit', (code, signal) => {
       clearTimeout(timer)
+      if (timedOut) return
       if (code !== 0) {
         reject(
           new Error(

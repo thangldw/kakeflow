@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { spawn } from 'node:child_process'
 
-import { executableForPlatform, validateSmokeResult } from './packaged-app-smoke.mjs'
+import { executableForPlatform, terminateChild, validateSmokeResult } from './packaged-app-smoke.mjs'
 
 describe('packaged app smoke harness', () => {
+  it('terminates a timed-out child before returning control to cleanup', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    await terminateChild(child, 50)
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+  })
+
   it('resolves the native artifacts produced by each CI package build', () => {
     expect(executableForPlatform('darwin', '/repo')).toBe(
       '/repo/src-tauri/target/release/bundle/macos/KakeFlow.app/Contents/MacOS/kakeflow',
