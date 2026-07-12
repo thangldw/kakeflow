@@ -45,6 +45,16 @@ jobs:
           rustup toolchain install 1.97.0 --profile minimal
           rustup default 1.97.0
 
+      - name: Prefer Strawberry Perl for OpenSSL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $perlBin = 'C:\Strawberry\perl\bin'
+          if (-not (Test-Path "$perlBin\perl.exe")) {
+            choco install strawberryperl --yes --no-progress
+          }
+          $perlBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
@@ -70,9 +80,8 @@ jobs:
           releaseBody: |
             Local-first household finance desktop application for macOS and Windows.
 
-            v0.3 adds investment asset snapshots, automatic reviewed sync-folder
-            discovery, immutable source-row viewing, and persisted classification
-            rules with categories, labels, and tags. See CHANGELOG.md for details.
+            See CHANGELOG.md for the release's financial calendar, reports,
+            recurring/anomaly insights, account scopes, exports, and later additions.
 
             This automated release is unsigned/ad-hoc. macOS Gatekeeper and
             Windows SmartScreen may warn until production signing certificates are configured.
