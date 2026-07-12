@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import {
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
   CircleDollarSign,
+  CalendarDays,
+  Bell,
   CreditCard,
   FileCheck2,
+  FileText,
+  Download,
   Goal,
   Home,
   Import,
   Leaf,
+  Layers,
   Menu,
   MoreHorizontal,
   Search,
   Settings,
   Sparkles,
+  Repeat2,
   TrainFront,
   TrendingUp,
   Utensils,
@@ -30,6 +37,13 @@ import { mapParsedImportToStartImport } from './features/import/importMapper'
 import { buildReceiptImport } from './features/import/receiptText'
 import { createPortfolioPlatform, mapPortfolioSnapshotImport } from './features/investments/portfolioPlatform'
 import type { PortfolioSnapshotDetailDto, PortfolioSnapshotSummaryDto } from './features/investments/portfolioPlatform'
+import { queryFinancialIntelligence } from './features/financial-intelligence/platform'
+import type { FinancialIntelligenceDto } from './features/financial-intelligence/platform'
+import { createAccountGroupExportPlatform } from './features/export/accountGroupExportPlatform'
+import type { AccountGroupDto, AccountGroupKindDto, ExportAccountingBasisDto, ExportKindDto } from './features/export/accountGroupExportPlatform'
+import { createFinancialCalendarPlatform } from './features/calendar/financialCalendarPlatform'
+import type { FinancialCalendarDto, MonthlyFinancialReportDto } from './features/calendar/financialCalendarPlatform'
+import { FinancialCalendarView, MonthlyReportView } from './features/reports/ReportViews'
 import type { PortfolioSnapshotCandidate } from './ingestion'
 import {
   DEFAULT_FOLDER_SCAN_INTERVAL_MS,
@@ -48,6 +62,8 @@ import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const portfolioPlatform = createPortfolioPlatform()
+const accountGroupExportPlatform = createAccountGroupExportPlatform()
+const financialCalendarPlatform = createFinancialCalendarPlatform()
 
 function currentTokyoPeriod(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(now)
@@ -74,6 +90,7 @@ const navigation: NavigationItem[] = [
   { id: 'import', label: 'インポート', icon: Import },
   { id: 'cards', label: 'カード照合', icon: CreditCard },
   { id: 'investments', label: '資産・投資', icon: TrendingUp },
+  { id: 'reports', label: 'カレンダー・レポート', icon: CalendarDays },
   { id: 'budgets', label: '予算・目標', icon: Goal },
   { id: 'rules', label: '分類ルール', icon: Sparkles },
 ]
@@ -785,6 +802,90 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
   </>
 }
 
+function FinancialIntelligencePanel({ householdId, month, revision, openTransactions }: { householdId: string | null; month: string; revision: number; openTransactions: () => void }) {
+  const [intelligence, setIntelligence] = useState<FinancialIntelligenceDto | null>(null)
+  const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    let active = true
+    const asOf = periodFromMonth(month).toDate
+    void queryFinancialIntelligence(tauriInvoke, { householdId, asOf }).then((result) => { if (active) { setIntelligence(result); setNotice('') } }).catch(() => { if (active) { setIntelligence(null); setNotice('定期支出と異常支出を分析できませんでした。') } })
+    return () => { active = false }
+  }, [householdId, month, revision])
+  if (notice) return <section className="panel"><p className="empty-state">{notice}</p></section>
+  if (!intelligence) return <section className="panel"><p className="empty-state">家計履歴を分析しています…</p></section>
+  const cadenceLabel = { WEEKLY: '毎週', BIWEEKLY: '隔週', MONTHLY: '毎月', QUARTERLY: '四半期', ANNUAL: '毎年' } as const
+  return <section className="intelligence-grid"><article className="panel recurring-panel"><div className="panel-head"><div><h2>定期支出・サブスクリプション</h2><p>{intelligence.historyFrom} 以降の確定取引から推定</p></div><Repeat2 size={19} /></div>{intelligence.recurringItems.length === 0 ? <p className="empty-state">十分な反復履歴はまだありません。</p> : intelligence.recurringItems.map((item) => <div className="recurring-row" key={item.normalizedPayee}><div><strong>{item.displayPayee}</strong><span>{cadenceLabel[item.cadence]} ・ {item.occurrenceCount}回 ・ 信頼度 {Math.round(item.confidenceBps / 100)}%</span></div><div><small>次回見込み</small><strong>{item.nextExpectedOn}</strong></div><div><small>標準金額</small><strong>{yen(item.typicalAmountJpy)}</strong>{item.priceChangeBps != null && item.priceChangeBps !== 0 && <em>{item.priceChangeBps > 0 ? '+' : ''}{(item.priceChangeBps / 100).toFixed(1)}%</em>}</div></div>)}</article><article className="panel anomaly-panel"><div className="panel-head"><div><h2>異常支出</h2><p>同じ支払先の過去実績と比較</p></div><Bell size={19} /></div>{intelligence.anomalies.length === 0 ? <p className="empty-state">確認が必要な異常支出はありません。</p> : intelligence.anomalies.map((item) => <button key={item.transactionId} onClick={openTransactions}><span><strong>{item.displayPayee}</strong><small>{item.occurredOn} ・ 基準 {yen(item.baselineAmountJpy)} ({item.baselineSampleCount}件)</small></span><strong>{yen(item.amountJpy)}</strong><em>スコア {Math.round(item.scoreBps / 100)}</em></button>)}</article></section>
+}
+
+function AccountGroupsExportPanel({ householdId, accounts, month }: { householdId: string | null; accounts: readonly AccountDto[]; month: string }) {
+  const [groups, setGroups] = useState<readonly AccountGroupDto[]>([])
+  const [name, setName] = useState('')
+  const [kind, setKind] = useState<AccountGroupKindDto>('FAMILY')
+  const [selectedAccounts, setSelectedAccounts] = useState<ReadonlySet<string>>(() => new Set())
+  const [exportKind, setExportKind] = useState<ExportKindDto>('TRANSACTIONS')
+  const [basis, setBasis] = useState<ExportAccountingBasisDto>('ACCRUAL')
+  const [groupId, setGroupId] = useState('')
+  const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState(false)
+  const period = periodFromMonth(month)
+  const reload = async () => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    setGroups(await accountGroupExportPlatform.listGroups(householdId))
+  }
+  useEffect(() => { void reload().catch(() => setNotice('口座グループを読み込めませんでした。')) }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const createGroup = async () => {
+    if (!householdId || !name.trim() || selectedAccounts.size === 0) { setNotice('グループ名と1つ以上の口座を選択してください。'); return }
+    setBusy(true); setNotice('')
+    try { await accountGroupExportPlatform.createGroup({ id: crypto.randomUUID(), householdId, name: name.trim(), groupKind: kind, accountIds: [...selectedAccounts] }); setName(''); setSelectedAccounts(new Set()); await reload(); setNotice('口座グループを保存しました。') }
+    catch { setNotice('口座グループを保存できませんでした。') }
+    finally { setBusy(false) }
+  }
+  const deleteGroup = async (group: AccountGroupDto) => {
+    if (!householdId) return
+    setBusy(true)
+    try { await accountGroupExportPlatform.deleteGroup(householdId, group.id); if (groupId === group.id) setGroupId(''); await reload(); setNotice('口座グループを削除しました。') }
+    catch { setNotice('口座グループを削除できませんでした。') }
+    finally { setBusy(false) }
+  }
+  const exportCsv = async () => {
+    if (!householdId) return
+    setBusy(true); setNotice('')
+    try {
+      const saved = await accountGroupExportPlatform.saveCsv({ householdId, exportKind, accountingBasis: basis, groupId: groupId || null, fromDate: period.fromDate, toDate: period.toDate })
+      setNotice(saved ? `${saved.fileName}（${saved.rowCount}行）を保存しました。` : 'エクスポートをキャンセルしました。')
+    } catch { setNotice('CSVを書き出せませんでした。対象期間とグループを確認してください。') }
+    finally { setBusy(false) }
+  }
+  const kindLabels: Record<AccountGroupKindDto, string> = { FAMILY: '家族', PERSONAL: '個人', DAILY_SPENDING: '日常支出', INVESTMENT: '投資', BUSINESS: '事業', TAX: '税務', EDUCATION: '教育', CUSTOM: 'カスタム' }
+  return <section className="groups-export-grid"><article className="panel account-group-panel"><div className="panel-head"><div><h2>口座グループ</h2><p>ダッシュボードと出力で再利用する保存済みスコープ</p></div><Layers size={19} /></div><div className="group-form"><input aria-label="グループ名" value={name} onChange={(event) => setName(event.target.value)} placeholder="家族の生活費" /><select aria-label="グループ種別" value={kind} onChange={(event) => setKind(event.target.value as AccountGroupKindDto)}>{Object.entries(kindLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><div className="group-account-choices">{accounts.map((account) => <label key={account.id}><input type="checkbox" checked={selectedAccounts.has(account.id)} onChange={(event) => setSelectedAccounts((current) => { const next = new Set(current); if (event.target.checked) next.add(account.id); else next.delete(account.id); return next })} /><span>{account.name}</span></label>)}</div><button className="primary-btn" disabled={busy} onClick={() => void createGroup()}>グループを保存</button></div><div className="saved-groups">{groups.map((group) => <div key={group.id}><span><strong>{group.name}</strong><small>{kindLabels[group.groupKind]} ・ {group.accountIds.length}口座</small></span><button className="text-btn" disabled={busy} onClick={() => void deleteGroup(group)}>削除</button></div>)}{groups.length === 0 && <p className="empty-state">保存済みグループはありません。</p>}</div></article><article className="panel export-panel"><div className="panel-head"><div><h2>CSVエクスポート</h2><p>UTF-8 BOM・確定データのみ</p></div><Download size={19} /></div><label>データ<select aria-label="エクスポートデータ" value={exportKind} onChange={(event) => setExportKind(event.target.value as ExportKindDto)}><option value="TRANSACTIONS">取引台帳</option><option value="PORTFOLIO_SNAPSHOTS">資産スナップショット</option></select></label><label>計上基準<select aria-label="エクスポート計上基準" value={basis} onChange={(event) => setBasis(event.target.value as ExportAccountingBasisDto)}><option value="ACCRUAL">発生ベース</option><option value="CASH">資金移動</option></select></label><label>口座スコープ<select aria-label="エクスポートグループ" value={groupId} onChange={(event) => setGroupId(event.target.value)}><option value="">すべての口座</option>{groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><div className="export-period"><span>対象期間</span><strong>{period.fromDate} → {period.toDate}</strong></div><button className="primary-btn" disabled={busy} onClick={() => void exportCsv()}>{busy ? '処理中…' : '保存先を選んでCSV出力'}</button>{notice && <p role="status">{notice}</p>}</article></section>
+}
+
+function ReportsPage({ householdId, accounts, month, revision, openPage }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number; openPage: (page: PageId) => void }) {
+  const [view, setView] = useState<'CALENDAR' | 'MONTHLY' | 'INTELLIGENCE' | 'EXPORT'>('CALENDAR')
+  const [calendar, setCalendar] = useState<FinancialCalendarDto | null>(null)
+  const [monthlyReport, setMonthlyReport] = useState<MonthlyFinancialReportDto | null>(null)
+  const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
+  const [comparison, setComparison] = useState<'PRIOR_MONTH' | 'PRIOR_YEAR'>('PRIOR_MONTH')
+  const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    let active = true
+    const request = { householdId, month, asOf: periodFromMonth(month).toDate }
+    void Promise.all([financialCalendarPlatform.getCalendar(request), financialCalendarPlatform.getMonthlyReport(request)])
+      .then(([nextCalendar, nextReport]) => { if (active) { setCalendar(nextCalendar); setMonthlyReport(nextReport); setNotice('') } })
+      .catch(() => { if (active) { setCalendar(null); setMonthlyReport(null); setNotice('カレンダーと月次レポートを読み込めませんでした。') } })
+    return () => { active = false }
+  }, [householdId, month, revision])
+  const reportBody = view === 'CALENDAR'
+    ? calendar ? <FinancialCalendarView data={calendar} basis={basis} onBasisChange={setBasis} onSelectDate={() => openPage('transactions')} onSelectEvent={() => openPage('transactions')} onOpenImports={() => openPage('import')} /> : <section className="panel report-loading"><CalendarDays size={28} /><p>{notice || '日次カレンダーを読み込んでいます…'}</p></section>
+    : view === 'MONTHLY'
+      ? monthlyReport ? <MonthlyReportView data={monthlyReport} comparison={comparison} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} /> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
+      : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
+        : <AccountGroupsExportPanel householdId={householdId} accounts={accounts} month={month} />
+  return <><PageHeader eyebrow="家計レビュー" title="カレンダー・レポート" description="確定台帳を日次、月次、定期支出・異常支出の三つの視点で確認します。"><div className="report-tabs" role="tablist" aria-label="レポート表示"><button role="tab" aria-selected={view === 'CALENDAR'} className={view === 'CALENDAR' ? 'active' : ''} onClick={() => setView('CALENDAR')}><CalendarDays size={15} /> カレンダー</button><button role="tab" aria-selected={view === 'MONTHLY'} className={view === 'MONTHLY' ? 'active' : ''} onClick={() => setView('MONTHLY')}><FileText size={15} /> 月次レポート</button><button role="tab" aria-selected={view === 'INTELLIGENCE'} className={view === 'INTELLIGENCE' ? 'active' : ''} onClick={() => setView('INTELLIGENCE')}><Bell size={15} /> 定期・異常</button><button role="tab" aria-selected={view === 'EXPORT'} className={view === 'EXPORT' ? 'active' : ''} onClick={() => setView('EXPORT')}><Download size={15} /> グループ・出力</button></div></PageHeader>{reportBody}</>
+}
+
 function BudgetsPage({ householdId, accounts, month, revision }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number }) {
   const desktop = platformClient.runtime === 'tauri'
   const [budgets, setBudgets] = useState<readonly MonthlyCategoryBudgetDto[]>([])
@@ -1108,6 +1209,7 @@ function App() {
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
+    reports: <ReportsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} openPage={setPage} />,
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     settings: <SettingsPage householdId={activeHouseholdId} accounts={accounts} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />,
