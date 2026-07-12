@@ -8,23 +8,32 @@ import type {
   ParseIssue,
 } from '../types'
 
+const MAX_MERGER_CASH_AMOUNT = 1e18
+const MAX_MERGER_FX_RATE = 1e12
+
 const ALIASES = {
-  tradeDate: ['約定日', '取引日', '国内約定日', '現地約定日', '約定年月日', '取引年月日'],
+  tradeDate: ['約定日', '取引日', '国内約定日', '現地約定日', '約定年月日', '取引年月日', 'TRADE DATE', 'TRANSACTION DATE'],
   settlementDate: ['受渡日', '国内受渡日', '受渡年月日'],
-  transactionType: ['取引', '取引区分', '取引種類', '取引種別', '売買', '売買区分', '摘要', '取引内容', '明細区分'],
-  instrumentCode: ['銘柄コード', 'コード', 'ティッカー', 'シンボル', '商品コード'],
-  instrumentName: ['銘柄名', '銘柄', '商品名', 'ファンド名', 'ティッカー+銘柄名(または通貨名)'],
+  transactionType: ['取引', '取引区分', '取引種類', '取引種別', '売買', '売買区分', '摘要', '取引内容', '明細区分', 'TRANSACTION TYPE', 'EVENT TYPE'],
+  instrumentCode: ['銘柄コード', 'コード', 'ティッカー', 'シンボル', '商品コード', 'INSTRUMENT CODE', 'SYMBOL'],
+  instrumentName: ['銘柄名', '銘柄', '商品名', 'ファンド名', 'ティッカー+銘柄名(または通貨名)', 'INSTRUMENT NAME', 'SECURITY NAME'],
   accountType: ['口座区分', '預り区分', '預かり区分', '口座', '口座種別'],
   quantity: ['数量', '約定数量', '約定数量[株]', '口数', '株数', '約定株数'],
   unitPrice: ['単価', '約定単価', '約定価格', '約定価格(円)', '約定値段[ドル]', '約定値段[円]'],
-  grossAmount: ['約定金額', '約定金額[ドル]', '約定金額[円]', '約定代金', '受取金額', '配当金額', '分配金額', '総額', '金額'],
+  grossAmount: ['約定金額', '約定金額[ドル]', '約定金額[円]', '約定代金', '受取金額', '配当金額', '分配金額', '総額', '金額', 'GROSS AMOUNT'],
   fee: ['手数料', '国内手数料', '委託手数料', '取引手数料', '手数料(税込)', '手数料(税込)[ドル]', '手数料(税込)[円]'],
   tax: ['税金', '税額', '源泉徴収税', '源泉税', '所得税・住民税', '譲渡益税', '所得税', '住民税', '外国税', '消費税'],
-  settlementAmount: ['受渡金額', '受渡金額[ドル]', '受渡金額[円]', '精算金額', '入出金額', '差引金額'],
-  currency: ['通貨', '通貨コード', '決済通貨', '通貨名', '取引通貨'],
-  corporateActionRatio: ['分割比率', '併合比率', '交換比率', '割当比率'],
-  targetInstrumentCode: ['割当銘柄コード', '新銘柄コード', '交換先コード'],
-  targetInstrumentName: ['割当銘柄名', '新銘柄名', '交換先銘柄名'],
+  settlementAmount: ['受渡金額', '受渡金額[ドル]', '受渡金額[円]', '精算金額', '入出金額', '差引金額', 'SETTLEMENT AMOUNT'],
+  currency: ['通貨', '通貨コード', '決済通貨', '通貨名', '取引通貨', 'CURRENCY', 'SOURCE CURRENCY'],
+  corporateActionRatio: ['分割比率', '併合比率', '交換比率', '割当比率', 'EXCHANGE RATIO', 'CORPORATE ACTION RATIO'],
+  targetInstrumentCode: ['割当銘柄コード', '新銘柄コード', '交換先コード', 'TARGET INSTRUMENT CODE', 'TARGET SYMBOL'],
+  targetInstrumentName: ['割当銘柄名', '新銘柄名', '交換先銘柄名', 'TARGET INSTRUMENT NAME', 'TARGET SECURITY NAME'],
+  targetCurrency: ['割当通貨', '交換先通貨', '新銘柄通貨', 'TARGET CURRENCY'],
+  mergerCashAmount: ['合併現金交付額', '合併現金対価', '現金対価額', 'MERGER CASH AMOUNT', 'MERGER CASH CONSIDERATION'],
+  mergerCashCurrency: ['合併現金通貨', '現金対価通貨', 'MERGER CASH CURRENCY'],
+  mergerStockCostBasisRatio: ['合併株式原価配分比率', '株式対価原価配分比率', '株式原価配分比率', 'MERGER STOCK COST BASIS RATIO', 'STOCK COST BASIS RATIO'],
+  sourceToTargetFxRate: ['交換先為替レート', '元通貨交換先通貨換算率', 'SOURCE TO TARGET FX RATE'],
+  sourceToCashFxRate: ['現金対価為替レート', '元通貨現金通貨換算率', 'SOURCE TO CASH FX RATE'],
   costBasisAllocationRatio: ['取得価額配分比率', '原価配分比率', '簿価配分比率', 'コスト配分率', 'COST ALLOCATION RATIO'],
   subscriptionAmount: ['払込金額', '権利行使金額', '購読金額', 'SUBSCRIPTION AMOUNT'],
   cashInLieuAmount: ['端数株代金', '端数処分代金', '現金交付額', 'CASH IN LIEU AMOUNT'],
@@ -38,7 +47,7 @@ function findHeader(rows: readonly CsvRow[]): number {
   let bestScore = 0
   rows.slice(0, 20).forEach((row, index) => {
     const headers = row.fields.map(normalizeHeader)
-    const has = (key: AliasKey) => ALIASES[key].some((alias) => headers.includes(alias))
+    const has = (key: AliasKey) => Boolean(headerFor(headers, key))
     const score = Number(has('tradeDate')) + Number(has('transactionType')) + Number(has('grossAmount') || has('settlementAmount')) + Number(has('instrumentName'))
     if (score > bestScore) { bestScore = score; bestIndex = index }
   })
@@ -46,7 +55,13 @@ function findHeader(rows: readonly CsvRow[]): number {
 }
 
 function headerFor(headers: readonly string[], key: AliasKey): string | undefined {
-  return ALIASES[key].find((alias) => headers.includes(alias))
+  const aliases = new Set(ALIASES[key].map((alias) => alias.toLocaleUpperCase('en-US')))
+  return headers.find((header) => aliases.has(header.toLocaleUpperCase('en-US')))
+}
+
+function headersFor(headers: readonly string[], key: AliasKey): readonly string[] {
+  const aliases = new Set(ALIASES[key].map((alias) => alias.toLocaleUpperCase('en-US')))
+  return headers.filter((header) => aliases.has(header.toLocaleUpperCase('en-US')))
 }
 
 function valueFor(values: Readonly<Record<string, string>>, headers: readonly string[], key: AliasKey): string {
@@ -55,14 +70,14 @@ function valueFor(values: Readonly<Record<string, string>>, headers: readonly st
 }
 
 function firstPopulatedValue(values: Readonly<Record<string, string>>, headers: readonly string[], key: AliasKey): string {
-  for (const alias of ALIASES[key]) {
-    if (headers.includes(alias) && (values[alias] ?? '').trim()) return values[alias]
+  for (const header of headersFor(headers, key)) {
+    if ((values[header] ?? '').trim()) return values[header]
   }
   return valueFor(values, headers, key)
 }
 
 function populatedValues(values: Readonly<Record<string, string>>, headers: readonly string[], key: AliasKey): string[] {
-  return ALIASES[key].filter((alias) => headers.includes(alias) && (values[alias] ?? '').trim()).map((alias) => values[alias])
+  return headersFor(headers, key).filter((header) => (values[header] ?? '').trim()).map((header) => values[header])
 }
 
 function amount(value: string): number | null {
@@ -76,9 +91,13 @@ function proportion(value: string): number | null {
   return value.includes('%') || value.includes('％') ? parsed / 100 : parsed
 }
 
+function positiveNumber(value: string): number | null {
+  const parsed = Number(normalizeJapaneseText(value).replace(/,/g, ''))
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
 function summedAmounts(values: Readonly<Record<string, string>>, headers: readonly string[], key: 'fee' | 'tax'): number {
-  return ALIASES[key]
-    .filter((alias) => headers.includes(alias))
+  return headersFor(headers, key)
     .reduce((sum, header) => sum + (amount(values[header] ?? '') ?? 0), 0)
 }
 
@@ -140,10 +159,13 @@ function buildLegs(input: {
   corporateActionRatio?: number
   targetInstrumentCode?: string
   targetInstrumentName?: string
+  targetCurrency?: string
   costBasisAllocationRatio?: number
   subscriptionAmount?: number
   cashInLieuAmount?: number
   cashInLieuQuantity?: number
+  mergerCashAmount?: number
+  mergerCashCurrency?: string
 }): { legs: BrokerageEventLegCandidate[]; settlement: number; difference: number } {
   const { eventType, currency, gross, fee, tax, instrumentCode, instrumentName, quantity } = input
   const security = { instrumentCode, instrumentName, signedQuantity: quantity ?? undefined }
@@ -162,7 +184,11 @@ function buildLegs(input: {
     const targetCode = changesInstrument ? input.targetInstrumentCode ?? '' : instrumentCode
     const targetName = changesInstrument ? input.targetInstrumentName ?? '' : instrumentName
     legs.push(leg('SECURITY', 0, currency, 'Units surrendered by corporate action', { instrumentCode, instrumentName, signedQuantity: -1 }))
-    legs.push(leg('SECURITY', 0, currency, 'Units received by corporate action', { instrumentCode: targetCode, instrumentName: targetName, signedQuantity: ratio }))
+    legs.push(leg('SECURITY', 0, changesInstrument ? input.targetCurrency ?? currency : currency, 'Units received by corporate action', { instrumentCode: targetCode, instrumentName: targetName, signedQuantity: ratio }))
+    if (eventType === 'MERGER' && input.mergerCashAmount && input.mergerCashCurrency) {
+      legs.push(leg('CASH', input.mergerCashAmount, input.mergerCashCurrency, 'Cash consideration received in merger'))
+      legs.push(leg('ADJUSTMENT', -input.mergerCashAmount, input.mergerCashCurrency, 'Merger cash consideration allocation'))
+    }
   } else if (subscription) {
     const subscribed = input.subscriptionAmount ?? gross
     legs.push(leg('SECURITY', subscribed, currency, 'Shares acquired through rights subscription', { instrumentCode: input.targetInstrumentCode || instrumentCode, instrumentName: input.targetInstrumentName || instrumentName, signedQuantity: input.corporateActionRatio }))
@@ -240,11 +266,22 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
       const unitPrice = amount(valueFor(values, headers, 'unitPrice'))
       const zeroValueCorporate = ['SPLIT', 'REVERSE_SPLIT', 'MERGER', 'SPIN_OFF'].includes(eventType)
       const ratioAction = zeroValueCorporate || eventType === 'RIGHTS_SUBSCRIPTION'
-      const ratio = ratioAction ? actionRatio(firstPopulatedValue(values, headers, 'corporateActionRatio') || rawTransactionType) : null
+      const corporateActionRatioRaw = firstPopulatedValue(values, headers, 'corporateActionRatio')
+      const ratio = ratioAction ? actionRatio(eventType === 'MERGER' ? corporateActionRatioRaw : corporateActionRatioRaw || rawTransactionType) : null
       const costBasisAllocationRatio = proportion(valueFor(values, headers, 'costBasisAllocationRatio'))
       const subscriptionAmount = amount(valueFor(values, headers, 'subscriptionAmount'))
       const cashInLieuAmount = amount(valueFor(values, headers, 'cashInLieuAmount'))
       const cashInLieuQuantity = amount(valueFor(values, headers, 'cashInLieuQuantity'))
+      const mergerCashAmountRaw = valueFor(values, headers, 'mergerCashAmount').trim()
+      const mergerCashAmount = amount(mergerCashAmountRaw)
+      const mergerCashCurrencyRaw = normalizeJapaneseText(valueFor(values, headers, 'mergerCashCurrency')).toUpperCase()
+      const mergerCashCurrency = /^[A-Z]{3}$/.test(mergerCashCurrencyRaw) ? mergerCashCurrencyRaw : null
+      const mergerStockCostBasisRatioRaw = valueFor(values, headers, 'mergerStockCostBasisRatio').trim()
+      const mergerStockCostBasisRatio = proportion(mergerStockCostBasisRatioRaw)
+      const sourceToTargetFxRateRaw = valueFor(values, headers, 'sourceToTargetFxRate').trim()
+      const sourceToTargetFxRate = positiveNumber(sourceToTargetFxRateRaw)
+      const sourceToCashFxRateRaw = valueFor(values, headers, 'sourceToCashFxRate').trim()
+      const sourceToCashFxRate = positiveNumber(sourceToCashFxRateRaw)
       const rawGross = amount(firstPopulatedValue(values, headers, 'grossAmount'))
       const fee = summedAmounts(values, headers, 'fee')
       const tax = summedAmounts(values, headers, 'tax')
@@ -277,8 +314,26 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
         issues.push({ code: 'BROKERAGE_ACTION_TARGET_MISSING', message: 'Merger target instrument is missing.', severity: 'warning', row: row.sourceRow })
         continue
       }
-      const currency = currencyOf(valueFor(values, headers, 'currency'))
-      const built = buildLegs({ eventType, currency, gross, fee, tax, settlement: zeroValueCorporate ? 0 : eventType === 'RIGHTS_SUBSCRIPTION' ? subscriptionAmount : eventType === 'CASH_IN_LIEU' ? cashInLieuAmount : rawSettlement, instrumentCode, instrumentName, quantity, corporateActionRatio: ratio ?? undefined, targetInstrumentCode, targetInstrumentName, costBasisAllocationRatio: costBasisAllocationRatio ?? undefined, subscriptionAmount: subscriptionAmount ?? undefined, cashInLieuAmount: cashInLieuAmount ?? undefined, cashInLieuQuantity: cashInLieuQuantity ?? undefined })
+      const sourceCurrencyRaw = normalizeJapaneseText(valueFor(values, headers, 'currency')).toUpperCase()
+      const currency = currencyOf(sourceCurrencyRaw)
+      const targetCurrencyRaw = normalizeJapaneseText(valueFor(values, headers, 'targetCurrency')).toUpperCase()
+      const targetCurrency = /^[A-Z]{3}$/.test(targetCurrencyRaw) ? targetCurrencyRaw : eventType === 'MERGER' ? null : currency
+      if (eventType !== 'MERGER' && (mergerCashAmountRaw || mergerCashCurrencyRaw || mergerStockCostBasisRatioRaw || sourceToTargetFxRateRaw || sourceToCashFxRateRaw)) {
+        issues.push({ code: 'BROKERAGE_MERGER_FIELD_UNEXPECTED', message: 'Merger allocation and FX fields cannot be applied to a non-merger event.', severity: 'warning', row: row.sourceRow })
+        continue
+      }
+      if (eventType === 'MERGER') {
+        const hasCash = Boolean(mergerCashAmountRaw || mergerCashCurrencyRaw || sourceToCashFxRateRaw)
+        const stockRatioValid = Boolean(mergerStockCostBasisRatioRaw) && mergerStockCostBasisRatio != null && (hasCash ? mergerStockCostBasisRatio > 0 && mergerStockCostBasisRatio < 1 : mergerStockCostBasisRatio === 1)
+        const cashTupleValid = hasCash ? Boolean(mergerCashAmountRaw) && mergerCashAmount != null && mergerCashAmount > 0 && mergerCashAmount <= MAX_MERGER_CASH_AMOUNT && mergerCashCurrency != null : !mergerCashAmountRaw && !mergerCashCurrencyRaw && !sourceToCashFxRateRaw
+        const targetFxValid = targetCurrency != null && (targetCurrency === currency ? !sourceToTargetFxRateRaw : Boolean(sourceToTargetFxRateRaw) && sourceToTargetFxRate != null && sourceToTargetFxRate <= MAX_MERGER_FX_RATE)
+        const cashFxValid = !hasCash || mergerCashCurrency === currency ? !sourceToCashFxRateRaw : Boolean(sourceToCashFxRateRaw) && sourceToCashFxRate != null && sourceToCashFxRate <= MAX_MERGER_FX_RATE
+        if (!/^[A-Z]{3}$/.test(sourceCurrencyRaw) || !corporateActionRatioRaw || !targetCurrency || !stockRatioValid || !cashTupleValid || !targetFxValid || !cashFxValid) {
+          issues.push({ code: 'BROKERAGE_MERGER_INPUT_MISSING', message: 'Merger requires explicit stock allocation, consideration currencies, and cross-currency rates; rates are never inferred.', severity: 'warning', row: row.sourceRow })
+          continue
+        }
+      }
+      const built = buildLegs({ eventType, currency, gross, fee, tax, settlement: zeroValueCorporate ? 0 : eventType === 'RIGHTS_SUBSCRIPTION' ? subscriptionAmount : eventType === 'CASH_IN_LIEU' ? cashInLieuAmount : rawSettlement, instrumentCode, instrumentName, quantity, corporateActionRatio: ratio ?? undefined, targetInstrumentCode, targetInstrumentName, targetCurrency: targetCurrency ?? undefined, costBasisAllocationRatio: costBasisAllocationRatio ?? undefined, subscriptionAmount: subscriptionAmount ?? undefined, cashInLieuAmount: cashInLieuAmount ?? undefined, cashInLieuQuantity: cashInLieuQuantity ?? undefined, mergerCashAmount: mergerCashAmount ?? undefined, mergerCashCurrency: mergerCashCurrency ?? undefined })
       if (Math.abs(built.difference) >= 0.000001) {
         issues.push({ code: 'BROKERAGE_SETTLEMENT_MISMATCH', message: `Settlement differs from gross, fee and tax by ${built.difference} ${currency}.`, severity: 'warning', row: row.sourceRow })
       }
@@ -291,10 +346,11 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
         reconciliationStatus: Math.abs(built.difference) < 0.000001 ? 'BALANCED' : 'ADJUSTED',
         reconciliationDifference: built.difference, affectsHouseholdExpense: false, rawTransactionType,
         ...(ratioAction ? { corporateActionRatio: ratio ?? undefined } : {}),
-        ...(['MERGER', 'SPIN_OFF', 'RIGHTS_SUBSCRIPTION'].includes(eventType) && (targetInstrumentCode || targetInstrumentName) ? { targetInstrumentCode, targetInstrumentName, targetCurrency: currency } : {}),
+        ...(['MERGER', 'SPIN_OFF', 'RIGHTS_SUBSCRIPTION'].includes(eventType) && (targetInstrumentCode || targetInstrumentName) ? { targetInstrumentCode, targetInstrumentName, targetCurrency: targetCurrency ?? currency } : {}),
         ...(eventType === 'SPIN_OFF' ? { costBasisAllocationRatio: costBasisAllocationRatio ?? undefined } : {}),
         ...(eventType === 'RIGHTS_SUBSCRIPTION' ? { subscriptionAmount: subscriptionAmount ?? undefined } : {}),
         ...(eventType === 'CASH_IN_LIEU' ? { cashInLieuAmount: cashInLieuAmount ?? undefined, cashInLieuQuantity: cashInLieuQuantity ?? undefined } : {}),
+        ...(eventType === 'MERGER' ? { mergerCashAmount: mergerCashAmount ?? undefined, mergerCashCurrency: mergerCashCurrency ?? undefined, mergerStockCostBasisRatio: mergerStockCostBasisRatio!, sourceToTargetFxRate: sourceToTargetFxRate ?? undefined, sourceToCashFxRate: sourceToCashFxRate ?? undefined } : {}),
       })
     }
     return { adapterId: this.id, records, issues, metadata: { ledgerKind: 'INVESTMENT', headerRow: csv.rows[headerIndex].sourceRow, delimiter: csv.delimiter } }

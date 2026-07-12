@@ -76,13 +76,18 @@ export interface UncoveredSaleDto {
 
 export interface CorporateActionAllocationDto {
   readonly actionEventId: string
-  readonly actionType: 'SPIN_OFF' | 'RIGHTS_SUBSCRIPTION' | 'CASH_IN_LIEU'
+  readonly actionType: 'SPIN_OFF' | 'RIGHTS_SUBSCRIPTION' | 'CASH_IN_LIEU' | 'MERGER_STOCK' | 'MERGER_CASH'
   readonly actionOn: string
   readonly actionSourceDocumentId: string
   readonly actionSourceRow: number
   readonly sourceBuyEventId: string | null
+  readonly sourceBuySourceDocumentId: string | null
+  readonly sourceBuySourceRow: number | null
   readonly fromInstrumentCode: string
   readonly targetInstrumentCode: string
+  readonly sourceCurrency: string | null
+  readonly sourceCostBasis: number | null
+  readonly conversionRate: number | null
   readonly currency: string
   readonly quantity: number
   readonly allocatedCostBasis: number
@@ -228,13 +233,22 @@ function parseUncoveredSale(value: unknown): UncoveredSaleDto {
 function parseCorporateActionAllocation(value: unknown): CorporateActionAllocationDto {
   const item = record(value, 'corporate action allocation')
   stringFields(item, ['actionEventId', 'actionType', 'actionSourceDocumentId', 'fromInstrumentCode', 'targetInstrumentCode'])
-  if (!['SPIN_OFF', 'RIGHTS_SUBSCRIPTION', 'CASH_IN_LIEU'].includes(item.actionType as string)) throw new TypeError('Invalid actionType')
+  if (!['SPIN_OFF', 'RIGHTS_SUBSCRIPTION', 'CASH_IN_LIEU', 'MERGER_STOCK', 'MERGER_CASH'].includes(item.actionType as string)) throw new TypeError('Invalid actionType')
   date(item.actionOn, 'actionOn')
   if (item.sourceBuyEventId !== null && typeof item.sourceBuyEventId !== 'string') throw new TypeError('Invalid sourceBuyEventId')
+  if (item.sourceBuySourceDocumentId !== null && typeof item.sourceBuySourceDocumentId !== 'string') throw new TypeError('Invalid sourceBuySourceDocumentId')
+  if (item.sourceBuySourceRow !== null) safeInteger(item.sourceBuySourceRow, 'sourceBuySourceRow')
+  if (item.sourceCurrency !== null) currency(item.sourceCurrency)
+  if (item.sourceCostBasis !== null) finite(item.sourceCostBasis, 'sourceCostBasis')
+  if (item.conversionRate !== null) { finite(item.conversionRate, 'conversionRate'); if ((item.conversionRate as number) <= 0) throw new TypeError('Invalid conversionRate') }
   currency(item.currency)
   numberFields(item, ['quantity', 'allocatedCostBasis', 'cashAmount'])
   if (item.realizedPnl !== null) finite(item.realizedPnl, 'realizedPnl')
   safeInteger(item.actionSourceRow, 'actionSourceRow')
+  if (item.actionType === 'MERGER_STOCK' || item.actionType === 'MERGER_CASH') {
+    if (item.sourceBuyEventId === null || item.sourceBuySourceDocumentId === null || item.sourceBuySourceRow === null || item.sourceCurrency === null || item.sourceCostBasis === null || (item.sourceCostBasis as number) < 0) throw new TypeError('Invalid merger source allocation')
+    if (((item.sourceCurrency as string) === item.currency) !== (item.conversionRate === null)) throw new TypeError('Invalid merger conversion rate')
+  }
   return item as unknown as CorporateActionAllocationDto
 }
 

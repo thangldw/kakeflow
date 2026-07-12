@@ -71,19 +71,61 @@ describe('Japanese brokerage transaction adapter', () => {
 
   it('recognizes common Japanese aliases and zero-value split and merger actions', () => {
     const corporateActions = [
-      '約定年月日,取引内容,銘柄,商品コード,受渡金額,分割比率,交換比率,交換先コード,交換先銘柄名,通貨名',
-      '2026/08/01,株式分割,旧会社,1111,,1:2,,,,JPY',
-      '2026/09/01,株式交換（合併）,旧会社,1111,,,1:0.5,2222,新会社,JPY',
+      '約定年月日,取引内容,銘柄,商品コード,受渡金額,分割比率,交換比率,交換先コード,交換先銘柄名,通貨名,交換先通貨,合併株式原価配分比率',
+      '2026/08/01,株式分割,旧会社,1111,,1:2,,,,JPY,,',
+      '2026/09/01,株式交換（合併）,旧会社,1111,,,1:0.5,2222,新会社,JPY,JPY,100%',
     ].join('\n')
     const result = japaneseBrokerageTransactionsAdapter.parse({ text: corporateActions, filename: '楽天証券_取引履歴.csv' })
     expect(result.records).toHaveLength(2)
     expect(result.records[0]).toMatchObject({ eventType: 'SPLIT', grossAmount: 0, settlementAmount: 0, corporateActionRatio: 2 })
-    expect(result.records[1]).toMatchObject({ eventType: 'MERGER', corporateActionRatio: 0.5, targetInstrumentCode: '2222', targetInstrumentName: '新会社' })
+    expect(result.records[1]).toMatchObject({ eventType: 'MERGER', corporateActionRatio: 0.5, targetInstrumentCode: '2222', targetInstrumentName: '新会社', targetCurrency: 'JPY', mergerStockCostBasisRatio: 1 })
     expect(result.records[0].legs).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'SECURITY', signedAmount: 0, signedQuantity: -1 }),
       expect.objectContaining({ kind: 'SECURITY', signedAmount: 0, signedQuantity: 2 }),
     ]))
     expect(result.issues).toHaveLength(0)
+  })
+
+  it('requires explicit FX for an all-stock cross-currency merger', () => {
+    const merger = [
+      'TRADE DATE,TRANSACTION TYPE,INSTRUMENT CODE,INSTRUMENT NAME,GROSS AMOUNT,CURRENCY,EXCHANGE RATIO,TARGET INSTRUMENT CODE,TARGET INSTRUMENT NAME,TARGET CURRENCY,MERGER STOCK COST BASIS RATIO,SOURCE TO TARGET FX RATE',
+      '2026-04-01,MERGER,ABC,Acme,,USD,1:0.25,XYZ,Global Co,EUR,100%,0.92',
+    ].join('\n')
+    const result = japaneseBrokerageTransactionsAdapter.parse({ text: merger })
+    expect(result.issues).toEqual([])
+    expect(result.records[0]).toMatchObject({ eventType: 'MERGER', currency: 'USD', targetCurrency: 'EUR', mergerStockCostBasisRatio: 1, sourceToTargetFxRate: 0.92 })
+    expect(result.records[0].legs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'SECURITY', currency: 'USD', signedQuantity: -1 }),
+      expect.objectContaining({ kind: 'SECURITY', currency: 'EUR', signedQuantity: 0.25 }),
+    ]))
+
+    const missingRate = japaneseBrokerageTransactionsAdapter.parse({ text: merger.replace(',0.92', ',') })
+    expect(missingRate.records).toHaveLength(0)
+    expect(missingRate.issues).toContainEqual(expect.objectContaining({ code: 'BROKERAGE_MERGER_INPUT_MISSING', row: 2 }))
+
+    const invalidCashText = merger.split('\n').map((line, index) => `${line},${index === 0 ? 'MERGER CASH AMOUNT' : 'abc'}`).join('\n')
+    const invalidCash = japaneseBrokerageTransactionsAdapter.parse({ text: invalidCashText })
+    expect(invalidCash.records).toHaveLength(0)
+    expect(invalidCash.issues).toContainEqual(expect.objectContaining({ code: 'BROKERAGE_MERGER_INPUT_MISSING' }))
+
+    const unnecessaryRate = japaneseBrokerageTransactionsAdapter.parse({ text: merger.replace(',EUR,100%,0.92', ',USD,100%,0.92') })
+    expect(unnecessaryRate.records).toHaveLength(0)
+    expect(unnecessaryRate.issues).toContainEqual(expect.objectContaining({ code: 'BROKERAGE_MERGER_INPUT_MISSING' }))
+  })
+
+  it('preserves explicit stock and cash allocations for a mixed-currency merger', () => {
+    const merger = [
+      '約定日,取引,銘柄コード,銘柄名,約定金額,通貨,交換比率,交換先コード,交換先銘柄名,交換先通貨,合併株式原価配分比率,交換先為替レート,合併現金交付額,合併現金通貨,現金対価為替レート',
+      '2026/05/01,合併,1111,旧会社,,USD,1:0.5,2222,新会社,EUR,75%,0.9,30000,JPY,150',
+    ].join('\n')
+    const result = japaneseBrokerageTransactionsAdapter.parse({ text: merger })
+    expect(result.issues).toEqual([])
+    expect(result.records[0]).toMatchObject({ eventType: 'MERGER', targetCurrency: 'EUR', mergerCashAmount: 30000, mergerCashCurrency: 'JPY', mergerStockCostBasisRatio: 0.75, sourceToTargetFxRate: 0.9, sourceToCashFxRate: 150 })
+    expect(result.records[0].legs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'SECURITY', currency: 'EUR', signedQuantity: 0.5 }),
+      expect.objectContaining({ kind: 'CASH', currency: 'JPY', signedAmount: 30000 }),
+      expect.objectContaining({ kind: 'ADJUSTMENT', currency: 'JPY', signedAmount: -30000 }),
+    ]))
   })
 
   it('requires and preserves explicit complex corporate-action allocation inputs', () => {
