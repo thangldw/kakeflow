@@ -174,6 +174,9 @@ export type BrokerageEventType =
   | 'SPLIT'
   | 'REVERSE_SPLIT'
   | 'MERGER'
+  | 'SPIN_OFF'
+  | 'RIGHTS_SUBSCRIPTION'
+  | 'CASH_IN_LIEU'
 
 export type BrokerageLegKind =
   | 'SECURITY'
@@ -228,4 +231,8 @@ export interface BrokerageEventCandidate {
   targetInstrumentCode?: string
   targetInstrumentName?: string
   targetCurrency?: string
+  costBasisAllocationRatio?: number
+  subscriptionAmount?: number
+  cashInLieuAmount?: number
+  cashInLieuQuantity?: number
 }

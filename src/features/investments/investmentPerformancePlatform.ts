@@ -74,6 +74,22 @@ export interface UncoveredSaleDto {
   readonly sourceRow: number
 }
 
+export interface CorporateActionAllocationDto {
+  readonly actionEventId: string
+  readonly actionType: 'SPIN_OFF' | 'RIGHTS_SUBSCRIPTION' | 'CASH_IN_LIEU'
+  readonly actionOn: string
+  readonly actionSourceDocumentId: string
+  readonly actionSourceRow: number
+  readonly sourceBuyEventId: string | null
+  readonly fromInstrumentCode: string
+  readonly targetInstrumentCode: string
+  readonly currency: string
+  readonly quantity: number
+  readonly allocatedCostBasis: number
+  readonly cashAmount: number
+  readonly realizedPnl: number | null
+}
+
 export interface InvestmentHoldingsDto {
   readonly asOf: string
   readonly costBasisMethod: InvestmentCostBasisMethod
@@ -83,6 +99,7 @@ export interface InvestmentHoldingsDto {
   readonly uncoveredSales: readonly UncoveredSaleDto[]
   readonly skippedEventIds: readonly string[]
   readonly corporateActionEventIds: readonly string[]
+  readonly corporateActionAllocations: readonly CorporateActionAllocationDto[]
 }
 
 export interface InvestmentPeriodCurrencyDto {
@@ -104,6 +121,7 @@ export interface InvestmentPerformanceDto {
   readonly uncoveredSales: readonly UncoveredSaleDto[]
   readonly skippedEventIds: readonly string[]
   readonly corporateActionEventIds: readonly string[]
+  readonly corporateActionAllocations: readonly CorporateActionAllocationDto[]
 }
 
 export type InvestmentPerformanceInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
@@ -127,6 +145,7 @@ function parseHoldings(value: unknown): InvestmentHoldingsDto {
   array(item.uncoveredSales, 'uncoveredSales')
   strings(item.skippedEventIds, 'skippedEventIds')
   strings(item.corporateActionEventIds, 'corporateActionEventIds')
+  array(item.corporateActionAllocations, 'corporateActionAllocations')
   return {
     asOf: item.asOf,
     costBasisMethod: item.costBasisMethod,
@@ -136,6 +155,7 @@ function parseHoldings(value: unknown): InvestmentHoldingsDto {
     uncoveredSales: item.uncoveredSales.map(parseUncoveredSale),
     skippedEventIds: item.skippedEventIds,
     corporateActionEventIds: item.corporateActionEventIds,
+    corporateActionAllocations: item.corporateActionAllocations.map(parseCorporateActionAllocation),
   }
 }
 
@@ -149,6 +169,7 @@ function parsePerformance(value: unknown): InvestmentPerformanceDto {
   array(item.uncoveredSales, 'uncoveredSales')
   strings(item.skippedEventIds, 'skippedEventIds')
   strings(item.corporateActionEventIds, 'corporateActionEventIds')
+  array(item.corporateActionAllocations, 'corporateActionAllocations')
   return {
     dateFrom: item.dateFrom,
     dateTo: item.dateTo,
@@ -158,6 +179,7 @@ function parsePerformance(value: unknown): InvestmentPerformanceDto {
     uncoveredSales: item.uncoveredSales.map(parseUncoveredSale),
     skippedEventIds: item.skippedEventIds,
     corporateActionEventIds: item.corporateActionEventIds,
+    corporateActionAllocations: item.corporateActionAllocations.map(parseCorporateActionAllocation),
   }
 }
 
@@ -201,6 +223,19 @@ function parseUncoveredSale(value: unknown): UncoveredSaleDto {
   finite(item.uncoveredQuantity, 'uncoveredQuantity')
   safeInteger(item.sourceRow, 'sourceRow')
   return item as unknown as UncoveredSaleDto
+}
+
+function parseCorporateActionAllocation(value: unknown): CorporateActionAllocationDto {
+  const item = record(value, 'corporate action allocation')
+  stringFields(item, ['actionEventId', 'actionType', 'actionSourceDocumentId', 'fromInstrumentCode', 'targetInstrumentCode'])
+  if (!['SPIN_OFF', 'RIGHTS_SUBSCRIPTION', 'CASH_IN_LIEU'].includes(item.actionType as string)) throw new TypeError('Invalid actionType')
+  date(item.actionOn, 'actionOn')
+  if (item.sourceBuyEventId !== null && typeof item.sourceBuyEventId !== 'string') throw new TypeError('Invalid sourceBuyEventId')
+  currency(item.currency)
+  numberFields(item, ['quantity', 'allocatedCostBasis', 'cashAmount'])
+  if (item.realizedPnl !== null) finite(item.realizedPnl, 'realizedPnl')
+  safeInteger(item.actionSourceRow, 'actionSourceRow')
+  return item as unknown as CorporateActionAllocationDto
 }
 
 function parsePeriodTotals(value: unknown): InvestmentPeriodCurrencyDto {

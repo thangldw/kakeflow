@@ -40,6 +40,10 @@ export interface ImportBrokerageEventDto {
   readonly targetInstrumentCode?: string
   readonly targetInstrumentName?: string
   readonly targetCurrency?: string
+  readonly costBasisAllocationRatio?: number
+  readonly subscriptionAmount?: number
+  readonly cashInLieuAmount?: number
+  readonly cashInLieuQuantity?: number
   readonly legs: readonly ImportBrokerageLegDto[]
 }
 
@@ -72,7 +76,7 @@ export interface BrokerageHistoryDto {
   readonly totalsByCurrency: readonly BrokerageCurrencyTotalsDto[]
 }
 
-export interface BrokerageEventDto extends Omit<ImportBrokerageEventDto, 'legs' | 'corporateActionRatio' | 'targetInstrumentCode' | 'targetInstrumentName' | 'targetCurrency'> {
+export interface BrokerageEventDto extends Omit<ImportBrokerageEventDto, 'legs' | 'corporateActionRatio' | 'targetInstrumentCode' | 'targetInstrumentName' | 'targetCurrency' | 'costBasisAllocationRatio' | 'subscriptionAmount' | 'cashInLieuAmount' | 'cashInLieuQuantity'> {
   readonly accountId: string
   readonly accountName: string
   readonly sourceDocumentId: string
@@ -80,6 +84,10 @@ export interface BrokerageEventDto extends Omit<ImportBrokerageEventDto, 'legs' 
   readonly targetInstrumentCode: string | null
   readonly targetInstrumentName: string | null
   readonly targetCurrency: string | null
+  readonly costBasisAllocationRatio: number | null
+  readonly subscriptionAmount: number | null
+  readonly cashInLieuAmount: number | null
+  readonly cashInLieuQuantity: number | null
   readonly legs: readonly BrokerageLegDto[]
 }
 
@@ -141,6 +149,10 @@ export function mapBrokerageEventsImport(
         targetInstrumentCode: candidate.targetInstrumentCode,
         targetInstrumentName: candidate.targetInstrumentName,
         targetCurrency: candidate.targetCurrency,
+        costBasisAllocationRatio: candidate.costBasisAllocationRatio,
+        subscriptionAmount: candidate.subscriptionAmount,
+        cashInLieuAmount: candidate.cashInLieuAmount,
+        cashInLieuQuantity: candidate.cashInLieuQuantity,
         legs: candidate.legs.map((leg, legIndex) => ({ ...leg, id: `${eventId}-l-${legIndex + 1}` })),
       }
     }),
@@ -171,13 +183,14 @@ function parseHistory(value: unknown): BrokerageHistoryDto {
 function parseEvent(value: unknown): BrokerageEventDto {
   const item = record(value, 'brokerage event')
   for (const key of ['id', 'accountId', 'accountName', 'sourceDocumentId', 'eventType', 'instrumentCode', 'instrumentName', 'accountType', 'currency', 'reconciliationStatus', 'rawTransactionType']) string(item[key], key)
-  if (!['BUY', 'SELL', 'DIVIDEND', 'FEE', 'TAX', 'DEPOSIT', 'WITHDRAWAL', 'SPLIT', 'REVERSE_SPLIT', 'MERGER'].includes(item.eventType as string)) throw new TypeError('Invalid eventType')
+  if (!['BUY', 'SELL', 'DIVIDEND', 'FEE', 'TAX', 'DEPOSIT', 'WITHDRAWAL', 'SPLIT', 'REVERSE_SPLIT', 'MERGER', 'SPIN_OFF', 'RIGHTS_SUBSCRIPTION', 'CASH_IN_LIEU'].includes(item.eventType as string)) throw new TypeError('Invalid eventType')
   if (!['BALANCED', 'ADJUSTED'].includes(item.reconciliationStatus as string)) throw new TypeError('Invalid reconciliationStatus')
   if (!/^[A-Z]{3}$/.test(item.currency as string)) throw new TypeError('Invalid currency')
   safeInteger(item.sourceRow, 'sourceRow')
   for (const key of ['tradeDate', 'settlementDate']) nullableString(item[key], key)
   for (const key of ['quantity', 'unitPrice']) nullableFinite(item[key], key)
   nullableFinite(item.corporateActionRatio, 'corporateActionRatio')
+  for (const key of ['costBasisAllocationRatio', 'subscriptionAmount', 'cashInLieuAmount', 'cashInLieuQuantity']) nullableFinite(item[key], key)
   for (const key of ['targetInstrumentCode', 'targetInstrumentName', 'targetCurrency']) nullableString(item[key], key)
   for (const key of ['grossAmount', 'feeAmount', 'taxAmount', 'settlementAmount', 'reconciliationDifference']) finite(item[key], key)
   if (item.affectsHouseholdExpense !== false || !Array.isArray(item.legs)) throw new TypeError('Invalid brokerage event accounting fields')

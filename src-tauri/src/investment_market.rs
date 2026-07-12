@@ -419,6 +419,7 @@ mod tests {
             include_str!("../migrations/0013_investment_performance.sql"),
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
             include_str!("../migrations/0015_investment_market_prices.sql"),
+            include_str!("../migrations/0016_complex_corporate_actions.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
