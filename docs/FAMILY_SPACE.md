@@ -37,7 +37,16 @@ changes a linked transaction, and neither tuple is inferred from account
 ownership. A transfer can touch multiple owners, while one statement can support
 transactions attributed to several members.
 
-Member-filtered analytics remain disabled until dashboard, calendar, reports,
-intelligence, forecast, and export all implement the same tagged attribution
-scope. Audience labels still do not provide access control; authenticated
-multi-device enforcement requires a future principal-to-member mapping.
+KakeFlow v0.13 enables member analytics with one tagged attribution scope across
+dashboard activity, ledger, calendar, reports, intelligence, forecast history,
+Action Center actuals, and transaction export. The available scopes are the
+whole household, household-common activity, or one member—including an archived
+member for historical reporting. Account groups and attribution are independent
+filters and combine using logical AND.
+
+Net worth, account and investment balances, goals, import status, and unallocated
+household obligations remain household-wide because they are not transaction
+attribution facts. The UI labels that boundary instead of presenting a partial
+balance as a member balance. Audience labels still do not provide access control;
+authenticated multi-device enforcement requires a future principal-to-member
+mapping.
