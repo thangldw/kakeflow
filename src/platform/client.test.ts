@@ -34,6 +34,7 @@ describe('platform client', () => {
     await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
     await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
     await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
+    await expect(client.extractDocument(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ command: 'document_extract' })
     expect(client.runtime).toBe('web')
     expect(invokeSpy).not.toHaveBeenCalled()
   })
@@ -68,6 +69,7 @@ describe('platform client', () => {
       import_commit: { runId: 'run-1', postedCount: 1 },
       import_rollback: null,
       backup_create: { entryCount: 4, plaintextBytes: 4096 },
+      document_extract: { method: 'EMBEDDED_TEXT', text: 'STORE TOTAL 1200', confidenceBps: 9000, issues: [] },
     }
     const invokeSpy = vi.fn()
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -110,6 +112,7 @@ describe('platform client', () => {
     await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
     await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).resolves.toEqual(responses.backup_create)
+    await expect(client.extractDocument(new Uint8Array([37, 80, 68, 70]), 'application/pdf')).resolves.toEqual(responses.document_extract)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
     expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
@@ -117,7 +120,8 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_create', { archivePath: '/tmp/family.kakeflow-backup', passphrase: 'long secure passphrase' })
-    expect(invokeSpy).toHaveBeenCalledTimes(14)
+    expect(invokeSpy).toHaveBeenCalledWith('document_extract', { fileBytes: [37, 80, 68, 70], mediaType: 'application/pdf' })
+    expect(invokeSpy).toHaveBeenCalledTimes(15)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

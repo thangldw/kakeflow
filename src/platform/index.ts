@@ -20,6 +20,7 @@ export type {
   DashboardExpenseCategoryDto,
   DashboardRequestDto,
   DatabaseStatusDto,
+  ExtractedDocumentDto,
   HouseholdDto,
   ImportRunCountsDto,
   ImportPreviewDto,

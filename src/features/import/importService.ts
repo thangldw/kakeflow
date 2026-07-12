@@ -9,7 +9,7 @@ export interface ImportPreview {
   encoding: string
   recordCount: number
   issues: readonly ParseIssue[]
-  status: 'ready' | 'unsupported' | 'error'
+  status: 'ready' | 'extractable' | 'unsupported' | 'error'
   parsedAt: string
   fileBytes?: Uint8Array
   parsed?: ParsedImport<unknown>
@@ -68,6 +68,15 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
     }
     const bytes = await readFileBytes(file)
     id = await sha256Hex(bytes)
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+    if (isPdf) {
+      return {
+        id, filename: file.name, adapterId: 'pdf-embedded-text-v1', encoding: 'binary', recordCount: 0,
+        issues: [{ code: 'DOCUMENT_EXTRACTION_REQUIRED', message: 'PDFの埋め込みテキストをローカルで抽出します。', severity: 'warning' }],
+        status: 'extractable', parsedAt: new Date().toISOString(), fileBytes: bytes,
+        mediaType: 'application/pdf', sourceModifiedAt: new Date(file.lastModified).toISOString(),
+      }
+    }
     const isXlsx = /\.xlsx$/i.test(file.name) || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     let text: string
     let encoding: string

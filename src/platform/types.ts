@@ -68,6 +68,7 @@ export interface PostingDecisionDto {
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
 export interface BackupSummaryDto { readonly entryCount: number; readonly plaintextBytes: number }
+export interface ExtractedDocumentDto { readonly method: 'EMBEDDED_TEXT' | 'OCR'; readonly text: string; readonly confidenceBps: number; readonly issues: readonly string[] }
 
 export type AccountingBasisDto = 'ACCRUAL' | 'CASH'
 
@@ -161,6 +162,7 @@ export type AppCommand =
   | 'import_commit'
   | 'import_rollback'
   | 'backup_create'
+  | 'document_extract'
 
 export type Invoke = <T>(command: AppCommand, args?: Record<string, unknown>) => Promise<T>
 
@@ -180,4 +182,5 @@ export interface PlatformClient {
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
   createBackup(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
+  extractDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
 }
