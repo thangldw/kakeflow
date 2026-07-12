@@ -23,6 +23,7 @@ use read_model::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use zeroize::Zeroizing;
 
 struct BackupPaths {
@@ -32,6 +33,43 @@ struct BackupPaths {
 }
 
 struct BackupMasterKey(Zeroizing<[u8; 32]>);
+
+#[derive(Default)]
+struct RestoreCommandAuthorization {
+    operation_gate: std::sync::Mutex<()>,
+    prepared_fingerprint: std::sync::Mutex<Option<[u8; 32]>>,
+}
+
+impl RestoreCommandAuthorization {
+    fn clear(&self) -> Result<(), String> {
+        *self
+            .prepared_fingerprint
+            .lock()
+            .map_err(|_| "Restore authorization is unavailable".to_owned())? = None;
+        Ok(())
+    }
+
+    fn authorize(&self, fingerprint: [u8; 32]) -> Result<(), String> {
+        *self
+            .prepared_fingerprint
+            .lock()
+            .map_err(|_| "Restore authorization is unavailable".to_owned())? = Some(fingerprint);
+        Ok(())
+    }
+
+    fn consume_if_matches(&self, prepared: Option<[u8; 32]>) -> Result<bool, String> {
+        let mut authorized = self
+            .prepared_fingerprint
+            .lock()
+            .map_err(|_| "Restore authorization is unavailable".to_owned())?;
+        if authorized.is_some() && *authorized == prepared {
+            *authorized = None;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
 
 struct OcrPaths {
     temporary_directory: std::path::PathBuf,
@@ -372,16 +410,51 @@ fn backup_create(
 }
 
 #[tauri::command]
-fn backup_restore_stage(
+async fn backup_restore_stage(
+    app: tauri::AppHandle,
     paths: tauri::State<'_, BackupPaths>,
     credentials: tauri::State<'_, OsRestoreCredentialStore>,
-    archive_path: String,
+    authorization: tauri::State<'_, RestoreCommandAuthorization>,
     passphrase: String,
-) -> Result<BackupSummaryDto, String> {
+) -> Result<Option<BackupSummaryDto>, String> {
+    // One backend-owned gate covers native selection, confirmation, staging,
+    // and authorization publication. No path or consent bit crosses IPC.
+    let _operation = authorization
+        .operation_gate
+        .lock()
+        .map_err(|_| "Restore is unavailable".to_owned())?;
+    authorization.clear()?;
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Backup", &["kakeflow-backup"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let archive_path = selected
+        .into_path()
+        .map_err(|_| "Selected backup is unavailable".to_owned())?;
+    let confirmed = app
+        .dialog()
+        .message(
+            "現在の台帳と原本を選択したバックアップで置き換え、KakeFlowを再起動します。続行しますか？",
+        )
+        .title("バックアップから復元")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "置き換えて復元".to_owned(),
+            "キャンセル".to_owned(),
+        ))
+        .blocking_show();
+    if !confirmed {
+        return Ok(None);
+    }
+    let passphrase = Zeroizing::new(passphrase);
     let summary = restore::stage_portable_restore(
         &paths.app_data_root,
-        std::path::Path::new(&archive_path),
-        &passphrase,
+        &archive_path,
+        passphrase.as_str(),
         credentials.inner(),
     )
     .map_err(|error| match error {
@@ -390,15 +463,30 @@ fn backup_restore_stage(
         restore::RestoreError::InvalidLayout => "Backup contents are invalid",
         _ => "Backup could not be staged for restore",
     })?;
-    Ok(BackupSummaryDto {
+    let fingerprint =
+        restore::prepared_restore_fingerprint(&paths.app_data_root, credentials.inner())
+            .map_err(|_| "Restore authorization check failed".to_owned())?
+            .ok_or_else(|| "Restore authorization check failed".to_owned())?;
+    authorization.authorize(fingerprint)?;
+    Ok(Some(BackupSummaryDto {
         format_version: 2,
         entry_count: summary.entry_count,
         plaintext_bytes: summary.plaintext_bytes,
-    })
+    }))
 }
 
 #[tauri::command]
-fn app_restart_for_restore(app: tauri::AppHandle) {
+fn app_restart_for_restore(
+    app: tauri::AppHandle,
+    paths: tauri::State<'_, BackupPaths>,
+    credentials: tauri::State<'_, OsRestoreCredentialStore>,
+    authorization: tauri::State<'_, RestoreCommandAuthorization>,
+) -> Result<(), String> {
+    let prepared = restore::prepared_restore_fingerprint(&paths.app_data_root, credentials.inner())
+        .map_err(|_| "Restore authorization check failed".to_owned())?;
+    if !authorization.consume_if_matches(prepared)? {
+        return Err("No authorized restore is prepared".to_owned());
+    }
     app.restart()
 }
 
@@ -569,6 +657,7 @@ pub fn run() {
             app.manage(vault);
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
+            app.manage(RestoreCommandAuthorization::default());
             app.manage(BackupPaths {
                 app_data_root: app_data_dir.clone(),
                 database: database_path,
@@ -605,4 +694,31 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("KakeFlow failed to start");
+}
+
+#[cfg(test)]
+mod command_authorization_tests {
+    use super::RestoreCommandAuthorization;
+
+    #[test]
+    fn restore_authorization_is_exact_match_and_one_shot() {
+        let authorization = RestoreCommandAuthorization::default();
+        let fingerprint = [0x42; 32];
+
+        assert!(!authorization.consume_if_matches(Some(fingerprint)).unwrap());
+        authorization.authorize(fingerprint).unwrap();
+        assert!(!authorization.consume_if_matches(Some([0x24; 32])).unwrap());
+        assert!(authorization.consume_if_matches(Some(fingerprint)).unwrap());
+        assert!(!authorization.consume_if_matches(Some(fingerprint)).unwrap());
+    }
+
+    #[test]
+    fn clearing_restore_authorization_prevents_restart() {
+        let authorization = RestoreCommandAuthorization::default();
+        let fingerprint = [0x73; 32];
+        authorization.authorize(fingerprint).unwrap();
+        authorization.clear().unwrap();
+
+        assert!(!authorization.consume_if_matches(Some(fingerprint)).unwrap());
+    }
 }

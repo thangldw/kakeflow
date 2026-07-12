@@ -124,7 +124,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
     createBackup: (archivePath, passphrase) => invokeValidated(invoke, 'backup_create', parseBackupSummary, { archivePath, passphrase }),
-    stageBackupRestore: (archivePath, passphrase) => invokeValidated(invoke, 'backup_restore_stage', parseBackupSummary, { archivePath, passphrase }),
+    stageBackupRestore: (passphrase) => invokeValidated(invoke, 'backup_restore_stage', parseNullableBackupSummary, { passphrase }),
     restartForRestore: async () => { await invokeValidated(invoke, 'app_restart_for_restore', parseVoid) },
     extractDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_extract', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
     ocrDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_ocr', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
@@ -227,6 +227,10 @@ function parseBackupSummary(value: unknown): BackupSummaryDto {
   const record = asRecord(value)
   if (record.formatVersion !== 2) throw new TypeError('backup version')
   return { formatVersion: record.formatVersion, entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
+}
+
+function parseNullableBackupSummary(value: unknown): BackupSummaryDto | null {
+  return value == null ? null : parseBackupSummary(value)
 }
 
 function parseExtractedDocument(value: unknown): ExtractedDocumentDto {
