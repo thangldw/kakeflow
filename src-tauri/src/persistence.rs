@@ -46,6 +46,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0019_delimited_parser_profiles.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0020_mixed_currency_mergers.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -503,6 +506,106 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 20 {
+        for query in [
+            "SELECT 1 FROM brokerage_events e
+             WHERE (e.event_type != 'MERGER' AND (
+                       e.merger_cash_amount IS NOT NULL
+                    OR e.merger_cash_currency IS NOT NULL
+                    OR e.merger_stock_cost_basis_ratio IS NOT NULL
+                    OR e.source_to_target_fx_rate IS NOT NULL
+                    OR e.source_to_cash_fx_rate IS NOT NULL))
+                OR (e.event_type = 'MERGER' AND (
+                       (length(trim(COALESCE(e.target_instrument_code, ''))) = 0
+                        AND length(trim(COALESCE(e.target_instrument_name, ''))) = 0)
+                    OR e.target_currency IS NULL
+                    OR length(e.target_currency) != 3
+                    OR e.target_currency GLOB '*[^A-Z]*'
+                    OR e.corporate_action_ratio IS NULL
+                    OR e.corporate_action_ratio <= 0
+                    OR e.merger_stock_cost_basis_ratio IS NULL
+                    OR e.merger_stock_cost_basis_ratio <= 0
+                    OR e.merger_stock_cost_basis_ratio > 1
+                    OR (e.target_currency = e.currency
+                        AND e.source_to_target_fx_rate IS NOT NULL)
+                    OR (e.target_currency != e.currency AND (
+                        e.source_to_target_fx_rate IS NULL
+                        OR e.source_to_target_fx_rate <= 0
+                        OR e.source_to_target_fx_rate > 1.0e12))
+                    OR (e.merger_cash_amount IS NULL AND (
+                        e.merger_cash_currency IS NOT NULL
+                        OR e.source_to_cash_fx_rate IS NOT NULL
+                        OR e.merger_stock_cost_basis_ratio != 1))
+                    OR (e.merger_cash_amount IS NOT NULL AND (
+                        e.merger_cash_amount <= 0 OR e.merger_cash_amount > 1.0e18
+                        OR e.merger_cash_currency IS NULL
+                        OR length(e.merger_cash_currency) != 3
+                        OR e.merger_cash_currency GLOB '*[^A-Z]*'
+                        OR e.merger_stock_cost_basis_ratio >= 1
+                        OR (e.merger_cash_currency = e.currency
+                            AND e.source_to_cash_fx_rate IS NOT NULL)
+                        OR (e.merger_cash_currency != e.currency AND (
+                            e.source_to_cash_fx_rate IS NULL
+                            OR e.source_to_cash_fx_rate <= 0
+                            OR e.source_to_cash_fx_rate > 1.0e12))))))
+             LIMIT 1",
+            "SELECT 1 FROM brokerage_events e
+             WHERE (e.event_type != 'MERGER' AND EXISTS (
+                       SELECT 1 FROM brokerage_event_legs l
+                       WHERE l.brokerage_event_id = e.id AND l.currency != e.currency))
+                OR (e.event_type = 'MERGER' AND (
+                       e.gross_amount != 0 OR e.fee_amount != 0
+                    OR e.tax_amount != 0 OR e.settlement_amount != 0
+                    OR (SELECT count(*) FROM brokerage_event_legs l
+                        WHERE l.brokerage_event_id = e.id) !=
+                       CASE WHEN e.merger_cash_amount IS NULL THEN 2 ELSE 4 END
+                    OR (SELECT count(*) FROM brokerage_event_legs l
+                        WHERE l.brokerage_event_id = e.id AND l.leg_kind = 'SECURITY'
+                          AND l.currency = e.currency AND l.signed_amount = 0
+                          AND l.signed_quantity < 0
+                          AND ((length(trim(e.instrument_code)) > 0
+                                AND l.instrument_code = e.instrument_code)
+                            OR (length(trim(e.instrument_code)) = 0
+                                AND length(trim(e.instrument_name)) > 0
+                                AND l.instrument_name = e.instrument_name))) != 1
+                    OR (SELECT count(*) FROM brokerage_event_legs l
+                        WHERE l.brokerage_event_id = e.id AND l.leg_kind = 'SECURITY'
+                          AND l.currency = e.target_currency AND l.signed_amount = 0
+                          AND l.signed_quantity > 0
+                          AND ((length(trim(COALESCE(e.target_instrument_code, ''))) > 0
+                                AND l.instrument_code = e.target_instrument_code)
+                            OR (length(trim(COALESCE(e.target_instrument_code, ''))) = 0
+                                AND l.instrument_name = e.target_instrument_name))) != 1
+                    OR abs(
+                        (SELECT l.signed_quantity FROM brokerage_event_legs l
+                         WHERE l.brokerage_event_id = e.id AND l.leg_kind = 'SECURITY'
+                           AND l.signed_quantity > 0 LIMIT 1)
+                        + (SELECT l.signed_quantity FROM brokerage_event_legs l
+                           WHERE l.brokerage_event_id = e.id AND l.leg_kind = 'SECURITY'
+                             AND l.signed_quantity < 0 LIMIT 1) * e.corporate_action_ratio
+                       ) > 0.000001
+                    OR (e.merger_cash_amount IS NOT NULL AND (
+                        (SELECT count(*) FROM brokerage_event_legs l
+                         WHERE l.brokerage_event_id = e.id AND l.leg_kind = 'CASH'
+                           AND l.currency = e.merger_cash_currency
+                           AND abs(l.signed_amount - e.merger_cash_amount) <= 0.000001
+                           AND l.signed_quantity IS NULL) != 1
+                        OR (SELECT count(*) FROM brokerage_event_legs l
+                            WHERE l.brokerage_event_id = e.id AND l.leg_kind = 'ADJUSTMENT'
+                              AND l.currency = e.merger_cash_currency
+                              AND abs(l.signed_amount + e.merger_cash_amount) <= 0.000001
+                              AND l.signed_quantity IS NULL) != 1))))
+             LIMIT 1",
+            "SELECT 1 FROM brokerage_events e
+             JOIN brokerage_event_legs l ON l.brokerage_event_id = e.id
+             WHERE e.event_type = 'MERGER'
+             GROUP BY e.id, l.currency
+             HAVING abs(sum(l.signed_amount)) > 0.000001
+             LIMIT 1",
+        ] {
+            reject_if_exists(connection, query)?;
+        }
+    }
     Ok(())
 }
 
@@ -855,6 +958,72 @@ mod tests {
                      WHERE id = 'profile';",
                 )?;
                 assert!(validate_restored_semantics(connection, 19).is_err());
+                connection.execute_batch("PRAGMA ignore_check_constraints = OFF;")?;
+                Ok(())
+            })
+            .expect("test database should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_mixed_currency_mergers() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let hash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+                connection.execute_batch(&format!(
+                    "INSERT INTO households (id, name) VALUES ('family', 'Family');
+                     INSERT INTO accounts
+                       (id, household_id, name, account_kind, account_subtype)
+                     VALUES ('broker', 'family', 'Broker', 'ASSET', 'SECURITIES');
+                     INSERT INTO import_runs (id, household_id, status)
+                     VALUES ('run', 'family', 'REVIEW_REQUIRED');
+                     INSERT INTO source_documents
+                       (id, household_id, import_run_id, source_type, original_filename,
+                        media_type, byte_size, sha256, storage_path)
+                     VALUES ('document', 'family', 'run', 'MANUAL_UPLOAD', 'merger.csv',
+                        'text/csv', 1, '{hash}', 'vault://{hash}');
+                     INSERT INTO brokerage_events
+                       (id, household_id, account_id, source_document_id, source_row,
+                        event_type, trade_date, instrument_code, instrument_name,
+                        brokerage_account_type, currency, gross_amount, fee_amount,
+                        tax_amount, settlement_amount, reconciliation_status,
+                        reconciliation_difference, raw_transaction_type,
+                        corporate_action_ratio, target_instrument_code,
+                        target_instrument_name, target_currency, merger_cash_amount,
+                        merger_cash_currency, merger_stock_cost_basis_ratio,
+                        source_to_target_fx_rate, source_to_cash_fx_rate)
+                     VALUES ('merger', 'family', 'broker', 'document', 1, 'MERGER',
+                        '2026-07-13', 'OLD', 'Old', 'TAXABLE', 'USD', 0, 0, 0, 0,
+                        'BALANCED', 0, 'MERGER', 0.5, 'NEW', 'New', 'JPY', 25,
+                        'EUR', 0.75, 150, 0.9);
+                     INSERT INTO brokerage_event_legs
+                       (id, brokerage_event_id, line_number, leg_kind, signed_amount,
+                        currency, instrument_code, instrument_name, signed_quantity, description)
+                     VALUES
+                       ('source', 'merger', 1, 'SECURITY', 0, 'USD', 'OLD', 'Old', -2, 'Source'),
+                       ('target', 'merger', 2, 'SECURITY', 0, 'JPY', 'NEW', 'New', 1, 'Target'),
+                       ('cash', 'merger', 3, 'CASH', 25, 'EUR', NULL, NULL, NULL, 'Cash'),
+                       ('offset', 'merger', 4, 'ADJUSTMENT', -25, 'EUR', NULL, NULL, NULL, 'Offset');"
+                ))?;
+                assert!(validate_restored_semantics(connection, 20).is_ok());
+
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints = ON;
+                     UPDATE brokerage_events SET source_to_target_fx_rate = NULL
+                     WHERE id = 'merger';",
+                )?;
+                assert!(validate_restored_semantics(connection, 20).is_err());
+
+                connection.execute(
+                    "UPDATE brokerage_events SET source_to_target_fx_rate = 150
+                     WHERE id = 'merger'",
+                    [],
+                )?;
+                connection.execute(
+                    "UPDATE brokerage_event_legs SET currency = 'USD' WHERE id = 'cash'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 20).is_err());
                 connection.execute_batch("PRAGMA ignore_check_constraints = OFF;")?;
                 Ok(())
             })
