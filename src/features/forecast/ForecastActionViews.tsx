@@ -13,6 +13,8 @@ const priorityLabels: Record<ActionPriority, string> = {
 const kindLabels: Record<ActionKind, string> = {
   IMPORT_REVIEW: '取込確認', IMPORT_FAILED: '取込失敗', CARD_MISMATCH: 'カード不一致',
   CARD_PAYMENT_DUE: 'カード引落', BUDGET_OVERRUN: '予算超過', GOAL_DUE: '目標期限',
+  CARD_BALANCE_SHORTFALL: 'カード残高不足',
+  CARD_MAPPING_REQUIRED: 'カード引落設定',
   SPENDING_ANOMALY: '異常支出', RECURRING_PRICE_CHANGE: '定期支払変更',
 }
 

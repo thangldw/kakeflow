@@ -65,8 +65,8 @@ describe('KakeFlow application shell', () => {
     await renderApp()
     fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
 
-    expect(screen.getByRole('heading', { name: '請求・口座引落の照合' })).toBeInTheDocument()
-    expect(screen.getByText(/カード利用は支出、銀行引落は負債の返済/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'カード引落・支払余力' })).toBeInTheDocument()
+    expect(screen.getByText(/明示した銀行口座で今後のカード引落を支払えるか確認/)).toBeInTheDocument()
     expect(screen.getByText('Rakuten Card')).toBeInTheDocument()
     expect(screen.getAllByText('¥204,987').length).toBeGreaterThanOrEqual(1)
   })

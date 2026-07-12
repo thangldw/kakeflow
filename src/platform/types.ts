@@ -146,6 +146,38 @@ export interface CardSettlementDto {
   readonly paymentOn: string | null; readonly matchScoreBps: number | null; readonly reconciliationStatus: CardReconciliationStatusDto
 }
 export interface CardMatchConfirmationDto { readonly statementId: string; readonly paymentId: string; readonly reconciliationStatus: 'FULLY_RECONCILED' }
+export interface CardSettlementBankMappingDto {
+  readonly householdId: string; readonly cardAccountId: string; readonly cardAccountName: string
+  readonly bankAccountId: string; readonly bankAccountName: string; readonly createdAt: string; readonly updatedAt: string
+}
+export interface UpsertCardSettlementBankMappingInputDto { readonly householdId: string; readonly cardAccountId: string; readonly bankAccountId: string }
+export interface DeleteCardSettlementBankMappingInputDto { readonly householdId: string; readonly cardAccountId: string }
+export type CardSettlementCoverageStatusDto = 'COVERED' | 'SHORTFALL' | 'OVERDUE'
+export interface CardSettlementCoverageStatementDto {
+  readonly statementId: string; readonly cardAccountId: string; readonly cardAccountName: string; readonly paymentDueOn: string
+  readonly statementAmountJpy: number; readonly paidAmountJpy: number; readonly outstandingAmountJpy: number
+  readonly projectedBankBalanceJpy: number; readonly shortfallJpy: number; readonly status: CardSettlementCoverageStatusDto
+}
+export interface CardSettlementBankCoverageDto {
+  readonly bankAccountId: string; readonly bankAccountName: string; readonly balanceAsOfJpy: number
+  readonly projectedEndingBalanceJpy: number; readonly maxShortfallJpy: number
+  readonly statements: readonly CardSettlementCoverageStatementDto[]
+}
+export interface UnmappedCardSettlementDto {
+  readonly statementId: string; readonly cardAccountId: string; readonly cardAccountName: string; readonly paymentDueOn: string
+  readonly statementAmountJpy: number; readonly paidAmountJpy: number; readonly outstandingAmountJpy: number
+  readonly status: 'UNMAPPED' | 'OVERDUE'
+}
+export interface MissingDueCardSettlementDto {
+  readonly statementId: string; readonly cardAccountId: string; readonly cardAccountName: string
+  readonly statementAmountJpy: number; readonly paidAmountJpy: number; readonly outstandingAmountJpy: number; readonly mappingConfigured: boolean
+}
+export interface CardSettlementBalanceCoverageRequestDto { readonly householdId: string; readonly asOf: string; readonly horizonDays?: number }
+export interface CardSettlementBalanceCoverageDto {
+  readonly asOf: string; readonly historyFrom: string; readonly horizonThrough: string; readonly horizonDays: number
+  readonly banks: readonly CardSettlementBankCoverageDto[]; readonly unmappedStatements: readonly UnmappedCardSettlementDto[]
+  readonly missingDueStatements: readonly MissingDueCardSettlementDto[]
+}
 
 export type AccountingBasisDto = 'ACCRUAL' | 'CASH'
 
@@ -368,6 +400,10 @@ export type AppCommand =
   | 'document_ocr'
   | 'cards_list'
   | 'card_match_confirm'
+  | 'card_settlement_bank_mappings_list'
+  | 'card_settlement_bank_mapping_upsert'
+  | 'card_settlement_bank_mapping_delete'
+  | 'card_settlement_balance_coverage_query'
 
 export type Invoke = <T>(command: AppCommand, args?: Record<string, unknown>) => Promise<T>
 
@@ -425,4 +461,8 @@ export interface PlatformClient {
   ocrDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
   listCardSettlements(householdId: string): Promise<readonly CardSettlementDto[]>
   confirmCardMatch(householdId: string, statementId: string, paymentId: string): Promise<CardMatchConfirmationDto>
+  listCardSettlementBankMappings(householdId: string): Promise<readonly CardSettlementBankMappingDto[]>
+  upsertCardSettlementBankMapping(input: UpsertCardSettlementBankMappingInputDto): Promise<CardSettlementBankMappingDto>
+  deleteCardSettlementBankMapping(input: DeleteCardSettlementBankMappingInputDto): Promise<void>
+  queryCardSettlementBalanceCoverage(request: CardSettlementBalanceCoverageRequestDto): Promise<CardSettlementBalanceCoverageDto>
 }

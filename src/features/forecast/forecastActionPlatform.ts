@@ -14,6 +14,8 @@ export type ActionKind =
   | 'IMPORT_FAILED'
   | 'CARD_MISMATCH'
   | 'CARD_PAYMENT_DUE'
+  | 'CARD_BALANCE_SHORTFALL'
+  | 'CARD_MAPPING_REQUIRED'
   | 'BUDGET_OVERRUN'
   | 'GOAL_DUE'
   | 'SPENDING_ANOMALY'
@@ -126,7 +128,7 @@ function parseForecastMonth(value: unknown): ForecastMonthDto {
 
 function parseAction(value: unknown): ActionItemDto {
   const item = record(value, 'action')
-  const kind = oneOf(item.kind, 'kind', ['IMPORT_REVIEW', 'IMPORT_FAILED', 'CARD_MISMATCH', 'CARD_PAYMENT_DUE', 'BUDGET_OVERRUN', 'GOAL_DUE', 'SPENDING_ANOMALY', 'RECURRING_PRICE_CHANGE'] as const)
+  const kind = oneOf(item.kind, 'kind', ['IMPORT_REVIEW', 'IMPORT_FAILED', 'CARD_MISMATCH', 'CARD_PAYMENT_DUE', 'CARD_BALANCE_SHORTFALL', 'CARD_MAPPING_REQUIRED', 'BUDGET_OVERRUN', 'GOAL_DUE', 'SPENDING_ANOMALY', 'RECURRING_PRICE_CHANGE'] as const)
   const priority = oneOf(item.priority, 'priority', ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const)
   return {
     id: text(item.id, 'id'),
