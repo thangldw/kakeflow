@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.0 — 2026-07-13
+
+- Add stable household-member records with ordered active/archive lifecycle and an automatically created primary local member for existing and new households.
+- Add a dedicated Family Space for member management and clearly state that personal classification is local organization, not authentication or access control.
+- Classify accounts independently by household/member ownership and shared/personal visibility; member-owned shared accounts remain supported.
+- Create accounts with ownership atomically and reject personal household accounts, foreign or archived owners, last-active-member archive, and archive of a member who still owns accounts.
+- Preserve member and ownership data in the encrypted database/backup and validate cross-household ownership and active-member invariants during restore.
+- Replace hard-coded person-like avatars with neutral initials derived from the active household name.
+
 ## 0.10.0 — 2026-07-13
 
 - Add a saved account-scope selector to Overview, Transactions, and Reports, restore the selection per household, and reset it safely when the household changes or the group is deleted.
