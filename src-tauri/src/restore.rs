@@ -605,7 +605,7 @@ fn write_journal(paths: &RestorePaths, mut journal: Journal) -> Result<Journal> 
     file.sync_all().map_err(|_| RestoreError::Io)?;
     drop(file);
 
-    let slot = if journal.generation % 2 == 0 {
+    let slot = if journal.generation.is_multiple_of(2) {
         paths.work.join(JOURNAL_SLOT_0)
     } else {
         paths.work.join(JOURNAL_SLOT_1)
@@ -1183,7 +1183,7 @@ mod tests {
         let latest = read_latest_journal(&paths)
             .expect("journal")
             .expect("latest");
-        let slot = if latest.generation % 2 == 0 {
+        let slot = if latest.generation.is_multiple_of(2) {
             paths.work.join(JOURNAL_SLOT_0)
         } else {
             paths.work.join(JOURNAL_SLOT_1)

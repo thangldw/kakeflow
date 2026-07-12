@@ -123,7 +123,7 @@ fn apply_key(connection: &Connection, key_material: &[u8]) -> Result<(), Persist
     let cipher_version: Option<String> = connection
         .query_row("PRAGMA cipher_version", [], |row| row.get(0))
         .optional()?;
-    if cipher_version.as_deref().map_or(true, str::is_empty) {
+    if cipher_version.as_deref().is_none_or(str::is_empty) {
         return Err(PersistenceError::CipherUnavailable);
     }
     Ok(())
