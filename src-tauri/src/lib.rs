@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod document_vault;
 pub mod import_workflow;
 mod key_store;
