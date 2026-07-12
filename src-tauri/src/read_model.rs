@@ -7,12 +7,34 @@ const MAX_HOUSEHOLD_ID_LEN: usize = 48;
 const MAX_LOOKUP_ID_LEN: usize = 64;
 const MAX_NAME_LEN: usize = 80;
 const MAX_PLANNING_JPY: i64 = 9_000_000_000_000_000;
+const CANONICAL_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
+    ("bank", "Bank", "ASSET", "BANK"),
+    ("cash", "Cash", "ASSET", "CASH"),
+    ("wallet", "Wallet", "ASSET", "WALLET"),
+    ("card", "Credit Card", "LIABILITY", "CREDIT_CARD"),
+    ("rakuten-card", "Rakuten Card", "LIABILITY", "CREDIT_CARD"),
+    (
+        "amazon-card",
+        "Amazon Mastercard",
+        "LIABILITY",
+        "CREDIT_CARD",
+    ),
+    ("income", "Income", "INCOME", "OTHER"),
+    ("groceries", "Groceries", "EXPENSE", "OTHER"),
+    ("housing", "Housing", "EXPENSE", "OTHER"),
+    ("utilities", "Utilities", "EXPENSE", "OTHER"),
+    ("transport", "Transport", "EXPENSE", "OTHER"),
+    ("healthcare", "Healthcare", "EXPENSE", "OTHER"),
+    ("entertainment", "Entertainment", "EXPENSE", "OTHER"),
+    ("other-expense", "Other Expense", "EXPENSE", "OTHER"),
+];
 
 #[derive(Debug)]
 pub enum RepositoryError {
     InvalidInput(&'static str),
     NotFound,
     Conflict,
+    InUse,
     Unavailable,
 }
 
@@ -23,6 +45,7 @@ impl RepositoryError {
             Self::InvalidInput(message) => message,
             Self::NotFound => "The requested record was not found",
             Self::Conflict => "The record already exists",
+            Self::InUse => "The account is required or still in use",
             Self::Unavailable => "Financial data is temporarily unavailable",
         }
     }
@@ -126,28 +149,7 @@ pub fn create_household(
 
     // These accounts are intentionally generic. Institution-specific accounts can
     // be added after import detection without changing the canonical ledger shape.
-    const ACCOUNTS: &[(&str, &str, &str, &str)] = &[
-        ("bank", "Bank", "ASSET", "BANK"),
-        ("cash", "Cash", "ASSET", "CASH"),
-        ("wallet", "Wallet", "ASSET", "WALLET"),
-        ("card", "Credit Card", "LIABILITY", "CREDIT_CARD"),
-        ("rakuten-card", "Rakuten Card", "LIABILITY", "CREDIT_CARD"),
-        (
-            "amazon-card",
-            "Amazon Mastercard",
-            "LIABILITY",
-            "CREDIT_CARD",
-        ),
-        ("income", "Income", "INCOME", "OTHER"),
-        ("groceries", "Groceries", "EXPENSE", "OTHER"),
-        ("housing", "Housing", "EXPENSE", "OTHER"),
-        ("utilities", "Utilities", "EXPENSE", "OTHER"),
-        ("transport", "Transport", "EXPENSE", "OTHER"),
-        ("healthcare", "Healthcare", "EXPENSE", "OTHER"),
-        ("entertainment", "Entertainment", "EXPENSE", "OTHER"),
-        ("other-expense", "Other Expense", "EXPENSE", "OTHER"),
-    ];
-    for (suffix, account_name, kind, subtype) in ACCOUNTS {
+    for (suffix, account_name, kind, subtype) in CANONICAL_ACCOUNTS {
         let account_id = format!("{}-{suffix}", input.id);
         transaction
             .execute(
@@ -187,6 +189,110 @@ pub struct AccountDto {
     pub currency: String,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AccountKind {
+    Asset,
+    Liability,
+    Equity,
+    Income,
+    Expense,
+}
+
+impl AccountKind {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Asset => "ASSET",
+            Self::Liability => "LIABILITY",
+            Self::Equity => "EQUITY",
+            Self::Income => "INCOME",
+            Self::Expense => "EXPENSE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AccountSubtype {
+    Bank,
+    Cash,
+    Wallet,
+    Securities,
+    CreditCard,
+    Receivable,
+    Other,
+}
+
+impl AccountSubtype {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Bank => "BANK",
+            Self::Cash => "CASH",
+            Self::Wallet => "WALLET",
+            Self::Securities => "SECURITIES",
+            Self::CreditCard => "CREDIT_CARD",
+            Self::Receivable => "RECEIVABLE",
+            Self::Other => "OTHER",
+        }
+    }
+
+    fn is_valid_for(self, kind: AccountKind) -> bool {
+        match kind {
+            AccountKind::Asset => matches!(
+                self,
+                Self::Bank
+                    | Self::Cash
+                    | Self::Wallet
+                    | Self::Securities
+                    | Self::Receivable
+                    | Self::Other
+            ),
+            AccountKind::Liability => matches!(self, Self::CreditCard | Self::Other),
+            AccountKind::Equity | AccountKind::Income | AccountKind::Expense => self == Self::Other,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub enum AccountCurrency {
+    #[serde(rename = "JPY")]
+    Jpy,
+}
+
+impl AccountCurrency {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Jpy => "JPY",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateAccountInput {
+    pub id: String,
+    pub household_id: String,
+    pub name: String,
+    pub account_kind: AccountKind,
+    pub account_subtype: AccountSubtype,
+    pub currency: AccountCurrency,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameAccountInput {
+    pub household_id: String,
+    pub account_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveAccountInput {
+    pub household_id: String,
+    pub account_id: String,
+}
+
 pub fn list_accounts(
     connection: &Connection,
     household_id: &str,
@@ -213,6 +319,147 @@ pub fn list_accounts(
         .map_err(map_database_error)?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(map_database_error)
+}
+
+pub fn create_account(
+    connection: &Connection,
+    input: &CreateAccountInput,
+) -> Result<AccountDto, RepositoryError> {
+    validate_id(&input.id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    let name = validate_account_name(&input.name)?;
+    if !input.account_subtype.is_valid_for(input.account_kind) {
+        return Err(RepositoryError::InvalidInput(
+            "Invalid account kind and subtype",
+        ));
+    }
+    ensure_household_exists(connection, &input.household_id)?;
+    connection
+        .execute(
+            "INSERT INTO accounts
+               (id, household_id, name, account_kind, account_subtype, currency)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                input.id,
+                input.household_id,
+                name,
+                input.account_kind.as_sql_value(),
+                input.account_subtype.as_sql_value(),
+                input.currency.as_sql_value()
+            ],
+        )
+        .map_err(map_database_error)?;
+    find_active_account(connection, &input.household_id, &input.id)
+}
+
+pub fn rename_account(
+    connection: &Connection,
+    input: &RenameAccountInput,
+) -> Result<AccountDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.account_id, MAX_LOOKUP_ID_LEN)?;
+    let name = validate_account_name(&input.name)?;
+    let changed = connection
+        .execute(
+            "UPDATE accounts SET name = ?1,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?2 AND household_id = ?3 AND is_archived = 0",
+            params![name, input.account_id, input.household_id],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(RepositoryError::NotFound);
+    }
+    find_active_account(connection, &input.household_id, &input.account_id)
+}
+
+pub fn archive_account(
+    connection: &Connection,
+    input: &ArchiveAccountInput,
+) -> Result<(), RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.account_id, MAX_LOOKUP_ID_LEN)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    find_active_account(&transaction, &input.household_id, &input.account_id)?;
+    if is_canonical_account(&input.household_id, &input.account_id) {
+        return Err(RepositoryError::InUse);
+    }
+    let referenced: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM journal_entries je
+               JOIN transactions t ON t.id = je.transaction_id
+               WHERE je.account_id = ?1 AND t.household_id = ?2 AND t.status = 'POSTED'
+               UNION ALL
+               SELECT 1 FROM transaction_candidates tc
+               WHERE tc.account_id = ?1 AND tc.household_id = ?2
+                 AND tc.review_status IN ('PENDING', 'READY')
+               UNION ALL
+               SELECT 1 FROM card_statements cs
+               WHERE cs.card_account_id = ?1 AND cs.household_id = ?2
+               UNION ALL
+               SELECT 1 FROM card_payments cp
+               WHERE cp.card_account_id = ?1 AND cp.household_id = ?2
+               UNION ALL
+               SELECT 1 FROM staged_card_statements scs
+               WHERE scs.card_account_id = ?1 AND scs.household_id = ?2
+               UNION ALL
+               SELECT 1 FROM monthly_category_budgets b
+               WHERE b.category_account_id = ?1 AND b.household_id = ?2
+             )",
+            params![input.account_id, input.household_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if referenced {
+        return Err(RepositoryError::InUse);
+    }
+    let changed = transaction
+        .execute(
+            "UPDATE accounts SET is_archived = 1,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?1 AND household_id = ?2 AND is_archived = 0",
+            params![input.account_id, input.household_id],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(RepositoryError::NotFound);
+    }
+    transaction.commit().map_err(map_database_error)
+}
+
+fn find_active_account(
+    connection: &Connection,
+    household_id: &str,
+    account_id: &str,
+) -> Result<AccountDto, RepositoryError> {
+    connection
+        .query_row(
+            "SELECT id, name, account_kind, account_subtype, currency
+             FROM accounts
+             WHERE id = ?1 AND household_id = ?2 AND is_archived = 0",
+            params![account_id, household_id],
+            |row| {
+                Ok(AccountDto {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    account_kind: row.get(2)?,
+                    account_subtype: row.get(3)?,
+                    currency: row.get(4)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)
+}
+
+fn is_canonical_account(household_id: &str, account_id: &str) -> bool {
+    CANONICAL_ACCOUNTS
+        .iter()
+        .any(|(suffix, _, _, _)| account_id == format!("{household_id}-{suffix}"))
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -1071,6 +1318,17 @@ fn validate_name(value: &str) -> Result<&str, RepositoryError> {
     Ok(trimmed)
 }
 
+fn validate_account_name(value: &str) -> Result<&str, RepositoryError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_NAME_LEN
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(RepositoryError::InvalidInput("Invalid account name"));
+    }
+    Ok(trimmed)
+}
+
 fn validate_savings_goal_name(value: &str) -> Result<&str, RepositoryError> {
     let trimmed = value.trim();
     if trimmed.is_empty()
@@ -1165,7 +1423,9 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
                    currency TEXT NOT NULL, masked_identifier TEXT,
-                   is_archived INTEGER NOT NULL DEFAULT 0, UNIQUE(household_id, name)
+                   is_archived INTEGER NOT NULL DEFAULT 0,
+                   updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   UNIQUE(household_id, name)
                  );
                  CREATE TABLE transactions (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
@@ -1181,7 +1441,9 @@ mod tests {
                  CREATE TABLE import_runs (id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
                  CREATE TABLE source_documents (id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT);
                  CREATE TABLE source_records (id TEXT PRIMARY KEY, source_document_id TEXT);
-                 CREATE TABLE transaction_candidates (id TEXT PRIMARY KEY, household_id TEXT, review_status TEXT);
+                 CREATE TABLE transaction_candidates (
+                   id TEXT PRIMARY KEY, household_id TEXT, account_id TEXT REFERENCES accounts(id),
+                   review_status TEXT);
                  CREATE TABLE card_statements (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
                    period_start TEXT NOT NULL, period_end TEXT NOT NULL, payment_due_on TEXT,
@@ -1194,6 +1456,11 @@ mod tests {
                    bank_transaction_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
                    payment_amount_jpy INTEGER NOT NULL, payment_on TEXT NOT NULL,
                    match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);
+                 CREATE TABLE staged_card_statements (
+                   id TEXT PRIMARY KEY, import_run_id TEXT NOT NULL, household_id TEXT NOT NULL,
+                   card_account_id TEXT NOT NULL REFERENCES accounts(id), issuer TEXT NOT NULL,
+                   period_start TEXT NOT NULL, period_end TEXT NOT NULL, payment_due_on TEXT,
+                   statement_amount_jpy INTEGER NOT NULL);
                  CREATE TABLE monthly_category_budgets (
                    household_id TEXT NOT NULL REFERENCES households(id), month TEXT NOT NULL,
                    category_account_id TEXT NOT NULL REFERENCES accounts(id), budget_jpy INTEGER NOT NULL,
@@ -1231,6 +1498,268 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 14);
+    }
+
+    fn create_test_account(connection: &Connection, household_id: &str, id: &str) -> AccountDto {
+        create_account(
+            connection,
+            &CreateAccountInput {
+                id: id.to_owned(),
+                household_id: household_id.to_owned(),
+                name: format!("Account {id}"),
+                account_kind: AccountKind::Asset,
+                account_subtype: AccountSubtype::Bank,
+                currency: AccountCurrency::Jpy,
+            },
+        )
+        .expect("custom account")
+    }
+
+    #[test]
+    fn account_lifecycle_validates_types_and_keeps_lists_active_only() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let created = create_account(
+            &connection,
+            &CreateAccountInput {
+                id: "family-savings".into(),
+                household_id: "family".into(),
+                name: "  Savings  ".into(),
+                account_kind: AccountKind::Asset,
+                account_subtype: AccountSubtype::Bank,
+                currency: AccountCurrency::Jpy,
+            },
+        )
+        .unwrap();
+        assert_eq!(created.name, "Savings");
+        assert_eq!(created.account_kind, "ASSET");
+        assert_eq!(created.account_subtype, "BANK");
+        assert_eq!(created.currency, "JPY");
+
+        let renamed = rename_account(
+            &connection,
+            &RenameAccountInput {
+                household_id: "family".into(),
+                account_id: created.id.clone(),
+                name: "  Emergency Savings  ".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(renamed.name, "Emergency Savings");
+        assert!(list_accounts(&connection, "family")
+            .unwrap()
+            .iter()
+            .any(|account| account.id == created.id));
+
+        archive_account(
+            &connection,
+            &ArchiveAccountInput {
+                household_id: "family".into(),
+                account_id: created.id.clone(),
+            },
+        )
+        .unwrap();
+        assert!(!list_accounts(&connection, "family")
+            .unwrap()
+            .iter()
+            .any(|account| account.id == created.id));
+        assert!(matches!(
+            rename_account(
+                &connection,
+                &RenameAccountInput {
+                    household_id: "family".into(),
+                    account_id: created.id,
+                    name: "Unavailable".into(),
+                }
+            ),
+            Err(RepositoryError::NotFound)
+        ));
+
+        assert!(matches!(
+            create_account(
+                &connection,
+                &CreateAccountInput {
+                    id: "family-invalid".into(),
+                    household_id: "family".into(),
+                    name: "Invalid".into(),
+                    account_kind: AccountKind::Expense,
+                    account_subtype: AccountSubtype::Bank,
+                    currency: AccountCurrency::Jpy,
+                }
+            ),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn account_mutations_are_strictly_household_scoped() {
+        let connection = database();
+        for id in ["one", "two"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        create_test_account(&connection, "one", "one-custom");
+
+        assert!(matches!(
+            rename_account(
+                &connection,
+                &RenameAccountInput {
+                    household_id: "two".into(),
+                    account_id: "one-custom".into(),
+                    name: "Cross household".into(),
+                }
+            ),
+            Err(RepositoryError::NotFound)
+        ));
+        assert!(matches!(
+            archive_account(
+                &connection,
+                &ArchiveAccountInput {
+                    household_id: "two".into(),
+                    account_id: "one-custom".into(),
+                }
+            ),
+            Err(RepositoryError::NotFound)
+        ));
+        assert_eq!(
+            find_active_account(&connection, "one", "one-custom")
+                .unwrap()
+                .name,
+            "Account one-custom"
+        );
+    }
+
+    #[test]
+    fn account_archive_rejects_required_and_referenced_accounts() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            archive_account(
+                &connection,
+                &ArchiveAccountInput {
+                    household_id: "family".into(),
+                    account_id: "family-bank".into(),
+                }
+            ),
+            Err(RepositoryError::InUse)
+        ));
+
+        for id in [
+            "posted-account",
+            "candidate-account",
+            "statement-account",
+            "payment-account",
+            "staged-account",
+            "budget-account",
+        ] {
+            create_test_account(&connection, "family", id);
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO transactions
+                   (id, household_id, occurred_on, transaction_type, status)
+                 VALUES ('posted', 'family', '2026-07-12', 'ADJUSTMENT', 'POSTED');
+                 INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                 VALUES ('entry', 'posted', 'posted-account', 'DEBIT', 1, 1);
+                 INSERT INTO transaction_candidates
+                   (id, household_id, account_id, review_status)
+                 VALUES ('candidate', 'family', 'candidate-account', 'READY');
+                 INSERT INTO card_statements
+                   (id, household_id, card_account_id, period_start, period_end,
+                    statement_amount_jpy, reconciliation_status)
+                 VALUES ('statement', 'family', 'statement-account', '2026-07-01',
+                         '2026-07-31', 1, 'UNMATCHED');
+                 INSERT INTO card_payments
+                   (id, household_id, bank_transaction_id, card_account_id,
+                    payment_amount_jpy, payment_on, reconciliation_status)
+                 VALUES ('payment', 'family', 'posted', 'payment-account', 1,
+                         '2026-07-31', 'UNMATCHED');
+                 INSERT INTO staged_card_statements
+                   (id, import_run_id, household_id, card_account_id, issuer,
+                    period_start, period_end, statement_amount_jpy)
+                 VALUES ('staged', 'run', 'family', 'staged-account', 'Issuer',
+                         '2026-07-01', '2026-07-31', 1);
+                 INSERT INTO monthly_category_budgets
+                   (household_id, month, category_account_id, budget_jpy)
+                 VALUES ('family', '2026-07', 'budget-account', 1);",
+            )
+            .unwrap();
+
+        for id in [
+            "posted-account",
+            "candidate-account",
+            "statement-account",
+            "payment-account",
+            "staged-account",
+            "budget-account",
+        ] {
+            assert!(matches!(
+                archive_account(
+                    &connection,
+                    &ArchiveAccountInput {
+                        household_id: "family".into(),
+                        account_id: id.into(),
+                    }
+                ),
+                Err(RepositoryError::InUse)
+            ));
+        }
+    }
+
+    #[test]
+    fn draft_journal_and_inactive_candidate_do_not_block_account_archive() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        create_test_account(&connection, "family", "family-unused");
+        connection
+            .execute_batch(
+                "INSERT INTO transactions
+                   (id, household_id, occurred_on, transaction_type, status)
+                 VALUES ('draft', 'family', '2026-07-12', 'ADJUSTMENT', 'DRAFT');
+                 INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                 VALUES ('draft-entry', 'draft', 'family-unused', 'DEBIT', 1, 1);
+                 INSERT INTO transaction_candidates
+                   (id, household_id, account_id, review_status)
+                 VALUES ('excluded', 'family', 'family-unused', 'EXCLUDED');",
+            )
+            .unwrap();
+        archive_account(
+            &connection,
+            &ArchiveAccountInput {
+                household_id: "family".into(),
+                account_id: "family-unused".into(),
+            },
+        )
+        .unwrap();
     }
 
     #[test]
