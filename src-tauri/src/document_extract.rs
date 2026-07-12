@@ -3,6 +3,9 @@ use thiserror::Error;
 
 const MAX_DOCUMENT_BYTES: usize = 25 * 1024 * 1024;
 const MAX_EXTRACTED_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_PDF_OBJECTS: usize = 100_000;
+const MAX_PDF_PAGES: usize = 2_000;
+const MAX_PDF_STREAM_MARKERS: usize = 20_000;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractError {
@@ -32,9 +35,9 @@ pub fn extract_document(bytes: &[u8], media_type: &str) -> Result<ExtractedDocum
     if media_type != "application/pdf" && !bytes.starts_with(b"%PDF-") {
         return Err(ExtractError::Unsupported);
     }
-    let extracted = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes))
-        .map_err(|_| ExtractError::Extraction)?
-        .map_err(|_| ExtractError::Extraction)?;
+    preflight_pdf(bytes)?;
+    let extracted = std::panic::catch_unwind(|| extract_text_capped(bytes))
+        .map_err(|_| ExtractError::Extraction)??;
     let text = extracted.replace('\0', "").trim().to_owned();
     if text.len() > MAX_EXTRACTED_TEXT_BYTES {
         return Err(ExtractError::InvalidInput);
@@ -59,9 +62,109 @@ pub fn extract_document(bytes: &[u8], media_type: &str) -> Result<ExtractedDocum
     })
 }
 
+fn preflight_pdf(bytes: &[u8]) -> Result<(), ExtractError> {
+    if count_occurrences(bytes, b" stream") > MAX_PDF_STREAM_MARKERS
+        || declared_pdf_size(bytes).is_some_and(|size| size > MAX_PDF_OBJECTS)
+    {
+        return Err(ExtractError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn extract_text_capped(bytes: &[u8]) -> Result<String, ExtractError> {
+    let mut document =
+        pdf_extract::Document::load_mem(bytes).map_err(|_| ExtractError::Extraction)?;
+    if document.objects.len() > MAX_PDF_OBJECTS || document.get_pages().len() > MAX_PDF_PAGES {
+        return Err(ExtractError::InvalidInput);
+    }
+    if document.is_encrypted() {
+        document.decrypt("").map_err(|_| ExtractError::Extraction)?;
+    }
+
+    let mut text = CappedBytes::new(MAX_EXTRACTED_TEXT_BYTES);
+    let output_result = {
+        let writer: &mut dyn std::io::Write = &mut text;
+        let mut output = pdf_extract::PlainTextOutput::new(writer);
+        pdf_extract::output_doc(&document, &mut output)
+    };
+    if text.exceeded {
+        return Err(ExtractError::InvalidInput);
+    }
+    output_result.map_err(|_| ExtractError::Extraction)?;
+    String::from_utf8(text.value).map_err(|_| ExtractError::Extraction)
+}
+
+fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
+    haystack
+        .windows(needle.len())
+        .filter(|window| *window == needle)
+        .count()
+}
+
+fn declared_pdf_size(bytes: &[u8]) -> Option<usize> {
+    let mut largest = None;
+    for index in 0..bytes.len().saturating_sub(5) {
+        if &bytes[index..index + 5] != b"/Size" {
+            continue;
+        }
+        let mut cursor = index + 5;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
+        }
+        let start = cursor;
+        while bytes.get(cursor).is_some_and(u8::is_ascii_digit) {
+            cursor += 1;
+        }
+        if cursor > start {
+            let value = std::str::from_utf8(&bytes[start..cursor])
+                .ok()
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(usize::MAX);
+            largest = Some(largest.map_or(value, |current: usize| current.max(value)));
+        }
+    }
+    largest
+}
+
+struct CappedBytes {
+    value: Vec<u8>,
+    limit: usize,
+    exceeded: bool,
+}
+
+impl CappedBytes {
+    fn new(limit: usize) -> Self {
+        Self {
+            value: Vec::new(),
+            limit,
+            exceeded: false,
+        }
+    }
+}
+
+impl std::io::Write for CappedBytes {
+    fn write(&mut self, value: &[u8]) -> std::io::Result<usize> {
+        let Some(next_len) = self.value.len().checked_add(value.len()) else {
+            self.exceeded = true;
+            return Err(std::io::Error::other("extracted text limit exceeded"));
+        };
+        if next_len > self.limit {
+            self.exceeded = true;
+            return Err(std::io::Error::other("extracted text limit exceeded"));
+        }
+        self.value.extend_from_slice(value);
+        Ok(value.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
 
     fn text_pdf(text: &str) -> Vec<u8> {
         let escaped = text
@@ -115,6 +218,33 @@ mod tests {
         );
         assert_eq!(
             extract_document(&[], "application/pdf"),
+            Err(ExtractError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn rejects_implausible_declared_object_count_before_parsing() {
+        let bytes = b"%PDF-1.7\ntrailer << /Size 100001 >>\n%%EOF";
+        assert_eq!(
+            extract_document(bytes, "application/pdf"),
+            Err(ExtractError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn capped_writer_stops_before_allocating_excess_output() {
+        let mut writer = CappedBytes::new(8);
+        assert!(writer.write_all(b"12345678").is_ok());
+        assert!(writer.write_all(b"9").is_err());
+        assert!(writer.exceeded);
+        assert_eq!(writer.value, b"12345678");
+    }
+
+    #[test]
+    fn aborts_pdf_text_extraction_at_output_limit() {
+        let oversized_text = "A".repeat(MAX_EXTRACTED_TEXT_BYTES + 1);
+        assert_eq!(
+            extract_document(&text_pdf(&oversized_text), "application/pdf"),
             Err(ExtractError::InvalidInput)
         );
     }
