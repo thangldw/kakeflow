@@ -15,11 +15,32 @@ export interface SourcePdfPagePreviewDto {
 }
 
 export type SourcePdfPreviewInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
+export type SourcePdfPagePreviewStatus = 'SUCCESS' | 'PASSWORD_REQUIRED' | 'PASSWORD_INVALID' | 'PASSWORD_UNSUPPORTED'
+
+export class PdfPreviewAccessError extends Error {
+  constructor(readonly status: Exclude<SourcePdfPagePreviewStatus, 'SUCCESS'>) {
+    super(status)
+    this.name = 'PdfPreviewAccessError'
+  }
+}
 
 export function createSourcePdfPagePreviewPlatform(invoke: SourcePdfPreviewInvoke = tauriInvoke) {
   return {
     get: async (householdId: string, sourceDocumentId: string, pageNumber: number): Promise<SourcePdfPagePreviewDto> => parsePreview(await invoke('source_pdf_page_preview_get', { householdId, sourceDocumentId, pageNumber })),
+    getWithPassword: async (householdId: string, sourceDocumentId: string, pageNumber: number, password?: string): Promise<SourcePdfPagePreviewDto> => {
+      const attempt = parseAttempt(await invoke('source_pdf_page_preview_attempt', { householdId, sourceDocumentId, pageNumber, password: password ?? null }))
+      if (attempt.status !== 'SUCCESS') throw new PdfPreviewAccessError(attempt.status)
+      return attempt.preview
+    },
   }
+}
+
+function parseAttempt(value: unknown): { readonly status: 'SUCCESS'; readonly preview: SourcePdfPagePreviewDto } | { readonly status: Exclude<SourcePdfPagePreviewStatus, 'SUCCESS'>; readonly preview: null } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new TypeError('source PDF preview attempt')
+  const item = value as Record<string, unknown>
+  if (item.status === 'SUCCESS') return { status: 'SUCCESS', preview: parsePreview(item.preview) }
+  if (['PASSWORD_REQUIRED', 'PASSWORD_INVALID', 'PASSWORD_UNSUPPORTED'].includes(String(item.status)) && item.preview === null) return { status: item.status as Exclude<SourcePdfPagePreviewStatus, 'SUCCESS'>, preview: null }
+  throw new TypeError('source PDF preview attempt')
 }
 
 export function pdfPreviewToEvidenceImage(preview: SourcePdfPagePreviewDto): EvidencePageImage {

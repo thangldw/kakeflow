@@ -396,6 +396,33 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE' })]))
   })
 
+  it('prompts for a protected PDF password and never persists it in the import request', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command !== 'document_extract_attempt') return fallback(command, args)
+      if (args?.password !== 'one-time-password') return { status: 'PASSWORD_REQUIRED', document: null }
+      return {
+        status: 'SUCCESS',
+        document: { method: 'EMBEDDED_TEXT', text: 'スーパー\n2026/07/12\n合計 ¥1,200', confidenceBps: 9000, issues: [], regions: [{ pageNumber: 1, coordinateSpace: 'UNLOCATED', boundingBox: null, text: 'スーパー\n2026/07/12\n合計 ¥1,200', confidenceBps: 9000, provenance: 'PDF_EMBEDDED_TEXT' }] },
+      }
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['%PDF-1.3 protected'], 'protected.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'PDF抽出' }))
+
+    expect(await screen.findByText('このPDFはパスワードで保護されています')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('PDFパスワード'), { target: { value: 'one-time-password' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ロックを解除' }))
+
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('document_extract_attempt', expect.objectContaining({ password: 'one-time-password' })))
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
+    expect(desktop.startImport.mock.calls.at(-1)?.[0]).not.toHaveProperty('password')
+    expect(screen.queryByLabelText('PDFパスワード')).not.toBeInTheDocument()
+  })
+
   it('creates a household-owned account from settings', async () => {
     render(<App />)
     await screen.findByText('生協')

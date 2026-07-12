@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use hayro::hayro_interpret::InterpreterSettings;
-use hayro::hayro_syntax::Pdf;
+use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::{render, RenderCache, RenderSettings};
 use rusqlite::Connection;
@@ -14,6 +14,7 @@ use crate::source_viewer;
 const MAX_PDF_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_PDF_PAGES: usize = 2_000;
 const MAX_RENDER_EDGE: f32 = 1_600.0;
+const MAX_PDF_PASSWORD_BYTES: usize = 256;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SourcePdfPreviewError {
@@ -25,6 +26,12 @@ pub enum SourcePdfPreviewError {
     Unsupported,
     #[error("source PDF preview is unavailable")]
     Unavailable,
+    #[error("source PDF password is required")]
+    PasswordRequired,
+    #[error("source PDF password is invalid")]
+    PasswordInvalid,
+    #[error("source PDF password encryption is unsupported")]
+    PasswordUnsupported,
 }
 
 impl SourcePdfPreviewError {
@@ -34,6 +41,9 @@ impl SourcePdfPreviewError {
             Self::NotFound => "Source PDF preview was not found",
             Self::Unsupported => "Only PDF source page previews are supported",
             Self::Unavailable => "Source PDF preview is temporarily unavailable",
+            Self::PasswordRequired => "Source PDF password is required",
+            Self::PasswordInvalid => "Source PDF password is invalid",
+            Self::PasswordUnsupported => "Source PDF password encryption is unsupported",
         }
     }
 }
@@ -54,6 +64,13 @@ pub struct SourcePdfPagePreviewDto {
     pub data_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcePdfPagePreviewAttemptDto {
+    pub status: &'static str,
+    pub preview: Option<SourcePdfPagePreviewDto>,
+}
+
 pub fn render_source_pdf_page(
     connection: &Connection,
     vault: &DocumentVault,
@@ -61,6 +78,27 @@ pub fn render_source_pdf_page(
     source_document_id: &str,
     page_number: u32,
 ) -> Result<SourcePdfPagePreviewDto, SourcePdfPreviewError> {
+    render_source_pdf_page_with_password(
+        connection,
+        vault,
+        household_id,
+        source_document_id,
+        page_number,
+        None,
+    )
+}
+
+pub fn render_source_pdf_page_with_password(
+    connection: &Connection,
+    vault: &DocumentVault,
+    household_id: &str,
+    source_document_id: &str,
+    page_number: u32,
+    password: Option<&str>,
+) -> Result<SourcePdfPagePreviewDto, SourcePdfPreviewError> {
+    if password.is_some_and(|value| value.len() > MAX_PDF_PASSWORD_BYTES) {
+        return Err(SourcePdfPreviewError::Invalid);
+    }
     if page_number == 0 {
         return Err(SourcePdfPreviewError::Invalid);
     }
@@ -87,7 +125,7 @@ pub fn render_source_pdf_page(
     }
 
     let rendered = catch_unwind(AssertUnwindSafe(|| {
-        render_page(&retrieved.bytes, page_number)
+        render_page(&retrieved.bytes, page_number, password)
     }))
     .map_err(|_| SourcePdfPreviewError::Unavailable)??;
     let encoded = STANDARD.encode(rendered.png);
@@ -105,6 +143,42 @@ pub fn render_source_pdf_page(
     })
 }
 
+pub fn attempt_source_pdf_page_preview(
+    connection: &Connection,
+    vault: &DocumentVault,
+    household_id: &str,
+    source_document_id: &str,
+    page_number: u32,
+    password: Option<&str>,
+) -> Result<SourcePdfPagePreviewAttemptDto, SourcePdfPreviewError> {
+    match render_source_pdf_page_with_password(
+        connection,
+        vault,
+        household_id,
+        source_document_id,
+        page_number,
+        password,
+    ) {
+        Ok(preview) => Ok(SourcePdfPagePreviewAttemptDto {
+            status: "SUCCESS",
+            preview: Some(preview),
+        }),
+        Err(SourcePdfPreviewError::PasswordRequired) => Ok(SourcePdfPagePreviewAttemptDto {
+            status: "PASSWORD_REQUIRED",
+            preview: None,
+        }),
+        Err(SourcePdfPreviewError::PasswordInvalid) => Ok(SourcePdfPagePreviewAttemptDto {
+            status: "PASSWORD_INVALID",
+            preview: None,
+        }),
+        Err(SourcePdfPreviewError::PasswordUnsupported) => Ok(SourcePdfPagePreviewAttemptDto {
+            status: "PASSWORD_UNSUPPORTED",
+            preview: None,
+        }),
+        Err(error) => Err(error),
+    }
+}
+
 struct RenderedPage {
     png: Vec<u8>,
     page_count: u32,
@@ -114,8 +188,27 @@ struct RenderedPage {
     height_pixels: u16,
 }
 
-fn render_page(bytes: &[u8], page_number: u32) -> Result<RenderedPage, SourcePdfPreviewError> {
-    let pdf = Pdf::new(bytes.to_vec()).map_err(|_| SourcePdfPreviewError::Unavailable)?;
+fn render_page(
+    bytes: &[u8],
+    page_number: u32,
+    password: Option<&str>,
+) -> Result<RenderedPage, SourcePdfPreviewError> {
+    let pdf =
+        Pdf::new_with_password(bytes.to_vec(), password.unwrap_or("")).map_err(
+            |error| match error {
+                LoadPdfError::Decryption(DecryptionError::PasswordProtected) => {
+                    if password.is_some() {
+                        SourcePdfPreviewError::PasswordInvalid
+                    } else {
+                        SourcePdfPreviewError::PasswordRequired
+                    }
+                }
+                LoadPdfError::Decryption(DecryptionError::UnsupportedAlgorithm) => {
+                    SourcePdfPreviewError::PasswordUnsupported
+                }
+                _ => SourcePdfPreviewError::Unavailable,
+            },
+        )?;
     let pages = pdf.pages();
     if pages.is_empty() || pages.len() > MAX_PDF_PAGES {
         return Err(SourcePdfPreviewError::Unavailable);
@@ -201,6 +294,12 @@ mod tests {
         pdf
     }
 
+    fn password_protected_pdf() -> Vec<u8> {
+        STANDARD
+            .decode(include_str!("../testdata/password-protected-reportlab.pdf.b64").trim())
+            .unwrap()
+    }
+
     fn fixture(media_type: &str, bytes: &[u8]) -> (Connection, DocumentVault, tempfile::TempDir) {
         let temp = tempfile::tempdir().unwrap();
         let vault = DocumentVault::new(temp.path().join("vault"), &[8_u8; 32]).unwrap();
@@ -248,5 +347,44 @@ mod tests {
             render_source_pdf_page(&connection, &vault, "family", "document", 2),
             Err(SourcePdfPreviewError::Invalid)
         );
+    }
+
+    #[test]
+    fn renders_an_encrypted_vault_pdf_only_with_an_ephemeral_password() {
+        let bytes = password_protected_pdf();
+        let (connection, vault, _temp) = fixture("application/pdf", &bytes);
+
+        let required =
+            attempt_source_pdf_page_preview(&connection, &vault, "family", "document", 1, None)
+                .unwrap();
+        assert_eq!(required.status, "PASSWORD_REQUIRED");
+        assert!(required.preview.is_none());
+
+        let invalid = attempt_source_pdf_page_preview(
+            &connection,
+            &vault,
+            "family",
+            "document",
+            1,
+            Some("wrong"),
+        )
+        .unwrap();
+        assert_eq!(invalid.status, "PASSWORD_INVALID");
+
+        let success = attempt_source_pdf_page_preview(
+            &connection,
+            &vault,
+            "family",
+            "document",
+            1,
+            Some("one-time-password"),
+        )
+        .unwrap();
+        assert_eq!(success.status, "SUCCESS");
+        assert!(success
+            .preview
+            .unwrap()
+            .data_url
+            .starts_with("data:image/png;base64,"));
     }
 }
