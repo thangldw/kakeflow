@@ -29,7 +29,10 @@ describe('receipt text normalization', () => {
       extractionConfidenceBps: 6200,
       normalizationConfidenceBps: 10000,
       reviewStatus: 'PENDING',
+      attributionKind: 'HOUSEHOLD', attributedMemberId: null,
+      audienceVisibility: 'SHARED', audienceMemberId: null,
     })
+    expect(result.request).toMatchObject({ audienceVisibility: 'SHARED', audienceMemberId: null })
   })
 
   it('extracts item, Japanese tax, coupon and points evidence with line provenance', () => {

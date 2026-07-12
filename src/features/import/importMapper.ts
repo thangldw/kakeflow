@@ -61,6 +61,10 @@ export interface StartImportCandidate {
   externalTransactionId: string | null
   extractionConfidenceBps: number | null
   normalizationConfidenceBps: number | null
+  attributionKind: 'HOUSEHOLD' | 'MEMBER'
+  attributedMemberId: string | null
+  audienceVisibility: 'SHARED' | 'PERSONAL'
+  audienceMemberId: string | null
   reviewStatus: 'PENDING'
   evidence: StartImportEvidence[]
 }
@@ -78,6 +82,8 @@ export interface StartImportRequest {
   sourceModifiedAt: string | null
   adapterId: AdapterId | null
   adapterVersion: string | null
+  audienceVisibility: 'SHARED' | 'PERSONAL'
+  audienceMemberId: string | null
   records: StartImportSourceRecord[]
   candidates: StartImportCandidate[]
   cardStatements: StartImportCardStatement[]
@@ -154,10 +160,12 @@ function issueInvalid(context: MappingContext, code: 'INVALID_DATE' | 'INVALID_A
   context.issues.push({ code, message, severity: 'error', ...(row === undefined ? {} : { sourceRow: row }) })
 }
 
-function candidate(context: MappingContext, values: Omit<StartImportCandidate, 'id' | 'accountId' | 'reviewStatus' | 'extractionConfidenceBps' | 'normalizationConfidenceBps'>): StartImportCandidate {
+function candidate(context: MappingContext, values: Omit<StartImportCandidate, 'id' | 'accountId' | 'reviewStatus' | 'extractionConfidenceBps' | 'normalizationConfidenceBps' | 'attributionKind' | 'attributedMemberId' | 'audienceVisibility' | 'audienceMemberId'>): StartImportCandidate {
   return {
     id: context.ids.next('candidate'), accountId: context.accountId, reviewStatus: 'PENDING',
-    extractionConfidenceBps: null, normalizationConfidenceBps: null, ...values,
+    extractionConfidenceBps: null, normalizationConfidenceBps: null,
+    attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
+    ...values,
   }
 }
 
@@ -277,6 +285,7 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
       sourceType: input.file.sourceType, originalFilename: input.file.originalFilename, mediaType: input.file.mediaType,
       byteSize: input.file.byteSize, sha256: input.file.sha256, sourceModifiedAt: input.file.sourceModifiedAt ?? null,
       adapterId: input.detectedAdapterId, adapterVersion: input.file.adapterVersion ?? null,
+      audienceVisibility: 'SHARED', audienceMemberId: null,
       records: context.records, candidates, cardStatements,
     },
     issues,

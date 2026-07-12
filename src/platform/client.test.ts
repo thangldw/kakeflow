@@ -35,6 +35,7 @@ describe('platform client', () => {
     await expect(client.getTransactionDetail('family', 'tx')).rejects.toMatchObject({ command: 'transaction_detail_get' })
     await expect(client.updateTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_update' })
     await expect(client.getSourceDocument('family', 'document')).rejects.toMatchObject({ command: 'source_document_get' })
+    await expect(client.updateSourceDocumentAudience({} as never)).rejects.toMatchObject({ command: 'source_document_audience_update' })
     await expect(client.querySourceDocumentRecords({ householdId: 'family', sourceDocumentId: 'document', page: 1, pageSize: 20 })).rejects.toMatchObject({ command: 'source_document_records_query' })
     await expect(client.listTransactionSourceRecords('family', 'tx')).rejects.toMatchObject({ command: 'transaction_source_records_list' })
     await expect(client.listWatchedFolders('family')).resolves.toEqual([])
@@ -80,17 +81,22 @@ describe('platform client', () => {
       transaction_manual_create: {
         id: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null,
         amountJpy: 1000, status: 'POSTED', debitAccountId: 'expense', debitAccountName: 'Food', creditAccountId: 'bank', creditAccountName: 'Bank', categoryAccountId: 'expense', categoryName: 'Food',
+        attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
       },
       transaction_detail_get: {
         id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null, status: 'POSTED', createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z', editable: true,
+        attributionKind: 'MEMBER', attributedMemberId: 'member-1', attributedMemberName: 'Taro', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-1', audienceMemberName: 'Taro',
         entries: [{ id: 'entry-1', accountId: 'expense', accountName: 'Food', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 1000, lineNumber: 1 }, { id: 'entry-2', accountId: 'bank', accountName: 'Bank', accountKind: 'ASSET', side: 'CREDIT', amountJpy: 1000, lineNumber: 2 }],
-        sourceEvidence: [{ sourceRecordId: 'record-1', sourceDocumentId: 'document-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }],
+        sourceEvidence: [{ sourceRecordId: 'record-1', sourceDocumentId: 'document-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
       },
       transaction_update: null,
       source_document_get: {
         id: 'document-1', householdId: 'family', importRunId: 'run-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv',
         mediaType: 'text/csv', byteSize: 42, sha256: 'a'.repeat(64), sourceModifiedAt: null, importedAt: '2026-07-12T00:00:00Z',
-        adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', recordCount: 1,
+        adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', recordCount: 1, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
+      },
+      source_document_audience_update: {
+        id: 'document-1', householdId: 'family', importRunId: 'run-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'a'.repeat(64), sourceModifiedAt: null, importedAt: '2026-07-12T00:00:00Z', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', recordCount: 1, audienceVisibility: 'PERSONAL', audienceMemberId: 'member-1', audienceMemberName: 'Taro',
       },
       source_document_records_query: {
         items: [{ id: 'record-1', sourceDocumentId: 'document-1', rowNumber: 2, recordHash: 'b'.repeat(64), payloadJson: '{"rawFields":["STORE","1200"]}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: null }],
@@ -106,11 +112,12 @@ describe('platform client', () => {
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       import_preview: {
         summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
-        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123' },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123', audienceVisibility: 'SHARED', audienceMemberId: null },
         candidates: [{
           id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
           amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
           externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000,
+          attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
           reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
         }],
       },
@@ -140,11 +147,13 @@ describe('platform client', () => {
       runId: 'run-1', documentId: 'document-1', householdId: 'family', sourceType: 'MANUAL_UPLOAD',
       originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123',
       sourceModifiedAt: null, adapterId: 'japanese-bank-ledger', adapterVersion: '1',
+      audienceVisibility: 'SHARED', audienceMemberId: null,
       records: [{ id: 'record-1', rowNumber: 1, recordHash: 'record-hash', payloadJson: '{}' }],
       candidates: [{
         id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
         amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
         externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000,
+        attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
         reviewStatus: 'READY', evidence: [{ sourceRecordId: 'record-1', role: 'PRIMARY' }],
       }],
       cardStatements: [],
@@ -152,6 +161,7 @@ describe('platform client', () => {
     const decisions: readonly PostingDecisionDto[] = [{
       candidateId: 'candidate-1', transactionId: 'transaction-1', transactionType: 'EXPENSE',
       payee: 'STORE', description: null,
+      attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
       entries: [
         { id: 'entry-1', accountId: 'family-expense-other', side: 'DEBIT', amountJpy: 1200 },
         { id: 'entry-2', accountId: 'family-bank', side: 'CREDIT', amountJpy: 1200 },
@@ -172,13 +182,15 @@ describe('platform client', () => {
     await expect(client.listAccounts('family')).resolves.toEqual(responses.accounts_list)
     await expect(client.queryDashboard({ householdId: 'family', accountGroupId: 'daily', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
     await expect(client.queryTransactions({ householdId: 'family', accountGroupId: 'daily', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
-    const manualInput = { id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
+    const manualInput = { id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, attributionKind: 'MEMBER' as const, attributedMemberId: 'member-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1', entries: [] }
     await expect(client.createManualTransaction(manualInput)).resolves.toEqual(responses.transaction_manual_create)
     await expect(client.getTransactionDetail('family', 'tx-manual')).resolves.toEqual(responses.transaction_detail_get)
     responses.transaction_update = responses.transaction_detail_get
-    const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
+    const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, attributionKind: 'MEMBER' as const, attributedMemberId: 'member-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1', entries: [] }
     await expect(client.updateTransaction(updateInput)).resolves.toEqual(responses.transaction_detail_get)
     await expect(client.getSourceDocument('family', 'document-1')).resolves.toEqual(responses.source_document_get)
+    const sourceAudience = { householdId: 'family', sourceDocumentId: 'document-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1' }
+    await expect(client.updateSourceDocumentAudience(sourceAudience)).resolves.toEqual(responses.source_document_audience_update)
     const sourcePage = { householdId: 'family', sourceDocumentId: 'document-1', page: 1, pageSize: 20 }
     await expect(client.querySourceDocumentRecords(sourcePage)).resolves.toEqual(responses.source_document_records_query)
     await expect(client.listTransactionSourceRecords('family', 'tx-manual')).resolves.toEqual(responses.transaction_source_records_list)
@@ -210,6 +222,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('transaction_detail_get', { householdId: 'family', transactionId: 'tx-manual' })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_update', { input: updateInput })
     expect(invokeSpy).toHaveBeenCalledWith('source_document_get', { householdId: 'family', sourceDocumentId: 'document-1' })
+    expect(invokeSpy).toHaveBeenCalledWith('source_document_audience_update', { input: sourceAudience })
     expect(invokeSpy).toHaveBeenCalledWith('source_document_records_query', { request: sourcePage })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_source_records_list', { householdId: 'family', transactionId: 'tx-manual' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folders_list', { householdId: 'family' })
@@ -227,7 +240,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(35)
+    expect(invokeSpy).toHaveBeenCalledTimes(36)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {
@@ -348,5 +361,18 @@ describe('platform client', () => {
 
     await expect(client.listHouseholdMembers('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'household_members_list' })
     await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
+  })
+
+  it('rejects half-valid attribution and audience tuples at every IPC boundary', async () => {
+    const invoke: Invoke = async <T>(command: AppCommand) => {
+      if (command === 'transactions_query') return { items: [{ id: 'tx', occurredOn: '2026-07-01', postedOn: null, transactionType: 'EXPENSE', payee: null, description: null, amountJpy: 1, status: 'POSTED', debitAccountId: null, debitAccountName: null, creditAccountId: null, creditAccountName: null, categoryAccountId: null, categoryName: null, attributionKind: 'HOUSEHOLD', attributedMemberId: 'member', attributedMemberName: 'Taro', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }], page: 1, pageSize: 20, totalItems: 1, totalPages: 1 } as T
+      if (command === 'import_preview') return { summary: { runId: 'run', documentId: 'doc', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false }, source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'x.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null }, candidates: [{ id: 'candidate', accountId: null, occurredOn: '2026-07-01', postedOn: null, amountJpy: 1, direction: 'OUT', descriptionRaw: null, merchantRaw: null, externalTransactionId: null, extractionConfidenceBps: null, normalizationConfidenceBps: null, attributionKind: 'MEMBER', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 0, evidenceRoles: [], issues: [] }] } as T
+      return { id: 'doc', householdId: 'family', importRunId: 'run', sourceType: 'MANUAL_UPLOAD', originalFilename: 'x.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', sourceModifiedAt: null, importedAt: '2026-07-01', adapterId: null, adapterVersion: null, recordCount: 1, audienceVisibility: 'PERSONAL', audienceMemberId: null, audienceMemberName: null } as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.queryTransactions({ householdId: 'family', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'transactions_query' })
+    await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+    await expect(client.getSourceDocument('family', 'doc')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'source_document_get' })
   })
 })

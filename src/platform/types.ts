@@ -57,6 +57,8 @@ export interface UpdateHouseholdMemberInputDto {
 
 export type AccountOwnershipKindDto = 'HOUSEHOLD' | 'MEMBER'
 export type AccountVisibilityDto = 'SHARED' | 'PERSONAL'
+export type AudienceVisibilityDto = AccountVisibilityDto
+export type AttributionKindDto = 'HOUSEHOLD' | 'MEMBER'
 export interface AccountDto {
   readonly id: string
   readonly name: string
@@ -80,12 +82,15 @@ export interface NormalizedCandidateDto {
   readonly amountJpy: number; readonly direction: 'IN' | 'OUT'; readonly descriptionRaw: string | null
   readonly merchantRaw: string | null; readonly externalTransactionId: string | null
   readonly extractionConfidenceBps: number | null; readonly normalizationConfidenceBps: number | null
+  readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly reviewStatus: 'PENDING' | 'READY' | 'DUPLICATE' | 'EXCLUDED'; readonly evidence: readonly ImportEvidenceDto[]
 }
 export interface StartImportDto {
   readonly runId: string; readonly documentId: string; readonly householdId: string
   readonly sourceType: 'LOCAL_FOLDER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
   readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly sourceModifiedAt: string | null; readonly adapterId: string | null; readonly adapterVersion: string | null
   readonly records: readonly ImportSourceRecordDto[]; readonly candidates: readonly NormalizedCandidateDto[]
   readonly cardStatements: readonly StartImportCardStatementDto[]
@@ -100,13 +105,15 @@ export interface ImportSummaryDto { readonly runId: string; readonly documentId:
 export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evidence'> { readonly evidenceCount: number; readonly evidenceRoles: readonly string[]; readonly issues: readonly string[] }
 export interface ImportPreviewDto {
   readonly summary: ImportSummaryDto
-  readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string }
+  readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }
   readonly candidates: readonly PreviewCandidateDto[]
 }
 export interface JournalEntryDecisionDto { readonly id: string; readonly accountId: string; readonly side: 'DEBIT' | 'CREDIT'; readonly amountJpy: number }
 export interface PostingDecisionDto {
   readonly candidateId: string; readonly transactionId: string; readonly transactionType: string
   readonly payee: string | null; readonly description: string | null; readonly entries: readonly JournalEntryDecisionDto[]
+  readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
@@ -198,6 +205,12 @@ export interface TransactionRowDto {
   readonly creditAccountName: string | null
   readonly categoryAccountId: string | null
   readonly categoryName: string | null
+  readonly attributionKind: AttributionKindDto
+  readonly attributedMemberId: string | null
+  readonly attributedMemberName: string | null
+  readonly audienceVisibility: AudienceVisibilityDto
+  readonly audienceMemberId: string | null
+  readonly audienceMemberName: string | null
 }
 
 export type ManualTransactionTypeDto = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'CARD_PURCHASE' | 'CARD_PAYMENT' | 'REFUND' | 'FEE' | 'INTEREST' | 'ADJUSTMENT'
@@ -205,13 +218,17 @@ export interface ManualJournalEntryInputDto { readonly id: string; readonly acco
 export interface CreateManualTransactionInputDto {
   readonly id: string; readonly householdId: string; readonly occurredOn: string; readonly postedOn: string | null
   readonly transactionType: ManualTransactionTypeDto; readonly payee: string | null; readonly description: string | null
+  readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly entries: readonly ManualJournalEntryInputDto[]
 }
 export interface TransactionJournalEntryDto { readonly id: string; readonly accountId: string; readonly accountName: string; readonly accountKind: string; readonly side: 'DEBIT' | 'CREDIT'; readonly amountJpy: number; readonly lineNumber: number }
-export interface TransactionSourceEvidenceDto { readonly sourceRecordId: string; readonly sourceDocumentId: string; readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly rowNumber: number; readonly importedAt: string; readonly evidenceRole: string }
+export interface TransactionSourceEvidenceDto { readonly sourceRecordId: string; readonly sourceDocumentId: string; readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly rowNumber: number; readonly importedAt: string; readonly evidenceRole: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName: string | null }
 export interface TransactionDetailDto {
   readonly id: string; readonly householdId: string; readonly occurredOn: string; readonly postedOn: string | null
   readonly transactionType: ManualTransactionTypeDto; readonly payee: string | null; readonly description: string | null
+  readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null; readonly attributedMemberName: string | null
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName: string | null
   readonly status: string; readonly createdAt: string; readonly updatedAt: string; readonly editable: boolean
   readonly entries: readonly TransactionJournalEntryDto[]; readonly sourceEvidence: readonly TransactionSourceEvidenceDto[]
 }
@@ -221,7 +238,9 @@ export interface SourceDocumentViewDto {
   readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
   readonly sourceModifiedAt: string | null; readonly importedAt: string; readonly adapterId: string | null
   readonly adapterVersion: string | null; readonly recordCount: number
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName: string | null
 }
+export interface UpdateSourceDocumentAudienceInputDto { readonly householdId: string; readonly sourceDocumentId: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }
 export interface SourceRecordViewDto {
   readonly id: string; readonly sourceDocumentId: string; readonly rowNumber: number; readonly recordHash: string
   readonly payloadJson: string; readonly createdAt: string; readonly evidenceRole: string | null
@@ -307,6 +326,7 @@ export type AppCommand =
   | 'transaction_detail_get'
   | 'transaction_update'
   | 'source_document_get'
+  | 'source_document_audience_update'
   | 'source_document_records_query'
   | 'transaction_source_records_list'
   | 'watched_folders_list'
@@ -363,6 +383,7 @@ export interface PlatformClient {
   getTransactionDetail(householdId: string, transactionId: string): Promise<TransactionDetailDto>
   updateTransaction(input: UpdatePostedTransactionInputDto): Promise<TransactionDetailDto>
   getSourceDocument(householdId: string, sourceDocumentId: string): Promise<SourceDocumentViewDto>
+  updateSourceDocumentAudience(input: UpdateSourceDocumentAudienceInputDto): Promise<SourceDocumentViewDto>
   querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>
   listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>

@@ -18,6 +18,12 @@ function row(overrides: Partial<TransactionRowDto> = {}): TransactionRowDto {
     creditAccountName: '銀行',
     categoryAccountId: 'family-groceries',
     categoryName: '食費',
+    attributionKind: 'HOUSEHOLD',
+    attributedMemberId: null,
+    attributedMemberName: null,
+    audienceVisibility: 'SHARED',
+    audienceMemberId: null,
+    audienceMemberName: null,
     ...overrides,
   }
 }
@@ -35,6 +41,8 @@ describe('toTransactionViewModel', () => {
       status: 'confirmed',
       icon: 'subscription',
       accountingEffect: 'ACCRUAL_AND_CASH',
+      attributionLabel: '世帯共通',
+      audienceLabel: '共有',
     })
   })
 

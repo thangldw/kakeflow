@@ -14,6 +14,7 @@ const desktop = vi.hoisted(() => ({
   getTransactionDetail: vi.fn(),
   updateTransaction: vi.fn(),
   listTransactionSourceRecords: vi.fn(),
+  updateSourceDocumentAudience: vi.fn(),
   listWatchedFolders: vi.fn(),
   selectWatchedFolder: vi.fn(),
   removeWatchedFolder: vi.fn(),
@@ -81,6 +82,7 @@ vi.mock('./platform', async () => {
       getTransactionDetail: desktop.getTransactionDetail,
       updateTransaction: desktop.updateTransaction,
       listTransactionSourceRecords: desktop.listTransactionSourceRecords,
+      updateSourceDocumentAudience: desktop.updateSourceDocumentAudience,
       listWatchedFolders: desktop.listWatchedFolders,
       selectWatchedFolder: desktop.selectWatchedFolder,
       removeWatchedFolder: desktop.removeWatchedFolder,
@@ -138,18 +140,19 @@ describe('KakeFlow desktop read models', () => {
     desktop.startImport.mockReset().mockResolvedValue({ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false })
     desktop.previewImport.mockReset().mockResolvedValue({
       summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
-      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash' },
-      candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
     desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
     desktop.createAccount.mockReset().mockResolvedValue({ id: 'new-bank', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' })
     desktop.renameAccount.mockReset()
     desktop.archiveAccount.mockReset()
     desktop.updateAccountOwnership.mockReset()
-    desktop.createManualTransaction.mockReset().mockResolvedValue({ id: 'manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: '八百屋', description: null, amountJpy: 1500, status: 'POSTED', debitAccountId: 'family-other-expense', debitAccountName: 'その他', creditAccountId: 'family-bank', creditAccountName: '銀行', categoryAccountId: 'family-other-expense', categoryName: 'その他' })
-    desktop.getTransactionDetail.mockReset().mockResolvedValue({ id: 'purchase', householdId: 'family', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', status: 'POSTED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z', editable: true, entries: [{ id: 'debit', accountId: 'family-other-expense', accountName: 'その他', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 120000, lineNumber: 1 }, { id: 'credit', accountId: 'family-card', accountName: 'カード', accountKind: 'LIABILITY', side: 'CREDIT', amountJpy: 120000, lineNumber: 2 }], sourceEvidence: [{ sourceRecordId: 'record', sourceDocumentId: 'document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }] })
+    desktop.createManualTransaction.mockReset().mockResolvedValue({ id: 'manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: '八百屋', description: null, amountJpy: 1500, status: 'POSTED', debitAccountId: 'family-other-expense', debitAccountName: 'その他', creditAccountId: 'family-bank', creditAccountName: '銀行', categoryAccountId: 'family-other-expense', categoryName: 'その他', attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null })
+    desktop.getTransactionDetail.mockReset().mockResolvedValue({ id: 'purchase', householdId: 'family', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, status: 'POSTED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z', editable: true, entries: [{ id: 'debit', accountId: 'family-other-expense', accountName: 'その他', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 120000, lineNumber: 1 }, { id: 'credit', accountId: 'family-card', accountName: 'カード', accountKind: 'LIABILITY', side: 'CREDIT', amountJpy: 120000, lineNumber: 2 }], sourceEvidence: [{ sourceRecordId: 'record', sourceDocumentId: 'document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }] })
     desktop.updateTransaction.mockReset().mockImplementation(async (input) => ({ ...(await desktop.getTransactionDetail()), ...input, id: input.transactionId }))
     desktop.listTransactionSourceRecords.mockReset().mockResolvedValue([{ id: 'record', sourceDocumentId: 'document', rowNumber: 2, recordHash: 'hash', payloadJson: '{"merchant":"生協","amount":120000}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }])
+    desktop.updateSourceDocumentAudience.mockReset().mockImplementation(async (input) => ({ id: input.sourceDocumentId, householdId: input.householdId, importRunId: 'run-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', byteSize: 100, sha256: 'hash', sourceModifiedAt: null, importedAt: '2026-07-12T00:00:00Z', adapterId: 'card', adapterVersion: '1', recordCount: 1, audienceVisibility: input.audienceVisibility, audienceMemberId: input.audienceMemberId, audienceMemberName: input.audienceMemberId ? '太郎' : null }))
     desktop.listClassificationRules.mockReset().mockResolvedValue([])
     desktop.createClassificationRule.mockReset().mockImplementation(async (input) => ({ ...input, categoryName: 'その他', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
     desktop.updateClassificationRule.mockReset()
@@ -193,8 +196,8 @@ describe('KakeFlow desktop read models', () => {
     }))
     desktop.queryTransactions.mockReset().mockImplementation(async ({ accountingBasis, pageSize }: { accountingBasis: 'ACCRUAL' | 'CASH'; pageSize: number }) => ({
       items: accountingBasis === 'ACCRUAL'
-        ? [{ id: 'purchase', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', amountJpy: 120_000, status: 'POSTED' }]
-        : [{ id: 'payment', occurredOn: '2026-07-27', postedOn: null, transactionType: 'CARD_PAYMENT', payee: 'Rakuten Card', description: '口座引落', amountJpy: 204_987, status: 'POSTED' }],
+        ? [{ id: 'purchase', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', amountJpy: 120_000, status: 'POSTED', attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }]
+        : [{ id: 'payment', occurredOn: '2026-07-27', postedOn: null, transactionType: 'CARD_PAYMENT', payee: 'Rakuten Card', description: '口座引落', amountJpy: 204_987, status: 'POSTED', attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
       page: 1, pageSize, totalItems: 1, totalPages: 1,
     }))
   })
@@ -205,6 +208,8 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('生協')).toBeInTheDocument()
     expect(screen.getAllByText('¥500,000').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('−¥120,000')).toBeInTheDocument()
+    expect(screen.getAllByText('帰属: 世帯共通').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('表示: 共有').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
   })
@@ -311,7 +316,7 @@ describe('KakeFlow desktop read models', () => {
 
   it('paginates through more than one ledger page', async () => {
     desktop.queryTransactions.mockImplementation(async ({ page, pageSize }: { page: number; pageSize: number }) => ({
-      items: [{ id: `transaction-${page}`, occurredOn: '2026-07-10', postedOn: null, transactionType: 'EXPENSE', payee: `店舗${page}`, description: null, amountJpy: 1000, status: 'POSTED' }],
+      items: [{ id: `transaction-${page}`, occurredOn: '2026-07-10', postedOn: null, transactionType: 'EXPENSE', payee: `店舗${page}`, description: null, amountJpy: 1000, status: 'POSTED', attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
       page, pageSize, totalItems: 26, totalPages: 2,
     }))
     render(<App />)
@@ -325,6 +330,10 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('searches the persisted ledger and posts a balanced manual transaction', async () => {
+    desktop.listHouseholdMembers.mockResolvedValue([
+      { id: 'taro', householdId: 'family', displayName: '太郎', relationshipLabel: '父', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-01', updatedAt: '2026-07-01' },
+      { id: 'hanako', householdId: 'family', displayName: '花子', relationshipLabel: '母', status: 'ACTIVE', sortOrder: 1, createdAt: '2026-07-01', updatedAt: '2026-07-01' },
+    ])
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
@@ -337,10 +346,13 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByLabelText('手動取引の金額'), { target: { value: '1500' } })
     fireEvent.change(screen.getByLabelText('手動取引の借方口座'), { target: { value: 'family-other-expense' } })
     fireEvent.change(screen.getByLabelText('手動取引の貸方口座'), { target: { value: 'family-bank' } })
+    fireEvent.change(screen.getByLabelText('手動取引の家族内の帰属'), { target: { value: 'taro' } })
+    fireEvent.change(screen.getByLabelText('手動取引の表示区分'), { target: { value: 'hanako' } })
     fireEvent.click(screen.getByRole('button', { name: '取引を記録' }))
 
     await waitFor(() => expect(desktop.createManualTransaction).toHaveBeenCalledWith(expect.objectContaining({
       householdId: 'family', transactionType: 'EXPENSE', payee: '八百屋',
+      attributionKind: 'MEMBER', attributedMemberId: 'taro', audienceVisibility: 'PERSONAL', audienceMemberId: 'hanako',
       entries: expect.arrayContaining([
         expect.objectContaining({ accountId: 'family-other-expense', side: 'DEBIT', amountJpy: 1500 }),
         expect.objectContaining({ accountId: 'family-bank', side: 'CREDIT', amountJpy: 1500 }),
@@ -350,6 +362,11 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('drills into source evidence and saves balanced transaction corrections', async () => {
+    desktop.listHouseholdMembers.mockResolvedValue([
+      { id: 'taro', householdId: 'family', displayName: '太郎', relationshipLabel: '父', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-01', updatedAt: '2026-07-01' },
+      { id: 'retired', householdId: 'family', displayName: '次郎', relationshipLabel: null, status: 'ARCHIVED', sortOrder: 1, createdAt: '2026-07-01', updatedAt: '2026-07-02' },
+    ])
+    desktop.getTransactionDetail.mockResolvedValue({ ...(await desktop.getTransactionDetail()), attributionKind: 'MEMBER', attributedMemberId: 'retired', attributedMemberName: '次郎', audienceVisibility: 'PERSONAL', audienceMemberId: 'retired', audienceMemberName: '次郎' })
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
@@ -357,15 +374,24 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(merchant.closest('button')!)
 
     expect(await screen.findByText('card.csv')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '次郎（アーカイブ済み）' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '個人・次郎（アーカイブ済み）' })).toBeInTheDocument()
     expect(screen.getByText(/行 2/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /card.csv/ }))
+    fireEvent.click(screen.getByRole('button', { name: /card.csv.*原本行を表示/ }))
     expect(await screen.findByText(/"merchant": "生協"/)).toBeInTheDocument()
     expect(desktop.listTransactionSourceRecords).toHaveBeenCalledWith('family', 'purchase')
+    fireEvent.change(screen.getByLabelText('card.csvの原本表示区分'), { target: { value: 'taro' } })
+    fireEvent.click(screen.getByRole('button', { name: 'card.csvの原本区分を保存' }))
+    await waitFor(() => expect(desktop.updateSourceDocumentAudience).toHaveBeenCalledWith({ householdId: 'family', sourceDocumentId: 'document', audienceVisibility: 'PERSONAL', audienceMemberId: 'taro' }))
+    expect(await screen.findByText(/リンク先取引の帰属・表示区分は変更していません/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('取引の家族内の帰属'), { target: { value: 'taro' } })
+    fireEvent.change(screen.getByLabelText('取引の表示区分'), { target: { value: 'SHARED' } })
     fireEvent.change(screen.getByDisplayValue('食料品'), { target: { value: '週末の食料品' } })
     fireEvent.click(screen.getByRole('button', { name: '変更を保存' }))
 
     await waitFor(() => expect(desktop.updateTransaction).toHaveBeenCalledWith(expect.objectContaining({
       householdId: 'family', transactionId: 'purchase', description: '週末の食料品',
+      attributionKind: 'MEMBER', attributedMemberId: 'taro', audienceVisibility: 'SHARED', audienceMemberId: null,
       entries: expect.arrayContaining([expect.objectContaining({ side: 'DEBIT', amountJpy: 120000 }), expect.objectContaining({ side: 'CREDIT', amountJpy: 120000 })]),
     })))
     expect(await screen.findByText('取引と仕訳を更新しました。')).toBeInTheDocument()
@@ -448,6 +474,7 @@ describe('KakeFlow desktop read models', () => {
     const file = new File(['日付,摘要,支払い金額,預かり金額,差引残高\n2026/07/12,STORE,1200,,10000'], 'bank.csv', { type: 'text/csv' })
     fireEvent.change(input, { target: { files: [file] } })
     fireEvent.click(await screen.findByRole('button', { name: '取込開始' }))
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({ audienceVisibility: 'SHARED', audienceMemberId: null, candidates: [expect.objectContaining({ attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })] }), expect.any(Uint8Array)))
 
     const commit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
     expect(commit).toBeDisabled()
@@ -455,7 +482,7 @@ describe('KakeFlow desktop read models', () => {
     expect(commit).toBeEnabled()
     fireEvent.click(commit)
 
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE' })]))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
   })
 
   it('prompts for a protected PDF password and never persists it in the import request', async () => {
