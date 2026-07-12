@@ -116,4 +116,14 @@ jobs:
         run: npm run ${{ matrix.package-script }}
 
       - name: Launch and validate packaged application
+        env:
+          KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/${{ matrix.name }}
         run: npm run test:packaged
+
+      - name: Upload packaged UI evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: packaged-smoke-${{ matrix.name }}
+          path: artifacts/packaged-smoke/${{ matrix.name }}
+          if-no-files-found: error
