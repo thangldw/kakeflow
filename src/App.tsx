@@ -56,8 +56,9 @@ import { FixedCostReviewView } from './features/fixed-costs/FixedCostReviewView'
 import { createAccountGroupExportPlatform } from './features/export/accountGroupExportPlatform'
 import type { AccountGroupDto, AccountGroupKindDto, ExportAccountingBasisDto, ExportKindDto } from './features/export/accountGroupExportPlatform'
 import { createFinancialCalendarPlatform } from './features/calendar/financialCalendarPlatform'
-import type { FinancialCalendarDto, MonthlyFinancialReportDto } from './features/calendar/financialCalendarPlatform'
+import type { FinancialCalendarDto, MonthlyFinancialReportDto, YearlyFinancialReportDto } from './features/calendar/financialCalendarPlatform'
 import { FinancialCalendarView, MonthlyReportView } from './features/reports/ReportViews'
+import { AnnualReviewView } from './features/reports/AnnualReviewView'
 import { createForecastActionPlatform } from './features/forecast/forecastActionPlatform'
 import type { ActionItemDto, ForecastActionDto } from './features/forecast/forecastActionPlatform'
 import { ForecastActionViews } from './features/forecast/ForecastActionViews'
@@ -109,6 +110,12 @@ function currentTokyoPeriod(now = new Date()) {
   const month = `${year}-${String(monthNumber).padStart(2, '0')}`
   const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
   return { month, fromDate: `${month}-01`, toDate: `${month}-${String(lastDay).padStart(2, '0')}` }
+}
+
+function currentTokyoDate(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now)
+  const value = (type: 'year' | 'month' | 'day') => parts.find((part) => part.type === type)?.value ?? ''
+  return `${value('year')}-${value('month')}-${value('day')}`
 }
 
 function periodFromMonth(month: string) {
@@ -1124,9 +1131,12 @@ function AccountGroupsExportPanel({ householdId, accounts, month, groups, select
 }
 
 function ReportsPage({ householdId, accountGroupId, attributionScope, accountGroups, onGroupsChanged, accounts, month, revision, openPage }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; accountGroups: readonly AccountGroupDto[]; onGroupsChanged: (groups: readonly AccountGroupDto[]) => void; accounts: readonly AccountDto[]; month: string; revision: number; openPage: (page: PageId) => void }) {
-  const [view, setView] = useState<'CALENDAR' | 'MONTHLY' | 'FORECAST' | 'INTELLIGENCE' | 'FIXED_COST' | 'EXPORT'>('CALENDAR')
+  const [view, setView] = useState<'CALENDAR' | 'MONTHLY' | 'ANNUAL' | 'FORECAST' | 'INTELLIGENCE' | 'FIXED_COST' | 'EXPORT'>('CALENDAR')
   const [calendar, setCalendar] = useState<FinancialCalendarDto | null>(null)
   const [monthlyReport, setMonthlyReport] = useState<MonthlyFinancialReportDto | null>(null)
+  const [annualReport, setAnnualReport] = useState<YearlyFinancialReportDto | null>(null)
+  const [annualNotice, setAnnualNotice] = useState('')
+  const [annualSaving, setAnnualSaving] = useState(false)
   const [forecast, setForecast] = useState<ForecastActionDto | null>(null)
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [comparison, setComparison] = useState<'PRIOR_MONTH' | 'PRIOR_YEAR'>('PRIOR_MONTH')
@@ -1140,15 +1150,35 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
       .catch(() => { if (active) { setCalendar(null); setMonthlyReport(null); setForecast(null); setNotice('家計レビューを読み込めませんでした。') } })
     return () => { active = false }
   }, [accountGroupId, attributionScope, householdId, month, revision])
+  useEffect(() => {
+    if (view !== 'ANNUAL' || !householdId || platformClient.runtime !== 'tauri') return
+    let active = true
+    setAnnualReport(null); setAnnualNotice('')
+    const request = { householdId, accountGroupId, attributionScope, year: month.slice(0, 4), asOf: currentTokyoDate() }
+    void financialCalendarPlatform.getYearlyReport(request)
+      .then((result) => { if (active) setAnnualReport(result) })
+      .catch(() => { if (active) setAnnualNotice('年次レビューを読み込めませんでした。対象年と確定取引を確認してください。') })
+    return () => { active = false }
+  }, [accountGroupId, attributionScope, householdId, month, revision, view])
+  const saveAnnualCsv = async () => {
+    if (!householdId) return
+    setAnnualSaving(true); setAnnualNotice('')
+    try {
+      const saved = await financialCalendarPlatform.saveAnnualReviewCsv({ householdId, accountGroupId, attributionScope, year: month.slice(0, 4), asOf: currentTokyoDate() })
+      setAnnualNotice(saved ? `${saved.fileName}（${saved.rowCount}行）を保存しました。` : 'エクスポートをキャンセルしました。')
+    } catch { setAnnualNotice('年次CSVを書き出せませんでした。対象年とスコープを確認してください。') }
+    finally { setAnnualSaving(false) }
+  }
   const reportBody = view === 'CALENDAR'
     ? calendar ? <FinancialCalendarView data={calendar} basis={basis} onBasisChange={setBasis} onSelectDate={() => openPage('transactions')} onSelectEvent={() => openPage('transactions')} onOpenImports={() => openPage('import')} /> : <section className="panel report-loading"><CalendarDays size={28} /><p>{notice || '日次カレンダーを読み込んでいます…'}</p></section>
     : view === 'MONTHLY'
       ? monthlyReport ? <MonthlyReportView data={monthlyReport} comparison={comparison} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} /> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
+      : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} saving={annualSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} />{annualNotice && <p role="status">{annualNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || '前年同期間と年次推移を比較しています…'}</p></section>
       : view === 'FORECAST' ? forecast ? <ForecastActionViews data={forecast} onAction={(action: ActionItemDto) => openPage(action.kind.startsWith('IMPORT_') ? 'import' : action.kind.startsWith('CARD_') ? 'cards' : action.kind === 'BUDGET_OVERRUN' || action.kind === 'GOAL_DUE' ? 'budgets' : 'transactions')} /> : <section className="panel report-loading"><TrendingUp size={28} /><p>{notice || '予測とアクションを読み込んでいます…'}</p></section>
         : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
           : view === 'FIXED_COST' ? <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
             : <AccountGroupsExportPanel householdId={householdId} accounts={accounts} month={month} groups={accountGroups} selectedAccountGroupId={accountGroupId} attributionScope={attributionScope} onGroupsChanged={onGroupsChanged} />
-  return <><PageHeader eyebrow="家計レビュー" title="カレンダー・レポート" description="確定台帳を日次、月次、予測、定期支出・異常支出の視点で確認します。"><div className="report-tabs" role="tablist" aria-label="レポート表示"><button role="tab" aria-selected={view === 'CALENDAR'} className={view === 'CALENDAR' ? 'active' : ''} onClick={() => setView('CALENDAR')}><CalendarDays size={15} /> カレンダー</button><button role="tab" aria-selected={view === 'MONTHLY'} className={view === 'MONTHLY' ? 'active' : ''} onClick={() => setView('MONTHLY')}><FileText size={15} /> 月次レポート</button><button role="tab" aria-selected={view === 'FORECAST'} className={view === 'FORECAST' ? 'active' : ''} onClick={() => setView('FORECAST')}><TrendingUp size={15} /> 予測・アクション</button><button role="tab" aria-selected={view === 'INTELLIGENCE'} className={view === 'INTELLIGENCE' ? 'active' : ''} onClick={() => setView('INTELLIGENCE')}><Bell size={15} /> 定期・異常</button><button role="tab" aria-selected={view === 'FIXED_COST'} className={view === 'FIXED_COST' ? 'active' : ''} onClick={() => setView('FIXED_COST')}><Repeat2 size={15} /> 固定費</button><button role="tab" aria-selected={view === 'EXPORT'} className={view === 'EXPORT' ? 'active' : ''} onClick={() => setView('EXPORT')}><Download size={15} /> グループ・出力</button></div></PageHeader>{reportBody}</>
+  return <><PageHeader eyebrow="家計レビュー" title="カレンダー・レポート" description="確定台帳を日次、月次、年次、予測、定期支出・異常支出の視点で確認します。"><div className="report-tabs" role="tablist" aria-label="レポート表示"><button role="tab" aria-selected={view === 'CALENDAR'} className={view === 'CALENDAR' ? 'active' : ''} onClick={() => setView('CALENDAR')}><CalendarDays size={15} /> カレンダー</button><button role="tab" aria-selected={view === 'MONTHLY'} className={view === 'MONTHLY' ? 'active' : ''} onClick={() => setView('MONTHLY')}><FileText size={15} /> 月次レポート</button><button role="tab" aria-selected={view === 'ANNUAL'} className={view === 'ANNUAL' ? 'active' : ''} onClick={() => setView('ANNUAL')}><FileText size={15} /> 年次レビュー</button><button role="tab" aria-selected={view === 'FORECAST'} className={view === 'FORECAST' ? 'active' : ''} onClick={() => setView('FORECAST')}><TrendingUp size={15} /> 予測・アクション</button><button role="tab" aria-selected={view === 'INTELLIGENCE'} className={view === 'INTELLIGENCE' ? 'active' : ''} onClick={() => setView('INTELLIGENCE')}><Bell size={15} /> 定期・異常</button><button role="tab" aria-selected={view === 'FIXED_COST'} className={view === 'FIXED_COST' ? 'active' : ''} onClick={() => setView('FIXED_COST')}><Repeat2 size={15} /> 固定費</button><button role="tab" aria-selected={view === 'EXPORT'} className={view === 'EXPORT' ? 'active' : ''} onClick={() => setView('EXPORT')}><Download size={15} /> グループ・出力</button></div></PageHeader>{reportBody}</>
 }
 
 function BudgetsPage({ householdId, accounts, month, revision }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number }) {

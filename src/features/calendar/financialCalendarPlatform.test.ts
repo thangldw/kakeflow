@@ -16,6 +16,23 @@ const sharedReport = {
   budget, goals, dataQuality, reconciliation,
 }
 
+const annualCurrent = { incomeJpy: 600_000, expenseJpy: 300_000, savingsJpy: 300_000, savingsRateBps: 5_000, postedTransactionCount: 12 }
+const annualPrior = { incomeJpy: 540_000, expenseJpy: 300_000, savingsJpy: 240_000, savingsRateBps: 4_444, postedTransactionCount: 12 }
+const annualDelta = { income: { amountJpy: 60_000, rateBps: 1_111 }, expense: { amountJpy: 0, rateBps: 0 }, savings: { amountJpy: 60_000, rateBps: 2_500 } }
+const annualMonths = Array.from({ length: 12 }, (_, index) => ({
+  month: `2026-${String(index + 1).padStart(2, '0')}`,
+  status: index < 6 ? 'COMPLETE' : index === 6 ? 'PARTIAL' : 'FUTURE',
+  incomeJpy: index < 6 ? 100_000 : 0, expenseJpy: index < 6 ? 50_000 : 0,
+  savingsJpy: index < 6 ? 50_000 : 0, savingsRateBps: index < 6 ? 5_000 : null,
+  postedTransactionCount: index < 6 ? 2 : 0,
+}))
+const annual = {
+  period: '2026', asOf: '2026-07-31', throughMonth: '2026-06', completedMonthCount: 6, isCompleteYear: false,
+  currentComparable: annualCurrent, priorYearComparable: annualPrior, vsPriorYearComparable: annualDelta,
+  current: annualCurrent, priorYear: annualPrior, vsPriorYear: annualDelta, months: annualMonths,
+  topCategoryDrivers: [], topMerchantDrivers: [], budget, goals, dataQuality, reconciliation,
+}
+
 describe('financial calendar platform boundary', () => {
   it('invokes the isolated calendar command and validates nested events', async () => {
     const response = {
@@ -30,13 +47,28 @@ describe('financial calendar platform boundary', () => {
 
   it('invokes and parses monthly and yearly financial reports', async () => {
     const monthly = { period: '2026-07', ...sharedReport, priorMonth: { ...metrics, expenseJpy: 40_000 }, vsPriorMonth: deltas }
-    const yearly = { period: '2026', ...sharedReport, months: [{ month: '2026-07', ...metrics }] }
-    const invoke = vi.fn(async (command: string) => command === 'financial_report_monthly_query' ? monthly : yearly) as unknown as FinancialCalendarInvoke
+    const invoke = vi.fn(async (command: string) => command === 'financial_report_monthly_query' ? monthly : annual) as unknown as FinancialCalendarInvoke
     const platform = createFinancialCalendarPlatform(invoke)
     await expect(platform.getMonthlyReport({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' })).resolves.toEqual(monthly)
-    await expect(platform.getYearlyReport({ householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026' })).resolves.toEqual(yearly)
+    await expect(platform.getYearlyReport({ householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026', asOf: '2026-07-31' })).resolves.toEqual(annual)
     expect(invoke).toHaveBeenNthCalledWith(1, 'financial_report_monthly_query', { request: { householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' } })
-    expect(invoke).toHaveBeenNthCalledWith(2, 'financial_report_yearly_query', { request: { householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026' } })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'financial_report_yearly_query', { request: { householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026', asOf: '2026-07-31' } })
+  })
+
+  it('saves the exact annual scope and rejects inconsistent annual windows', async () => {
+    const saved = { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
+    const invoke = vi.fn(async (command: string) => command === 'annual_household_review_csv_save' ? saved : annual) as unknown as FinancialCalendarInvoke
+    const platform = createFinancialCalendarPlatform(invoke)
+    const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, year: '2026', asOf: '2026-07-31' }
+    await expect(platform.saveAnnualReviewCsv(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('annual_household_review_csv_save', { request })
+
+    const bad = vi.fn(async () => ({ ...annual, completedMonthCount: 7 })) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(bad).getYearlyReport(request)).rejects.toThrow('completed months')
+    const badAlias = vi.fn(async () => ({ ...annual, current: { ...annualCurrent, expenseJpy: 1, savingsJpy: 599_999, savingsRateBps: 9_999 } })) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(badAlias).getYearlyReport(request)).rejects.toThrow('legacy aliases')
+    const badFuture = vi.fn(async () => ({ ...annual, months: annualMonths.map((point, index) => index === 8 ? { ...point, incomeJpy: 1, savingsJpy: 1, savingsRateBps: 10_000 } : point) })) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(badFuture).getYearlyReport(request)).rejects.toThrow('future month')
   })
 
   it('rejects malformed financial responses at the desktop boundary', async () => {
