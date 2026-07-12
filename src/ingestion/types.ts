@@ -4,6 +4,7 @@ export type AdapterId =
   | 'amazon-mastercard-statement-v1'
   | 'rakuten-enavi-v1'
   | 'securities-asset-snapshot-v1'
+  | 'japanese-brokerage-transactions-v1'
 
 export type ParseIssueSeverity = 'warning' | 'error'
 
@@ -160,4 +161,64 @@ export interface PortfolioSnapshotCandidate {
   assetClasses: readonly PortfolioAssetClassCandidate[]
   positions: readonly PositionSnapshotCandidate[]
   fxRates: readonly FxRateSnapshotCandidate[]
+}
+
+export type BrokerageEventType =
+  | 'BUY'
+  | 'SELL'
+  | 'DIVIDEND'
+  | 'FEE'
+  | 'TAX'
+  | 'DEPOSIT'
+  | 'WITHDRAWAL'
+
+export type BrokerageLegKind =
+  | 'SECURITY'
+  | 'CASH'
+  | 'INVESTMENT_INCOME'
+  | 'INVESTMENT_EXPENSE'
+  | 'INVESTMENT_TAX'
+  | 'TRANSFER'
+  | 'ADJUSTMENT'
+
+/**
+ * Signed monetary values follow ledger convention: debit/asset increase is
+ * positive, credit/asset decrease is negative. Every event must sum to zero.
+ */
+export interface BrokerageEventLegCandidate {
+  kind: BrokerageLegKind
+  signedAmount: number
+  currency: string
+  instrumentCode?: string
+  instrumentName?: string
+  signedQuantity?: number
+  description: string
+}
+
+/**
+ * Canonical brokerage activity. These events belong to the investment ledger
+ * and must not be included in household income or expense metrics.
+ */
+export interface BrokerageEventCandidate {
+  kind: 'brokerage-event'
+  lineage: SourceLineage
+  accountHint?: string
+  eventType: BrokerageEventType
+  tradeDate: string | null
+  settlementDate: string | null
+  instrumentCode: string
+  instrumentName: string
+  accountType: string
+  currency: string
+  quantity: number | null
+  unitPrice: number | null
+  grossAmount: number
+  feeAmount: number
+  taxAmount: number
+  settlementAmount: number
+  legs: readonly BrokerageEventLegCandidate[]
+  reconciliationStatus: 'BALANCED' | 'ADJUSTED'
+  reconciliationDifference: number
+  affectsHouseholdExpense: false
+  rawTransactionType: string
 }

@@ -1,0 +1,209 @@
+import { normalizeHeader, rowObject, tokenizeCsv, type CsvRow } from '../csv'
+import { clampScore, normalizeJapaneseText, parseJapaneseAmount, parseJapaneseDate } from '../normalize'
+import type {
+  BrokerageEventCandidate,
+  BrokerageEventLegCandidate,
+  BrokerageEventType,
+  ImportAdapter,
+  ParseIssue,
+} from '../types'
+
+const ALIASES = {
+  tradeDate: ['約定日', '取引日', '国内約定日', '現地約定日'],
+  settlementDate: ['受渡日', '国内受渡日'],
+  transactionType: ['取引', '取引区分', '取引種類', '売買区分', '摘要'],
+  instrumentCode: ['銘柄コード', 'コード', 'ティッカー', 'シンボル'],
+  instrumentName: ['銘柄名', '商品名', 'ファンド名'],
+  accountType: ['口座区分', '預り区分', '預かり区分'],
+  quantity: ['数量', '約定数量', '口数', '株数'],
+  unitPrice: ['単価', '約定単価', '約定価格'],
+  grossAmount: ['約定金額', '受取金額', '配当金額', '分配金額', '総額', '金額'],
+  fee: ['手数料', '国内手数料', '委託手数料'],
+  tax: ['税金', '税額', '源泉徴収税', '所得税・住民税', '譲渡益税', '所得税', '住民税', '外国税', '消費税'],
+  settlementAmount: ['受渡金額', '精算金額', '入出金額', '差引金額'],
+  currency: ['通貨', '通貨コード', '決済通貨'],
+} as const
+
+type AliasKey = keyof typeof ALIASES
+
+function findHeader(rows: readonly CsvRow[]): number {
+  let bestIndex = -1
+  let bestScore = 0
+  rows.slice(0, 20).forEach((row, index) => {
+    const headers = row.fields.map(normalizeHeader)
+    const has = (key: AliasKey) => ALIASES[key].some((alias) => headers.includes(alias))
+    const score = Number(has('tradeDate')) + Number(has('transactionType')) + Number(has('grossAmount') || has('settlementAmount')) + Number(has('instrumentName'))
+    if (score > bestScore) { bestScore = score; bestIndex = index }
+  })
+  return bestScore >= 3 ? bestIndex : -1
+}
+
+function headerFor(headers: readonly string[], key: AliasKey): string | undefined {
+  return ALIASES[key].find((alias) => headers.includes(alias))
+}
+
+function valueFor(values: Readonly<Record<string, string>>, headers: readonly string[], key: AliasKey): string {
+  const header = headerFor(headers, key)
+  return header ? values[header] ?? '' : ''
+}
+
+function amount(value: string): number | null {
+  const parsed = parseJapaneseAmount(value)
+  return parsed == null ? null : Math.abs(parsed)
+}
+
+function summedAmounts(values: Readonly<Record<string, string>>, headers: readonly string[], key: 'fee' | 'tax'): number {
+  return ALIASES[key]
+    .filter((alias) => headers.includes(alias))
+    .reduce((sum, header) => sum + (amount(values[header] ?? '') ?? 0), 0)
+}
+
+function classify(raw: string): BrokerageEventType | null {
+  const value = normalizeJapaneseText(raw).toUpperCase()
+  if (/配当|分配金|DIVIDEND|DISTRIBUTION/.test(value)) return 'DIVIDEND'
+  if (/買付|買い|購入|BUY/.test(value)) return 'BUY'
+  if (/売却|売り|SELL/.test(value)) return 'SELL'
+  if (/入金|預入|DEPOSIT/.test(value)) return 'DEPOSIT'
+  if (/出金|引出|WITHDRAW/.test(value)) return 'WITHDRAWAL'
+  if (/手数料|FEE|COMMISSION/.test(value)) return 'FEE'
+  if (/税|TAX/.test(value)) return 'TAX'
+  return null
+}
+
+function currencyOf(raw: string): string {
+  const normalized = normalizeJapaneseText(raw).toUpperCase()
+  return normalized.match(/\b[A-Z]{3}\b/)?.[0] ?? 'JPY'
+}
+
+function leg(
+  kind: BrokerageEventLegCandidate['kind'],
+  signedAmount: number,
+  currency: string,
+  description: string,
+  security?: Pick<BrokerageEventLegCandidate, 'instrumentCode' | 'instrumentName' | 'signedQuantity'>,
+): BrokerageEventLegCandidate {
+  return { kind, signedAmount, currency, description, ...security }
+}
+
+function buildLegs(input: {
+  eventType: BrokerageEventType
+  currency: string
+  gross: number
+  fee: number
+  tax: number
+  settlement: number | null
+  instrumentCode: string
+  instrumentName: string
+  quantity: number | null
+}): { legs: BrokerageEventLegCandidate[]; settlement: number; difference: number } {
+  const { eventType, currency, gross, fee, tax, instrumentCode, instrumentName, quantity } = input
+  const security = { instrumentCode, instrumentName, signedQuantity: quantity ?? undefined }
+  const expected = eventType === 'BUY' ? gross + fee + tax
+    : eventType === 'SELL' || eventType === 'DIVIDEND' ? gross - fee - tax
+      : gross
+  const settlement = input.settlement ?? expected
+  const legs: BrokerageEventLegCandidate[] = []
+
+  if (eventType === 'BUY') {
+    legs.push(leg('SECURITY', gross, currency, 'Security acquired at transaction value', security))
+    legs.push(leg('CASH', -settlement, currency, 'Brokerage cash settlement'))
+  } else if (eventType === 'SELL') {
+    legs.push(leg('SECURITY', -gross, currency, 'Security disposed at transaction value', { ...security, signedQuantity: quantity == null ? undefined : -quantity }))
+    legs.push(leg('CASH', settlement, currency, 'Brokerage cash settlement'))
+  } else if (eventType === 'DIVIDEND') {
+    legs.push(leg('INVESTMENT_INCOME', -gross, currency, 'Gross dividend or distribution'))
+    legs.push(leg('CASH', settlement, currency, 'Net dividend cash received'))
+  } else if (eventType === 'DEPOSIT') {
+    legs.push(leg('CASH', settlement, currency, 'Cash deposited to brokerage'))
+    legs.push(leg('TRANSFER', -settlement, currency, 'Transfer from external account'))
+  } else if (eventType === 'WITHDRAWAL') {
+    legs.push(leg('CASH', -settlement, currency, 'Cash withdrawn from brokerage'))
+    legs.push(leg('TRANSFER', settlement, currency, 'Transfer to external account'))
+  } else if (eventType === 'FEE') {
+    const charge = fee || gross || settlement
+    legs.push(leg('INVESTMENT_EXPENSE', charge, currency, 'Brokerage fee'))
+    legs.push(leg('CASH', -charge, currency, 'Fee paid from brokerage cash'))
+  } else {
+    const charge = tax || gross || settlement
+    legs.push(leg('INVESTMENT_TAX', charge, currency, 'Investment tax'))
+    legs.push(leg('CASH', -charge, currency, 'Tax paid from brokerage cash'))
+  }
+
+  if (['BUY', 'SELL', 'DIVIDEND'].includes(eventType)) {
+    if (fee) legs.push(leg('INVESTMENT_EXPENSE', fee, currency, 'Brokerage fee'))
+    if (tax) legs.push(leg('INVESTMENT_TAX', tax, currency, 'Investment tax'))
+  }
+
+  const difference = legs.reduce((sum, item) => sum + item.signedAmount, 0)
+  if (Math.abs(difference) >= 0.000001) {
+    legs.push(leg('ADJUSTMENT', -difference, currency, 'Unexplained source settlement difference'))
+  }
+  return { legs, settlement, difference }
+}
+
+export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventCandidate> = {
+  id: 'japanese-brokerage-transactions-v1',
+  detect(input) {
+    const csv = tokenizeCsv(input.text)
+    const headerIndex = findHeader(csv.rows)
+    if (headerIndex < 0) return { adapterId: this.id, score: 0, reasons: ['Brokerage transaction header not found'] }
+    const headers = csv.rows[headerIndex].fields.map(normalizeHeader)
+    const matched = (Object.keys(ALIASES) as AliasKey[]).filter((key) => headerFor(headers, key)).length
+    const filenameBonus = /(取引|trade|transaction|history|deal)/i.test(input.filename ?? '') ? 0.1 : 0
+    return { adapterId: this.id, score: clampScore(0.5 + matched * 0.04 + filenameBonus), reasons: [`${matched}/${Object.keys(ALIASES).length} brokerage fields matched`] }
+  },
+  parse(input) {
+    const csv = tokenizeCsv(input.text)
+    const issues: ParseIssue[] = [...csv.issues]
+    const headerIndex = findHeader(csv.rows)
+    if (headerIndex < 0) {
+      return { adapterId: this.id, records: [], issues: [...issues, { code: 'BROKERAGE_HEADER_MISSING', message: 'Japanese brokerage transaction header was not found.', severity: 'error' }], metadata: {} }
+    }
+    const headers = csv.rows[headerIndex].fields.map(normalizeHeader)
+    const records: BrokerageEventCandidate[] = []
+    for (const row of csv.rows.slice(headerIndex + 1)) {
+      const values = rowObject(headers, row)
+      const rawTransactionType = normalizeJapaneseText(valueFor(values, headers, 'transactionType'))
+      const eventType = classify(rawTransactionType)
+      if (!eventType) {
+        issues.push({ code: 'BROKERAGE_EVENT_TYPE_UNKNOWN', message: `Unsupported brokerage event type: ${rawTransactionType || '(empty)'}`, severity: 'warning', row: row.sourceRow })
+        continue
+      }
+      const quantity = amount(valueFor(values, headers, 'quantity'))
+      const unitPrice = amount(valueFor(values, headers, 'unitPrice'))
+      const rawGross = amount(valueFor(values, headers, 'grossAmount'))
+      const fee = summedAmounts(values, headers, 'fee')
+      const tax = summedAmounts(values, headers, 'tax')
+      const rawSettlement = amount(valueFor(values, headers, 'settlementAmount'))
+      const derivedTradeAmount = quantity != null && unitPrice != null ? quantity * unitPrice : null
+      const gross = (rawGross ?? derivedTradeAmount ?? rawSettlement ?? fee) || tax
+      if (!Number.isFinite(gross) || gross <= 0) {
+        issues.push({ code: 'BROKERAGE_AMOUNT_MISSING', message: 'Brokerage event has no usable amount.', severity: 'warning', row: row.sourceRow })
+        continue
+      }
+      const tradeDateRaw = valueFor(values, headers, 'tradeDate')
+      const tradeDate = parseJapaneseDate(tradeDateRaw)
+      if (!tradeDate) issues.push({ code: 'BROKERAGE_TRADE_DATE_INVALID', message: `Invalid trade date: ${tradeDateRaw}`, severity: 'warning', row: row.sourceRow, column: headerFor(headers, 'tradeDate') })
+      const settlementDateRaw = valueFor(values, headers, 'settlementDate')
+      const settlementDate = settlementDateRaw ? parseJapaneseDate(settlementDateRaw) : null
+      if (settlementDateRaw && !settlementDate) issues.push({ code: 'BROKERAGE_SETTLEMENT_DATE_INVALID', message: `Invalid settlement date: ${settlementDateRaw}`, severity: 'warning', row: row.sourceRow, column: headerFor(headers, 'settlementDate') })
+      const instrumentCode = normalizeJapaneseText(valueFor(values, headers, 'instrumentCode'))
+      const instrumentName = normalizeJapaneseText(valueFor(values, headers, 'instrumentName'))
+      const currency = currencyOf(valueFor(values, headers, 'currency'))
+      const built = buildLegs({ eventType, currency, gross, fee, tax, settlement: rawSettlement, instrumentCode, instrumentName, quantity })
+      if (Math.abs(built.difference) >= 0.000001) {
+        issues.push({ code: 'BROKERAGE_SETTLEMENT_MISMATCH', message: `Settlement differs from gross, fee and tax by ${built.difference} ${currency}.`, severity: 'warning', row: row.sourceRow })
+      }
+      records.push({
+        kind: 'brokerage-event', lineage: row, accountHint: input.accountHint, eventType,
+        tradeDate, settlementDate, instrumentCode, instrumentName,
+        accountType: normalizeJapaneseText(valueFor(values, headers, 'accountType')),
+        currency, quantity, unitPrice, grossAmount: gross, feeAmount: fee, taxAmount: tax,
+        settlementAmount: built.settlement, legs: built.legs,
+        reconciliationStatus: Math.abs(built.difference) < 0.000001 ? 'BALANCED' : 'ADJUSTED',
+        reconciliationDifference: built.difference, affectsHouseholdExpense: false, rawTransactionType,
+      })
+    }
+    return { adapterId: this.id, records, issues, metadata: { ledgerKind: 'INVESTMENT', headerRow: csv.rows[headerIndex].sourceRow, delimiter: csv.delimiter } }
+  },
+}
