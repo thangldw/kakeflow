@@ -55,6 +55,7 @@ export async function buildReceiptImport(
         normalizationConfidenceBps: fields.confidenceBps, reviewStatus: fields.confidenceBps >= 7500 ? 'READY' : 'PENDING',
         evidence: [{ sourceRecordId: recordId, role: 'PRIMARY' }],
       }],
+      cardStatements: [],
     },
   }
 }

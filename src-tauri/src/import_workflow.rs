@@ -48,6 +48,29 @@ pub struct StartImport {
     pub adapter_version: Option<String>,
     pub records: Vec<ImportSourceRecord>,
     pub candidates: Vec<NormalizedCandidate>,
+    #[serde(default)]
+    pub card_statements: Vec<StartCardStatement>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartCardStatement {
+    pub id: String,
+    pub card_account_id: String,
+    pub issuer: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub payment_due_on: Option<String>,
+    pub statement_amount_jpy: i64,
+    pub lines: Vec<StartCardStatementLine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartCardStatementLine {
+    pub candidate_id: String,
+    pub statement_line_number: i64,
+    pub billed_amount_jpy: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +182,14 @@ pub struct JournalEntryDecision {
 pub struct CommitSummary {
     pub run_id: String,
     pub posted_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CardMatchConfirmation {
+    pub statement_id: String,
+    pub payment_id: String,
+    pub reconciliation_status: String,
 }
 
 type CandidatePostingRow = (String, Option<String>, String, Option<String>, i64, String);
@@ -277,6 +308,49 @@ pub fn start_import(
                 "INSERT INTO candidate_sources (candidate_id, source_record_id, evidence_role) \
                  VALUES (?1, ?2, ?3)",
                 params![candidate.id, evidence.source_record_id, evidence.role],
+            )?;
+        }
+    }
+    for statement in &request.card_statements {
+        let valid_card_account: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = ?1 AND household_id = ?2 \
+             AND account_kind = 'LIABILITY' AND account_subtype = 'CREDIT_CARD')",
+            params![statement.card_account_id, request.household_id],
+            |row| row.get(0),
+        )?;
+        if !valid_card_account {
+            return Err(ImportWorkflowError::Validation(
+                "statement card account is invalid".into(),
+            ));
+        }
+        tx.execute(
+            "INSERT INTO staged_card_statements \
+             (id, import_run_id, household_id, card_account_id, issuer, period_start, period_end, \
+              payment_due_on, statement_amount_jpy) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                statement.id,
+                request.run_id,
+                request.household_id,
+                statement.card_account_id,
+                statement.issuer,
+                statement.period_start,
+                statement.period_end,
+                statement.payment_due_on,
+                statement.statement_amount_jpy
+            ],
+        )?;
+        for line in &statement.lines {
+            tx.execute(
+                "INSERT INTO staged_card_statement_candidates \
+                 (statement_id, candidate_id, statement_line_number, billed_amount_jpy) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    statement.id,
+                    line.candidate_id,
+                    line.statement_line_number,
+                    line.billed_amount_jpy
+                ],
             )?;
         }
     }
@@ -461,6 +535,20 @@ pub fn commit_import(
             "import was rolled back".into(),
         ));
     }
+    let expected_candidates: u64 = tx.query_row(
+        "SELECT count(DISTINCT tc.id) FROM transaction_candidates tc \
+         JOIN candidate_sources cs ON cs.candidate_id = tc.id \
+         JOIN source_records sr ON sr.id = cs.source_record_id \
+         JOIN source_documents sd ON sd.id = sr.source_document_id \
+         WHERE sd.import_run_id = ?1 AND tc.review_status IN ('PENDING', 'READY')",
+        [run_id],
+        |row| row.get(0),
+    )?;
+    if expected_candidates != decisions.len() as u64 {
+        return Err(ImportWorkflowError::Validation(
+            "every reviewable candidate needs one posting decision".into(),
+        ));
+    }
 
     for decision in decisions {
         let candidate: Option<CandidatePostingRow> = tx
@@ -499,12 +587,13 @@ pub fn commit_import(
 
         let mut debit = 0_i64;
         let mut credit = 0_i64;
+        let mut card_payment_account = None;
         for entry in &decision.entries {
-            let account_kind: String = tx
+            let (account_kind, account_subtype): (String, String) = tx
                 .query_row(
-                    "SELECT account_kind FROM accounts WHERE id = ?1 AND household_id = ?2",
+                    "SELECT account_kind, account_subtype FROM accounts WHERE id = ?1 AND household_id = ?2",
                     params![entry.account_id, household_id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()?
                 .ok_or_else(|| {
@@ -516,6 +605,18 @@ pub fn commit_import(
             if decision.transaction_type == "CARD_PAYMENT" && account_kind == "EXPENSE" {
                 return Err(ImportWorkflowError::Validation(
                     "CARD_PAYMENT cannot post to an expense account".into(),
+                ));
+            }
+            if decision.transaction_type == "CARD_PAYMENT"
+                && entry.side == "DEBIT"
+                && account_kind == "LIABILITY"
+                && account_subtype == "CREDIT_CARD"
+                && card_payment_account
+                    .replace(entry.account_id.clone())
+                    .is_some()
+            {
+                return Err(ImportWorkflowError::Validation(
+                    "CARD_PAYMENT has multiple card accounts".into(),
                 ));
             }
             match entry.side.as_str() {
@@ -545,6 +646,27 @@ pub fn commit_import(
             params![decision.transaction_id, household_id, occurred_on, posted_on,
                     decision.transaction_type, decision.payee, decision.description],
         )?;
+        if decision.transaction_type == "CARD_PAYMENT" {
+            let card_account_id = card_payment_account.ok_or_else(|| {
+                ImportWorkflowError::Validation(
+                    "CARD_PAYMENT requires a credit-card liability debit".into(),
+                )
+            })?;
+            tx.execute(
+                "INSERT INTO card_payments \
+                 (id, household_id, bank_transaction_id, card_account_id, payment_amount_jpy, \
+                  payment_on, match_score_bps, reconciliation_status) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 'UNMATCHED')",
+                params![
+                    format!("{}-payment", decision.transaction_id),
+                    household_id,
+                    decision.transaction_id,
+                    card_account_id,
+                    candidate_amount,
+                    occurred_on
+                ],
+            )?;
+        }
         for (index, entry) in decision.entries.iter().enumerate() {
             tx.execute(
                 "INSERT INTO journal_entries \
@@ -571,6 +693,8 @@ pub fn commit_import(
             [&decision.candidate_id],
         )?;
     }
+    finalize_card_statements(&tx, run_id, &household_id)?;
+    reconcile_exact_card_payments(&tx, &household_id)?;
     tx.execute(
         "UPDATE import_runs SET status = 'POSTED', \
          completed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
@@ -580,6 +704,181 @@ pub fn commit_import(
     Ok(CommitSummary {
         run_id: run_id.into(),
         posted_count: decisions.len() as u64,
+    })
+}
+
+fn finalize_card_statements(tx: &Transaction<'_>, run_id: &str, household_id: &str) -> Result<()> {
+    let statements = {
+        let mut query = tx.prepare(
+            "SELECT scs.id, scs.card_account_id, scs.period_start, scs.period_end, \
+                    scs.payment_due_on, scs.statement_amount_jpy, sd.id \
+             FROM staged_card_statements scs \
+             JOIN source_documents sd ON sd.import_run_id = scs.import_run_id \
+             WHERE scs.import_run_id = ?1 ORDER BY scs.id",
+        )?;
+        let rows = query
+            .query_map([run_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    for (id, account, start, end, due, amount, source_document) in statements {
+        tx.execute(
+            "INSERT INTO card_statements \
+             (id, household_id, card_account_id, period_start, period_end, payment_due_on, \
+              statement_amount_jpy, reconciliation_status, source_document_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'UNMATCHED', ?8)",
+            params![
+                id,
+                household_id,
+                account,
+                start,
+                end,
+                due,
+                amount,
+                source_document
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO card_statement_transactions \
+             (statement_id, transaction_id, statement_line_number, billed_amount_jpy) \
+             SELECT DISTINCT ?1, ts.transaction_id, scc.statement_line_number, scc.billed_amount_jpy \
+             FROM staged_card_statement_candidates scc \
+             JOIN transaction_sources ts ON ts.candidate_id = scc.candidate_id \
+             WHERE scc.statement_id = ?1",
+            [&id],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM staged_card_statements WHERE import_run_id = ?1",
+        [run_id],
+    )?;
+    Ok(())
+}
+
+fn reconcile_exact_card_payments(tx: &Transaction<'_>, household_id: &str) -> Result<()> {
+    let payments = {
+        let mut query = tx.prepare(
+            "SELECT id, card_account_id, payment_amount_jpy, payment_on \
+             FROM card_payments WHERE household_id = ?1 AND reconciliation_status = 'UNMATCHED' \
+             ORDER BY payment_on, id",
+        )?;
+        let rows = query
+            .query_map([household_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    for (payment_id, account_id, amount, payment_on) in payments {
+        let statement_id: Option<String> = tx
+            .query_row(
+                "SELECT id FROM card_statements \
+                 WHERE household_id = ?1 AND card_account_id = ?2 \
+                   AND statement_amount_jpy = ?3 AND reconciliation_status = 'UNMATCHED' \
+                   AND period_end <= ?4 AND julianday(?4) - julianday(period_end) BETWEEN 0 AND 120 \
+                 ORDER BY abs(julianday(?4) - julianday(period_end)), period_end DESC, id LIMIT 1",
+                params![household_id, account_id, amount, payment_on],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(statement_id) = statement_id {
+            tx.execute(
+                "UPDATE card_payments SET statement_id = ?1, match_score_bps = 8000, \
+                 reconciliation_status = 'POSSIBLE_MATCH' WHERE id = ?2",
+                params![statement_id, payment_id],
+            )?;
+            tx.execute(
+                "UPDATE card_statements SET reconciliation_status = 'POSSIBLE_MATCH' WHERE id = ?1",
+                [statement_id],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub fn confirm_card_match(
+    connection: &Connection,
+    household_id: &str,
+    statement_id: &str,
+    payment_id: &str,
+) -> Result<CardMatchConfirmation> {
+    validate_id("household id", household_id)?;
+    validate_id("statement id", statement_id)?;
+    validate_id("payment id", payment_id)?;
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let row: Option<(String, String, i64, i64, String, String)> = tx
+        .query_row(
+            "SELECT cs.card_account_id, cp.card_account_id, cs.statement_amount_jpy,
+                    cp.payment_amount_jpy, cs.reconciliation_status, cp.reconciliation_status
+             FROM card_statements cs JOIN card_payments cp ON cp.statement_id = cs.id
+             WHERE cs.id = ?1 AND cp.id = ?2 AND cs.household_id = ?3 AND cp.household_id = ?3",
+            params![statement_id, payment_id, household_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let (
+        statement_account,
+        payment_account,
+        statement_amount,
+        payment_amount,
+        statement_status,
+        payment_status,
+    ) = row.ok_or_else(|| ImportWorkflowError::Validation("card match was not found".into()))?;
+    if statement_account != payment_account || statement_amount != payment_amount {
+        return Err(ImportWorkflowError::Validation(
+            "card match amount or account changed".into(),
+        ));
+    }
+    if statement_status == "FULLY_RECONCILED" && payment_status == "FULLY_RECONCILED" {
+        tx.commit()?;
+        return Ok(CardMatchConfirmation {
+            statement_id: statement_id.into(),
+            payment_id: payment_id.into(),
+            reconciliation_status: "FULLY_RECONCILED".into(),
+        });
+    }
+    if statement_status != "POSSIBLE_MATCH" || payment_status != "POSSIBLE_MATCH" {
+        return Err(ImportWorkflowError::Validation(
+            "card match is not confirmable".into(),
+        ));
+    }
+    tx.execute(
+        "UPDATE card_statements SET reconciliation_status = 'FULLY_RECONCILED' WHERE id = ?1",
+        [statement_id],
+    )?;
+    tx.execute(
+        "UPDATE card_payments SET reconciliation_status = 'FULLY_RECONCILED', match_score_bps = 10000 WHERE id = ?1",
+        [payment_id],
+    )?;
+    tx.commit()?;
+    Ok(CardMatchConfirmation {
+        statement_id: statement_id.into(),
+        payment_id: payment_id.into(),
+        reconciliation_status: "FULLY_RECONCILED".into(),
     })
 }
 
@@ -607,6 +906,10 @@ pub fn rollback_import(connection: &Connection, run_id: &str) -> Result<()> {
     if status == "POSTED" || posted_count > 0 {
         return Err(ImportWorkflowError::AlreadyPosted);
     }
+    tx.execute(
+        "DELETE FROM staged_card_statements WHERE import_run_id = ?1",
+        [run_id],
+    )?;
     let candidate_ids = {
         let mut statement = tx.prepare(
             "SELECT DISTINCT tc.id FROM transaction_candidates tc \
@@ -806,6 +1109,67 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
             validate_text("candidate text", text, MAX_TEXT_BYTES)?;
         }
     }
+    if request.card_statements.len() > 16 {
+        return Err(ImportWorkflowError::Validation(
+            "too many card statements".into(),
+        ));
+    }
+    let candidate_ids = request
+        .candidates
+        .iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect::<HashSet<_>>();
+    let mut statement_ids = HashSet::new();
+    for statement in &request.card_statements {
+        validate_id("statement id", &statement.id)?;
+        validate_id("statement card account", &statement.card_account_id)?;
+        validate_text("statement issuer", &statement.issuer, 255)?;
+        validate_date(&statement.period_start)?;
+        validate_date(&statement.period_end)?;
+        if statement.period_end < statement.period_start {
+            return Err(ImportWorkflowError::Validation(
+                "statement period is invalid".into(),
+            ));
+        }
+        if let Some(due) = &statement.payment_due_on {
+            validate_date(due)?;
+        }
+        if statement.statement_amount_jpy < 0
+            || statement.lines.is_empty()
+            || statement.lines.len() > MAX_CANDIDATES
+            || !statement_ids.insert(statement.id.as_str())
+        {
+            return Err(ImportWorkflowError::Validation(
+                "card statement is invalid".into(),
+            ));
+        }
+        let mut line_candidates = HashSet::new();
+        let mut line_numbers = HashSet::new();
+        let mut detail_total = 0_i64;
+        for line in &statement.lines {
+            validate_id("statement candidate", &line.candidate_id)?;
+            if !candidate_ids.contains(line.candidate_id.as_str())
+                || !line_candidates.insert(line.candidate_id.as_str())
+                || line.statement_line_number <= 0
+                || !line_numbers.insert(line.statement_line_number)
+                || line.billed_amount_jpy == 0
+            {
+                return Err(ImportWorkflowError::Validation(
+                    "statement line is invalid".into(),
+                ));
+            }
+            detail_total = detail_total
+                .checked_add(line.billed_amount_jpy)
+                .ok_or_else(|| {
+                    ImportWorkflowError::Validation("statement total overflow".into())
+                })?;
+        }
+        if detail_total != statement.statement_amount_jpy {
+            return Err(ImportWorkflowError::Validation(
+                "statement detail does not match total".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -975,10 +1339,34 @@ mod tests {
                    amount_jpy INTEGER NOT NULL, line_number INTEGER NOT NULL,
                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                    UNIQUE(transaction_id,line_number));
+                 CREATE TABLE card_statements (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   card_account_id TEXT NOT NULL REFERENCES accounts(id), period_start TEXT NOT NULL,
+                   period_end TEXT NOT NULL, payment_due_on TEXT, statement_amount_jpy INTEGER NOT NULL,
+                   reconciliation_status TEXT NOT NULL, source_document_id TEXT REFERENCES source_documents(id));
+                 CREATE TABLE card_statement_transactions (
+                   statement_id TEXT NOT NULL REFERENCES card_statements(id) ON DELETE CASCADE,
+                   transaction_id TEXT NOT NULL REFERENCES transactions(id), statement_line_number INTEGER NOT NULL,
+                   billed_amount_jpy INTEGER NOT NULL, PRIMARY KEY(statement_id,transaction_id));
+                 CREATE TABLE card_payments (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   statement_id TEXT REFERENCES card_statements(id), bank_transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(id),
+                   card_account_id TEXT NOT NULL REFERENCES accounts(id), payment_amount_jpy INTEGER NOT NULL,
+                   payment_on TEXT NOT NULL, match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);
+                 CREATE TABLE staged_card_statements (
+                   id TEXT PRIMARY KEY, import_run_id TEXT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
+                   household_id TEXT NOT NULL REFERENCES households(id), card_account_id TEXT NOT NULL REFERENCES accounts(id),
+                   issuer TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT NOT NULL, payment_due_on TEXT,
+                   statement_amount_jpy INTEGER NOT NULL, UNIQUE(import_run_id,card_account_id));
+                 CREATE TABLE staged_card_statement_candidates (
+                   statement_id TEXT NOT NULL REFERENCES staged_card_statements(id) ON DELETE CASCADE,
+                   candidate_id TEXT NOT NULL REFERENCES transaction_candidates(id), statement_line_number INTEGER NOT NULL,
+                   billed_amount_jpy INTEGER NOT NULL, PRIMARY KEY(statement_id,candidate_id));
                  INSERT INTO households(id,name) VALUES('household','Test');
                  INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
                    VALUES('bank','household','Bank','ASSET','BANK'),
-                         ('expense','household','Food','EXPENSE','OTHER');",
+                         ('expense','household','Food','EXPENSE','OTHER'),
+                         ('card','household','Card','LIABILITY','CREDIT_CARD');",
             )
             .expect("create compatible schema");
         connection
@@ -1035,6 +1423,7 @@ mod tests {
                     },
                 ],
             }],
+            card_statements: Vec::new(),
         }
     }
 
@@ -1199,6 +1588,123 @@ mod tests {
                     .get::<_, i64>(0))
                 .unwrap(),
             1
+        );
+    }
+
+    #[test]
+    fn card_statement_and_later_bank_payment_create_a_reviewable_exact_match() {
+        let connection = database();
+        let mut statement_request = request("statement-run", "statement-doc", 'd');
+        statement_request.candidates[0].account_id = Some("card".into());
+        statement_request.card_statements = vec![StartCardStatement {
+            id: "statement-1".into(),
+            card_account_id: "card".into(),
+            issuer: "RAKUTEN_CARD".into(),
+            period_start: "2026-07-12".into(),
+            period_end: "2026-07-12".into(),
+            payment_due_on: None,
+            statement_amount_jpy: 1_000,
+            lines: vec![StartCardStatementLine {
+                candidate_id: "statement-run-candidate".into(),
+                statement_line_number: 1,
+                billed_amount_jpy: 1_000,
+            }],
+        }];
+        start_import(&connection, &statement_request, "vault://statement").unwrap();
+        let purchase = PostingDecision {
+            candidate_id: "statement-run-candidate".into(),
+            transaction_id: "purchase-transaction".into(),
+            transaction_type: "CARD_PURCHASE".into(),
+            payee: Some("Store".into()),
+            description: None,
+            entries: vec![
+                JournalEntryDecision {
+                    id: "purchase-debit".into(),
+                    account_id: "expense".into(),
+                    side: "DEBIT".into(),
+                    amount_jpy: 1_000,
+                },
+                JournalEntryDecision {
+                    id: "purchase-credit".into(),
+                    account_id: "card".into(),
+                    side: "CREDIT".into(),
+                    amount_jpy: 1_000,
+                },
+            ],
+        };
+        commit_import(&connection, "statement-run", &[purchase]).unwrap();
+
+        let mut payment_request = request("payment-run", "payment-doc", 'e');
+        payment_request.candidates[0].occurred_on = "2026-08-10".into();
+        start_import(&connection, &payment_request, "vault://payment").unwrap();
+        let payment = PostingDecision {
+            candidate_id: "payment-run-candidate".into(),
+            transaction_id: "payment-transaction".into(),
+            transaction_type: "CARD_PAYMENT".into(),
+            payee: Some("Rakuten Card".into()),
+            description: None,
+            entries: vec![
+                JournalEntryDecision {
+                    id: "payment-debit".into(),
+                    account_id: "card".into(),
+                    side: "DEBIT".into(),
+                    amount_jpy: 1_000,
+                },
+                JournalEntryDecision {
+                    id: "payment-credit".into(),
+                    account_id: "bank".into(),
+                    side: "CREDIT".into(),
+                    amount_jpy: 1_000,
+                },
+            ],
+        };
+        commit_import(&connection, "payment-run", &[payment]).unwrap();
+
+        let statement_status: String = connection
+            .query_row(
+                "SELECT reconciliation_status FROM card_statements WHERE id = 'statement-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let (payment_status, score, linked): (String, i64, String) = connection
+            .query_row(
+                "SELECT reconciliation_status, match_score_bps, statement_id FROM card_payments",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(statement_status, "POSSIBLE_MATCH");
+        assert_eq!(payment_status, "POSSIBLE_MATCH");
+        assert_eq!(score, 8_000);
+        assert_eq!(linked, "statement-1");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM card_statement_transactions",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        let confirmed = confirm_card_match(
+            &connection,
+            "household",
+            "statement-1",
+            "payment-transaction-payment",
+        )
+        .unwrap();
+        assert_eq!(confirmed.reconciliation_status, "FULLY_RECONCILED");
+        assert_eq!(
+            confirm_card_match(
+                &connection,
+                "household",
+                "statement-1",
+                "payment-transaction-payment",
+            )
+            .unwrap(),
+            confirmed
         );
     }
 }

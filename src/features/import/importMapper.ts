@@ -33,7 +33,7 @@ export interface ImportMapperInput {
   parsed: ParsedImport<unknown>
 }
 
-export type ImportIdKind = 'run' | 'document' | 'sourceRecord' | 'candidate'
+export type ImportIdKind = 'run' | 'document' | 'sourceRecord' | 'candidate' | 'statement'
 export interface IdFactory { next(kind: ImportIdKind): string }
 export type HashFn = (canonicalRecord: string) => Promise<string>
 
@@ -80,6 +80,18 @@ export interface StartImportRequest {
   adapterVersion: string | null
   records: StartImportSourceRecord[]
   candidates: StartImportCandidate[]
+  cardStatements: StartImportCardStatement[]
+}
+
+export interface StartImportCardStatement {
+  id: string
+  cardAccountId: string
+  issuer: string
+  periodStart: string
+  periodEnd: string
+  paymentDueOn: string | null
+  statementAmountJpy: number
+  lines: { candidateId: string; statementLineNumber: number; billedAmountJpy: number }[]
 }
 
 export interface ImportMapperIssue {
@@ -232,11 +244,30 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
   if (input.detectedAdapterId !== input.parsed.adapterId) issues.push({ code: 'ADAPTER_MISMATCH', message: `Detected adapter ${input.detectedAdapterId} does not match parsed adapter ${input.parsed.adapterId}.`, severity: 'error' })
   const context: MappingContext = { ids, hash, accountId: input.file.accountId ?? null, records: [], issues, lineageRecords: new Map() }
   const candidates: StartImportCandidate[] = []
+  const cardStatements: StartImportCardStatement[] = []
   if (input.detectedAdapterId === input.parsed.adapterId) {
     for (const record of input.parsed.records) {
       if (isBank(record)) candidates.push(...await mapBank(record, context))
       else if (isWallet(record)) candidates.push(...await mapPayPay(record, context))
-      else if (isStatement(record)) for (const transaction of record.transactions) candidates.push(...await mapCardTransaction(transaction, context))
+      else if (isStatement(record)) {
+        const statementCandidates: { candidate: StartImportCandidate; billedAmountJpy: number }[] = []
+        for (const transaction of record.transactions) {
+          const mapped = await mapCardTransaction(transaction, context)
+          candidates.push(...mapped)
+          if (mapped[0] && transaction.billingAmount) statementCandidates.push({ candidate: mapped[0], billedAmountJpy: transaction.billingAmount })
+        }
+        const dates = statementCandidates.map(({ candidate: item }) => item.occurredOn).sort()
+        const statementAmount = record.statementTotal != null && Number.isSafeInteger(record.statementTotal) && record.statementTotal > 0
+          ? record.statementTotal : null
+        if (input.file.accountId && dates[0] && dates.at(-1) && statementAmount != null) {
+          cardStatements.push({
+            id: ids.next('statement'), cardAccountId: input.file.accountId, issuer: record.issuer,
+            periodStart: dates[0], periodEnd: dates.at(-1)!, paymentDueOn: null,
+            statementAmountJpy: statementAmount,
+            lines: statementCandidates.map(({ candidate: item, billedAmountJpy }, index) => ({ candidateId: item.id, statementLineNumber: index + 1, billedAmountJpy })),
+          })
+        }
+      }
       else issues.push({ code: 'UNSUPPORTED_RECORD', message: 'Parsed import contains an unsupported record shape.', severity: 'error' })
     }
   }
@@ -246,7 +277,7 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
       sourceType: input.file.sourceType, originalFilename: input.file.originalFilename, mediaType: input.file.mediaType,
       byteSize: input.file.byteSize, sha256: input.file.sha256, sourceModifiedAt: input.file.sourceModifiedAt ?? null,
       adapterId: input.detectedAdapterId, adapterVersion: input.file.adapterVersion ?? null,
-      records: context.records, candidates,
+      records: context.records, candidates, cardStatements,
     },
     issues,
   }

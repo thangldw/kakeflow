@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const desktop = vi.hoisted(() => ({
   queryDashboard: vi.fn(),
   queryTransactions: vi.fn(),
+  listCardSettlements: vi.fn(),
+  confirmCardMatch: vi.fn(),
 }))
 
 vi.mock('./platform', async () => {
@@ -23,6 +25,10 @@ vi.mock('./platform', async () => {
       previewImport: vi.fn(),
       commitImport: vi.fn(),
       rollbackImport: vi.fn(),
+      listCardSettlements: desktop.listCardSettlements,
+      confirmCardMatch: desktop.confirmCardMatch,
+      createBackup: vi.fn(),
+      extractDocument: vi.fn(),
     },
   }
 })
@@ -31,6 +37,8 @@ import App from './App'
 
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
+    desktop.listCardSettlements.mockReset().mockResolvedValue([])
+    desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
       month: '2026-07', accountingBasis,
       incomeJpy: accountingBasis === 'ACCRUAL' ? 500_000 : 480_000,
@@ -70,5 +78,24 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('Rakuten Card')).toBeInTheDocument()
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountingBasis: 'CASH', householdId: 'family' })))
     expect(screen.getByText('現金流出 ¥204,987')).toBeInTheDocument()
+  })
+
+  it('renders and confirms a persisted card-payment match', async () => {
+    desktop.listCardSettlements.mockResolvedValue([{
+      id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: '•••• 8106',
+      periodStart: '2026-06-01', periodEnd: '2026-06-30', paymentDueOn: null,
+      statementAmountJpy: 204_987, detailAmountJpy: 204_987, lineCount: 15,
+      paymentId: 'payment-1', bankTransactionId: 'bank-payment', paymentAmountJpy: 204_987,
+      paymentOn: '2026-07-27', matchScoreBps: 8000, reconciliationStatus: 'POSSIBLE_MATCH',
+    }])
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カード照合 1' }))
+
+    expect(await screen.findByText('照合候補')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /金額と口座を確認して照合/ }))
+
+    await waitFor(() => expect(desktop.confirmCardMatch).toHaveBeenCalledWith('family', 'statement-1', 'payment-1'))
+    expect(await screen.findByText('請求と口座引落を照合済みにしました。')).toBeInTheDocument()
   })
 })

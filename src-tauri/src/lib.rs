@@ -7,12 +7,16 @@ mod persistence;
 mod read_model;
 
 use document_vault::DocumentVault;
-use import_workflow::{CommitSummary, ImportPreview, ImportSummary, PostingDecision, StartImport};
+use import_workflow::{
+    CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
+    StartImport,
+};
 use key_store::OsDatabaseKeyProvider;
 use persistence::AppState;
 use read_model::{
-    AccountDto, AccountingBasis, CreateHouseholdInput, DashboardMonthlyTotalsDto, HouseholdDto,
-    ImportRunCountsDto, TransactionPageDto, TransactionPageRequest,
+    AccountDto, AccountingBasis, CardSettlementDto, CreateHouseholdInput,
+    DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, TransactionPageDto,
+    TransactionPageRequest,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -185,6 +189,28 @@ fn import_summary(
 ) -> Result<ImportRunCountsDto, String> {
     repository_result(&state, |connection| {
         read_model::import_run_counts(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn cards_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<CardSettlementDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::list_card_settlements(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn card_match_confirm(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    statement_id: String,
+    payment_id: String,
+) -> Result<CardMatchConfirmation, String> {
+    workflow_result(&state, |connection| {
+        import_workflow::confirm_card_match(connection, &household_id, &statement_id, &payment_id)
     })
 }
 
@@ -382,6 +408,8 @@ pub fn run() {
             transactions_query,
             dashboard_query,
             import_summary,
+            cards_list,
+            card_match_confirm,
             import_start,
             import_preview,
             import_commit,

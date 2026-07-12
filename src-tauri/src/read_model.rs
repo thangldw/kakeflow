@@ -130,6 +130,13 @@ pub fn create_household(
         ("cash", "Cash", "ASSET", "CASH"),
         ("wallet", "Wallet", "ASSET", "WALLET"),
         ("card", "Credit Card", "LIABILITY", "CREDIT_CARD"),
+        ("rakuten-card", "Rakuten Card", "LIABILITY", "CREDIT_CARD"),
+        (
+            "amazon-card",
+            "Amazon Mastercard",
+            "LIABILITY",
+            "CREDIT_CARD",
+        ),
         ("income", "Income", "INCOME", "OTHER"),
         ("groceries", "Groceries", "EXPENSE", "OTHER"),
         ("housing", "Housing", "EXPENSE", "OTHER"),
@@ -610,6 +617,78 @@ pub fn import_run_counts(
         .map_err(map_database_error)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardSettlementDto {
+    pub id: String,
+    pub card_account_id: String,
+    pub card_name: String,
+    pub masked_identifier: Option<String>,
+    pub period_start: String,
+    pub period_end: String,
+    pub payment_due_on: Option<String>,
+    pub statement_amount_jpy: i64,
+    pub detail_amount_jpy: i64,
+    pub line_count: u64,
+    pub payment_id: Option<String>,
+    pub bank_transaction_id: Option<String>,
+    pub payment_amount_jpy: Option<i64>,
+    pub payment_on: Option<String>,
+    pub match_score_bps: Option<i64>,
+    pub reconciliation_status: String,
+}
+
+pub fn list_card_settlements(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<CardSettlementDto>, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    let mut statement = connection
+        .prepare(
+            "WITH line_totals AS (
+               SELECT statement_id, count(*) AS line_count, COALESCE(sum(billed_amount_jpy), 0) AS detail_total
+               FROM card_statement_transactions GROUP BY statement_id
+             )
+             SELECT cs.id, cs.card_account_id, a.name, a.masked_identifier,
+                    cs.period_start, cs.period_end, cs.payment_due_on, cs.statement_amount_jpy,
+                    COALESCE(lt.detail_total, 0), COALESCE(lt.line_count, 0),
+                    cp.id, cp.bank_transaction_id, cp.payment_amount_jpy, cp.payment_on,
+                    cp.match_score_bps, cs.reconciliation_status
+             FROM card_statements cs
+             JOIN accounts a ON a.id = cs.card_account_id
+             LEFT JOIN line_totals lt ON lt.statement_id = cs.id
+             LEFT JOIN card_payments cp ON cp.statement_id = cs.id
+             WHERE cs.household_id = ?1
+             ORDER BY cs.period_end DESC, cs.id DESC",
+        )
+        .map_err(map_database_error)?;
+    let rows = statement
+        .query_map([household_id], |row| {
+            Ok(CardSettlementDto {
+                id: row.get(0)?,
+                card_account_id: row.get(1)?,
+                card_name: row.get(2)?,
+                masked_identifier: row.get(3)?,
+                period_start: row.get(4)?,
+                period_end: row.get(5)?,
+                payment_due_on: row.get(6)?,
+                statement_amount_jpy: row.get(7)?,
+                detail_amount_jpy: row.get(8)?,
+                line_count: row.get(9)?,
+                payment_id: row.get(10)?,
+                bank_transaction_id: row.get(11)?,
+                payment_amount_jpy: row.get(12)?,
+                payment_on: row.get(13)?,
+                match_score_bps: row.get(14)?,
+                reconciliation_status: row.get(15)?,
+            })
+        })
+        .map_err(map_database_error)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(map_database_error)
+}
+
 fn validate_id(value: &str, max_len: usize) -> Result<(), RepositoryError> {
     if value.is_empty()
         || value.len() > max_len
@@ -707,7 +786,7 @@ mod tests {
                  CREATE TABLE accounts (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
-                   currency TEXT NOT NULL, UNIQUE(household_id, name)
+                   currency TEXT NOT NULL, masked_identifier TEXT, UNIQUE(household_id, name)
                  );
                  CREATE TABLE transactions (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
@@ -723,7 +802,19 @@ mod tests {
                  CREATE TABLE import_runs (id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
                  CREATE TABLE source_documents (id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT);
                  CREATE TABLE source_records (id TEXT PRIMARY KEY, source_document_id TEXT);
-                 CREATE TABLE transaction_candidates (id TEXT PRIMARY KEY, household_id TEXT, review_status TEXT);",
+                 CREATE TABLE transaction_candidates (id TEXT PRIMARY KEY, household_id TEXT, review_status TEXT);
+                 CREATE TABLE card_statements (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
+                   period_start TEXT NOT NULL, period_end TEXT NOT NULL, payment_due_on TEXT,
+                   statement_amount_jpy INTEGER NOT NULL, reconciliation_status TEXT NOT NULL);
+                 CREATE TABLE card_statement_transactions (
+                   statement_id TEXT NOT NULL, transaction_id TEXT NOT NULL, statement_line_number INTEGER NOT NULL,
+                   billed_amount_jpy INTEGER NOT NULL, PRIMARY KEY(statement_id,transaction_id));
+                 CREATE TABLE card_payments (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL, statement_id TEXT,
+                   bank_transaction_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
+                   payment_amount_jpy INTEGER NOT NULL, payment_on TEXT NOT NULL,
+                   match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);",
             )
             .expect("compatible schema");
         connection
@@ -748,7 +839,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 12);
+        assert_eq!(count, 14);
     }
 
     #[test]
@@ -894,6 +985,41 @@ mod tests {
             .accrual_trend
             .iter()
             .all(|point| point.income_jpy == 0 && point.expense_jpy == 0));
+    }
+
+    #[test]
+    fn card_settlement_read_model_keeps_line_totals_separate_from_payment() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        connection.execute_batch(
+            "INSERT INTO transactions (id, household_id, occurred_on, transaction_type, status)
+               VALUES ('purchase-1','family','2026-06-01','CARD_PURCHASE','POSTED'),
+                      ('purchase-2','family','2026-06-02','CARD_PURCHASE','POSTED'),
+                      ('bank-payment','family','2026-07-27','CARD_PAYMENT','POSTED');
+             INSERT INTO card_statements
+               (id, household_id, card_account_id, period_start, period_end, statement_amount_jpy, reconciliation_status)
+               VALUES ('statement','family','family-rakuten-card','2026-06-01','2026-06-30',3000,'POSSIBLE_MATCH');
+             INSERT INTO card_statement_transactions
+               (statement_id,transaction_id,statement_line_number,billed_amount_jpy)
+               VALUES ('statement','purchase-1',1,1000),('statement','purchase-2',2,2000);
+             INSERT INTO card_payments
+               (id,household_id,statement_id,bank_transaction_id,card_account_id,payment_amount_jpy,payment_on,match_score_bps,reconciliation_status)
+               VALUES ('payment','family','statement','bank-payment','family-rakuten-card',3000,'2026-07-27',8000,'POSSIBLE_MATCH');",
+        ).unwrap();
+
+        let rows = list_card_settlements(&connection, "family").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].line_count, 2);
+        assert_eq!(rows[0].detail_amount_jpy, 3000);
+        assert_eq!(rows[0].payment_amount_jpy, Some(3000));
+        assert_eq!(rows[0].reconciliation_status, "POSSIBLE_MATCH");
     }
 
     #[test]

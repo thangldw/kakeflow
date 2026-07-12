@@ -38,6 +38,7 @@ describe('import mapper', () => {
     expect(JSON.parse(result.request.records[0].payloadJson)).toEqual({ sourceRow: 2, sourceRowEnd: 2, rawFields: ['2026/07/27', 'ラクテンカード', '204987'] })
     expect(result.request.records[0].recordHash).toHaveLength(64)
     expect(result.request.candidates[0]).toMatchObject({ amountJpy: 204987, direction: 'OUT', occurredOn: '2026-07-27', accountId: 'account-1', reviewStatus: 'PENDING' })
+    expect(result.request.cardStatements).toEqual([])
   })
 
   it('groups PayPay legs while preserving primary, supporting, and split-funding evidence', async () => {
@@ -54,6 +55,7 @@ describe('import mapper', () => {
     expect(result.request.candidates).toHaveLength(1)
     expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['FUNDING_LEG', 'SUPPORTING'])
     expect(result.request.candidates[0]).toMatchObject({ amountJpy: 998, direction: 'OUT', externalTransactionId: 'pay-1' })
+    expect(result.request.cardStatements).toEqual([])
   })
 
   it('maps card refunds and marks merged Rakuten lineage as continuation evidence', async () => {
@@ -68,6 +70,23 @@ describe('import mapper', () => {
 
     expect(result.request.candidates[0]).toMatchObject({ amountJpy: 3666, direction: 'IN', merchantRaw: 'ANTHROPIC' })
     expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['CONTINUATION'])
+    expect(result.request.cardStatements).toEqual([])
+  })
+
+  it('retains card statement total and candidate line grouping', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'rakuten-enavi-v1', issues: [], metadata: {}, records: [{
+      kind: 'card-statement', issuer: 'RAKUTEN_CARD', statementTotal: 4000, transactions: [
+        { kind: 'card-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['STORE', '5000'] }, usageDate: '2026-06-10', merchant: 'STORE', userName: '', paymentMethod: '一括', billingAmount: 5000, feeOrInterest: 0, isRefund: false, rawExtra: {} },
+        { kind: 'card-transaction', lineage: { sourceRow: 3, sourceRowEnd: 3, rawFields: ['REFUND', '-1000'] }, usageDate: '2026-06-20', merchant: 'REFUND', userName: '', paymentMethod: '一括', billingAmount: -1000, feeOrInterest: 0, isRefund: true, rawExtra: {} },
+      ],
+    }] }
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+
+    expect(result.request.cardStatements).toHaveLength(1)
+    expect(result.request.cardStatements[0]).toMatchObject({
+      cardAccountId: 'account-1', issuer: 'RAKUTEN_CARD', periodStart: '2026-06-10', periodEnd: '2026-06-20', statementAmountJpy: 4000,
+      lines: [{ statementLineNumber: 1, billedAmountJpy: 5000 }, { statementLineNumber: 2, billedAmountJpy: -1000 }],
+    })
   })
 
   it.each([

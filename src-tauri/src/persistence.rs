@@ -15,6 +15,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0003_candidates.sql")),
     M::up(include_str!("../migrations/0004_transactions_journal.sql")),
     M::up(include_str!("../migrations/0005_card_reconciliation.sql")),
+    M::up(include_str!(
+        "../migrations/0006_import_card_statements.sql"
+    )),
 ];
 
 #[derive(Debug, Error)]
@@ -201,7 +204,7 @@ mod tests {
         let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
         state
             .with_connection(|connection| {
-                assert_eq!(schema_version(connection)?, 5);
+                assert_eq!(schema_version(connection)?, 6);
                 assert!(integrity_check(connection)?);
                 Ok(())
             })

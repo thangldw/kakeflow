@@ -39,7 +39,7 @@ import { buildReceiptImport } from './features/import/receiptText'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
+import type { AccountDto, AppBootstrapDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -195,20 +195,27 @@ function TransactionRows({ rows = transactions }: { rows?: Transaction[] }) {
   })}</div>
 }
 
-function ReconciliationMini() {
+function ReconciliationMini({ liveCards, desktop }: { liveCards: readonly CardSettlementDto[]; desktop: boolean }) {
+  const cards = desktop ? liveCards.map((card) => ({
+    name: card.cardName, mask: card.maskedIdentifier ?? '番号未設定', dueDate: card.paymentDueOn ?? card.periodEnd,
+    statement: card.statementAmountJpy, bankDebit: card.paymentAmountJpy ?? undefined,
+    progress: card.reconciliationStatus === 'FULLY_RECONCILED' ? 100 : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 80 : 0,
+    status: card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' as const : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 'possible' as const : 'pending' as const,
+    color: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a',
+  })) : cardSettlements
   return (
     <article className="panel reconciliation">
       <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="icon-btn" aria-label="カード照合メニュー"><MoreHorizontal size={18} /></button></div>
-      <div className="card-stack">{cardSettlements.map((card) => <div className="settlement" key={card.name}>
+      <div className="card-stack">{cards.length > 0 ? cards.map((card) => <div className="settlement" key={card.name}>
         <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{card.status === 'reconciled' ? '照合済み' : '引落待ち'}</b></div>
         <div className="settlement-values"><span>請求額 <strong>{yen(card.statement)}</strong></span><span>口座引落 <strong>{card.bankDebit ? yen(card.bankDebit) : '—'}</strong></span></div>
         <div className="progress"><span style={{ width: `${card.progress}%` }} /></div>
-      </div>)}</div>
+      </div>) : <p className="empty-state">カード明細はまだありません。</p>}</div>
     </article>
   )
 }
 
-function Overview({ setPage, liveDashboard, liveTransactions, desktop }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; desktop: boolean }) {
+function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean }) {
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
   const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
@@ -236,7 +243,7 @@ function Overview({ setPage, liveDashboard, liveTransactions, desktop }: { setPa
         <div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>
         {displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}
       </article>
-      <ReconciliationMini />
+      <ReconciliationMini liveCards={liveCards} desktop={desktop} />
     </section>
     <div className="data-footnote"><FileCheck2 size={15} /> 最終更新: 本日 15:42 ・ MUFG、PayPay、Rakuten Card ほか3件 <span>データ充足率 96%</span></div>
   </>
@@ -288,8 +295,13 @@ function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly Acc
   if (!source) throw new Error('Candidate source account is missing')
   const expenseAccount = accounts.find((account) => account.id === `${householdId}-other-expense` && account.accountKind === 'EXPENSE')
   const incomeAccount = accounts.find((account) => account.id === `${householdId}-income` && account.accountKind === 'INCOME')
-  const cardAccount = accounts.find((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
   const text = `${candidate.merchantRaw ?? ''} ${candidate.descriptionRaw ?? ''}`
+  const cardAccounts = accounts.filter((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
+  const cardAccount = /(?:楽天|RAKUTEN)/i.test(text)
+    ? cardAccounts.find((account) => /Rakuten/i.test(account.name))
+    : /(?:AMAZON|SMBC|三井住友)/i.test(text)
+      ? cardAccounts.find((account) => /Amazon/i.test(account.name))
+      : cardAccounts.find((account) => account.id.endsWith('-card')) ?? cardAccounts[0]
   const looksLikeCardPayment = source.accountSubtype === 'BANK' && /(カード|CARD|JCB|AMEX|アメックス)/i.test(text)
   const looksLikeRefund = /(返金|返品|REFUND|REVERSAL)/i.test(text)
   let transactionType: string
@@ -343,9 +355,13 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     setActiveRun(item.id)
     setNotice('')
     try {
+      const rakutenCard = accounts.find((account) => account.accountSubtype === 'CREDIT_CARD' && /Rakuten|楽天/i.test(account.name))?.id
+      const amazonCard = accounts.find((account) => account.accountSubtype === 'CREDIT_CARD' && /Amazon/i.test(account.name))?.id
       const defaultAccount = item.detectedAdapterId === 'japanese-bank-ledger-v1'
         ? `${householdId}-bank`
-        : item.detectedAdapterId === 'paypay-history-v1' ? `${householdId}-wallet` : `${householdId}-card`
+        : item.detectedAdapterId === 'paypay-history-v1' ? `${householdId}-wallet`
+          : item.detectedAdapterId === 'rakuten-enavi-v1' ? rakutenCard ?? `${householdId}-card`
+            : item.detectedAdapterId === 'amazon-mastercard-statement-v1' ? amazonCard ?? `${householdId}-card` : `${householdId}-card`
       const mapping = await mapParsedImportToStartImport({
         file: {
           householdId, sourceType: 'MANUAL_UPLOAD', originalFilename: item.filename,
@@ -454,18 +470,36 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   </>
 }
 
-function CardsPage() {
+function CardsPage({ cards, householdId, onChanged }: { cards: readonly CardSettlementDto[]; householdId: string | null; onChanged: () => void }) {
+  const desktop = platformClient.runtime === 'tauri'
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [notice, setNotice] = useState('')
+  const displayCards = desktop ? cards : cardSettlements.map((card, index) => ({
+    id: `demo-${index}`, cardAccountId: `demo-${index}`, cardName: card.name, maskedIdentifier: card.mask,
+    periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: card.dueDate,
+    statementAmountJpy: card.statement, detailAmountJpy: card.statement, lineCount: card.name.includes('Rakuten') ? 15 : 14,
+    paymentId: card.bankDebit ? `demo-payment-${index}` : null, bankTransactionId: null,
+    paymentAmountJpy: card.bankDebit ?? null, paymentOn: null, matchScoreBps: card.bankDebit ? 10000 : null,
+    reconciliationStatus: card.status === 'reconciled' ? 'FULLY_RECONCILED' as const : 'UNMATCHED' as const,
+  }))
+  const confirm = async (card: CardSettlementDto) => {
+    if (!householdId || !card.paymentId) return
+    setBusyId(card.id); setNotice('')
+    try { await platformClient.confirmCardMatch(householdId, card.id, card.paymentId); onChanged(); setNotice('請求と口座引落を照合済みにしました。') }
+    catch { setNotice('照合を確定できませんでした。金額とカード口座を確認してください。') }
+    finally { setBusyId(null) }
+  }
   return <>
     <PageHeader eyebrow="カード管理" title="請求・口座引落の照合" description="カード利用は支出、銀行引落は負債の返済として正しく区別します。">
       <button className="secondary-btn"><CalendarDays size={17} /> 2026年7月</button>
     </PageHeader>
-    <div className="reconcile-banner"><div><FileCheck2 size={22} /><span><strong>1件の請求を自動照合しました</strong><small>Rakuten Card ¥204,987 と MUFG の口座引落が一致しました。</small></span></div><button>詳細を見る</button></div>
-    <section className="cards-page-grid">{cardSettlements.map((card) => <article className="panel card-detail" key={card.name}>
-      <div className="card-visual" style={{ background: card.color }}><span>KAKEFLOW CARD</span><strong>{card.name}</strong><small>{card.mask}</small></div>
-      <div className="card-detail-head"><div><span>7月請求額</span><strong>{yen(card.statement)}</strong></div><b className={card.status}>{card.status === 'reconciled' ? '✓ 照合済み' : '引落待ち'}</b></div>
-      <dl><div><dt>支払日</dt><dd>{card.dueDate}</dd></div><div><dt>口座引落</dt><dd>{card.bankDebit ? yen(card.bankDebit) : '未検出'}</dd></div><div><dt>利用明細</dt><dd>{card.name.includes('Rakuten') ? '15件' : '14件'}</dd></div></dl>
-      <button className="full-btn">明細と照合を開く <ArrowRight size={15} /></button>
-    </article>)}</section>
+    {notice && <div className="import-notice" role="status">{notice}</div>}
+    <section className="cards-page-grid">{displayCards.map((card) => <article className="panel card-detail" key={card.id}>
+      <div className="card-visual" style={{ background: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a' }}><span>KAKEFLOW CARD</span><strong>{card.cardName}</strong><small>{card.maskedIdentifier ?? '番号未設定'}</small></div>
+      <div className="card-detail-head"><div><span>請求額</span><strong>{yen(card.statementAmountJpy)}</strong></div><b className={card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 'possible' : 'pending'}>{card.reconciliationStatus === 'FULLY_RECONCILED' ? '✓ 照合済み' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? '照合候補' : '引落待ち'}</b></div>
+      <dl><div><dt>期間</dt><dd>{card.periodStart} – {card.periodEnd}</dd></div><div><dt>口座引落</dt><dd>{card.paymentAmountJpy ? yen(card.paymentAmountJpy) : '未検出'}</dd></div><div><dt>利用明細</dt><dd>{card.lineCount}件</dd></div></dl>
+      {card.reconciliationStatus === 'POSSIBLE_MATCH' ? <button className="full-btn" disabled={busyId === card.id} onClick={() => void confirm(card)}>{busyId === card.id ? '確定中…' : '金額と口座を確認して照合'} <ArrowRight size={15} /></button> : <button className="full-btn">明細を開く <ArrowRight size={15} /></button>}
+    </article>)}{desktop && displayCards.length === 0 && <p className="empty-state">カードCSVを取り込むと、ここに請求と照合状況が表示されます。</p>}</section>
   </>
 }
 
@@ -537,6 +571,7 @@ function App() {
   const [liveDashboard, setLiveDashboard] = useState<DashboardMonthlyTotalsDto | null>(null)
   const [liveTransactions, setLiveTransactions] = useState<readonly TransactionRowDto[]>([])
   const [importCounts, setImportCounts] = useState<ImportRunCountsDto | null>(null)
+  const [liveCards, setLiveCards] = useState<readonly CardSettlementDto[]>([])
   const [ledgerRevision, setLedgerRevision] = useState(0)
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
 
@@ -578,6 +613,7 @@ function App() {
       setLiveDashboard(null)
       setLiveTransactions([])
       setImportCounts(null)
+      setLiveCards([])
       return
     }
     let active = true
@@ -586,19 +622,20 @@ function App() {
       platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: 'ACCRUAL' }),
       platformClient.queryTransactions({ householdId, accountingBasis: 'ACCRUAL', fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
       platformClient.importSummary(householdId),
-    ]).then(([dashboard, page, summary]) => {
-      if (active) { setLiveDashboard(dashboard); setLiveTransactions(page.items); setImportCounts(summary) }
+      platformClient.listCardSettlements(householdId),
+    ]).then(([dashboard, page, summary, cards]) => {
+      if (active) { setLiveDashboard(dashboard); setLiveTransactions(page.items); setImportCounts(summary); setLiveCards(cards) }
     }).catch(() => {
-      if (active) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null) }
+      if (active) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]) }
     })
     return () => { active = false }
   }, [households, ledgerRevision])
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} desktop={platformClient.runtime === 'tauri'} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} />,
     transactions: <TransactionsPage householdId={households[0]?.id ?? null} revision={ledgerRevision} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    cards: <CardsPage />,
+    cards: <CardsPage cards={liveCards} householdId={households[0]?.id ?? null} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     budgets: <BudgetsPage />,
     settings: <SettingsPage />,
   }[page]
