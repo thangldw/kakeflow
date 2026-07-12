@@ -1,3 +1,4 @@
+pub mod account_groups_export;
 pub mod backup;
 pub mod document_extract;
 pub mod document_vault;
@@ -13,6 +14,10 @@ pub mod restore;
 mod source_viewer;
 pub mod watched_folders;
 
+use account_groups_export::{
+    AccountGroupDto, CreateAccountGroupInput, ExportCsvDto, ExportCsvRequest, ExportSavedDto,
+    ReorderAccountGroupsInput, UpdateAccountGroupInput,
+};
 use document_vault::DocumentVault;
 use import_workflow::{
     CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
@@ -362,6 +367,18 @@ fn portfolio_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn account_group_export_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(
+        &rusqlite::Connection,
+    ) -> Result<T, account_groups_export::AccountGroupExportError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Account group database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 #[tauri::command]
 fn households_list(state: tauri::State<'_, AppState>) -> Result<Vec<HouseholdDto>, String> {
     repository_result(&state, read_model::list_households)
@@ -610,6 +627,97 @@ fn portfolio_snapshot_get(
     portfolio_result(&state, |connection| {
         portfolio::get_snapshot(connection, &household_id, &snapshot_id)
     })
+}
+
+#[tauri::command]
+fn account_groups_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<AccountGroupDto>, String> {
+    account_group_export_result(&state, |connection| {
+        account_groups_export::list_account_groups(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn account_group_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateAccountGroupInput,
+) -> Result<AccountGroupDto, String> {
+    account_group_export_result(&state, |connection| {
+        account_groups_export::create_account_group(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn account_group_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateAccountGroupInput,
+) -> Result<AccountGroupDto, String> {
+    account_group_export_result(&state, |connection| {
+        account_groups_export::update_account_group(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn account_group_delete(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    group_id: String,
+) -> Result<(), String> {
+    account_group_export_result(&state, |connection| {
+        account_groups_export::delete_account_group(connection, &household_id, &group_id)
+    })
+}
+
+#[tauri::command]
+fn account_groups_reorder(
+    state: tauri::State<'_, AppState>,
+    input: ReorderAccountGroupsInput,
+) -> Result<Vec<AccountGroupDto>, String> {
+    account_group_export_result(&state, |connection| {
+        account_groups_export::reorder_account_groups(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn export_csv_generate(
+    state: tauri::State<'_, AppState>,
+    request: ExportCsvRequest,
+) -> Result<ExportCsvDto, String> {
+    account_group_export_result(&state, |connection| {
+        account_groups_export::generate_csv(connection, &request)
+    })
+}
+
+#[tauri::command]
+async fn export_csv_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: ExportCsvRequest,
+) -> Result<Option<ExportSavedDto>, String> {
+    let export = account_group_export_result(&state, |connection| {
+        account_groups_export::generate_csv(connection, &request)
+    })?;
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(&export.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected export destination is unavailable".to_owned())?;
+    std::fs::write(destination, export.utf8_bom_csv.as_bytes())
+        .map_err(|_| "CSV export could not be saved".to_owned())?;
+    Ok(Some(ExportSavedDto {
+        file_name: export.file_name,
+        row_count: export.row_count,
+        byte_size: export.byte_size,
+    }))
 }
 
 #[tauri::command]
@@ -1230,6 +1338,13 @@ pub fn run() {
             portfolio_snapshot_import,
             portfolio_snapshots_list,
             portfolio_snapshot_get,
+            account_groups_list,
+            account_group_create,
+            account_group_update,
+            account_group_delete,
+            account_groups_reorder,
+            export_csv_generate,
+            export_csv_save,
             classification_rules_list,
             classification_rule_create,
             classification_rule_update,
