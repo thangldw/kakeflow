@@ -1,0 +1,32 @@
+.forecast-action-layout { display: grid; gap: 18px; grid-template-columns: minmax(280px, .8fr) minmax(520px, 1.6fr); }
+.forecast-panel { background: var(--surface, #fff); border: 1px solid var(--border, #d9e0e7); border-radius: 16px; color: var(--text, #17202a); padding: 20px; }
+.forecast-panel > header { align-items: flex-start; display: flex; justify-content: space-between; gap: 12px; }
+.forecast-panel header p { color: #617080; font-size: 11px; font-weight: 750; letter-spacing: .12em; margin: 0 0 4px; text-transform: uppercase; }
+.forecast-panel h2, .forecast-panel h3 { margin: 0; }
+.forecast-panel h2 { font-size: 20px; }
+.action-count { align-items: center; background: #17202a; border-radius: 999px; color: #fff; display: flex; font-weight: 800; height: 30px; justify-content: center; min-width: 30px; }
+.action-list { display: grid; gap: 10px; list-style: none; margin: 18px 0 0; padding: 0; }
+.action-item { align-items: start; border: 1px solid #dde4eb; border-left: 4px solid #7a8794; border-radius: 10px; display: grid; gap: 12px; grid-template-columns: auto 1fr auto; padding: 13px; }
+.action-item--critical { border-left-color: #c93b45; } .action-item--high { border-left-color: #e27a24; } .action-item--medium { border-left-color: #d2a718; } .action-item--low { border-left-color: #658195; }
+.action-badges { display: grid; gap: 4px; text-align: center; }
+.action-badges span, .action-badges strong { background: #eef2f5; border-radius: 4px; font-size: 10px; padding: 3px 5px; white-space: nowrap; }
+.action-badges strong { color: #9f2730; }
+.action-copy h3 { font-size: 14px; } .action-copy > p { color: #53616f; font-size: 12px; line-height: 1.55; margin: 5px 0; }
+.action-meta { display: flex; gap: 12px; font-size: 11px; } .action-meta b { color: #b6333e; }
+.action-copy details, .forecast-assumptions { font-size: 11px; margin-top: 8px; } .action-copy summary, .forecast-assumptions summary { cursor: pointer; font-weight: 700; }
+.action-copy ul, .forecast-assumptions ul { line-height: 1.5; margin: 6px 0 0; padding-left: 18px; }
+.action-item > button { background: #17202a; border: 0; border-radius: 7px; color: #fff; cursor: pointer; font: inherit; font-size: 11px; font-weight: 700; padding: 8px 10px; }
+.action-item > button:focus-visible, .forecast-assumptions summary:focus-visible { outline: 3px solid #61a4e8; outline-offset: 2px; }
+.forecast-empty { color: #617080; margin: 28px 0; text-align: center; }
+.cash-forecast > header > span { color: #617080; font-size: 12px; }
+.forecast-opening { align-items: baseline; display: flex; gap: 9px; margin: 18px 0; } .forecast-opening span, .forecast-opening small { color: #617080; font-size: 11px; } .forecast-opening strong { font-size: 22px; }
+.forecast-months { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.forecast-months > article { background: #f6f8fa; border-radius: 10px; padding: 14px; }
+.forecast-months article header { display: flex; justify-content: space-between; gap: 8px; } .forecast-months h3 { font-size: 14px; } .forecast-months header strong { color: #19735a; font-size: 11px; } .forecast-months header .is-negative { color: #b6333e; }
+.cash-bar { background: #dfe7ec; border-radius: 999px; height: 7px; margin: 12px 0; overflow: hidden; } .cash-bar span { background: #237c99; border-radius: inherit; display: block; height: 100%; }
+.forecast-months dl { display: grid; gap: 6px; margin: 0; } .forecast-months dl div { display: flex; font-size: 11px; justify-content: space-between; gap: 5px; } .forecast-months dt { color: #617080; } .forecast-months dd { font-weight: 650; margin: 0; }
+.forecast-months .forecast-closing { border-top: 1px solid #d9e0e7; font-size: 12px; margin-top: 3px; padding-top: 8px; }
+.forecast-assumptions { border-top: 1px solid #dde4eb; margin-top: 16px; padding-top: 12px; }
+.assumption-grid { display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); margin-top: 10px; } .assumption-grid span { color: #617080; display: grid; gap: 3px; } .assumption-grid strong { color: var(--text, #17202a); }
+@media (max-width: 1050px) { .forecast-action-layout { grid-template-columns: 1fr; } }
+@media (max-width: 680px) { .forecast-months, .assumption-grid { grid-template-columns: 1fr; } .action-item { grid-template-columns: auto 1fr; } .action-item > button { grid-column: 1 / -1; } }
