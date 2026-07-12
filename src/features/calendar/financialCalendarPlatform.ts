@@ -142,22 +142,46 @@ export interface MonthlyFinancialReportDto {
   readonly reconciliation: ReconciliationSummaryDto
 }
 
-export interface MonthlyReportPointDto extends PeriodMetricsDto {
+export type AnnualMonthStatusDto = 'COMPLETE' | 'PARTIAL' | 'FUTURE'
+
+export interface AnnualMonthPointDto extends PeriodMetricsDto {
   readonly month: string
+  readonly status: AnnualMonthStatusDto
 }
 
 export interface YearlyFinancialReportDto {
   readonly period: string
+  readonly asOf: string
+  readonly throughMonth: string | null
+  readonly completedMonthCount: number
+  readonly isCompleteYear: boolean
+  readonly currentComparable: PeriodMetricsDto
+  readonly priorYearComparable: PeriodMetricsDto
+  readonly vsPriorYearComparable: MetricDeltaSetDto
   readonly current: PeriodMetricsDto
   readonly priorYear: PeriodMetricsDto
   readonly vsPriorYear: MetricDeltaSetDto
-  readonly months: readonly MonthlyReportPointDto[]
+  readonly months: readonly AnnualMonthPointDto[]
   readonly topCategoryDrivers: readonly CategoryDriverDto[]
   readonly topMerchantDrivers: readonly MerchantDriverDto[]
   readonly budget: BudgetStatusDto
   readonly goals: GoalProgressSummaryDto
   readonly dataQuality: DataQualitySummaryDto
   readonly reconciliation: ReconciliationSummaryDto
+}
+
+export interface AnnualReviewCsvDto {
+  readonly fileName: string
+  readonly mediaType: 'text/csv;charset=utf-8'
+  readonly rowCount: number
+  readonly byteSize: number
+  readonly utf8BomCsv: string
+}
+
+export interface AnnualReviewCsvSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
 }
 
 export type FinancialCalendarInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
@@ -170,6 +194,12 @@ export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke 
       parseMonthlyReport(await invoke('financial_report_monthly_query', { request })),
     getYearlyReport: async (request: YearlyFinancialReportRequest): Promise<YearlyFinancialReportDto> =>
       parseYearlyReport(await invoke('financial_report_yearly_query', { request })),
+    generateAnnualReviewCsv: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewCsvDto> =>
+      parseAnnualReviewCsv(await invoke('annual_household_review_csv_generate', { request })),
+    saveAnnualReviewCsv: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewCsvSavedDto | null> => {
+      const value = await invoke('annual_household_review_csv_save', { request })
+      return value === null ? null : parseAnnualReviewCsvSaved(value)
+    },
   }
 }
 
@@ -226,20 +256,42 @@ function parseMonthlyReport(value: unknown): MonthlyFinancialReportDto {
 
 function parseYearlyReport(value: unknown): YearlyFinancialReportDto {
   const item = record(value, 'yearly financial report')
-  stringValue(item.period, 'yearly financial report period')
+  yearValue(item.period, 'yearly financial report period')
+  dateValue(item.asOf, 'yearly financial report as-of')
+  if (item.throughMonth !== null) monthValue(item.throughMonth, 'yearly financial report through month')
+  nonNegativeInteger(item.completedMonthCount, 'yearly financial report completed month count')
+  if ((item.completedMonthCount as number) > 12) throw new TypeError('yearly financial report completed month count')
+  booleanValue(item.isCompleteYear, 'yearly financial report complete flag')
   const months = arrayValue(item.months, 'yearly financial report months').map((value) => {
     const month = record(value, 'monthly report point')
-    stringValue(month.month, 'monthly report point month')
-    return { month: month.month as string, ...parseMetrics(month) }
+    monthValue(month.month, 'monthly report point month')
+    if (!['COMPLETE', 'PARTIAL', 'FUTURE'].includes(String(month.status))) throw new TypeError('monthly report point status')
+    return { month: month.month as string, status: month.status as AnnualMonthStatusDto, ...parseAnnualMetrics(month) }
   })
+  validateAnnualWindow(item.period as string, item.throughMonth as string | null, item.completedMonthCount as number, item.isCompleteYear as boolean, months)
+  const currentComparable = parseAnnualMetrics(item.currentComparable)
+  const priorYearComparable = parseAnnualMetrics(item.priorYearComparable)
+  const vsPriorYearComparable = parseDeltaSet(item.vsPriorYearComparable)
+  const current = parseAnnualMetrics(item.current)
+  const priorYear = parseAnnualMetrics(item.priorYear)
+  const vsPriorYear = parseDeltaSet(item.vsPriorYear)
+  if (!sameMetrics(currentComparable, current) || !sameMetrics(priorYearComparable, priorYear) || !sameDeltaSet(vsPriorYearComparable, vsPriorYear)) throw new TypeError('yearly financial report legacy aliases')
+  validateCurrentMatchesMonths(currentComparable, months)
+  validateDeltaSet(currentComparable, priorYearComparable, vsPriorYearComparable)
+  const topCategoryDrivers = arrayValue(item.topCategoryDrivers, 'category drivers').map(parseCategoryDriver)
+  const topMerchantDrivers = arrayValue(item.topMerchantDrivers, 'merchant drivers').map(parseMerchantDriver)
+  if ([...topCategoryDrivers, ...topMerchantDrivers].some((driver) => driver.deltaJpy !== driver.currentJpy - driver.previousJpy)) throw new TypeError('yearly financial report driver')
   return {
     period: item.period as string,
-    current: parseMetrics(item.current),
-    priorYear: parseMetrics(item.priorYear),
-    vsPriorYear: parseDeltaSet(item.vsPriorYear),
+    asOf: item.asOf as string,
+    throughMonth: item.throughMonth as string | null,
+    completedMonthCount: item.completedMonthCount as number,
+    isCompleteYear: item.isCompleteYear as boolean,
+    currentComparable, priorYearComparable, vsPriorYearComparable,
+    current, priorYear, vsPriorYear,
     months,
-    topCategoryDrivers: arrayValue(item.topCategoryDrivers, 'category drivers').map(parseCategoryDriver),
-    topMerchantDrivers: arrayValue(item.topMerchantDrivers, 'merchant drivers').map(parseMerchantDriver),
+    topCategoryDrivers,
+    topMerchantDrivers,
     budget: parseBudget(item.budget),
     goals: parseGoals(item.goals),
     dataQuality: parseDataQuality(item.dataQuality),
@@ -252,6 +304,14 @@ function parseMetrics(value: unknown): PeriodMetricsDto {
   integers(item, ['incomeJpy', 'expenseJpy', 'savingsJpy', 'postedTransactionCount'], 'period metrics')
   nullableInteger(item.savingsRateBps, 'period savings rate')
   return item as unknown as PeriodMetricsDto
+}
+
+function parseAnnualMetrics(value: unknown): PeriodMetricsDto {
+  const result = parseMetrics(value)
+  if (result.postedTransactionCount < 0 || result.savingsJpy !== result.incomeJpy - result.expenseJpy) throw new TypeError('period metrics')
+  const expectedRate = result.incomeJpy === 0 ? null : Math.trunc(result.savingsJpy * 10_000 / result.incomeJpy)
+  if (result.savingsRateBps !== expectedRate) throw new TypeError('period savings rate')
+  return result
 }
 
 function parseDeltaSet(value: unknown): MetricDeltaSetDto {
@@ -341,4 +401,69 @@ function nullableString(value: unknown, label: string) {
 
 function booleanValue(value: unknown, label: string) {
   if (typeof value !== 'boolean') throw new TypeError(label)
+}
+
+function yearValue(value: unknown, label: string) {
+  if (typeof value !== 'string' || !/^\d{4}$/.test(value)) throw new TypeError(label)
+}
+
+function monthValue(value: unknown, label: string) {
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) throw new TypeError(label)
+}
+
+function dateValue(value: unknown, label: string) {
+  if (typeof value !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-([0-2]\d|3[01])$/.test(value) || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) throw new TypeError(label)
+}
+
+function nonNegativeInteger(value: unknown, label: string) {
+  integerValue(value, label)
+  if ((value as number) < 0) throw new TypeError(label)
+}
+
+function validateAnnualWindow(period: string, throughMonth: string | null, completedMonthCount: number, isCompleteYear: boolean, months: readonly AnnualMonthPointDto[]) {
+  if (months.length !== 12 || months.some((point, index) => point.month !== `${period}-${String(index + 1).padStart(2, '0')}`)) throw new TypeError('yearly financial report months')
+  const complete = months.filter((point) => point.status === 'COMPLETE')
+  if (complete.length !== completedMonthCount || complete.some((point, index) => point.month !== months[index].month)) throw new TypeError('yearly financial report completed months')
+  if ((throughMonth ?? null) !== (complete.at(-1)?.month ?? null) || isCompleteYear !== (completedMonthCount === 12)) throw new TypeError('yearly financial report window')
+  const nonComplete = months.slice(completedMonthCount)
+  if (!isCompleteYear && (nonComplete[0]?.status !== 'PARTIAL' || nonComplete.slice(1).some((point) => point.status !== 'FUTURE'))) throw new TypeError('yearly financial report month status')
+  if (months.filter((point) => point.status === 'FUTURE').some((point) => point.incomeJpy !== 0 || point.expenseJpy !== 0 || point.savingsJpy !== 0 || point.savingsRateBps !== null || point.postedTransactionCount !== 0)) throw new TypeError('yearly financial report future month')
+}
+
+function sameMetrics(left: PeriodMetricsDto, right: PeriodMetricsDto) {
+  return left.incomeJpy === right.incomeJpy && left.expenseJpy === right.expenseJpy && left.savingsJpy === right.savingsJpy && left.savingsRateBps === right.savingsRateBps && left.postedTransactionCount === right.postedTransactionCount
+}
+
+function sameDeltaSet(left: MetricDeltaSetDto, right: MetricDeltaSetDto) {
+  return (['income', 'expense', 'savings'] as const).every((key) => left[key].amountJpy === right[key].amountJpy && left[key].rateBps === right[key].rateBps)
+}
+
+function validateDeltaSet(current: PeriodMetricsDto, previous: PeriodMetricsDto, deltas: MetricDeltaSetDto) {
+  for (const [key, field] of [['income', 'incomeJpy'], ['expense', 'expenseJpy'], ['savings', 'savingsJpy']] as const) {
+    const amount = current[field] - previous[field]
+    const expectedRate = previous[field] === 0 ? null : Math.trunc(amount * 10_000 / Math.abs(previous[field]))
+    if (deltas[key].amountJpy !== amount || deltas[key].rateBps !== expectedRate) throw new TypeError('yearly financial report deltas')
+  }
+}
+
+function validateCurrentMatchesMonths(current: PeriodMetricsDto, months: readonly AnnualMonthPointDto[]) {
+  const complete = months.filter((point) => point.status === 'COMPLETE')
+  const incomeJpy = complete.reduce((sum, point) => sum + point.incomeJpy, 0)
+  const expenseJpy = complete.reduce((sum, point) => sum + point.expenseJpy, 0)
+  const postedTransactionCount = complete.reduce((sum, point) => sum + point.postedTransactionCount, 0)
+  if (current.incomeJpy !== incomeJpy || current.expenseJpy !== expenseJpy || current.postedTransactionCount !== postedTransactionCount) throw new TypeError('yearly financial report current total')
+}
+
+function parseAnnualReviewCsv(value: unknown): AnnualReviewCsvDto {
+  const item = record(value, 'annual review CSV')
+  if (item.mediaType !== 'text/csv;charset=utf-8') throw new TypeError('annual review CSV')
+  stringValue(item.fileName, 'annual review CSV filename'); nonNegativeInteger(item.rowCount, 'annual review CSV rows'); nonNegativeInteger(item.byteSize, 'annual review CSV bytes'); stringValue(item.utf8BomCsv, 'annual review CSV data')
+  if (!(item.utf8BomCsv as string).startsWith('\uFEFF') || new TextEncoder().encode(item.utf8BomCsv as string).byteLength !== item.byteSize) throw new TypeError('annual review CSV')
+  return item as unknown as AnnualReviewCsvDto
+}
+
+function parseAnnualReviewCsvSaved(value: unknown): AnnualReviewCsvSavedDto {
+  const item = record(value, 'saved annual review CSV')
+  stringValue(item.fileName, 'saved annual review CSV filename'); nonNegativeInteger(item.rowCount, 'saved annual review CSV rows'); nonNegativeInteger(item.byteSize, 'saved annual review CSV bytes')
+  return item as unknown as AnnualReviewCsvSavedDto
 }
