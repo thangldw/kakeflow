@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.0 — 2026-07-13
+
+- Add a dedicated fixed-cost review inside Reports, derived only from confirmed household expenses and card purchases.
+- Compare the latest three complete months with the preceding three while excluding the partial current month and always returning an explicit six-month series.
+- Detect weekly, biweekly, monthly, quarterly, and annual payment cadence over a bounded 36-month history, exclude stale series, and annualize each payee by its observed cadence.
+- Classify housing, insurance, electricity, gas, water, internet, mobile, and subscription segments using category-first evidence while preventing short English keywords from matching inside unrelated words.
+- Allow cadence-stable utilities to vary in amount with lower confidence; require stable amounts for generic recurring costs and disclose every reason in the drill-down.
+- Apply the global account-group and household/member attribution scopes without double-counting split journal entries.
+- Report source coverage and limitations explicitly and never invent a market-price comparison or potential-savings estimate.
+
 ## 0.15.0 — 2026-07-13
 
 - Add explicit source terms for all-stock and mixed cash/stock mergers, including target and cash currencies, stock cost-basis allocation, and source-to-target/source-to-cash FX rates.
