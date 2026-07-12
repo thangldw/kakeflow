@@ -17,9 +17,10 @@ use import_workflow::{
 use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
 use read_model::{
-    AccountDto, AccountingBasis, CardSettlementDto, CreateHouseholdInput,
-    DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, TransactionPageDto,
-    TransactionPageRequest,
+    AccountDto, AccountingBasis, CardSettlementDto, CreateHouseholdInput, CreateSavingsGoalInput,
+    DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, MonthlyCategoryBudgetDto,
+    SavingsGoalDto, TransactionPageDto, TransactionPageRequest, UpdateSavingsGoalInput,
+    UpsertMonthlyCategoryBudgetInput,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -383,6 +384,68 @@ fn dashboard_query(
             &request.month,
             request.accounting_basis,
         )
+    })
+}
+
+#[tauri::command]
+fn budgets_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+) -> Result<Vec<MonthlyCategoryBudgetDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::list_monthly_category_budgets(connection, &household_id, &month)
+    })
+}
+
+#[tauri::command]
+fn budget_upsert(
+    state: tauri::State<'_, AppState>,
+    input: UpsertMonthlyCategoryBudgetInput,
+) -> Result<MonthlyCategoryBudgetDto, String> {
+    repository_result(&state, |connection| {
+        read_model::upsert_monthly_category_budget(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn savings_goals_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<SavingsGoalDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::list_savings_goals(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn savings_goal_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateSavingsGoalInput,
+) -> Result<SavingsGoalDto, String> {
+    repository_result(&state, |connection| {
+        read_model::create_savings_goal(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn savings_goal_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateSavingsGoalInput,
+) -> Result<SavingsGoalDto, String> {
+    repository_result(&state, |connection| {
+        read_model::update_savings_goal(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn savings_goal_delete(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    goal_id: String,
+) -> Result<(), String> {
+    repository_result(&state, |connection| {
+        read_model::delete_savings_goal(connection, &household_id, &goal_id)
     })
 }
 
@@ -833,6 +896,12 @@ pub fn run() {
             accounts_list,
             transactions_query,
             dashboard_query,
+            budgets_query,
+            budget_upsert,
+            savings_goals_list,
+            savings_goal_create,
+            savings_goal_update,
+            savings_goal_delete,
             import_summary,
             cards_list,
             card_match_confirm,
