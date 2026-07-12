@@ -8,6 +8,9 @@ import type {
   AccountDto,
   BackupSummaryDto,
   CommitSummaryDto,
+  CardMatchConfirmationDto,
+  CardReconciliationStatusDto,
+  CardSettlementDto,
   DashboardMonthlyTotalsDto,
   DatabaseStatusDto,
   ExtractedDocumentDto,
@@ -97,6 +100,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       rollbackImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_rollback') },
       createBackup: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'backup_create') },
       extractDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'document_extract') },
+      listCardSettlements: async () => [],
+      confirmCardMatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_match_confirm') },
     }
   }
 
@@ -117,6 +122,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
     createBackup: (archivePath, passphrase) => invokeValidated(invoke, 'backup_create', parseBackupSummary, { archivePath, passphrase }),
     extractDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_extract', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
+    listCardSettlements: (householdId) => invokeValidated(invoke, 'cards_list', parseCardSettlements, { householdId }),
+    confirmCardMatch: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_match_confirm', parseCardMatchConfirmation, { householdId, statementId, paymentId }),
   }
 }
 
@@ -221,6 +228,33 @@ function parseExtractedDocument(value: unknown): ExtractedDocumentDto {
   const confidenceBps = asSafeInteger(record.confidenceBps)
   if (confidenceBps > 10_000) throw new TypeError('confidence')
   return { method: record.method, text: record.text, confidenceBps, issues: record.issues }
+}
+
+const CARD_STATUSES: readonly CardReconciliationStatusDto[] = ['UNMATCHED', 'POSSIBLE_MATCH', 'FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'OVERPAID', 'UNDERPAID', 'MANUAL_OVERRIDE']
+
+function parseCardSettlements(value: unknown): readonly CardSettlementDto[] {
+  if (!Array.isArray(value)) throw new TypeError('card settlements')
+  return value.map((item) => {
+    const record = asRecord(item)
+    if (!CARD_STATUSES.includes(record.reconciliationStatus as CardReconciliationStatusDto)) throw new TypeError('card status')
+    const matchScoreBps = asNullableSafeInteger(record.matchScoreBps)
+    if (matchScoreBps != null && matchScoreBps > 10_000) throw new TypeError('card score')
+    return {
+      id: asRequiredString(record.id), cardAccountId: asRequiredString(record.cardAccountId), cardName: asRequiredString(record.cardName),
+      maskedIdentifier: asNullableString(record.maskedIdentifier), periodStart: asRequiredString(record.periodStart), periodEnd: asRequiredString(record.periodEnd),
+      paymentDueOn: asNullableString(record.paymentDueOn), statementAmountJpy: asSafeInteger(record.statementAmountJpy),
+      detailAmountJpy: asSafeSignedInteger(record.detailAmountJpy), lineCount: asSafeInteger(record.lineCount),
+      paymentId: asNullableString(record.paymentId), bankTransactionId: asNullableString(record.bankTransactionId),
+      paymentAmountJpy: asNullableSafeInteger(record.paymentAmountJpy), paymentOn: asNullableString(record.paymentOn),
+      matchScoreBps, reconciliationStatus: record.reconciliationStatus as CardReconciliationStatusDto,
+    }
+  })
+}
+
+function parseCardMatchConfirmation(value: unknown): CardMatchConfirmationDto {
+  const record = asRecord(value)
+  if (record.reconciliationStatus !== 'FULLY_RECONCILED') throw new TypeError('card confirmation')
+  return { statementId: asRequiredString(record.statementId), paymentId: asRequiredString(record.paymentId), reconciliationStatus: record.reconciliationStatus }
 }
 
 function parseVoid(value: unknown): void {

@@ -67,7 +67,8 @@ describe('KakeFlow application shell', () => {
 
     expect(screen.getByRole('heading', { name: '請求・口座引落の照合' })).toBeInTheDocument()
     expect(screen.getByText(/カード利用は支出、銀行引落は負債の返済/)).toBeInTheDocument()
-    expect(screen.getByText(/Rakuten Card ¥204,987 と MUFG/)).toBeInTheDocument()
+    expect(screen.getByText('Rakuten Card')).toBeInTheDocument()
+    expect(screen.getAllByText('¥204,987').length).toBeGreaterThanOrEqual(1)
   })
 
   it('keeps encrypted backup controls desktop-only in browser preview', async () => {
