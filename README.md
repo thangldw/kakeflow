@@ -1,6 +1,6 @@
 # KakeFlow
 
-KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, investment, PDF, spreadsheet, and receipt sources into a reconciled household ledger.
+KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, and receipt sources into a reconciled household ledger, with investment portfolio support planned as a separate snapshot-based module.
 
 This repository contains a runnable desktop application slice: responsive ledger dashboards, accrual/cash accounting views, CSV/XLSX/PDF/image ingestion, native sync-folder scanning, review-before-posting, searchable and paginated double-entry transactions, balanced split editing with source-evidence drill-down, persisted budgets and savings goals, credit-card settlement reconciliation, a Tauri 2 shell, and an encrypted SQLCipher database with forward-only migrations.
 
@@ -112,5 +112,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Remaining product milestones
 
 1. Add background filesystem change notifications and reviewed batch import on top of the current bounded native sync-folder scanner.
-2. Add packaged UI launch/E2E coverage on macOS and Windows; current CI compiles the real native executable without launching user data.
-3. Configure production signing, notarization, update keys, and a signed release channel.
+2. Add an investment and securities portfolio module, starting with the sample `assetbalance(all)_20260712_144756.csv` format. This file is an as-of asset snapshot—not transaction history—so it will populate separate `PortfolioSnapshot`, `PositionSnapshot`, and `FxRateSnapshot` models without changing household expense or cash-flow totals. Planned views include net worth, asset allocation, cash held at brokers, market value, average cost, realized/unrealized profit and loss, and historical portfolio performance. A separate brokerage transaction adapter will later handle buys, sells, dividends, fees, taxes, and deposits/withdrawals.
+3. Add packaged UI launch/E2E coverage on macOS and Windows; current CI compiles the real native executable without launching user data.
+4. Configure production signing, notarization, update keys, and a signed release channel.
