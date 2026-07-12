@@ -2,6 +2,7 @@ export type RecurringCadence = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'QUARTERLY' |
 
 export interface FinancialIntelligenceRequestDto {
   readonly householdId: string
+  readonly accountGroupId?: string | null
   readonly asOf: string
 }
 

@@ -41,6 +41,7 @@ const desktop = vi.hoisted(() => ({
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
 const nativeInvoke = vi.hoisted(() => vi.fn())
+const accountGroupState = vi.hoisted(() => ({ groups: [] as Array<{ id: string; householdId: string; name: string; groupKind: string; sortOrder: number; accountIds: string[]; createdAt: string; updatedAt: string }> }))
 
 vi.mock('@tauri-apps/plugin-dialog', () => dialog)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: nativeInvoke }))
@@ -102,6 +103,7 @@ import App from './App'
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     localStorage.clear()
+    accountGroupState.groups = []
     desktop.listHouseholds.mockReset().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }])
     desktop.listAccounts.mockReset().mockResolvedValue([
       { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' },
@@ -146,7 +148,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.readWatchedFile.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
-    nativeInvoke.mockReset().mockImplementation(async (command: string) => {
+    nativeInvoke.mockReset().mockImplementation(async (command: string, args?: { groupId?: string }) => {
       const quality = { totalImports: 1, postedImports: 1, reviewRequiredImports: 0, failedImports: 0, inProgressImports: 0, importCompletionBps: 10000, latestImportedAt: '2026-07-12T00:00:00Z', staleDays: 1, hasUnresolvedImports: false }
       const budget = { budgetJpy: 150000, actualJpy: 120000, remainingJpy: 30000, utilizationBps: 8000, categoryCount: 4, overBudgetCount: 0 }
       const goals = { activeCount: 1, targetJpy: 1000000, savedJpy: 400000, remainingJpy: 600000, dueWithinPeriodCount: 0 }
@@ -156,7 +158,12 @@ describe('KakeFlow desktop read models', () => {
       if (command === 'financial_report_monthly_query') return { period: '2026-07', current: metrics, priorMonth: { ...metrics, expenseJpy: 125000 }, priorYear: { ...metrics, incomeJpy: 490000 }, vsPriorMonth: deltas, vsPriorYear: deltas, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 70000, previousJpy: 60000, deltaJpy: 10000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 50000, previousJpy: 40000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 1, fullyReconciled: 1, possibleMatches: 0, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
       if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }] }
       if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
-      if (command === 'account_groups_list') return []
+      if (command === 'account_groups_list') return accountGroupState.groups
+      if (command === 'account_group_delete') {
+        const deletedId = args?.groupId
+        accountGroupState.groups = accountGroupState.groups.filter((group) => group.id !== deletedId)
+        return null
+      }
       throw new Error(`Unexpected native command: ${command}`)
     })
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
@@ -185,6 +192,38 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByText('−¥120,000')).toBeInTheDocument()
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
+  })
+
+  it('persists one global account scope across month and page changes, defaults export to it, and resets after deletion', async () => {
+    accountGroupState.groups = [{
+      id: 'daily', householdId: 'family', name: '生活費', groupKind: 'DAILY_SPENDING', sortOrder: 0,
+      accountIds: ['family-bank', 'family-card'], createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z',
+    }]
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    const scope = await screen.findByLabelText('口座スコープ') as HTMLSelectElement
+    await waitFor(() => expect(scope).toHaveDisplayValue('すべての口座'))
+    fireEvent.change(scope, { target: { value: 'daily' } })
+
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountGroupId: 'daily' })))
+    expect(localStorage.getItem('kakeflow.accountScope')).toContain('daily')
+    expect(container.querySelector('.scope-footnote')).toHaveTextContent('口座スコープ: 生活費')
+
+    fireEvent.change(screen.getByLabelText('対象月'), { target: { value: '2026-08' } })
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountGroupId: 'daily', fromDate: '2026-08-01' })))
+    expect(scope).toHaveValue('daily')
+
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    await screen.findByText('Financial Calendar')
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', { request: expect.objectContaining({ accountGroupId: 'daily' }) }))
+    fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
+    expect(await screen.findByLabelText('エクスポートグループ')).toHaveValue('daily')
+
+    fireEvent.click(screen.getByRole('button', { name: '削除' }))
+    await waitFor(() => expect(scope).toHaveValue(''))
+    expect(localStorage.getItem('kakeflow.accountScope')).toBeNull()
+    expect(container.querySelector('.scope-footnote')).toHaveTextContent('口座スコープ: すべての口座')
   })
 
   it('loads the financial calendar and monthly report from native read models', async () => {
@@ -221,17 +260,25 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('switches households and persists the active local selection', async () => {
+    accountGroupState.groups = [{
+      id: 'daily', householdId: 'family', name: '生活費', groupKind: 'DAILY_SPENDING', sortOrder: 0,
+      accountIds: ['family-bank'], createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z',
+    }]
     desktop.listHouseholds.mockResolvedValue([
       { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
       { id: 'parents', name: '両親家', baseCurrency: 'JPY', createdAt: '2026-07-02T00:00:00Z' },
     ])
     render(<App />)
     await screen.findByText('生協')
+    fireEvent.change(await screen.findByLabelText('口座スコープ'), { target: { value: 'daily' } })
+    expect(localStorage.getItem('kakeflow.accountScope')).toContain('daily')
 
     fireEvent.change(screen.getByLabelText('世帯を切り替える'), { target: { value: 'parents' } })
 
     await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'parents' })))
     expect(localStorage.getItem('kakeflow.activeHouseholdId')).toBe('parents')
+    expect(localStorage.getItem('kakeflow.accountScope')).toBeNull()
+    expect(screen.getByLabelText('口座スコープ')).toHaveValue('')
     expect(await screen.findByRole('heading', { name: '両親家の家計' })).toBeInTheDocument()
   })
 
