@@ -120,11 +120,18 @@ struct BootstrapResponse {
     database: DatabaseStatus,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DatabaseStatus {
     healthy: bool,
     schema_version: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackagedSmokeBootstrap {
+    application: String,
+    database: DatabaseStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -139,6 +146,45 @@ struct HealthResponse {
 struct StatusResponse {
     schema_version: i64,
     integrity: &'static str,
+}
+
+#[derive(Clone)]
+struct PackagedSmokeConfig {
+    root: std::path::PathBuf,
+    result: std::path::PathBuf,
+}
+
+impl PackagedSmokeConfig {
+    fn from_environment() -> Result<Option<Self>, std::io::Error> {
+        if std::env::var_os("KAKEFLOW_PACKAGED_SMOKE").as_deref()
+            != Some(std::ffi::OsStr::new("1"))
+        {
+            return Ok(None);
+        }
+
+        let root = std::env::var_os("KAKEFLOW_SMOKE_ROOT")
+            .map(std::path::PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "KAKEFLOW_SMOKE_ROOT must be an absolute path",
+                )
+            })?;
+        std::fs::create_dir_all(&root)?;
+        let root = root.canonicalize()?;
+        if root.parent().is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "KAKEFLOW_SMOKE_ROOT cannot be a filesystem root",
+            ));
+        }
+
+        Ok(Some(Self {
+            result: root.join("packaged-smoke-result.json"),
+            root,
+        }))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -352,6 +398,55 @@ fn database_status(state: &AppState) -> Result<DatabaseStatus, String> {
         })
         // Never expose paths, SQL, keys, or financial data to the webview.
         .map_err(|_| "Database health check failed".to_owned())
+}
+
+/// Test-only IPC endpoint used by the packaged-app smoke harness. It is inert
+/// unless startup explicitly enabled smoke mode with an isolated data root.
+#[tauri::command]
+fn packaged_smoke_complete(
+    app: tauri::AppHandle,
+    webview: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    bootstrap: PackagedSmokeBootstrap,
+) -> Result<(), String> {
+    let config = PackagedSmokeConfig::from_environment()
+        .map_err(|_| "Packaged smoke configuration is invalid".to_owned())?
+        .ok_or_else(|| "Packaged smoke mode is disabled".to_owned())?;
+    if webview.label() != "main" || bootstrap.application != "KakeFlow" {
+        return Err("Packaged smoke request is invalid".to_owned());
+    }
+
+    let current = database_status(&state)?;
+    if !bootstrap.database.healthy
+        || !current.healthy
+        || bootstrap.database.schema_version != current.schema_version
+        || current.schema_version <= 0
+    {
+        return Err("Packaged smoke database validation failed".to_owned());
+    }
+
+    let database = config.root.join("database").join("kakeflow.db");
+    if !database.is_file() {
+        return Err("Packaged smoke database was not created".to_owned());
+    }
+    let result = format!(
+        concat!(
+            "{{\n",
+            "  \"status\": \"ok\",\n",
+            "  \"application\": \"KakeFlow\",\n",
+            "  \"window\": \"main\",\n",
+            "  \"ipc\": true,\n",
+            "  \"databaseHealthy\": true,\n",
+            "  \"schemaVersion\": {}\n",
+            "}}\n"
+        ),
+        current.schema_version
+    );
+    std::fs::write(&config.result, result)
+        .map_err(|_| "Packaged smoke result could not be written".to_owned())?;
+
+    app.exit(0);
+    Ok(())
 }
 
 fn repository_result<T>(
@@ -1298,12 +1393,39 @@ fn create_ocr_temporary_file(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // Must be the first plugin: first-run key generation assumes one process.
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+    let smoke_config = PackagedSmokeConfig::from_environment()
+        .expect("KakeFlow packaged smoke configuration is invalid");
+    let smoke_enabled = smoke_config.is_some();
+    let mut builder = tauri::Builder::default();
+    if !smoke_enabled {
+        // Must be the first production plugin: first-run key generation assumes one process.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}));
+    }
+    let setup_smoke_config = smoke_config.clone();
+
+    builder
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let app_data_dir = app.path().app_data_dir()?;
+        .on_page_load(move |webview, payload| {
+            if smoke_enabled
+                && webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                let _ = webview.eval(
+                    r#"
+                    (async () => {
+                      const invoke = window.__TAURI_INTERNALS__.invoke;
+                      const bootstrap = await invoke('app_bootstrap');
+                      await invoke('packaged_smoke_complete', { bootstrap });
+                    })().catch((error) => console.error('packaged smoke failed', error));
+                    "#,
+                );
+            }
+        })
+        .setup(move |app| {
+            let app_data_dir = setup_smoke_config
+                .as_ref()
+                .map(|config| config.root.clone())
+                .unwrap_or(app.path().app_data_dir()?);
             let database_path = app_data_dir.join("database").join("kakeflow.db");
             let vault_path = app_data_dir.join("documents");
             let resource_dir = app.path().resource_dir()?;
@@ -1325,15 +1447,21 @@ pub fn run() {
                 }
             }
             let restore_credentials = OsRestoreCredentialStore::new()?;
-            // Finish or roll back any staged restore before SQLite or the vault
-            // obtains a file handle. This is required for reliable Windows
-            // activation and makes every crash checkpoint restart-safe.
-            restore::recover_interrupted_restore(&app_data_dir, &restore_credentials)?;
-            let key_provider = OsDatabaseKeyProvider::new()?;
-            let master_key = if database_path.exists() {
-                key_provider.existing_key()?
+            let master_key = if setup_smoke_config.is_some() {
+                // Deterministic process-local test key. Packaged smoke runs must
+                // never read or write the user's Keychain/Credential Manager.
+                Zeroizing::new(vec![0x4b_u8; 32])
             } else {
-                key_provider.key()?
+                // Finish or roll back any staged restore before SQLite or the vault
+                // obtains a file handle. This is required for reliable Windows
+                // activation and makes every crash checkpoint restart-safe.
+                restore::recover_interrupted_restore(&app_data_dir, &restore_credentials)?;
+                let key_provider = OsDatabaseKeyProvider::new()?;
+                if database_path.exists() {
+                    key_provider.existing_key()?
+                } else {
+                    key_provider.key()?
+                }
             };
             if master_key.len() != 32 {
                 return Err(std::io::Error::other("database key has invalid length").into());
@@ -1368,6 +1496,7 @@ pub fn run() {
             app_bootstrap,
             app_health,
             app_status,
+            packaged_smoke_complete,
             households_list,
             household_create,
             accounts_list,
