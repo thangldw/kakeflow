@@ -4,6 +4,27 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 This repository contains a runnable desktop application slice: responsive ledger dashboards, accrual/cash accounting views, CSV/XLSX/PDF/image ingestion, native sync-folder scanning, review-before-posting, searchable and paginated double-entry transactions, balanced split editing with source-evidence drill-down, persisted budgets and savings goals, credit-card settlement reconciliation, a Tauri 2 shell, and an encrypted SQLCipher database with forward-only migrations.
 
+## Product tour
+
+The household overview combines net worth, monthly income and spending, trends,
+category composition, recent transactions, and card-settlement status.
+
+![KakeFlow household overview](docs/assets/screenshots/kakeflow-overview.png)
+
+| Searchable transaction ledger | Import and review inbox |
+| --- | --- |
+| ![KakeFlow transaction ledger](docs/assets/screenshots/kakeflow-transactions.png) | ![KakeFlow import inbox](docs/assets/screenshots/kakeflow-import-inbox.png) |
+
+## How KakeFlow works
+
+![KakeFlow local-first data pipeline](docs/assets/infographics/data-pipeline.svg)
+
+KakeFlow deliberately separates expense recognition from cash settlement. A
+credit-card purchase creates an expense and a card liability; the later bank
+debit settles that liability without counting the expense twice.
+
+![KakeFlow credit-card reconciliation](docs/assets/infographics/card-reconciliation.svg)
+
 ## Run locally
 
 Use Node.js 20 LTS or 22 LTS.
