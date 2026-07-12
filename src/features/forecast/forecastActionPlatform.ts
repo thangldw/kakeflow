@@ -76,13 +76,15 @@ export function createForecastActionPlatform(invoke: ForecastActionInvoke = taur
 
 export function parseForecastAction(value: unknown): ForecastActionDto {
   const item = record(value, 'forecast action')
+  const months = array(item.months, 'months').map(parseForecastMonth)
+  if (months.length !== 3) throw new TypeError('months')
   return {
     asOf: isoDate(item.asOf, 'asOf'),
     forecastFrom: month(item.forecastFrom, 'forecastFrom'),
     forecastThrough: month(item.forecastThrough, 'forecastThrough'),
     openingCashJpy: integer(item.openingCashJpy, 'openingCashJpy'),
     assumptions: parseAssumptions(item.assumptions),
-    months: array(item.months, 'months').map(parseForecastMonth),
+    months,
     actions: array(item.actions, 'actions').map(parseAction),
   }
 }
@@ -93,11 +95,11 @@ function parseAssumptions(value: unknown): ForecastAssumptionsDto {
     historyFrom: month(item.historyFrom, 'historyFrom'),
     historyThrough: month(item.historyThrough, 'historyThrough'),
     historyMonths: integer(item.historyMonths, 'historyMonths', 1, 36),
-    averageMonthlyIncomeJpy: integer(item.averageMonthlyIncomeJpy, 'averageMonthlyIncomeJpy'),
-    averageMonthlyExpenseJpy: integer(item.averageMonthlyExpenseJpy, 'averageMonthlyExpenseJpy'),
-    averageMonthlyNonRecurringExpenseJpy: integer(item.averageMonthlyNonRecurringExpenseJpy, 'averageMonthlyNonRecurringExpenseJpy'),
+    averageMonthlyIncomeJpy: integer(item.averageMonthlyIncomeJpy, 'averageMonthlyIncomeJpy', 0),
+    averageMonthlyExpenseJpy: integer(item.averageMonthlyExpenseJpy, 'averageMonthlyExpenseJpy', 0),
+    averageMonthlyNonRecurringExpenseJpy: integer(item.averageMonthlyNonRecurringExpenseJpy, 'averageMonthlyNonRecurringExpenseJpy', 0),
     averageMonthlyCashChangeBeforeCardPaymentsJpy: integer(item.averageMonthlyCashChangeBeforeCardPaymentsJpy, 'averageMonthlyCashChangeBeforeCardPaymentsJpy'),
-    recurringMonthlyExpenseJpy: integer(item.recurringMonthlyExpenseJpy, 'recurringMonthlyExpenseJpy'),
+    recurringMonthlyExpenseJpy: integer(item.recurringMonthlyExpenseJpy, 'recurringMonthlyExpenseJpy', 0),
     recurringItemCount: integer(item.recurringItemCount, 'recurringItemCount', 0),
     reasons: strings(item.reasons, 'assumption reasons'),
   }
@@ -108,12 +110,12 @@ function parseForecastMonth(value: unknown): ForecastMonthDto {
   return {
     month: month(item.month, 'month'),
     openingCashJpy: integer(item.openingCashJpy, 'openingCashJpy'),
-    projectedIncomeJpy: integer(item.projectedIncomeJpy, 'projectedIncomeJpy'),
-    projectedNonRecurringExpenseJpy: integer(item.projectedNonRecurringExpenseJpy, 'projectedNonRecurringExpenseJpy'),
-    projectedRecurringExpenseJpy: integer(item.projectedRecurringExpenseJpy, 'projectedRecurringExpenseJpy'),
+    projectedIncomeJpy: integer(item.projectedIncomeJpy, 'projectedIncomeJpy', 0),
+    projectedNonRecurringExpenseJpy: integer(item.projectedNonRecurringExpenseJpy, 'projectedNonRecurringExpenseJpy', 0),
+    projectedRecurringExpenseJpy: integer(item.projectedRecurringExpenseJpy, 'projectedRecurringExpenseJpy', 0),
     projectedSavingsJpy: integer(item.projectedSavingsJpy, 'projectedSavingsJpy'),
     projectedCashChangeBeforeCardPaymentsJpy: integer(item.projectedCashChangeBeforeCardPaymentsJpy, 'projectedCashChangeBeforeCardPaymentsJpy'),
-    knownCardPaymentsJpy: integer(item.knownCardPaymentsJpy, 'knownCardPaymentsJpy'),
+    knownCardPaymentsJpy: integer(item.knownCardPaymentsJpy, 'knownCardPaymentsJpy', 0),
     projectedCashChangeJpy: integer(item.projectedCashChangeJpy, 'projectedCashChangeJpy'),
     closingCashJpy: integer(item.closingCashJpy, 'closingCashJpy'),
   }
@@ -130,7 +132,7 @@ function parseAction(value: unknown): ActionItemDto {
     title: text(item.title, 'title'),
     detail: text(item.detail, 'detail'),
     dueOn: nullableDate(item.dueOn, 'dueOn'),
-    amountJpy: nullableInteger(item.amountJpy, 'amountJpy'),
+    amountJpy: nullableInteger(item.amountJpy, 'amountJpy', 0),
     entityId: nullableText(item.entityId, 'entityId'),
     reasons: strings(item.reasons, 'action reasons'),
   }
@@ -168,8 +170,8 @@ function integer(value: unknown, field: string, minimum = Number.MIN_SAFE_INTEGE
   if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) throw new TypeError(field)
   return value as number
 }
-function nullableInteger(value: unknown, field: string): number | null {
-  return value === null ? null : integer(value, field)
+function nullableInteger(value: unknown, field: string, minimum = Number.MIN_SAFE_INTEGER): number | null {
+  return value === null ? null : integer(value, field, minimum)
 }
 function strings(value: unknown, field: string): readonly string[] {
   return array(value, field).map((item) => text(item, field))
