@@ -21,6 +21,8 @@ pub enum KeyStoreError {
     EntryUnavailable,
     #[error("the database key could not be read from the operating system credential store")]
     ReadFailed,
+    #[error("the database key is missing from the operating system credential store")]
+    MissingKey,
     #[error("the database key could not be written to the operating system credential store")]
     WriteFailed,
     #[error("the stored database key has an unsupported or invalid format")]
@@ -101,6 +103,13 @@ impl OsDatabaseKeyProvider {
         let result = decode_key(&persisted)?;
         generated.zeroize();
         Ok(result)
+    }
+
+    /// Loads an existing key without ever generating or persisting a replacement.
+    /// Use this whenever encrypted application data already exists.
+    pub fn existing_key(&self) -> Result<Zeroizing<Vec<u8>>, KeyStoreError> {
+        let encoded = self.backend.read()?.ok_or(KeyStoreError::MissingKey)?;
+        decode_key(&encoded)
     }
 }
 
@@ -246,6 +255,19 @@ mod tests {
             assert_eq!(provider.key().unwrap_err(), KeyStoreError::InvalidStoredKey);
             assert_eq!(*backend.writes.lock().unwrap(), 0);
         }
+    }
+
+    #[test]
+    fn missing_existing_key_never_generates_or_writes_a_replacement() {
+        let backend = Arc::new(MockBackend::default());
+        let provider = OsDatabaseKeyProvider::with_backend(backend.clone());
+
+        assert_eq!(
+            provider.existing_key().unwrap_err(),
+            KeyStoreError::MissingKey
+        );
+        assert_eq!(*backend.writes.lock().unwrap(), 0);
+        assert_eq!(*backend.reads.lock().unwrap(), 1);
     }
 
     #[test]

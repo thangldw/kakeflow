@@ -382,7 +382,11 @@ pub fn run() {
             let database_path = app_data_dir.join("database").join("kakeflow.db");
             let vault_path = app_data_dir.join("documents");
             let key_provider = OsDatabaseKeyProvider::new()?;
-            let master_key = key_provider.key()?;
+            let master_key = if database_path.exists() {
+                key_provider.existing_key()?
+            } else {
+                key_provider.key()?
+            };
             if master_key.len() != 32 {
                 return Err(std::io::Error::other("database key has invalid length").into());
             }
