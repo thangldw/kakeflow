@@ -20,10 +20,9 @@ npm run lint
 npm run build
 ```
 
-Desktop development also requires Rust 1.97. The current development key provider deliberately requires an environment key of at least 32 characters:
+Desktop development also requires Rust 1.97. The desktop app creates a random database master key on first launch and stores it in macOS Keychain or Windows Credential Manager:
 
 ```bash
-export KAKEFLOW_DATABASE_KEY='replace-with-a-local-development-secret'
 npm run desktop:dev
 ```
 
@@ -63,12 +62,12 @@ src-tauri/         Tauri shell, typed commands, SQLCipher, migrations
 workers/extract    planned PDF/OCR sidecar
 ```
 
-Release builds currently fail closed at database initialization until an OS credential provider replaces the development environment-key provider. This prevents accidentally distributing a build that relies on a bundled or process-environment database secret.
+KakeFlow never stores the database key in its database, logs, application bundle, or process environment. Losing the OS credential currently makes the encrypted local database unrecoverable; portable encrypted backup and recovery-key workflows remain a release requirement.
 
 ## Next milestone
 
-1. Add macOS Keychain and Windows Credential Manager database-key providers.
-2. Move immutable source copying and parsing behind typed Rust commands.
-3. Add import decision, atomic ledger posting, idempotency, and rollback by import run.
-4. Replace dashboard fixtures with SQLite read models and typed IPC queries.
-5. Add encrypted document vault, portable backup/restore, PDF/OCR, and signed release CI.
+1. Move immutable source copying and parsing behind typed Rust commands.
+2. Add import decision, atomic ledger posting, idempotency, and rollback by import run.
+3. Replace the remaining dashboard fixtures with SQLite read models and typed IPC queries.
+4. Add encrypted document vault, portable backup/restore, and PDF/OCR.
+5. Add signed/notarized release credentials and packaged E2E tests.

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -33,6 +33,8 @@ import { cardSettlements, categoryData, importItems, spendingTrend, transactions
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
+import { platformClient } from './platform'
+import type { AppBootstrapDto, HouseholdDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -45,7 +47,7 @@ const navigation: NavigationItem[] = [
   { id: 'budgets', label: '予算・目標', icon: Goal },
 ]
 
-function Sidebar({ page, setPage, open, close }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void }) {
+function Sidebar({ page, setPage, open, close, bootstrap, householdName }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; householdName: string }) {
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="メニューを閉じる" onClick={close} />}
@@ -56,11 +58,11 @@ function Sidebar({ page, setPage, open, close }: { page: PageId; setPage: (page:
           <button className="icon-btn mobile-close" aria-label="メニューを閉じる" onClick={close}><X size={19} /></button>
         </div>
 
-        <div className="household-picker">
+        <button className="household-picker" type="button" aria-label="世帯を切り替える">
           <div className="avatar">TK</div>
-          <div><strong>田中家</strong><small>ファミリープラン</small></div>
+          <div><strong>{householdName}</strong><small>ファミリープラン</small></div>
           <ChevronDown size={16} />
-        </div>
+        </button>
 
         <nav>
           <p className="nav-caption">メニュー</p>
@@ -81,7 +83,7 @@ function Sidebar({ page, setPage, open, close }: { page: PageId; setPage: (page:
         </nav>
 
         <div className="sidebar-foot">
-          <div className="sync-status"><span /><div><strong>データは最新です</strong><small>本日 15:42 に更新</small></div></div>
+          <div className={`sync-status ${bootstrap?.database.healthy ? '' : 'sync-status--offline'}`}><span /><div><strong>{bootstrap?.database.healthy ? '暗号化DB 接続済み' : platformClient.runtime === 'web' ? 'ブラウザプレビュー' : 'データベース確認中'}</strong><small>{bootstrap?.database.healthy ? `スキーマ v${bootstrap.database.schemaVersion}` : 'デスクトップ版で安全に保存'}</small></div></div>
           <button className="nav-item"><Settings size={19} /><span>設定</span></button>
         </div>
       </aside>
@@ -291,10 +293,56 @@ function BudgetsPage() {
   </>
 }
 
+function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => void }) {
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('世帯名を入力してください。')
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      onCreated(await platformClient.createHousehold({ id: globalThis.crypto.randomUUID(), name: trimmed }))
+    } catch {
+      setError('世帯を作成できませんでした。もう一度お試しください。')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <div className="onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><div className="brand-mark"><Leaf size={22} /></div><p>KakeFlowへようこそ</p><h1 id="onboarding-title">家計簿をはじめましょう</h1><span>データはこの端末で暗号化して保存されます。</span><form onSubmit={(event) => void submit(event)}><label htmlFor="household-name">世帯名</label><input id="household-name" autoFocus maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="例：田中家" />{error && <small role="alert">{error}</small>}<button className="primary-btn" disabled={busy}>{busy ? '作成中…' : '安全な家計簿を作成'}</button></form></section></div>
+}
+
 function App() {
   const [page, setPage] = useState<PageId>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [importPreviews, setImportPreviews] = useState<ImportPreview[]>([])
+  const [bootstrap, setBootstrap] = useState<AppBootstrapDto | null>(null)
+  const [households, setHouseholds] = useState<readonly HouseholdDto[]>([])
+  const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
+
+  useEffect(() => {
+    let active = true
+    void Promise.all([platformClient.bootstrap(), platformClient.listHouseholds()]).then(([result, householdList]) => {
+      if (active) {
+        setBootstrap(result)
+        setHouseholds(householdList)
+        setDesktopLoaded(true)
+      }
+    }).catch(() => {
+      if (active) {
+        setBootstrap(null)
+        setDesktopLoaded(true)
+      }
+    })
+    return () => { active = false }
+  }, [])
   const pageContent = {
     overview: <Overview setPage={setPage} />,
     transactions: <TransactionsPage />,
@@ -302,7 +350,7 @@ function App() {
     cards: <CardsPage />,
     budgets: <BudgetsPage />,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} /><main>{pageContent}</main></div></div>
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} householdName={households[0]?.name ?? '田中家'} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} /><main>{pageContent}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => setHouseholds([household])} />}</div>
 }
 
 export default App

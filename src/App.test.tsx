@@ -1,10 +1,16 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import App from './App'
 
+async function renderApp() {
+  const result = render(<App />)
+  await screen.findByText('ブラウザプレビュー')
+  return result
+}
+
 describe('KakeFlow application shell', () => {
-  it('renders the household overview with accounting KPIs', () => {
-    render(<App />)
+  it('renders the household overview with accounting KPIs', async () => {
+    await renderApp()
 
     expect(screen.getByRole('heading', { name: 'こんにちは、田中さん' })).toBeInTheDocument()
     expect(screen.getByText('純資産')).toBeInTheDocument()
@@ -12,8 +18,15 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByRole('heading', { name: 'カード支払い' })).toBeInTheDocument()
   })
 
-  it('navigates to the import inbox', () => {
-    render(<App />)
+  it('identifies the non-persistent browser preview runtime', async () => {
+    await renderApp()
+
+    await waitFor(() => expect(screen.getByText('ブラウザプレビュー')).toBeInTheDocument())
+    expect(screen.getByText('デスクトップ版で安全に保存')).toBeInTheDocument()
+  })
+
+  it('navigates to the import inbox', async () => {
+    await renderApp()
 
     fireEvent.click(screen.getByRole('button', { name: /インポート/ }))
 
@@ -22,8 +35,8 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText('反映可能')).toBeInTheDocument()
   })
 
-  it('filters transactions without changing accounting totals', () => {
-    render(<App />)
+  it('filters transactions without changing accounting totals', async () => {
+    await renderApp()
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
 
     const main = screen.getByRole('main')
@@ -35,8 +48,8 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText('支出 ¥267,990')).toBeInTheDocument()
   })
 
-  it('switches between accrual expense and cash movement without double counting card payments', () => {
-    render(<App />)
+  it('switches between accrual expense and cash movement without double counting card payments', async () => {
+    await renderApp()
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
 
     expect(screen.getByText('JR EAST')).toBeInTheDocument()
@@ -48,8 +61,8 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText('現金流出 ¥386,000')).toBeInTheDocument()
   })
 
-  it('explains reconciled card payments separately from expenses', () => {
-    render(<App />)
+  it('explains reconciled card payments separately from expenses', async () => {
+    await renderApp()
     fireEvent.click(screen.getByRole('button', { name: 'カード照合 1' }))
 
     expect(screen.getByRole('heading', { name: '請求・口座引落の照合' })).toBeInTheDocument()
