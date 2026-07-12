@@ -1,6 +1,17 @@
 # Investment performance accounting
 
-KakeFlow v0.7 derives investment holdings and realized performance from immutable brokerage events.
+KakeFlow v0.8 derives investment holdings, realized performance, and dated market valuation from immutable brokerage events and provenance-bearing observations.
+
+## Market valuation (v0.8)
+
+Valuation selects the latest confirmed instrument price on or before the requested
+date. Prices imported with `assetbalance(all)_*.csv` snapshots are reused with
+their original document and row provenance. A future quote, wrong-currency quote,
+or missing quote is never substituted: the affected position remains unvalued and
+is excluded from currency totals with an explicit missing-price warning.
+
+Market value and unrealized P&L stay grouped by native currency. The FX reporting
+layer remains separate so valuation never silently combines unlike currencies.
 
 ## Cost basis
 
