@@ -20,6 +20,7 @@ export interface SavedCustomParserProfileDto {
   payeeColumn: string | null
   amountMode: 'SIGNED' | 'DEBIT_CREDIT'
   signedAmountColumn: string | null
+  signedPositiveDirection: 'IN' | 'OUT' | null
   debitColumn: string | null
   creditColumn: string | null
   externalIdColumn: string | null
@@ -103,8 +104,8 @@ function invalidProfile(profile: SavedCustomParserProfileDto): ParseIssue[] {
     issues.push({ code: 'CUSTOM_DESCRIPTION_MISSING', message: 'At least one description or payee column is required.', severity: 'error' })
   }
   const amountShapeValid = profile.amountMode === 'SIGNED'
-    ? Boolean(profile.signedAmountColumn && !profile.debitColumn && !profile.creditColumn)
-    : Boolean(!profile.signedAmountColumn && profile.debitColumn && profile.creditColumn)
+    ? Boolean(profile.signedAmountColumn && profile.signedPositiveDirection && !profile.debitColumn && !profile.creditColumn)
+    : Boolean(!profile.signedAmountColumn && !profile.signedPositiveDirection && profile.debitColumn && profile.creditColumn)
   if (!amountShapeValid) issues.push({ code: 'CUSTOM_AMOUNT_MAPPING_INVALID', message: 'Amount columns do not match the selected signed or debit/credit mode.', severity: 'error' })
   const configured = mappedColumns(profile).map(([, header]) => normalizeHeader(header))
   if (configured.some((header) => !header)) {
@@ -208,7 +209,8 @@ function parseDecoded(
           issues.push({ code: 'CUSTOM_AMOUNT_INVALID', message: 'Signed amount must be a non-zero integer JPY value.', severity: 'error', row: row.sourceRow, column: profile.signedAmountColumn ?? undefined })
           continue
         }
-        const direction = amount > 0 ? 'IN' : 'OUT'
+        const positiveDirection = profile.signedPositiveDirection!
+        const direction = amount > 0 ? positiveDirection : positiveDirection === 'IN' ? 'OUT' : 'IN'
         if (direction === 'OUT') outgoingAmount = Math.abs(amount)
         else incomingAmount = Math.abs(amount)
       } else {

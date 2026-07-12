@@ -5,7 +5,7 @@ function profile(change: Partial<SavedCustomParserProfileDto> = {}): SavedCustom
   return {
     id: 'custom-bank', householdId: 'family', name: 'Custom bank', delimiter: 'COMMA', encoding: 'UTF8',
     headerRow: 1, dateColumn: 'Date', dateFormat: 'AUTO', descriptionColumn: 'Memo', payeeColumn: 'Payee',
-    amountMode: 'SIGNED', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null,
+    amountMode: 'SIGNED', signedAmountColumn: 'Amount', signedPositiveDirection: 'IN', debitColumn: null, creditColumn: null,
     externalIdColumn: 'ID', accountHintColumn: 'Account', isEnabled: true, priority: 10, version: 3,
     createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z', ...change,
   }
@@ -33,13 +33,22 @@ describe('custom delimited adapter', () => {
     const result = createCustomDelimitedAdapter(profile({
       delimiter: 'TAB', encoding: 'AUTO', dateColumn: 'When', dateFormat: 'DD_MM_YYYY',
       descriptionColumn: 'Details', payeeColumn: null, amountMode: 'DEBIT_CREDIT', signedAmountColumn: null,
-      debitColumn: 'Debit', creditColumn: 'Credit', externalIdColumn: null, accountHintColumn: null,
+      signedPositiveDirection: null, debitColumn: 'Debit', creditColumn: 'Credit', externalIdColumn: null, accountHintColumn: null,
     })).parseBytes(new TextEncoder().encode(text))
 
     expect(result.parsed.records).toHaveLength(1)
     expect(result.parsed.records[0]).toMatchObject({ transactionDate: '2026-07-13', outgoingAmount: 2500, incomingAmount: null })
     expect(result.preview).toMatchObject({ dataRowCount: 2, candidateCount: 1, rejectedRowCount: 1 })
     expect(result.parsed.issues).toContainEqual(expect.objectContaining({ code: 'CUSTOM_SUMMARY_ROW', row: 4, severity: 'warning' }))
+  })
+
+  it('honors POSITIVE_OUT signed profiles for charges and negative refunds', () => {
+    const result = createCustomDelimitedAdapter(profile({ signedPositiveDirection: 'OUT' })).parse({
+      text: 'Date,Payee,Memo,Amount,ID,Account\n2026-07-01,Store,Charge,1200,c-1,card\n2026-07-02,Store,Refund,-500,r-1,card',
+    })
+    expect(result.records).toHaveLength(2)
+    expect(result.records[0]).toMatchObject({ outgoingAmount: 1200, incomingAmount: null, externalTransactionId: 'c-1' })
+    expect(result.records[1]).toMatchObject({ outgoingAmount: null, incomingAmount: 500, externalTransactionId: 'r-1' })
   })
 
   it.each([
@@ -49,7 +58,7 @@ describe('custom delimited adapter', () => {
   ])('rejects ambiguous debit/credit rows: %s', (_name, row, code) => {
     const configured = profile({
       descriptionColumn: 'Payee', payeeColumn: null, amountMode: 'DEBIT_CREDIT', signedAmountColumn: null,
-      debitColumn: 'Debit', creditColumn: 'Credit', externalIdColumn: null, accountHintColumn: null,
+      signedPositiveDirection: null, debitColumn: 'Debit', creditColumn: 'Credit', externalIdColumn: null, accountHintColumn: null,
     })
     const result = createCustomDelimitedAdapter(configured).parse({ text: `Date,Payee,Debit,Credit\n${row}` })
     expect(result.records).toEqual([])
@@ -85,5 +94,18 @@ describe('custom delimited adapter', () => {
       .parse({ text: 'Date,Amount\n2026-07-01,-500' })
     expect(result.records).toEqual([])
     expect(result.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining(['CUSTOM_PROFILE_DISABLED', 'CUSTOM_DESCRIPTION_MISSING']))
+  })
+
+  it('requires signed direction only for signed amount profiles', () => {
+    const missingDirection = createCustomDelimitedAdapter(profile({ signedPositiveDirection: null }))
+      .parse({ text: 'Date,Payee,Memo,Amount,ID,Account\n2026-07-01,Shop,,500,x,bank' })
+    expect(missingDirection.records).toEqual([])
+    expect(missingDirection.issues).toContainEqual(expect.objectContaining({ code: 'CUSTOM_AMOUNT_MAPPING_INVALID' }))
+
+    const unexpectedDirection = createCustomDelimitedAdapter(profile({
+      amountMode: 'DEBIT_CREDIT', signedAmountColumn: null, signedPositiveDirection: 'OUT', debitColumn: 'Debit', creditColumn: 'Credit',
+    })).parse({ text: 'Date,Payee,Memo,Debit,Credit,ID,Account\n2026-07-01,Shop,,500,,x,bank' })
+    expect(unexpectedDirection.records).toEqual([])
+    expect(unexpectedDirection.issues).toContainEqual(expect.objectContaining({ code: 'CUSTOM_AMOUNT_MAPPING_INVALID' }))
   })
 })
