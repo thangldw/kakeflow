@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, investment, PDF, spreadsheet, and receipt sources into a reconciled household ledger.
 
-This repository currently contains the first runnable product slice: a responsive desktop dashboard prototype with transaction search, an import inbox, credit-card settlement reconciliation, and budgets/goals.
+This repository contains a runnable desktop vertical slice: a responsive dashboard, transaction accounting-basis switch, real CSV detection/preview, credit-card settlement reconciliation, budgets/goals, a Tauri 2 shell, and an encrypted SQLCipher database with forward-only migrations.
 
 ## Run locally
 
@@ -18,6 +18,19 @@ Production checks:
 ```bash
 npm run lint
 npm run build
+```
+
+Desktop development also requires Rust 1.97. The current development key provider deliberately requires an environment key of at least 32 characters:
+
+```bash
+export KAKEFLOW_DATABASE_KEY='replace-with-a-local-development-secret'
+npm run desktop:dev
+```
+
+Build an unsigned local macOS/Windows artifact:
+
+```bash
+npm run desktop:build
 ```
 
 ## Product principles
@@ -42,21 +55,20 @@ Local/synced folder
   -> desktop dashboard
 ```
 
-The current React application is the presentation layer. Planned boundaries are:
+The React application is the presentation and import-preview layer. Tauri/Rust owns the encrypted database, migrations, OS paths, and IPC boundary:
 
 ```text
-apps/desktop       Tauri shell and React UI
-crates/core        ingestion orchestration, validation, encryption
-workers/extract    CSV/XLSX/PDF/OCR adapters
-packages/domain    canonical schemas and accounting rules
+src/               React UI, domain rules, and decoded CSV adapters
+src-tauri/         Tauri shell, typed commands, SQLCipher, migrations
+workers/extract    planned PDF/OCR sidecar
 ```
 
-Tauri scaffolding is intentionally deferred until the Rust toolchain is available in the development environment. The UI runs independently in Vite so product work and domain modeling can continue in parallel.
+Release builds currently fail closed at database initialization until an OS credential provider replaces the development environment-key provider. This prevents accidentally distributing a build that relies on a bundled or process-environment database secret.
 
 ## Next milestone
 
-1. Introduce canonical domain types and SQLite migrations.
-2. Implement Japanese bank, PayPay, Amazon Mastercard, and Rakuten e-NAVI adapters.
-3. Add import preview, idempotency, and rollback by import run.
-4. Add deterministic credit-card statement to bank-debit reconciliation.
-5. Wrap the verified React application in Tauri for signed macOS and Windows builds.
+1. Add macOS Keychain and Windows Credential Manager database-key providers.
+2. Move immutable source copying and parsing behind typed Rust commands.
+3. Add import decision, atomic ledger posting, idempotency, and rollback by import run.
+4. Replace dashboard fixtures with SQLite read models and typed IPC queries.
+5. Add encrypted document vault, portable backup/restore, PDF/OCR, and signed release CI.
