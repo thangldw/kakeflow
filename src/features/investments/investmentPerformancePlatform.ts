@@ -82,6 +82,7 @@ export interface InvestmentHoldingsDto {
   readonly realizedAllocations: readonly RealizedAllocationDto[]
   readonly uncoveredSales: readonly UncoveredSaleDto[]
   readonly skippedEventIds: readonly string[]
+  readonly corporateActionEventIds: readonly string[]
 }
 
 export interface InvestmentPeriodCurrencyDto {
@@ -102,6 +103,7 @@ export interface InvestmentPerformanceDto {
   readonly realizedAllocations: readonly RealizedAllocationDto[]
   readonly uncoveredSales: readonly UncoveredSaleDto[]
   readonly skippedEventIds: readonly string[]
+  readonly corporateActionEventIds: readonly string[]
 }
 
 export type InvestmentPerformanceInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
@@ -124,6 +126,7 @@ function parseHoldings(value: unknown): InvestmentHoldingsDto {
   array(item.realizedAllocations, 'realizedAllocations')
   array(item.uncoveredSales, 'uncoveredSales')
   strings(item.skippedEventIds, 'skippedEventIds')
+  strings(item.corporateActionEventIds, 'corporateActionEventIds')
   return {
     asOf: item.asOf,
     costBasisMethod: item.costBasisMethod,
@@ -132,6 +135,7 @@ function parseHoldings(value: unknown): InvestmentHoldingsDto {
     realizedAllocations: item.realizedAllocations.map(parseAllocation),
     uncoveredSales: item.uncoveredSales.map(parseUncoveredSale),
     skippedEventIds: item.skippedEventIds,
+    corporateActionEventIds: item.corporateActionEventIds,
   }
 }
 
@@ -144,6 +148,7 @@ function parsePerformance(value: unknown): InvestmentPerformanceDto {
   array(item.realizedAllocations, 'realizedAllocations')
   array(item.uncoveredSales, 'uncoveredSales')
   strings(item.skippedEventIds, 'skippedEventIds')
+  strings(item.corporateActionEventIds, 'corporateActionEventIds')
   return {
     dateFrom: item.dateFrom,
     dateTo: item.dateTo,
@@ -152,6 +157,7 @@ function parsePerformance(value: unknown): InvestmentPerformanceDto {
     realizedAllocations: item.realizedAllocations.map(parseAllocation),
     uncoveredSales: item.uncoveredSales.map(parseUncoveredSale),
     skippedEventIds: item.skippedEventIds,
+    corporateActionEventIds: item.corporateActionEventIds,
   }
 }
 

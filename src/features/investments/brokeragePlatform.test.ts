@@ -28,7 +28,7 @@ describe('brokerage platform boundary', () => {
   })
 
   it('strictly validates native history responses', async () => {
-    const event = { ...mapBrokerageEventsImport([candidate], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' }).events[0], accountId: 'broker', accountName: 'Broker', sourceDocumentId: 'doc', legs: [{ id: 'leg', lineNumber: 1, kind: 'CASH', signedAmount: 1, currency: 'JPY', description: 'Cash' }] }
+    const event = { ...mapBrokerageEventsImport([candidate], { householdId: 'home', accountId: 'broker', sourceDocumentId: 'doc', idPrefix: 'batch' }).events[0], accountId: 'broker', accountName: 'Broker', sourceDocumentId: 'doc', corporateActionRatio: null, targetInstrumentCode: null, targetInstrumentName: null, targetCurrency: null, legs: [{ id: 'leg', lineNumber: 1, kind: 'CASH', signedAmount: 1, currency: 'JPY', description: 'Cash' }] }
     const invoke = vi.fn(async (command: string) => command === 'brokerage_events_import'
       ? { sourceDocumentId: 'doc', importedEventCount: 1, importedLegCount: 3 }
       : { events: [event], totalsByCurrency: [{ currency: 'JPY', buyGross: 10000, sellGross: 0, dividendGross: 0, fees: 100, taxes: 0, deposits: 0, withdrawals: 0, netCashMovement: -10100 }] }) as unknown as BrokerageInvoke

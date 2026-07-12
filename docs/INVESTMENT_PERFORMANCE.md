@@ -9,6 +9,43 @@ The cost-basis method is **FIFO (first in, first out)**. A sale consumes the old
 - Purchase cost basis = gross purchase amount + purchase fee + purchase tax.
 - Net sale proceeds = gross sale amount - sale fee - sale tax.
 - Realized P&L = allocated net sale proceeds - allocated FIFO cost basis.
+
+## Corporate actions (v0.7)
+
+KakeFlow supports three non-cash corporate actions with an explicit
+`new units / old unit` ratio:
+
+- `SPLIT`
+- `REVERSE_SPLIT`
+- `MERGER` (same-currency, share-for-share mergers only)
+
+Splits multiply every open lot quantity by the ratio and divide its unit cost
+by the same ratio. Mergers do the same transformation and move the lot to the
+explicit target instrument. The original acquisition date, source document,
+source row, and total remaining cost are retained. Corporate actions never
+create a realized allocation or gain by themselves.
+
+Unsupported cases are rejected or reported as skipped rather than guessed:
+cash-in-lieu for fractional shares, mixed cash-and-stock mergers, cross-currency
+mergers, spin-offs requiring a source-provided cost allocation, rights issues,
+and actions without an explicit ratio or merger target. Cash components should
+be imported as separate brokerage events until a dedicated allocation model is
+available.
+
+## FX reporting (v0.7)
+
+Brokerage events and FIFO lots always retain their original currency. FX rates
+are immutable observations containing an effective date, pair, provider,
+source kind, observation timestamp, and optional source-document row. The
+reporting conversion selects the latest direct (or explicit inverse) rate on or
+before `fxAsOf`, returns the native totals alongside the converted total, and
+exposes every selected rate in `conversions`.
+
+Identity conversion uses rate `1`. Triangulation and stale-rate substitution
+are intentionally unsupported. If any native currency lacks a required direct
+or inverse observation, `investment_reporting_query` fails without returning a
+partial converted total. This prevents an apparently complete report from
+containing an invented rate.
 - Partial sales retain the unconsumed quantity and cost in the original lot.
 - A sale without enough prior quantity is reported as an uncovered sale. KakeFlow does not invent a zero cost basis.
 - A buy or sell without a usable positive quantity is reported through `skippedEventIds`.

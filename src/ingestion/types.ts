@@ -171,6 +171,9 @@ export type BrokerageEventType =
   | 'TAX'
   | 'DEPOSIT'
   | 'WITHDRAWAL'
+  | 'SPLIT'
+  | 'REVERSE_SPLIT'
+  | 'MERGER'
 
 export type BrokerageLegKind =
   | 'SECURITY'
@@ -221,4 +224,8 @@ export interface BrokerageEventCandidate {
   reconciliationDifference: number
   affectsHouseholdExpense: false
   rawTransactionType: string
+  corporateActionRatio?: number
+  targetInstrumentCode?: string
+  targetInstrumentName?: string
+  targetCurrency?: string
 }

@@ -59,6 +59,14 @@ pub struct ImportBrokerageEventInput {
     pub reconciliation_difference: f64,
     pub affects_household_expense: bool,
     pub raw_transaction_type: String,
+    #[serde(default)]
+    pub corporate_action_ratio: Option<f64>,
+    #[serde(default)]
+    pub target_instrument_code: Option<String>,
+    #[serde(default)]
+    pub target_instrument_name: Option<String>,
+    #[serde(default)]
+    pub target_currency: Option<String>,
     pub legs: Vec<ImportBrokerageLegInput>,
 }
 
@@ -124,6 +132,10 @@ pub struct BrokerageEventDto {
     pub reconciliation_difference: f64,
     pub affects_household_expense: bool,
     pub raw_transaction_type: String,
+    pub corporate_action_ratio: Option<f64>,
+    pub target_instrument_code: Option<String>,
+    pub target_instrument_name: Option<String>,
+    pub target_currency: Option<String>,
     pub legs: Vec<BrokerageLegDto>,
 }
 
@@ -165,8 +177,8 @@ pub fn import_events(
     let mut leg_count = 0_i64;
     for event in &input.events {
         transaction.execute(
-            "INSERT INTO brokerage_events (id, household_id, account_id, source_document_id, source_row, event_type, trade_date, settlement_date, instrument_code, instrument_name, brokerage_account_type, currency, quantity, unit_price, gross_amount, fee_amount, tax_amount, settlement_amount, reconciliation_status, reconciliation_difference, affects_household_expense, raw_transaction_type) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 0, ?21)",
-            params![event.id, input.household_id, input.account_id, input.source_document_id, event.source_row, event.event_type, event.trade_date, event.settlement_date, event.instrument_code, event.instrument_name, event.account_type, event.currency, event.quantity, event.unit_price, event.gross_amount, event.fee_amount, event.tax_amount, event.settlement_amount, event.reconciliation_status, event.reconciliation_difference, event.raw_transaction_type],
+            "INSERT INTO brokerage_events (id, household_id, account_id, source_document_id, source_row, event_type, trade_date, settlement_date, instrument_code, instrument_name, brokerage_account_type, currency, quantity, unit_price, gross_amount, fee_amount, tax_amount, settlement_amount, reconciliation_status, reconciliation_difference, affects_household_expense, raw_transaction_type, corporate_action_ratio, target_instrument_code, target_instrument_name, target_currency) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 0, ?21, ?22, ?23, ?24, ?25)",
+            params![event.id, input.household_id, input.account_id, input.source_document_id, event.source_row, event.event_type, event.trade_date, event.settlement_date, event.instrument_code, event.instrument_name, event.account_type, event.currency, event.quantity, event.unit_price, event.gross_amount, event.fee_amount, event.tax_amount, event.settlement_amount, event.reconciliation_status, event.reconciliation_difference, event.raw_transaction_type, event.corporate_action_ratio, event.target_instrument_code, event.target_instrument_name, event.target_currency],
         ).map_err(insert_error)?;
         for (index, leg) in event.legs.iter().enumerate() {
             transaction.execute(
@@ -199,7 +211,7 @@ pub fn query_history(
         }
     }
     let mut statement = connection.prepare(
-        "SELECT e.id, e.account_id, a.name, e.source_document_id, e.source_row, e.event_type, e.trade_date, e.settlement_date, e.instrument_code, e.instrument_name, e.brokerage_account_type, e.currency, e.quantity, e.unit_price, e.gross_amount, e.fee_amount, e.tax_amount, e.settlement_amount, e.reconciliation_status, e.reconciliation_difference, e.affects_household_expense, e.raw_transaction_type
+        "SELECT e.id, e.account_id, a.name, e.source_document_id, e.source_row, e.event_type, e.trade_date, e.settlement_date, e.instrument_code, e.instrument_name, e.brokerage_account_type, e.currency, e.quantity, e.unit_price, e.gross_amount, e.fee_amount, e.tax_amount, e.settlement_amount, e.reconciliation_status, e.reconciliation_difference, e.affects_household_expense, e.raw_transaction_type, e.corporate_action_ratio, e.target_instrument_code, e.target_instrument_name, e.target_currency
          FROM brokerage_events e JOIN accounts a ON a.id = e.account_id
          WHERE e.household_id = ?1
            AND (?2 IS NULL OR e.account_id = ?2)
@@ -239,6 +251,10 @@ pub fn query_history(
                     reconciliation_difference: row.get(19)?,
                     affects_household_expense: row.get::<_, i64>(20)? != 0,
                     raw_transaction_type: row.get(21)?,
+                    corporate_action_ratio: row.get(22)?,
+                    target_instrument_code: row.get(23)?,
+                    target_instrument_name: row.get(24)?,
+                    target_currency: row.get(25)?,
                     legs: Vec::new(),
                 })
             },
@@ -342,6 +358,9 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         "TAX",
         "DEPOSIT",
         "WITHDRAWAL",
+        "SPLIT",
+        "REVERSE_SPLIT",
+        "MERGER",
     ];
     let statuses = ["BALANCED", "ADJUSTED"];
     if event.id.trim().is_empty()
@@ -385,6 +404,42 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
     {
         return false;
     }
+    let corporate = matches!(
+        event.event_type.as_str(),
+        "SPLIT" | "REVERSE_SPLIT" | "MERGER"
+    );
+    if corporate
+        != event
+            .corporate_action_ratio
+            .is_some_and(|ratio| ratio.is_finite() && ratio > 0.0)
+        || (!corporate
+            && (event.target_instrument_code.is_some()
+                || event.target_instrument_name.is_some()
+                || event.target_currency.is_some()))
+        || matches!(event.event_type.as_str(), "SPLIT" | "REVERSE_SPLIT")
+            && (event.target_instrument_code.is_some()
+                || event.target_instrument_name.is_some()
+                || event.target_currency.is_some())
+        || event.event_type == "MERGER"
+            && (event
+                .target_instrument_code
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+                && event
+                    .target_instrument_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .is_empty()
+                || event
+                    .target_currency
+                    .as_deref()
+                    .is_some_and(|value| !valid_currency(value) || value != event.currency))
+    {
+        return false;
+    }
     let leg_kinds = [
         "SECURITY",
         "CASH",
@@ -423,6 +478,24 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         "TAX" => has("INVESTMENT_TAX", true) && has("CASH", false),
         "DEPOSIT" => has("CASH", true) && has("TRANSFER", false),
         "WITHDRAWAL" => has("CASH", false) && has("TRANSFER", true),
+        "SPLIT" | "REVERSE_SPLIT" | "MERGER" => {
+            event.gross_amount == 0.0
+                && event.fee_amount == 0.0
+                && event.tax_amount == 0.0
+                && event.settlement_amount == 0.0
+                && event
+                    .legs
+                    .iter()
+                    .filter(|leg| leg.kind == "SECURITY")
+                    .count()
+                    == 2
+                && event.legs.iter().any(|leg| {
+                    leg.kind == "SECURITY" && leg.signed_quantity.is_some_and(|value| value < 0.0)
+                })
+                && event.legs.iter().any(|leg| {
+                    leg.kind == "SECURITY" && leg.signed_quantity.is_some_and(|value| value > 0.0)
+                })
+        }
         _ => false,
     };
     balance.abs() <= BALANCE_TOLERANCE && semantic_legs
@@ -519,6 +592,8 @@ mod tests {
             include_str!("../migrations/0001_household_accounts.sql"),
             include_str!("../migrations/0002_import_provenance.sql"),
             include_str!("../migrations/0012_brokerage_events.sql"),
+            include_str!("../migrations/0013_investment_performance.sql"),
+            include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
@@ -555,6 +630,10 @@ mod tests {
             reconciliation_difference: 0.0,
             affects_household_expense: false,
             raw_transaction_type: event_type.into(),
+            corporate_action_ratio: None,
+            target_instrument_code: None,
+            target_instrument_name: None,
+            target_currency: None,
             legs: vec![
                 ImportBrokerageLegInput {
                     id: format!("{id}-1"),
@@ -640,6 +719,63 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn imports_a_zero_value_split_with_explicit_ratio() {
+        let connection = connection();
+        let mut split = event("split", 2, "SPLIT");
+        split.quantity = None;
+        split.unit_price = None;
+        split.gross_amount = 0.0;
+        split.fee_amount = 0.0;
+        split.settlement_amount = 0.0;
+        split.corporate_action_ratio = Some(2.0);
+        split.legs = vec![
+            ImportBrokerageLegInput {
+                id: "split-old".into(),
+                kind: "SECURITY".into(),
+                signed_amount: 0.0,
+                currency: "JPY".into(),
+                instrument_code: Some("7203".into()),
+                instrument_name: Some("Toyota".into()),
+                signed_quantity: Some(-1.0),
+                description: "Old units".into(),
+            },
+            ImportBrokerageLegInput {
+                id: "split-new".into(),
+                kind: "SECURITY".into(),
+                signed_amount: 0.0,
+                currency: "JPY".into(),
+                instrument_code: Some("7203".into()),
+                instrument_name: Some("Toyota".into()),
+                signed_quantity: Some(2.0),
+                description: "New units".into(),
+            },
+        ];
+        import_events(
+            &connection,
+            &ImportBrokerageEventsInput {
+                household_id: "home".into(),
+                account_id: "broker".into(),
+                source_document_id: "doc".into(),
+                events: vec![split],
+            },
+        )
+        .unwrap();
+        let history = query_history(
+            &connection,
+            &BrokerageHistoryRequest {
+                household_id: "home".into(),
+                account_id: None,
+                date_from: None,
+                date_to: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(history.events[0].event_type, "SPLIT");
+        assert_eq!(history.events[0].corporate_action_ratio, Some(2.0));
+        assert_eq!(history.totals_by_currency[0].net_cash_movement, 0.0);
     }
 
     #[test]
