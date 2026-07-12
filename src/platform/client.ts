@@ -11,6 +11,8 @@ import type {
   CardMatchConfirmationDto,
   CardReconciliationStatusDto,
   CardSettlementDto,
+  CardSettlementBankMappingDto,
+  CardSettlementBalanceCoverageDto,
   DashboardMonthlyTotalsDto,
   DatabaseStatusDto,
   ExtractedDocumentDto,
@@ -151,6 +153,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       ocrDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'document_ocr') },
       listCardSettlements: async () => [],
       confirmCardMatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_match_confirm') },
+      listCardSettlementBankMappings: async () => [],
+      upsertCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_upsert') },
+      deleteCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_delete') },
+      queryCardSettlementBalanceCoverage: async () => ({ asOf: '1970-01-01', historyFrom: '1970-01-01', horizonThrough: '1970-02-15', horizonDays: 45, banks: [], unmappedStatements: [], missingDueStatements: [] }),
     }
   }
 
@@ -208,6 +214,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     ocrDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_ocr', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
     listCardSettlements: (householdId) => invokeValidated(invoke, 'cards_list', parseCardSettlements, { householdId }),
     confirmCardMatch: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_match_confirm', parseCardMatchConfirmation, { householdId, statementId, paymentId }),
+    listCardSettlementBankMappings: (householdId) => invokeValidated(invoke, 'card_settlement_bank_mappings_list', parseCardSettlementBankMappings, { householdId }),
+    upsertCardSettlementBankMapping: (input) => invokeValidated(invoke, 'card_settlement_bank_mapping_upsert', parseCardSettlementBankMapping, { input }),
+    deleteCardSettlementBankMapping: async (input) => { await invokeValidated(invoke, 'card_settlement_bank_mapping_delete', parseVoid, { input }) },
+    queryCardSettlementBalanceCoverage: (request) => invokeValidated(invoke, 'card_settlement_balance_coverage_query', parseCardSettlementBalanceCoverage, { request }),
   }
 }
 
@@ -371,6 +381,114 @@ function parseCardMatchConfirmation(value: unknown): CardMatchConfirmationDto {
   const record = asRecord(value)
   if (record.reconciliationStatus !== 'FULLY_RECONCILED') throw new TypeError('card confirmation')
   return { statementId: asRequiredString(record.statementId), paymentId: asRequiredString(record.paymentId), reconciliationStatus: record.reconciliationStatus }
+}
+
+function asIsoDate(value: unknown): string {
+  const result = asRequiredString(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(result)
+  if (!match || match[1] === '0000') throw new TypeError('date')
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]); const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) throw new TypeError('date')
+  return result
+}
+
+function parseCardSettlementBankMapping(value: unknown): CardSettlementBankMappingDto {
+  const record = asRecord(value)
+  return {
+    householdId: asRequiredString(record.householdId), cardAccountId: asRequiredString(record.cardAccountId),
+    cardAccountName: asRequiredString(record.cardAccountName), bankAccountId: asRequiredString(record.bankAccountId),
+    bankAccountName: asRequiredString(record.bankAccountName), createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+function parseCardSettlementBankMappings(value: unknown): readonly CardSettlementBankMappingDto[] {
+  if (!Array.isArray(value)) throw new TypeError('card bank mappings')
+  return value.map(parseCardSettlementBankMapping)
+}
+
+const COVERAGE_STATUSES = ['COVERED', 'SHORTFALL', 'OVERDUE'] as const
+
+function parseCoverageStatement(value: unknown) {
+  const record = asRecord(value)
+  if (!COVERAGE_STATUSES.includes(record.status as typeof COVERAGE_STATUSES[number])) throw new TypeError('coverage status')
+  return {
+    statementId: asRequiredString(record.statementId), cardAccountId: asRequiredString(record.cardAccountId), cardAccountName: asRequiredString(record.cardAccountName),
+    paymentDueOn: asIsoDate(record.paymentDueOn), statementAmountJpy: asSafeInteger(record.statementAmountJpy), paidAmountJpy: asSafeInteger(record.paidAmountJpy),
+    outstandingAmountJpy: asSafeInteger(record.outstandingAmountJpy), projectedBankBalanceJpy: asSafeSignedInteger(record.projectedBankBalanceJpy),
+    shortfallJpy: asSafeInteger(record.shortfallJpy), status: record.status as typeof COVERAGE_STATUSES[number],
+  }
+}
+
+function parseUnmappedCardSettlement(value: unknown) {
+  const record = asRecord(value)
+  if (record.status !== 'UNMAPPED' && record.status !== 'OVERDUE') throw new TypeError('unmapped status')
+  return {
+    statementId: asRequiredString(record.statementId), cardAccountId: asRequiredString(record.cardAccountId), cardAccountName: asRequiredString(record.cardAccountName),
+    paymentDueOn: asIsoDate(record.paymentDueOn), statementAmountJpy: asSafeInteger(record.statementAmountJpy), paidAmountJpy: asSafeInteger(record.paidAmountJpy),
+    outstandingAmountJpy: asSafeInteger(record.outstandingAmountJpy), status: record.status as 'UNMAPPED' | 'OVERDUE',
+  }
+}
+
+function parseMissingDueCardSettlement(value: unknown) {
+  const record = asRecord(value)
+  if (typeof record.mappingConfigured !== 'boolean') throw new TypeError('mapping configured')
+  return {
+    statementId: asRequiredString(record.statementId), cardAccountId: asRequiredString(record.cardAccountId), cardAccountName: asRequiredString(record.cardAccountName),
+    statementAmountJpy: asSafeInteger(record.statementAmountJpy), paidAmountJpy: asSafeInteger(record.paidAmountJpy), outstandingAmountJpy: asSafeInteger(record.outstandingAmountJpy),
+    mappingConfigured: record.mappingConfigured,
+  }
+}
+
+function parseCardSettlementBalanceCoverage(value: unknown): CardSettlementBalanceCoverageDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.banks) || !Array.isArray(record.unmappedStatements) || !Array.isArray(record.missingDueStatements)) throw new TypeError('coverage collections')
+  const asOf = asIsoDate(record.asOf); const historyFrom = asIsoDate(record.historyFrom); const horizonThrough = asIsoDate(record.horizonThrough)
+  if (horizonThrough < asOf) throw new TypeError('coverage range')
+  const horizonDays = asSafeInteger(record.horizonDays)
+  if (horizonDays > 365) throw new TypeError('coverage horizon')
+  const expectedHorizon = new Date(`${asOf}T00:00:00Z`); expectedHorizon.setUTCDate(expectedHorizon.getUTCDate() + horizonDays)
+  if (expectedHorizon.toISOString().slice(0, 10) !== horizonThrough) throw new TypeError('coverage horizon')
+  const statementIds = new Set<string>(); const bankIds = new Set<string>()
+  const banks = record.banks.map((value) => {
+    const bank = asRecord(value); if (!Array.isArray(bank.statements)) throw new TypeError('coverage statements')
+    const bankAccountId = asRequiredString(bank.bankAccountId); if (bankIds.has(bankAccountId)) throw new TypeError('duplicate bank'); bankIds.add(bankAccountId)
+    const balanceAsOfJpy = asSafeSignedInteger(bank.balanceAsOfJpy)
+    const statements = bank.statements.map(parseCoverageStatement)
+    statements.forEach((statement, index) => {
+      if (statementIds.has(statement.statementId)) throw new TypeError('duplicate statement'); statementIds.add(statement.statementId)
+      if (index > 0 && statements[index - 1].paymentDueOn > statement.paymentDueOn) throw new TypeError('statement order')
+      if (statement.outstandingAmountJpy !== Math.max(statement.statementAmountJpy - statement.paidAmountJpy, 0)) throw new TypeError('outstanding amount')
+      if (statement.shortfallJpy !== Math.max(-statement.projectedBankBalanceJpy, 0)) throw new TypeError('shortfall amount')
+      const priorBalance = index === 0 ? balanceAsOfJpy : statements[index - 1].projectedBankBalanceJpy
+      if (statement.projectedBankBalanceJpy !== priorBalance - statement.outstandingAmountJpy) throw new TypeError('projected balance step')
+      const expectedStatus = statement.paymentDueOn < asOf ? 'OVERDUE' : statement.shortfallJpy > 0 ? 'SHORTFALL' : 'COVERED'
+      if (statement.status !== expectedStatus) throw new TypeError('coverage status')
+    })
+    const projectedEndingBalanceJpy = asSafeSignedInteger(bank.projectedEndingBalanceJpy)
+    const maxShortfallJpy = asSafeInteger(bank.maxShortfallJpy)
+    if (projectedEndingBalanceJpy !== (statements.at(-1)?.projectedBankBalanceJpy ?? balanceAsOfJpy)) throw new TypeError('projected ending balance')
+    if (maxShortfallJpy !== Math.max(0, ...statements.map((statement) => statement.shortfallJpy))) throw new TypeError('maximum shortfall')
+    return {
+      bankAccountId, bankAccountName: asRequiredString(bank.bankAccountName), balanceAsOfJpy, projectedEndingBalanceJpy, maxShortfallJpy, statements,
+    }
+  })
+  const unmappedStatements = record.unmappedStatements.map(parseUnmappedCardSettlement)
+  unmappedStatements.forEach((statement) => {
+    if (statementIds.has(statement.statementId)) throw new TypeError('duplicate statement'); statementIds.add(statement.statementId)
+    if (statement.outstandingAmountJpy !== Math.max(statement.statementAmountJpy - statement.paidAmountJpy, 0)) throw new TypeError('outstanding amount')
+    if (statement.status !== (statement.paymentDueOn < asOf ? 'OVERDUE' : 'UNMAPPED')) throw new TypeError('unmapped status')
+  })
+  const missingDueStatements = record.missingDueStatements.map(parseMissingDueCardSettlement)
+  missingDueStatements.forEach((statement) => {
+    if (statementIds.has(statement.statementId)) throw new TypeError('duplicate statement'); statementIds.add(statement.statementId)
+    if (statement.outstandingAmountJpy !== Math.max(statement.statementAmountJpy - statement.paidAmountJpy, 0)) throw new TypeError('outstanding amount')
+  })
+  const datedDueDates = [...banks.flatMap((bank) => bank.statements.map((statement) => statement.paymentDueOn)), ...unmappedStatements.map((statement) => statement.paymentDueOn)]
+  const expectedHistoryFrom = datedDueDates.length > 0 ? [...datedDueDates].sort()[0] : asOf
+  if (historyFrom !== expectedHistoryFrom) throw new TypeError('coverage history')
+  return {
+    asOf, historyFrom, horizonThrough, horizonDays, banks, unmappedStatements, missingDueStatements,
+  }
 }
 
 function parseVoid(value: unknown): void {

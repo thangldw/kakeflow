@@ -54,6 +54,9 @@ describe('platform client', () => {
     await expect(client.ocrDocument(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({ command: 'document_ocr' })
     await expect(client.listCardSettlements('family')).resolves.toEqual([])
     await expect(client.confirmCardMatch('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_match_confirm' })
+    await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual([])
+    await expect(client.upsertCardSettlementBankMapping({} as never)).rejects.toMatchObject({ command: 'card_settlement_bank_mapping_upsert' })
+    await expect(client.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13' })).resolves.toMatchObject({ horizonDays: 45, banks: [] })
     expect(client.runtime).toBe('web')
     expect(invokeSpy).not.toHaveBeenCalled()
   })
@@ -136,6 +139,10 @@ describe('platform client', () => {
         paymentOn: '2026-08-10', matchScoreBps: 8000, reconciliationStatus: 'POSSIBLE_MATCH',
       }],
       card_match_confirm: { statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' },
+      card_settlement_bank_mappings_list: [{ householdId: 'family', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', bankAccountId: 'family-bank', bankAccountName: 'Bank', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }],
+      card_settlement_bank_mapping_upsert: { householdId: 'family', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', bankAccountId: 'family-bank', bankAccountName: 'Bank', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' },
+      card_settlement_bank_mapping_delete: null,
+      card_settlement_balance_coverage_query: { asOf: '2026-07-13', historyFrom: '2026-07-27', horizonThrough: '2026-08-27', horizonDays: 45, banks: [{ bankAccountId: 'family-bank', bankAccountName: 'Bank', balanceAsOfJpy: 1000, projectedEndingBalanceJpy: 400, maxShortfallJpy: 0, statements: [{ statementId: 'statement-1', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', paymentDueOn: '2026-07-27', statementAmountJpy: 600, paidAmountJpy: 0, outstandingAmountJpy: 600, projectedBankBalanceJpy: 400, shortfallJpy: 0, status: 'COVERED' }] }], unmappedStatements: [], missingDueStatements: [] },
     }
     const invokeSpy = vi.fn()
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -211,6 +218,12 @@ describe('platform client', () => {
     await expect(client.ocrDocument(new Uint8Array([1, 2, 3]), 'image/png')).resolves.toEqual(responses.document_ocr)
     await expect(client.listCardSettlements('family')).resolves.toEqual(responses.cards_list)
     await expect(client.confirmCardMatch('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_match_confirm)
+    const mappingInput = { householdId: 'family', cardAccountId: 'family-rakuten-card', bankAccountId: 'family-bank' }
+    await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual(responses.card_settlement_bank_mappings_list)
+    await expect(client.upsertCardSettlementBankMapping(mappingInput)).resolves.toEqual(responses.card_settlement_bank_mapping_upsert)
+    await expect(client.deleteCardSettlementBankMapping({ householdId: 'family', cardAccountId: 'family-rakuten-card' })).resolves.toBeUndefined()
+    const coverageRequest = { householdId: 'family', asOf: '2026-07-13', horizonDays: 45 }
+    await expect(client.queryCardSettlementBalanceCoverage(coverageRequest)).resolves.toEqual(responses.card_settlement_balance_coverage_query)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
     expect(invokeSpy).toHaveBeenCalledWith('household_members_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('household_member_create', { input: memberCreate })
@@ -240,7 +253,11 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(36)
+    expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mappings_list', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_upsert', { input: mappingInput })
+    expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
+    expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
+    expect(invokeSpy).toHaveBeenCalledTimes(40)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {
@@ -350,6 +367,30 @@ describe('platform client', () => {
 
     await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+  })
+
+  it('rejects impossible card coverage dates and inconsistent financial projections', async () => {
+    const statement = { statementId: 'statement', cardAccountId: 'card', cardAccountName: 'Card', paymentDueOn: '2026-07-27', statementAmountJpy: 600, paidAmountJpy: 0, outstandingAmountJpy: 600, projectedBankBalanceJpy: 400, shortfallJpy: 0, status: 'COVERED' }
+    const bank = { bankAccountId: 'bank', bankAccountName: 'Bank', balanceAsOfJpy: 1000, projectedEndingBalanceJpy: 400, maxShortfallJpy: 0, statements: [statement] }
+    const valid = { asOf: '2026-07-13', historyFrom: '2026-07-27', horizonThrough: '2026-08-27', horizonDays: 45, banks: [bank], unmappedStatements: [], missingDueStatements: [] }
+    const todayOnly = { asOf: '2026-07-13', historyFrom: '2026-07-13', horizonThrough: '2026-07-13', horizonDays: 0, banks: [], unmappedStatements: [], missingDueStatements: [] }
+    const zeroHorizonClient = createPlatformClient({ tauri: true, invoke: async <T>() => todayOnly as T })
+    await expect(zeroHorizonClient.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13', horizonDays: 0 })).resolves.toEqual(todayOnly)
+    const invalidResponses: readonly unknown[] = [
+      { ...valid, asOf: '2026-02-30' },
+      { ...valid, horizonDays: 366 },
+      { ...valid, banks: [bank, bank] },
+      { ...valid, banks: [{ ...bank, statements: [{ ...statement, statementId: 'later', paymentDueOn: '2026-08-01' }, { ...statement, statementId: 'earlier' }], projectedEndingBalanceJpy: 400 }] },
+      { ...valid, banks: [{ ...bank, statements: [{ ...statement, outstandingAmountJpy: 599 }] }] },
+      { ...valid, banks: [{ ...bank, statements: [{ ...statement, projectedBankBalanceJpy: -1, shortfallJpy: 0 }], projectedEndingBalanceJpy: -1 }] },
+      { ...valid, banks: [{ ...bank, projectedEndingBalanceJpy: 401 }] },
+      { ...valid, banks: [{ ...bank, maxShortfallJpy: 1 }] },
+      { ...valid, missingDueStatements: [{ statementId: 'missing', cardAccountId: 'card', cardAccountName: 'Card', statementAmountJpy: 100, paidAmountJpy: 0, outstandingAmountJpy: 100, mappingConfigured: 'yes' }] },
+    ]
+    for (const response of invalidResponses) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(client.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13' })).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'card_settlement_balance_coverage_query' })
+    }
   })
 
   it('rejects invalid member and account-ownership response contracts', async () => {

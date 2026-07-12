@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import {
   ArrowDownLeft,
@@ -91,7 +91,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -1014,10 +1014,38 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   </>
 }
 
-function CardsPage({ cards, householdId, onChanged, month }: { cards: readonly CardSettlementDto[]; householdId: string | null; onChanged: () => void; month: string }) {
+function CardsPage({ cards, householdId, accounts, revision, onChanged, month }: { cards: readonly CardSettlementDto[]; householdId: string | null; accounts: readonly AccountDto[]; revision: number; onChanged: () => void; month: string }) {
   const desktop = platformClient.runtime === 'tauri'
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
+  const [mappings, setMappings] = useState<readonly CardSettlementBankMappingDto[]>([])
+  const [coverage, setCoverage] = useState<CardSettlementBalanceCoverageDto | null>(null)
+  const [mappingDrafts, setMappingDrafts] = useState<Record<string, string>>({})
+  const cardAccounts = accounts.filter((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
+  const bankAccounts = accounts.filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK')
+  const reloadSettlementPlan = useCallback(async () => {
+    if (!householdId || !desktop) return
+    const [nextMappings, nextCoverage] = await Promise.all([
+      platformClient.listCardSettlementBankMappings(householdId),
+      platformClient.queryCardSettlementBalanceCoverage({ householdId, asOf: currentTokyoDate(), horizonDays: 45 }),
+    ])
+    setMappings(nextMappings)
+    setCoverage(nextCoverage)
+    setMappingDrafts(Object.fromEntries(nextMappings.map((mapping) => [mapping.cardAccountId, mapping.bankAccountId])))
+  }, [desktop, householdId])
+  useEffect(() => {
+    let active = true
+    if (!householdId || !desktop) { setMappings([]); setCoverage(null); return }
+    void Promise.all([
+      platformClient.listCardSettlementBankMappings(householdId),
+      platformClient.queryCardSettlementBalanceCoverage({ householdId, asOf: currentTokyoDate(), horizonDays: 45 }),
+    ]).then(([nextMappings, nextCoverage]) => {
+      if (!active) return
+      setMappings(nextMappings); setCoverage(nextCoverage)
+      setMappingDrafts(Object.fromEntries(nextMappings.map((mapping) => [mapping.cardAccountId, mapping.bankAccountId])))
+    }).catch(() => { if (active) setNotice('引落口座と支払余力を読み込めませんでした。') })
+    return () => { active = false }
+  }, [desktop, householdId, revision])
   const displayCards = desktop ? cards.filter((card) => (card.periodStart.slice(0, 7) <= month && card.periodEnd.slice(0, 7) >= month) || card.paymentDueOn?.slice(0, 7) === month || card.paymentOn?.slice(0, 7) === month) : cardSettlements.map((card, index) => ({
     id: `demo-${index}`, cardAccountId: `demo-${index}`, cardName: card.name, maskedIdentifier: card.mask,
     periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: card.dueDate,
@@ -1029,14 +1057,37 @@ function CardsPage({ cards, householdId, onChanged, month }: { cards: readonly C
   const confirm = async (card: CardSettlementDto) => {
     if (!householdId || !card.paymentId) return
     setBusyId(card.id); setNotice('')
-    try { await platformClient.confirmCardMatch(householdId, card.id, card.paymentId); onChanged(); setNotice('請求と口座引落を照合済みにしました。') }
+    try { await platformClient.confirmCardMatch(householdId, card.id, card.paymentId); await reloadSettlementPlan(); onChanged(); setNotice('請求と口座引落を照合済みにしました。') }
     catch { setNotice('照合を確定できませんでした。金額とカード口座を確認してください。') }
     finally { setBusyId(null) }
   }
+  const saveMapping = async (cardAccountId: string) => {
+    if (!householdId || !mappingDrafts[cardAccountId]) return
+    setBusyId(cardAccountId); setNotice('')
+    try {
+      await platformClient.upsertCardSettlementBankMapping({ householdId, cardAccountId, bankAccountId: mappingDrafts[cardAccountId] })
+      await reloadSettlementPlan(); onChanged(); setNotice('明示したカード引落口座を保存しました。')
+    } catch { setNotice('カード引落口座を保存できませんでした。') }
+    finally { setBusyId(null) }
+  }
+  const removeMapping = async (cardAccountId: string) => {
+    if (!householdId) return
+    setBusyId(cardAccountId); setNotice('')
+    try {
+      await platformClient.deleteCardSettlementBankMapping({ householdId, cardAccountId })
+      await reloadSettlementPlan(); onChanged(); setNotice('カード引落口座の設定を解除しました。')
+    } catch { setNotice('カード引落口座の設定を解除できませんでした。') }
+    finally { setBusyId(null) }
+  }
+  const coverageLabel = (status: 'COVERED' | 'SHORTFALL' | 'OVERDUE') => status === 'COVERED' ? '支払可能' : status === 'SHORTFALL' ? '残高不足' : '期限超過'
   return <>
-    <PageHeader eyebrow="カード管理" title="請求・口座引落の照合" description="カード利用は支出、銀行引落は負債の返済として正しく区別します。">
+    <PageHeader eyebrow="カード管理" title="カード引落・支払余力" description="請求照合に加え、明示した銀行口座で今後のカード引落を支払えるか確認します。">
     </PageHeader>
+    {desktop && <aside className="card-coverage-disclosure"><strong>引落口座はユーザーが明示した設定だけを使用し、取引名から推測しません。</strong><span>残高と予測は「集計対象外」を含むすべての確定済み仕訳を反映します。この画面は確認専用で、振込・カード支払いは実行しません。</span></aside>}
     {notice && <div className="import-notice" role="status">{notice}</div>}
+    {desktop && <section className="panel card-bank-mappings" aria-label="カード引落口座設定"><div className="panel-head"><div><h2>カードごとの引落銀行口座</h2><p>{mappings.length}/{cardAccounts.length}枚を明示設定済み</p></div><CreditCard size={19} /></div><div className="card-mapping-list">{cardAccounts.map((card) => { const mapped = mappings.some((mapping) => mapping.cardAccountId === card.id); return <div key={card.id}><span><strong>{card.name}</strong><small>{mapped ? '明示設定済み' : '未設定・銀行口座を推測しません'}</small></span><select aria-label={`${card.name}の引落銀行口座`} value={mappingDrafts[card.id] ?? ''} onChange={(event) => setMappingDrafts((current) => ({ ...current, [card.id]: event.target.value }))}><option value="">銀行口座を選択</option>{bankAccounts.map((bank) => <option key={bank.id} value={bank.id}>{bank.name}</option>)}</select><button className="secondary-btn" disabled={busyId === card.id || !mappingDrafts[card.id]} onClick={() => void saveMapping(card.id)}>{busyId === card.id ? '保存中…' : '保存'}</button>{mapped && <button className="text-btn" disabled={busyId === card.id} onClick={() => void removeMapping(card.id)}>解除</button>}</div> })}{cardAccounts.length === 0 && <p className="empty-state">クレジットカード口座を登録すると引落銀行口座を設定できます。</p>}</div></section>}
+    {desktop && coverage && <section className="card-coverage-section" aria-label="カード支払余力"><div className="card-coverage-heading"><div><h2>支払余力</h2><p>{coverage.asOf} 現在 → {coverage.horizonThrough}（{coverage.horizonDays}日）</p></div><small>残高基準: 全確定仕訳</small></div>{coverage.banks.map((bank) => <article className={`panel bank-coverage-card${bank.maxShortfallJpy > 0 ? ' has-shortfall' : ''}`} key={bank.bankAccountId}><header><div><strong>{bank.bankAccountName}</strong><span>現在残高 {yen(bank.balanceAsOfJpy)}</span></div><div><small>引落後の見込み</small><b>{yen(bank.projectedEndingBalanceJpy)}</b></div></header><div className="coverage-statement-list">{bank.statements.map((statement) => <div key={statement.statementId}><span><strong>{statement.cardAccountName}</strong><small>支払期日 {statement.paymentDueOn} ・ 未払 {yen(statement.outstandingAmountJpy)}</small></span><span><small>累積見込残高</small><b>{yen(statement.projectedBankBalanceJpy)}</b></span><em className={`coverage-status ${statement.status.toLowerCase()}`}>{coverageLabel(statement.status)}</em></div>)}{bank.statements.length === 0 && <p className="empty-state">期間内の未払請求はありません。</p>}</div>{bank.maxShortfallJpy > 0 && <footer>最大不足額 <strong>{yen(bank.maxShortfallJpy)}</strong></footer>}</article>)}{coverage.banks.length === 0 && <p className="empty-state">明示された引落口座に、期日付きの未払請求はありません。</p>}{coverage.unmappedStatements.length > 0 && <aside className="unmapped-statements" role="status"><div><strong>引落口座が未設定の請求</strong><span>銀行口座は推測せず、支払余力の計算にも含めません。</span></div>{coverage.unmappedStatements.map((statement) => <div key={statement.statementId}><span><strong>{statement.cardAccountName}</strong><small>支払期日 {statement.paymentDueOn}</small></span><b>{yen(statement.outstandingAmountJpy)}</b><em className={statement.status === 'OVERDUE' ? 'overdue' : ''}>{statement.status === 'OVERDUE' ? '期限超過' : '未設定'}</em></div>)}</aside>}{coverage.missingDueStatements.length > 0 && <aside className="unmapped-statements missing-due-statements" role="status"><div><strong>支払期日が未登録の請求</strong><span>支払期日がないため予測から除外しています。カード明細で期日を確認してください。</span></div>{coverage.missingDueStatements.map((statement) => <div key={statement.statementId}><span><strong>{statement.cardAccountName}</strong><small>{statement.mappingConfigured ? '引落口座は設定済み' : '引落口座も未設定'}</small></span><b>{yen(statement.outstandingAmountJpy)}</b><em>期日未登録</em></div>)}</aside>}</section>}
+    <div className="section-divider"><span>請求・口座引落の照合</span></div>
     <section className="cards-page-grid">{displayCards.map((card) => <article className="panel card-detail" key={card.id}>
       <div className="card-visual" style={{ background: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a' }}><span>KAKEFLOW CARD</span><strong>{card.cardName}</strong><small>{card.maskedIdentifier ?? '番号未設定'}</small></div>
       <div className="card-detail-head"><div><span>請求額</span><strong>{yen(card.statementAmountJpy)}</strong></div><b className={card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 'possible' : 'pending'}>{card.reconciliationStatus === 'FULLY_RECONCILED' ? '✓ 照合済み' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? '照合候補' : '引落待ち'}</b></div>
@@ -1630,7 +1681,7 @@ function App() {
     overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} backgroundChanges={backgroundFolderChanges} clearBackgroundChanges={() => setBackgroundFolderChanges(0)} />,
-    cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
+    cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} openPage={setPage} />,
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} />,

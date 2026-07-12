@@ -22,6 +22,10 @@ const desktop = vi.hoisted(() => ({
   readWatchedFile: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
+  listCardSettlementBankMappings: vi.fn(),
+  upsertCardSettlementBankMapping: vi.fn(),
+  deleteCardSettlementBankMapping: vi.fn(),
+  queryCardSettlementBalanceCoverage: vi.fn(),
   stageBackupRestore: vi.fn(),
   restartForRestore: vi.fn(),
   listBudgets: vi.fn(),
@@ -96,6 +100,10 @@ vi.mock('./platform', async () => {
       rollbackImport: desktop.rollbackImport,
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
+      listCardSettlementBankMappings: desktop.listCardSettlementBankMappings,
+      upsertCardSettlementBankMapping: desktop.upsertCardSettlementBankMapping,
+      deleteCardSettlementBankMapping: desktop.deleteCardSettlementBankMapping,
+      queryCardSettlementBalanceCoverage: desktop.queryCardSettlementBalanceCoverage,
       createBackup: vi.fn(),
       stageBackupRestore: desktop.stageBackupRestore,
       restartForRestore: desktop.restartForRestore,
@@ -130,6 +138,10 @@ describe('KakeFlow desktop read models', () => {
     ])
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
+    desktop.listCardSettlementBankMappings.mockReset().mockResolvedValue([])
+    desktop.upsertCardSettlementBankMapping.mockReset().mockImplementation(async (input) => ({ ...input, cardAccountName: 'カード', bankAccountName: '銀行', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
+    desktop.deleteCardSettlementBankMapping.mockReset().mockResolvedValue(undefined)
+    desktop.queryCardSettlementBalanceCoverage.mockReset().mockResolvedValue({ asOf: '2026-07-13', historyFrom: '2026-07-13', horizonThrough: '2026-08-27', horizonDays: 45, banks: [], unmappedStatements: [], missingDueStatements: [] })
     desktop.stageBackupRestore.mockReset().mockResolvedValue({ formatVersion: 2, entryCount: 4, plaintextBytes: 4096 })
     desktop.restartForRestore.mockReset().mockResolvedValue(undefined)
     desktop.listBudgets.mockReset().mockResolvedValue([])
@@ -515,6 +527,38 @@ describe('KakeFlow desktop read models', () => {
 
     await waitFor(() => expect(desktop.confirmCardMatch).toHaveBeenCalledWith('family', 'statement-1', 'payment-1'))
     expect(await screen.findByText('請求と口座引落を照合済みにしました。')).toBeInTheDocument()
+  })
+
+  it('saves an explicit card-to-bank mapping and shows projected coverage and unmapped warnings', async () => {
+    desktop.queryCardSettlementBalanceCoverage.mockResolvedValue({
+      asOf: '2026-07-13', historyFrom: '2025-07-13', horizonThrough: '2026-08-27', horizonDays: 45,
+      banks: [{
+        bankAccountId: 'family-bank', bankAccountName: '銀行', balanceAsOfJpy: 100_000, projectedEndingBalanceJpy: -20_000, maxShortfallJpy: 20_000,
+        statements: [{ statementId: 'due-1', cardAccountId: 'family-card', cardAccountName: 'カード', paymentDueOn: '2026-07-27', statementAmountJpy: 120_000, paidAmountJpy: 0, outstandingAmountJpy: 120_000, projectedBankBalanceJpy: -20_000, shortfallJpy: 20_000, status: 'SHORTFALL' }],
+      }],
+      unmappedStatements: [{ statementId: 'unmapped-1', cardAccountId: 'other-card', cardAccountName: '未設定カード', paymentDueOn: '2026-08-10', statementAmountJpy: 30_000, paidAmountJpy: 0, outstandingAmountJpy: 30_000, status: 'UNMAPPED' }],
+      missingDueStatements: [{ statementId: 'missing-date-1', cardAccountId: 'family-card', cardAccountName: '期日未登録カード', statementAmountJpy: 20_000, paidAmountJpy: 0, outstandingAmountJpy: 20_000, mappingConfigured: true }],
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
+
+    expect(await screen.findByRole('heading', { name: 'カード引落・支払余力' })).toBeInTheDocument()
+    expect(screen.getByText(/明示した設定だけを使用し、取引名から推測しません/)).toBeInTheDocument()
+    expect(screen.getByText(/「集計対象外」を含むすべての確定済み仕訳/)).toBeInTheDocument()
+    expect(screen.getByText('現在残高 ¥100,000')).toBeInTheDocument()
+    expect(screen.getAllByText('−¥20,000')).toHaveLength(2)
+    expect(screen.getByText('残高不足')).toBeInTheDocument()
+    expect(screen.getByText('未設定カード')).toBeInTheDocument()
+    expect(screen.getByText(/支払余力の計算にも含めません/)).toBeInTheDocument()
+    expect(screen.getByText('期日未登録カード')).toBeInTheDocument()
+    expect(screen.getByText(/支払期日がないため予測から除外/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('カードの引落銀行口座'), { target: { value: 'family-bank' } })
+    fireEvent.click(within(screen.getByLabelText('カード引落口座設定')).getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(desktop.upsertCardSettlementBankMapping).toHaveBeenCalledWith({ householdId: 'family', cardAccountId: 'family-card', bankAccountId: 'family-bank' }))
+    expect(await screen.findByText('明示したカード引落口座を保存しました。')).toBeInTheDocument()
+    expect(desktop.queryCardSettlementBalanceCoverage).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', horizonDays: 45 }))
   })
 
   it('shows Money Forward total-assets history without treating it as net worth', async () => {
