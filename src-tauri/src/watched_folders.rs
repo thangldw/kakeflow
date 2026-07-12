@@ -88,6 +88,36 @@ pub struct WatchedFileDto {
     pub file_bytes: Vec<u8>,
 }
 
+/// Minimal, path-free registration metadata used by the native discovery
+/// supervisor. Absolute roots remain confined to this module and are resolved
+/// again by `scan_registered` for every bounded scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EnabledWatchedFolder {
+    pub household_id: String,
+    pub watched_folder_id: String,
+}
+
+pub(crate) fn list_enabled_registrations(
+    connection: &Connection,
+) -> Result<Vec<EnabledWatchedFolder>, WatchedFolderError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT household_id, id FROM watched_folders
+             WHERE is_enabled = 1 ORDER BY household_id, id",
+        )
+        .map_err(|_| WatchedFolderError::Database)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(EnabledWatchedFolder {
+                household_id: row.get(0)?,
+                watched_folder_id: row.get(1)?,
+            })
+        })
+        .map_err(|_| WatchedFolderError::Database)?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|_| WatchedFolderError::Database)
+}
+
 fn valid_identifier(value: &str, max_len: usize) -> bool {
     !value.is_empty()
         && value.len() <= max_len
