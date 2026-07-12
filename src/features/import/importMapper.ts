@@ -13,7 +13,7 @@ const MAX_PAYLOAD_JSON_BYTES = 1_048_576
 const encoder = new TextEncoder()
 
 export type ImportSourceType = 'LOCAL_FOLDER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
-export type EvidenceRole = 'PRIMARY' | 'SUPPORTING' | 'SPLIT_FUNDING' | 'CONTINUATION'
+export type EvidenceRole = 'PRIMARY' | 'SUPPORTING' | 'FUNDING_LEG' | 'CONTINUATION'
 
 export interface ImportFileMetadata {
   householdId: string
@@ -189,8 +189,9 @@ async function mapPayPay(event: WalletEventCandidate, context: MappingContext): 
       issueInvalid(context, 'INVALID_AMOUNT', `PayPay leg has no positive integer JPY amount for ${event.transactionId}.`, leg.lineage.sourceRow)
       continue
     }
-    const evidence: StartImportEvidence[] = [{ sourceRecordId: record.id, role: 'PRIMARY' }]
-    if (leg.funding.length > 1) evidence.push({ sourceRecordId: record.id, role: 'SPLIT_FUNDING' })
+    // candidate_sources is unique per candidate/source row. A split-funded
+    // PayPay payment therefore uses FUNDING_LEG as the row's single role.
+    const evidence: StartImportEvidence[] = [{ sourceRecordId: record.id, role: leg.funding.length > 1 ? 'FUNDING_LEG' : 'PRIMARY' }]
     evidence.push(...supporting.map(({ record: item }) => ({ sourceRecordId: item!.id, role: 'SUPPORTING' as const })))
     results.push(candidate(context, {
       occurredOn: date, postedOn: null, amountJpy: outgoing ?? incoming!, direction: outgoing == null ? 'IN' : 'OUT',
@@ -208,8 +209,10 @@ async function mapCardTransaction(transaction: CardTransactionCandidate, context
   if (!date) issueInvalid(context, 'INVALID_DATE', 'Card transaction has no valid ISO usage date.', transaction.lineage.sourceRow)
   if (amount == null) issueInvalid(context, 'INVALID_AMOUNT', 'Card transaction has no positive integer JPY billing amount.', transaction.lineage.sourceRow)
   if (!record || !date || amount == null) return []
-  const evidence: StartImportEvidence[] = [{ sourceRecordId: record.id, role: 'PRIMARY' }]
-  if (transaction.lineage.sourceRowEnd > transaction.lineage.sourceRow) evidence.push({ sourceRecordId: record.id, role: 'CONTINUATION' })
+  const evidence: StartImportEvidence[] = [{
+    sourceRecordId: record.id,
+    role: transaction.lineage.sourceRowEnd > transaction.lineage.sourceRow ? 'CONTINUATION' : 'PRIMARY',
+  }]
   return [candidate(context, {
     occurredOn: date, postedOn: null, amountJpy: amount,
     direction: transaction.isRefund || (transaction.billingAmount ?? 0) < 0 ? 'IN' : 'OUT',

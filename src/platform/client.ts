@@ -5,12 +5,17 @@ import type {
   AppCommand,
   AppHealthDto,
   AppStatusDto,
+  AccountDto,
+  CommitSummaryDto,
   DashboardMonthlyTotalsDto,
   DatabaseStatusDto,
   HouseholdDto,
+  ImportPreviewDto,
   ImportRunCountsDto,
+  ImportSummaryDto,
   Invoke,
   PlatformClient,
+  PreviewCandidateDto,
   TransactionPageDto,
 } from './types'
 
@@ -75,9 +80,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       status: async () => WEB_STATUS,
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
+      listAccounts: async () => [],
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0 }),
       importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 }),
+      startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
+      previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
+      commitImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_commit') },
+      rollbackImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_rollback') },
     }
   }
 
@@ -88,9 +98,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     status: () => invokeValidated(invoke, 'app_status', parseStatus),
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
+    listAccounts: (householdId) => invokeValidated(invoke, 'accounts_list', parseAccounts, { householdId }),
     queryTransactions: (request) => invokeValidated(invoke, 'transactions_query', parseTransactionPage, { request }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     importSummary: (householdId) => invokeValidated(invoke, 'import_summary', parseImportSummary, { householdId }),
+    startImport: (request, fileBytes) => invokeValidated(invoke, 'import_start', parseImportSummaryDto, { request: { import: request, fileBytes: Array.from(fileBytes) } }),
+    previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
+    commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
+    rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
   }
 }
 
@@ -127,6 +142,42 @@ function parseHousehold(value: unknown): HouseholdDto {
     throw new TypeError('household')
   }
   return { id: record.id, name: record.name, baseCurrency: record.baseCurrency, createdAt: record.createdAt }
+}
+
+function parseAccounts(value: unknown): readonly AccountDto[] {
+  if (!Array.isArray(value)) throw new TypeError('accounts')
+  return value.map((item) => {
+    const record = asRecord(item)
+    if (typeof record.id !== 'string' || typeof record.name !== 'string' || typeof record.accountKind !== 'string' || typeof record.accountSubtype !== 'string' || record.currency !== 'JPY') throw new TypeError('account')
+    return record as unknown as AccountDto
+  })
+}
+
+function parseImportSummaryDto(value: unknown): ImportSummaryDto {
+  const record = asRecord(value)
+  if (typeof record.runId !== 'string' || typeof record.documentId !== 'string' || typeof record.status !== 'string' || typeof record.reusedExisting !== 'boolean') throw new TypeError('import summary')
+  return { runId: record.runId, documentId: record.documentId, status: record.status, recordCount: asSafeInteger(record.recordCount), candidateCount: asSafeInteger(record.candidateCount), reusedExisting: record.reusedExisting }
+}
+
+function parseImportPreview(value: unknown): ImportPreviewDto {
+  const record = asRecord(value)
+  const source = asRecord(record.source)
+  if (!Array.isArray(record.candidates) || typeof source.sourceType !== 'string' || typeof source.originalFilename !== 'string' || typeof source.mediaType !== 'string' || typeof source.sha256 !== 'string') throw new TypeError('import preview')
+  return {
+    summary: parseImportSummaryDto(record.summary),
+    source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256 },
+    candidates: record.candidates as unknown as PreviewCandidateDto[],
+  }
+}
+
+function parseCommitSummary(value: unknown): CommitSummaryDto {
+  const record = asRecord(value)
+  if (typeof record.runId !== 'string') throw new TypeError('commit summary')
+  return { runId: record.runId, postedCount: asSafeInteger(record.postedCount) }
+}
+
+function parseVoid(value: unknown): void {
+  if (value !== null) throw new TypeError('void')
 }
 
 function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
