@@ -40,8 +40,10 @@ const desktop = vi.hoisted(() => ({
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
+const nativeInvoke = vi.hoisted(() => vi.fn())
 
 vi.mock('@tauri-apps/plugin-dialog', () => dialog)
+vi.mock('@tauri-apps/api/core', () => ({ invoke: nativeInvoke }))
 
 vi.mock('./platform', async () => {
   const actual = await vi.importActual<typeof import('./platform')>('./platform')
@@ -144,6 +146,18 @@ describe('KakeFlow desktop read models', () => {
     desktop.readWatchedFile.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
+    nativeInvoke.mockReset().mockImplementation(async (command: string) => {
+      const quality = { totalImports: 1, postedImports: 1, reviewRequiredImports: 0, failedImports: 0, inProgressImports: 0, importCompletionBps: 10000, latestImportedAt: '2026-07-12T00:00:00Z', staleDays: 1, hasUnresolvedImports: false }
+      const budget = { budgetJpy: 150000, actualJpy: 120000, remainingJpy: 30000, utilizationBps: 8000, categoryCount: 4, overBudgetCount: 0 }
+      const goals = { activeCount: 1, targetJpy: 1000000, savedJpy: 400000, remainingJpy: 600000, dueWithinPeriodCount: 0 }
+      const metrics = { incomeJpy: 500000, expenseJpy: 120000, savingsJpy: 380000, savingsRateBps: 7600, postedTransactionCount: 1 }
+      const deltas = { income: { amountJpy: 10000, rateBps: 204 }, expense: { amountJpy: -5000, rateBps: -400 }, savings: { amountJpy: 15000, rateBps: 411 } }
+      if (command === 'financial_calendar_query') return { month: '2026-07', asOf: '2026-07-31', days: [{ date: '2026-07-10', accrualIncomeJpy: 0, accrualExpenseJpy: 120000, cashInflowJpy: 0, cashOutflowJpy: 0, postedTransactionCount: 1, noSpendDay: false, events: [] }], budget, goals, dataQuality: quality }
+      if (command === 'financial_report_monthly_query') return { period: '2026-07', current: metrics, priorMonth: { ...metrics, expenseJpy: 125000 }, priorYear: { ...metrics, incomeJpy: 490000 }, vsPriorMonth: deltas, vsPriorYear: deltas, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 70000, previousJpy: 60000, deltaJpy: 10000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 50000, previousJpy: 40000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 1, fullyReconciled: 1, possibleMatches: 0, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
+      if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
+      if (command === 'account_groups_list') return []
+      throw new Error(`Unexpected native command: ${command}`)
+    })
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
       month: '2026-07', accountingBasis,
       incomeJpy: accountingBasis === 'ACCRUAL' ? 500_000 : 480_000,
@@ -170,6 +184,21 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByText('−¥120,000')).toBeInTheDocument()
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
+  })
+
+  it('loads the financial calendar and monthly report from native read models', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+
+    expect(await screen.findByText('Financial Calendar')).toBeInTheDocument()
+    expect(screen.getByText('No-spend days')).toBeInTheDocument()
+    expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', expect.any(Object))
+
+    fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
+    expect(await screen.findByText('Monthly Review')).toBeInTheDocument()
+    expect(screen.getByText('食費')).toBeInTheDocument()
+    expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', expect.any(Object))
   })
 
   it('re-queries the ledger when switching to cash basis', async () => {
