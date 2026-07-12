@@ -10,6 +10,10 @@ export interface ReceiptTextFields {
   readonly taxes: readonly ReceiptTaxEvidence[]
   readonly couponAmountJpy: number | null
   readonly pointsUsedJpy: number | null
+  readonly subtotalJpy: number | null
+  readonly changeJpy: number | null
+  readonly paymentMethod: string | null
+  readonly taxMode: 'INCLUDED' | 'EXCLUDED' | 'MIXED' | null
 }
 
 export interface ReceiptEvidenceProvenance {
@@ -76,17 +80,31 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   }
   const couponAmountJpy = adjustmentAmount(/(?:クーポン|値引|割引|COUPON)/i)
   const pointsUsedJpy = adjustmentAmount(/(?:ポイント利用|ポイント使用|POINTS?\s*(?:USED|REDEEMED))/i)
-  const nonItem = /(?:合計|TOTAL|小計|税|対象|クーポン|値引|割引|ポイント|お預り|お釣り|現金|クレジット|PayPay|領収|レシート)/i
+  const subtotalJpy = adjustmentAmount(/(?:小計|税抜合計|SUBTOTAL)/i)
+  const changeJpy = adjustmentAmount(/(?:お釣り|おつり|釣銭|CHANGE)/i)
+  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
+  const paymentMethod = paymentLine.match(/(PayPay|楽天ペイ|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金)/i)?.[1] ?? null
+  const hasIncludedTax = lines.some(({ text: value }) => /(?:内税|税込)/.test(value))
+  const hasExcludedTax = lines.some(({ text: value }) => /(?:外税|税抜)/.test(value))
+  const taxMode = hasIncludedTax && hasExcludedTax ? 'MIXED' : hasIncludedTax ? 'INCLUDED' : hasExcludedTax ? 'EXCLUDED' : null
+  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り|おつり|釣銭|CHANGE|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|QUICPay|交通系|領収|レシート|登録番号|TEL|電話)/i
   const items: ReceiptItemEvidence[] = lines.flatMap(({ text: line, lineNumber }) => {
     if (nonItem.test(line) || /(20\d{2})[/.年-]/.test(line)) return []
-    const match = line.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?$/)
+    const match = line.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?(?:\s*[*※])?$/)
     if (!match) return []
     const amount = Number(match[2].replaceAll(',', ''))
     if (!Number.isSafeInteger(amount) || amount <= 0) return []
-    const quantity = match[1].match(/(?:x|×)\s*(\d+)$/i)
+    const quantity = match[1].match(/(?:(?:x|×)\s*(\d+)|(\d+)\s*(?:点|個|本))(?:\s*@\s*[0-9,]+)?$/i)
+      ?? match[1].match(/@\s*[0-9,]+\s*(?:x|×)\s*(\d+)$/i)
+    const quantityValue = quantity ? Number(quantity[1] ?? quantity[2]) : null
+    const description = match[1]
+      .replace(/@\s*[0-9,]+\s*(?:x|×)\s*\d+$/i, '')
+      .replace(/(?:(?:x|×)\s*\d+|\d+\s*(?:点|個|本))(?:\s*@\s*[0-9,]+)?$/i, '')
+      .trim()
+    if (!description) return []
     return [{
-      description: match[1].replace(/(?:x|×)\s*\d+$/i, '').trim(),
-      quantity: quantity ? Number(quantity[1]) : null,
+      description,
+      quantity: quantityValue,
       amountJpy: amount,
       confidenceBps: 8000,
       provenance: provenance(lineNumber),
@@ -98,7 +116,7 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   if (!occurredOn) issues.push('DATE_MISSING')
   if (!amountJpy) issues.push('TOTAL_MISSING')
   const confidenceBps = Math.max(0, 10_000 - issues.length * 2500)
-  return { merchant, occurredOn, amountJpy, confidenceBps, issues, items, taxes, couponAmountJpy, pointsUsedJpy }
+  return { merchant, occurredOn, amountJpy, confidenceBps, issues, items, taxes, couponAmountJpy, pointsUsedJpy, subtotalJpy, changeJpy, paymentMethod, taxMode }
 }
 
 export async function buildReceiptImport(
