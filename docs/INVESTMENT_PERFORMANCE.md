@@ -1,6 +1,6 @@
 # Investment performance accounting
 
-KakeFlow v0.6 derives investment holdings and realized performance from immutable brokerage events.
+KakeFlow v0.7 derives investment holdings and realized performance from immutable brokerage events.
 
 ## Cost basis
 
@@ -54,7 +54,7 @@ Each lot and realized allocation includes its buy/sell event ID, source document
 
 ## Currency policy
 
-All holdings, costs, proceeds, dividends, fees, taxes, and realized P&L stay in their source currency. JPY is one native-currency bucket alongside USD and other ISO currency codes. KakeFlow does not aggregate unlike currencies and does not infer an FX rate. Cross-currency reporting requires an explicit dated FX source in a future valuation layer.
+All holdings, costs, proceeds, dividends, fees, taxes, and realized P&L stay in their source currency. JPY is one native-currency bucket alongside USD and other ISO currency codes. The native totals never aggregate unlike currencies. The optional reporting view converts them only when every required direct or inverse dated FX observation is available and returns the exact rate provenance alongside the JPY total.
 
 ## Period behavior
 
