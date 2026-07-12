@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.4 adds a source-backed financial calendar, monthly/yearly comparison reports, recurring-payment and anomaly insights, reusable account scopes, and CSV exports. It keeps the v0.3 investment snapshots, automatic sync-folder discovery, source-row viewing, and persisted classification rules. Investment snapshots remain separate from household expense and cash-flow totals.
+Version 0.5 adds an explainable three-month cash/savings forecast and Action Center, Japanese brokerage transaction history, and page/region-aware PDF, OCR, and receipt evidence. It keeps the v0.4 financial calendar, reports, recurring/anomaly insights, account scopes, and CSV exports. Investment events and snapshots remain separate from household expense totals.
 
 ## Product tour
 
@@ -109,8 +109,12 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.4 capabilities
+## Current v0.5 capabilities
 
+- Three-month cash/savings forecast with explicit historical assumptions, recurring costs, and known card payments.
+- Prioritized Action Center for imports, card reconciliation, budgets, goals, anomalies, and subscription price changes.
+- Brokerage buys, sells, dividends, fees, taxes, deposits, and withdrawals with balanced investment legs and currency summaries.
+- Page-aware PDF/OCR evidence plus receipt item, tax, coupon, point, confidence, and provenance views.
 - Financial calendar with accrual/cash views, no-spend days, card schedules, and drill-down.
 - Monthly/yearly reports with MoM/YoY comparisons, budget/goal progress, spending drivers, reconciliation, and data-quality status.
 - Explainable recurring/subscription and unusual-spending detection derived locally from confirmed ledger history.
@@ -124,6 +128,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Remaining product milestones
 
 1. Add OS-native background filesystem notifications even when the Import Inbox is not open.
-2. Add brokerage transaction adapters for buys, sells, dividends, fees, taxes, and deposits/withdrawals; snapshots alone are not transaction history.
-3. Add item-level receipt OCR, PDF bounding-box highlighting, a unified action center, and cash-flow/savings forecasting.
+2. Add realized investment performance, lot/cost-basis tracking, corporate actions, and more institution-specific brokerage adapters.
+3. Add visual PDF/image overlays for evidence bounding boxes and improve receipt item extraction across more Japanese formats.
 4. Add packaged UI launch/E2E coverage, production signing/notarization, update keys, and a signed release channel.

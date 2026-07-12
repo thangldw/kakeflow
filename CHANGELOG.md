@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — 2026-07-13
+
+- Add a deterministic three-month household cash and savings forecast with visible assumptions, recurring costs, and known card payments.
+- Add an Action Center for import failures/review, card mismatches and due payments, budget overruns, goal deadlines, anomalies, and recurring price changes.
+- Add Japanese brokerage transaction ingestion and persistence for buys, sells, dividends, fees, taxes, deposits, and withdrawals without inflating household expenses.
+- Add brokerage currency totals, cash movement, source-row idempotence, balanced investment legs, and transaction history in the investment workspace.
+- Add page-aware PDF evidence and OCR word bounding boxes with confidence and provenance.
+- Upgrade receipt evidence with item rows, Japanese 8%/10% taxes, coupons, points, and source line/region references.
+- Add responsive forecast, action, and evidence viewers with desktop integration tests.
+- Make Windows release builds select the compatible Strawberry Perl toolchain for vendored OpenSSL.
+
 ## 0.4.0 — 2026-07-13
 
 - Add a 42-day financial calendar with accrual/cash views, no-spend days, card closing dates, payment due dates, and settlement events.
