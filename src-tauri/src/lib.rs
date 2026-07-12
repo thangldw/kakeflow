@@ -854,8 +854,9 @@ pub fn run() {
 mod command_authorization_tests {
     use super::{
         validate_import_metrics, ImportEnvelopeMetrics, RestoreCommandAuthorization,
-        MAX_IMPORT_CARD_LINES, MAX_IMPORT_FILE_BYTES, MAX_IMPORT_METADATA_BYTES,
-        MAX_IMPORT_RAW_PAYLOAD_BYTES,
+        MAX_IMPORT_CANDIDATES, MAX_IMPORT_CARD_LINES, MAX_IMPORT_CARD_STATEMENTS,
+        MAX_IMPORT_EVIDENCE_LINKS, MAX_IMPORT_FILE_BYTES, MAX_IMPORT_METADATA_BYTES,
+        MAX_IMPORT_RAW_PAYLOAD_BYTES, MAX_IMPORT_RECORDS,
     };
 
     #[test]
@@ -915,6 +916,22 @@ mod command_authorization_tests {
             },
             ImportEnvelopeMetrics {
                 card_lines: MAX_IMPORT_CARD_LINES + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                records: MAX_IMPORT_RECORDS + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                candidates: MAX_IMPORT_CANDIDATES + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                card_statements: MAX_IMPORT_CARD_STATEMENTS + 1,
+                ..small_import_metrics()
+            },
+            ImportEnvelopeMetrics {
+                evidence_links: MAX_IMPORT_EVIDENCE_LINKS + 1,
                 ..small_import_metrics()
             },
         ] {
