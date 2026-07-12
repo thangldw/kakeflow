@@ -50,6 +50,9 @@ import type { InvestmentValuationDto } from './features/investments/investmentMa
 import { createWatchedFolderDiscoveryPlatform } from './features/import/watchedFolderDiscoveryPlatform'
 import { queryFinancialIntelligence } from './features/financial-intelligence/platform'
 import type { FinancialIntelligenceDto } from './features/financial-intelligence/platform'
+import { queryFixedCostReview } from './features/fixed-costs/platform'
+import type { FixedCostReviewDto } from './features/fixed-costs/platform'
+import { FixedCostReviewView } from './features/fixed-costs/FixedCostReviewView'
 import { createAccountGroupExportPlatform } from './features/export/accountGroupExportPlatform'
 import type { AccountGroupDto, AccountGroupKindDto, ExportAccountingBasisDto, ExportKindDto } from './features/export/accountGroupExportPlatform'
 import { createFinancialCalendarPlatform } from './features/calendar/financialCalendarPlatform'
@@ -1061,6 +1064,23 @@ function FinancialIntelligencePanel({ householdId, accountGroupId, attributionSc
   return <section className="intelligence-grid"><article className="panel recurring-panel"><div className="panel-head"><div><h2>定期支出・サブスクリプション</h2><p>{intelligence.historyFrom} 以降の確定取引から推定</p></div><Repeat2 size={19} /></div>{intelligence.recurringItems.length === 0 ? <p className="empty-state">十分な反復履歴はまだありません。</p> : intelligence.recurringItems.map((item) => <div className="recurring-row" key={item.normalizedPayee}><div><strong>{item.displayPayee}</strong><span>{cadenceLabel[item.cadence]} ・ {item.occurrenceCount}回 ・ 信頼度 {Math.round(item.confidenceBps / 100)}%</span></div><div><small>次回見込み</small><strong>{item.nextExpectedOn}</strong></div><div><small>標準金額</small><strong>{yen(item.typicalAmountJpy)}</strong>{item.priceChangeBps != null && item.priceChangeBps !== 0 && <em>{item.priceChangeBps > 0 ? '+' : ''}{(item.priceChangeBps / 100).toFixed(1)}%</em>}</div></div>)}</article><article className="panel anomaly-panel"><div className="panel-head"><div><h2>異常支出</h2><p>同じ支払先の過去実績と比較</p></div><Bell size={19} /></div>{intelligence.anomalies.length === 0 ? <p className="empty-state">確認が必要な異常支出はありません。</p> : intelligence.anomalies.map((item) => <button key={item.transactionId} onClick={openTransactions}><span><strong>{item.displayPayee}</strong><small>{item.occurredOn} ・ 基準 {yen(item.baselineAmountJpy)} ({item.baselineSampleCount}件)</small></span><strong>{yen(item.amountJpy)}</strong><em>スコア {Math.round(item.scoreBps / 100)}</em></button>)}</article></section>
 }
 
+function FixedCostReviewPanel({ householdId, accountGroupId, attributionScope, month, revision, openTransactions }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; month: string; revision: number; openTransactions: () => void }) {
+  const [review, setReview] = useState<FixedCostReviewDto | null>(null)
+  const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    let active = true
+    setReview(null); setNotice('')
+    void queryFixedCostReview(tauriInvoke, { householdId, accountGroupId, attributionScope, asOf: periodFromMonth(month).toDate })
+      .then((result) => { if (active) setReview(result) })
+      .catch(() => { if (active) setNotice('固定費レビューを読み込めませんでした。6か月分の確定取引を確認してください。') })
+    return () => { active = false }
+  }, [accountGroupId, attributionScope, householdId, month, revision])
+  if (notice) return <section className="panel"><p className="empty-state">{notice}</p></section>
+  if (!review) return <section className="panel report-loading"><Repeat2 size={28} /><p>完了済み6か月の固定費を比較しています…</p></section>
+  return <FixedCostReviewView data={review} onOpenTransactions={openTransactions} />
+}
+
 function AccountGroupsExportPanel({ householdId, accounts, month, groups, selectedAccountGroupId, attributionScope, onGroupsChanged }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; groups: readonly AccountGroupDto[]; selectedAccountGroupId: string | null; attributionScope: AttributionScopeDto; onGroupsChanged: (groups: readonly AccountGroupDto[]) => void }) {
   const [name, setName] = useState('')
   const [kind, setKind] = useState<AccountGroupKindDto>('FAMILY')
@@ -1104,7 +1124,7 @@ function AccountGroupsExportPanel({ householdId, accounts, month, groups, select
 }
 
 function ReportsPage({ householdId, accountGroupId, attributionScope, accountGroups, onGroupsChanged, accounts, month, revision, openPage }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; accountGroups: readonly AccountGroupDto[]; onGroupsChanged: (groups: readonly AccountGroupDto[]) => void; accounts: readonly AccountDto[]; month: string; revision: number; openPage: (page: PageId) => void }) {
-  const [view, setView] = useState<'CALENDAR' | 'MONTHLY' | 'FORECAST' | 'INTELLIGENCE' | 'EXPORT'>('CALENDAR')
+  const [view, setView] = useState<'CALENDAR' | 'MONTHLY' | 'FORECAST' | 'INTELLIGENCE' | 'FIXED_COST' | 'EXPORT'>('CALENDAR')
   const [calendar, setCalendar] = useState<FinancialCalendarDto | null>(null)
   const [monthlyReport, setMonthlyReport] = useState<MonthlyFinancialReportDto | null>(null)
   const [forecast, setForecast] = useState<ForecastActionDto | null>(null)
@@ -1126,8 +1146,9 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
       ? monthlyReport ? <MonthlyReportView data={monthlyReport} comparison={comparison} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} /> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
       : view === 'FORECAST' ? forecast ? <ForecastActionViews data={forecast} onAction={(action: ActionItemDto) => openPage(action.kind.startsWith('IMPORT_') ? 'import' : action.kind.startsWith('CARD_') ? 'cards' : action.kind === 'BUDGET_OVERRUN' || action.kind === 'GOAL_DUE' ? 'budgets' : 'transactions')} /> : <section className="panel report-loading"><TrendingUp size={28} /><p>{notice || '予測とアクションを読み込んでいます…'}</p></section>
         : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
-        : <AccountGroupsExportPanel householdId={householdId} accounts={accounts} month={month} groups={accountGroups} selectedAccountGroupId={accountGroupId} attributionScope={attributionScope} onGroupsChanged={onGroupsChanged} />
-  return <><PageHeader eyebrow="家計レビュー" title="カレンダー・レポート" description="確定台帳を日次、月次、予測、定期支出・異常支出の視点で確認します。"><div className="report-tabs" role="tablist" aria-label="レポート表示"><button role="tab" aria-selected={view === 'CALENDAR'} className={view === 'CALENDAR' ? 'active' : ''} onClick={() => setView('CALENDAR')}><CalendarDays size={15} /> カレンダー</button><button role="tab" aria-selected={view === 'MONTHLY'} className={view === 'MONTHLY' ? 'active' : ''} onClick={() => setView('MONTHLY')}><FileText size={15} /> 月次レポート</button><button role="tab" aria-selected={view === 'FORECAST'} className={view === 'FORECAST' ? 'active' : ''} onClick={() => setView('FORECAST')}><TrendingUp size={15} /> 予測・アクション</button><button role="tab" aria-selected={view === 'INTELLIGENCE'} className={view === 'INTELLIGENCE' ? 'active' : ''} onClick={() => setView('INTELLIGENCE')}><Bell size={15} /> 定期・異常</button><button role="tab" aria-selected={view === 'EXPORT'} className={view === 'EXPORT' ? 'active' : ''} onClick={() => setView('EXPORT')}><Download size={15} /> グループ・出力</button></div></PageHeader>{reportBody}</>
+          : view === 'FIXED_COST' ? <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
+            : <AccountGroupsExportPanel householdId={householdId} accounts={accounts} month={month} groups={accountGroups} selectedAccountGroupId={accountGroupId} attributionScope={attributionScope} onGroupsChanged={onGroupsChanged} />
+  return <><PageHeader eyebrow="家計レビュー" title="カレンダー・レポート" description="確定台帳を日次、月次、予測、定期支出・異常支出の視点で確認します。"><div className="report-tabs" role="tablist" aria-label="レポート表示"><button role="tab" aria-selected={view === 'CALENDAR'} className={view === 'CALENDAR' ? 'active' : ''} onClick={() => setView('CALENDAR')}><CalendarDays size={15} /> カレンダー</button><button role="tab" aria-selected={view === 'MONTHLY'} className={view === 'MONTHLY' ? 'active' : ''} onClick={() => setView('MONTHLY')}><FileText size={15} /> 月次レポート</button><button role="tab" aria-selected={view === 'FORECAST'} className={view === 'FORECAST' ? 'active' : ''} onClick={() => setView('FORECAST')}><TrendingUp size={15} /> 予測・アクション</button><button role="tab" aria-selected={view === 'INTELLIGENCE'} className={view === 'INTELLIGENCE' ? 'active' : ''} onClick={() => setView('INTELLIGENCE')}><Bell size={15} /> 定期・異常</button><button role="tab" aria-selected={view === 'FIXED_COST'} className={view === 'FIXED_COST' ? 'active' : ''} onClick={() => setView('FIXED_COST')}><Repeat2 size={15} /> 固定費</button><button role="tab" aria-selected={view === 'EXPORT'} className={view === 'EXPORT' ? 'active' : ''} onClick={() => setView('EXPORT')}><Download size={15} /> グループ・出力</button></div></PageHeader>{reportBody}</>
 }
 
 function BudgetsPage({ householdId, accounts, month, revision }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number }) {
