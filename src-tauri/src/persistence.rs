@@ -37,6 +37,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0016_complex_corporate_actions.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0017_household_members_account_ownership.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -399,6 +402,27 @@ fn validate_restored_semantics(
                 OR a.account_kind != 'EXPENSE' LIMIT 1",
         )?;
     }
+    if schema_version >= 17 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM households h
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM household_members m
+                 WHERE m.household_id = h.id AND m.status = 'ACTIVE'
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM accounts a
+             LEFT JOIN household_members m ON m.id = a.owner_member_id
+             WHERE (a.ownership_kind = 'HOUSEHOLD' AND a.owner_member_id IS NOT NULL)
+                OR (a.ownership_kind = 'MEMBER' AND (
+                    m.id IS NULL OR m.household_id != a.household_id OR m.status != 'ACTIVE'
+                ))
+                OR (a.visibility = 'PERSONAL' AND a.ownership_kind != 'MEMBER')
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -465,6 +489,150 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_seventeen_backfills_members_and_shared_household_accounts() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 16)
+            .expect("schema sixteen");
+        connection
+            .execute_batch(
+                "INSERT INTO households (id, name) VALUES ('family', 'Family');
+                 INSERT INTO accounts
+                   (id, household_id, name, account_kind, account_subtype)
+                 VALUES ('family-bank', 'family', 'Bank', 'ASSET', 'BANK');",
+            )
+            .expect("legacy rows");
+
+        migrations
+            .to_version(&mut connection, 17)
+            .expect("schema seventeen");
+        let member: (String, String, String, i64) = connection
+            .query_row(
+                "SELECT id, display_name, status, sort_order FROM household_members
+                 WHERE household_id = 'family'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            member,
+            (
+                "family-member-primary".into(),
+                "Primary member".into(),
+                "ACTIVE".into(),
+                0
+            )
+        );
+        let ownership: (String, Option<String>, String) = connection
+            .query_row(
+                "SELECT ownership_kind, owner_member_id, visibility FROM accounts
+                 WHERE id = 'family-bank'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(ownership, ("HOUSEHOLD".into(), None, "SHARED".into()));
+        connection
+            .execute(
+                "INSERT INTO household_members
+                   (id, household_id, display_name, status, sort_order)
+                 VALUES ('family-alice', 'family', 'Alice', 'ACTIVE', 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE accounts SET ownership_kind = 'MEMBER',
+                    owner_member_id = 'family-alice', visibility = 'PERSONAL'
+                 WHERE id = 'family-bank'",
+                [],
+            )
+            .expect("same-household active member may own a personal account");
+        assert!(connection
+            .execute(
+                "UPDATE household_members SET status = 'ARCHIVED' WHERE id = 'family-alice'",
+                [],
+            )
+            .is_err());
+
+        connection
+            .execute(
+                "INSERT INTO households (id, name) VALUES ('new', 'New')",
+                [],
+            )
+            .expect("new household");
+        let created_members: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM household_members WHERE household_id = 'new'
+                   AND id = 'new-member-primary' AND status = 'ACTIVE'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(created_members, 1);
+        assert!(connection
+            .execute(
+                "UPDATE accounts SET owner_member_id = 'new-member-primary'
+                 WHERE id = 'family-bank'",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "DELETE FROM household_members WHERE id = 'new-member-primary'",
+                [],
+            )
+            .is_err());
+        connection
+            .execute("DELETE FROM households WHERE id = 'new'", [])
+            .expect("household cascade remains valid");
+        let cascaded_members: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM household_members WHERE household_id = 'new'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(cascaded_members, 0);
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_member_account_ownership() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households (id, name) VALUES ('one', 'One'), ('two', 'Two');
+                     INSERT INTO accounts
+                       (id, household_id, name, account_kind, account_subtype)
+                     VALUES ('one-bank', 'one', 'Bank', 'ASSET', 'BANK');
+                     DROP TRIGGER trg_accounts_owner_update;
+                     UPDATE accounts SET ownership_kind = 'MEMBER',
+                         owner_member_id = 'two-member-primary'
+                     WHERE household_id = 'one';",
+                )?;
+                assert!(validate_restored_semantics(connection, 17).is_err());
+
+                connection.execute(
+                    "UPDATE accounts SET ownership_kind = 'HOUSEHOLD', owner_member_id = NULL
+                     WHERE household_id = 'one'",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "DROP TRIGGER trg_household_member_archive_last_active;
+                     UPDATE household_members SET status = 'ARCHIVED'
+                     WHERE household_id = 'one';",
+                )?;
+                assert!(validate_restored_semantics(connection, 17).is_err());
+                Ok(())
+            })
+            .expect("test database should remain queryable");
     }
 
     #[test]

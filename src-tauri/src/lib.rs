@@ -58,11 +58,12 @@ use read_model::{
     AccountDto, AccountingBasis, AppliedClassificationDto, ApplyClassificationRuleInput,
     ArchiveAccountInput, CardSettlementDto, ClassificationPreviewDto, ClassificationPreviewInput,
     ClassificationRuleDto, CreateAccountInput, CreateClassificationRuleInput, CreateHouseholdInput,
-    CreateManualTransactionInput, CreateSavingsGoalInput, DashboardMonthlyTotalsDto, HouseholdDto,
-    ImportRunCountsDto, MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto,
-    TransactionDetailDto, TransactionPageDto, TransactionPageRequest, TransactionRowDto,
-    UpdateClassificationRuleInput, UpdatePostedTransactionInput, UpdateSavingsGoalInput,
-    UpsertMonthlyCategoryBudgetInput,
+    CreateHouseholdMemberInput, CreateManualTransactionInput, CreateSavingsGoalInput,
+    DashboardMonthlyTotalsDto, HouseholdDto, HouseholdMemberDto, ImportRunCountsDto,
+    MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto, TransactionDetailDto,
+    TransactionPageDto, TransactionPageRequest, TransactionRowDto, UpdateAccountOwnershipInput,
+    UpdateClassificationRuleInput, UpdateHouseholdMemberInput, UpdatePostedTransactionInput,
+    UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
 };
 use recurring_analytics::{FinancialIntelligenceDto, FinancialIntelligenceRequest};
 use serde::{Deserialize, Serialize};
@@ -729,6 +730,47 @@ fn household_create(
 }
 
 #[tauri::command]
+fn household_members_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<HouseholdMemberDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::list_household_members(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn household_member_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateHouseholdMemberInput,
+) -> Result<HouseholdMemberDto, String> {
+    repository_result(&state, |connection| {
+        read_model::create_household_member(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn household_member_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateHouseholdMemberInput,
+) -> Result<HouseholdMemberDto, String> {
+    repository_result(&state, |connection| {
+        read_model::update_household_member(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn household_member_archive(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    member_id: String,
+) -> Result<(), String> {
+    repository_result(&state, |connection| {
+        read_model::archive_household_member(connection, &household_id, &member_id)
+    })
+}
+
+#[tauri::command]
 fn accounts_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -745,6 +787,16 @@ fn account_create(
 ) -> Result<AccountDto, String> {
     repository_result(&state, |connection| {
         read_model::create_account(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn account_ownership_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateAccountOwnershipInput,
+) -> Result<AccountDto, String> {
+    repository_result(&state, |connection| {
+        read_model::update_account_ownership(connection, &input)
     })
 }
 
@@ -1903,8 +1955,13 @@ pub fn run() {
             packaged_smoke_progress,
             households_list,
             household_create,
+            household_members_list,
+            household_member_create,
+            household_member_update,
+            household_member_archive,
             accounts_list,
             account_create,
+            account_ownership_update,
             account_rename,
             account_archive,
             transactions_query,
