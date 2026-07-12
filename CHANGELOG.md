@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.0 — 2026-07-13
+
+- Add an Annual Household Review with equal-window year-over-year income, expense, savings, savings-rate, category, merchant, budget, reconciliation, and data-quality views.
+- Mark all twelve calendar points as `COMPLETE`, `PARTIAL`, or `FUTURE`; exclude incomplete months from annual KPIs and compare a current year only with the same completed prior-year months.
+- Add deterministic, scoped annual-review CSV generation and native save with UTF-8 BOM, explicit month status, source period, account group, and attribution scope.
+- Add a dedicated `money-forward-me-asset-trend-v1` adapter for the officially documented Money Forward ME asset-history columns, including optional and reordered asset-class columns.
+- Persist aggregate asset history by household/date with immutable source-document and source-row provenance, atomic 1–1,200 row imports, overlapping-export reuse, conflict rollback, and date-range queries.
+- Display total-asset trend, latest change, and asset-class composition in Investments while explicitly keeping the external aggregate out of accounts, ledger, cash flow, and net-worth calculations.
+- Allow zero-decision finalization only for non-transaction import runs with zero reviewable candidates, fixing completion of portfolio, brokerage, and aggregate-asset imports without weakening transaction review.
+
 ## 0.16.0 — 2026-07-13
 
 - Add a dedicated fixed-cost review inside Reports, derived only from confirmed household expenses and card purchases.
