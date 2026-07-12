@@ -46,6 +46,16 @@ function currentTokyoPeriod(now = new Date()) {
   return { month, fromDate: `${month}-01`, toDate: `${month}-${String(lastDay).padStart(2, '0')}` }
 }
 
+function periodFromMonth(month: string) {
+  const match = /^(\d{4})-(\d{2})$/.exec(month)
+  if (!match) return currentTokyoPeriod()
+  const year = Number(match[1])
+  const monthNumber = Number(match[2])
+  if (monthNumber < 1 || monthNumber > 12) return currentTokyoPeriod()
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
+  return { month, fromDate: `${month}-01`, toDate: `${month}-${String(lastDay).padStart(2, '0')}` }
+}
+
 const navigation: NavigationItem[] = [
   { id: 'overview', label: 'ホーム', icon: Home },
   { id: 'transactions', label: '取引', icon: WalletCards },
@@ -94,11 +104,11 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
   )
 }
 
-function Topbar({ openMenu }: { openMenu: () => void }) {
+function Topbar({ openMenu, month, setMonth }: { openMenu: () => void; month: string; setMonth: (month: string) => void }) {
   return (
     <header className="topbar">
       <button className="icon-btn menu-btn" aria-label="メニューを開く" onClick={openMenu}><Menu size={21} /></button>
-      <div className="top-actions"><div className="top-avatar">TK</div></div>
+      <div className="top-actions"><label className="period-picker"><span>対象月</span><input aria-label="対象月" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="top-avatar">TK</div></div>
     </header>
   )
 }
@@ -200,7 +210,7 @@ function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonl
   )
 }
 
-function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string }) {
+function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName, month }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string; month: string }) {
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
   const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
@@ -208,7 +218,7 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
   const trend = desktop ? (liveDashboard?.accrualTrend ?? []).map((point) => ({ month: point.month, income: point.incomeJpy, expense: point.expenseJpy })) : undefined
   const categories = desktop ? (liveDashboard?.expenseCategories ?? []).map((item) => ({ name: item.name, amount: item.amountJpy })) : undefined
   return <>
-    <PageHeader eyebrow={new Intl.DateTimeFormat('ja-JP', { dateStyle: 'full', timeZone: 'Asia/Tokyo' }).format(new Date())} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `今月の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています。` : `今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
+    <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>
     </PageHeader>
     <section className="kpi-grid">
@@ -233,7 +243,7 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
   </>
 }
 
-function TransactionsPage({ householdId, revision }: { householdId: string | null; revision: number }) {
+function TransactionsPage({ householdId, revision, month }: { householdId: string | null; revision: number; month: string }) {
   const [query, setQuery] = useState('')
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [liveRows, setLiveRows] = useState<readonly TransactionRowDto[]>([])
@@ -244,7 +254,7 @@ function TransactionsPage({ householdId, revision }: { householdId: string | nul
   useEffect(() => {
     if (!desktop || !householdId) return
     let active = true
-    const period = currentTokyoPeriod()
+    const period = periodFromMonth(month)
     setLoadError(false)
     void Promise.all([
       platformClient.queryTransactions({ householdId, accountingBasis: basis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 100 }),
@@ -255,7 +265,7 @@ function TransactionsPage({ householdId, revision }: { householdId: string | nul
       if (active) { setLiveRows([]); setLiveTotals(null); setLoadError(true) }
     })
     return () => { active = false }
-  }, [basis, desktop, householdId, revision])
+  }, [basis, desktop, householdId, month, revision])
 
   const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
   const displayRows = desktop ? liveRows.map(toTransactionViewModel) : basisTransactions
@@ -266,7 +276,7 @@ function TransactionsPage({ householdId, revision }: { householdId: string | nul
     <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。" />
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
-      <div className="table-summary"><span>{currentTokyoPeriod().month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
+      <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
       {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
     </section>
   </>
@@ -456,11 +466,11 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   </>
 }
 
-function CardsPage({ cards, householdId, onChanged }: { cards: readonly CardSettlementDto[]; householdId: string | null; onChanged: () => void }) {
+function CardsPage({ cards, householdId, onChanged, month }: { cards: readonly CardSettlementDto[]; householdId: string | null; onChanged: () => void; month: string }) {
   const desktop = platformClient.runtime === 'tauri'
   const [busyId, setBusyId] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
-  const displayCards = desktop ? cards : cardSettlements.map((card, index) => ({
+  const displayCards = desktop ? cards.filter((card) => (card.periodStart.slice(0, 7) <= month && card.periodEnd.slice(0, 7) >= month) || card.paymentDueOn?.slice(0, 7) === month || card.paymentOn?.slice(0, 7) === month) : cardSettlements.map((card, index) => ({
     id: `demo-${index}`, cardAccountId: `demo-${index}`, cardName: card.name, maskedIdentifier: card.mask,
     periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: card.dueDate,
     statementAmountJpy: card.statement, detailAmountJpy: card.statement, lineCount: card.name.includes('Rakuten') ? 15 : 14,
@@ -586,6 +596,7 @@ function App() {
   const [liveCards, setLiveCards] = useState<readonly CardSettlementDto[]>([])
   const [ledgerRevision, setLedgerRevision] = useState(0)
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
+  const [selectedMonth, setSelectedMonth] = useState(() => globalThis.localStorage?.getItem('kakeflow.selectedMonth') ?? currentTokyoPeriod().month)
 
   useEffect(() => {
     let active = true
@@ -634,7 +645,7 @@ function App() {
       return
     }
     let active = true
-    const period = currentTokyoPeriod()
+    const period = periodFromMonth(selectedMonth)
     void Promise.all([
       platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: 'ACCRUAL' }),
       platformClient.queryTransactions({ householdId, accountingBasis: 'ACCRUAL', fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
@@ -646,7 +657,13 @@ function App() {
       if (active) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]) }
     })
     return () => { active = false }
-  }, [activeHouseholdId, ledgerRevision])
+  }, [activeHouseholdId, ledgerRevision, selectedMonth])
+
+  const selectMonth = (month: string) => {
+    const selected = periodFromMonth(month).month
+    globalThis.localStorage?.setItem('kakeflow.selectedMonth', selected)
+    setSelectedMonth(selected)
+  }
 
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? null
   const selectHousehold = (id: string) => {
@@ -656,14 +673,14 @@ function App() {
   }
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} />,
-    transactions: <TransactionsPage householdId={activeHouseholdId} revision={ledgerRevision} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
+    transactions: <TransactionsPage householdId={activeHouseholdId} revision={ledgerRevision} month={selectedMonth} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     budgets: <BudgetsPage />,
     settings: <SettingsPage />,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} /><main>{pageContent}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} /><main>{pageContent}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App

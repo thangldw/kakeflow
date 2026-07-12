@@ -111,6 +111,18 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByRole('heading', { name: '両親家の家計' })).toBeInTheDocument()
   })
 
+  it('uses one persisted month for dashboard and ledger queries', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+
+    fireEvent.change(screen.getByLabelText('対象月'), { target: { value: '2026-06' } })
+
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ month: '2026-06' })))
+    expect(localStorage.getItem('kakeflow.selectedMonth')).toBe('2026-06')
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ fromDate: '2026-06-01', toDate: '2026-06-30' })))
+  })
+
   it('renders and confirms a persisted card-payment match', async () => {
     desktop.listCardSettlements.mockResolvedValue([{
       id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: '•••• 8106',
