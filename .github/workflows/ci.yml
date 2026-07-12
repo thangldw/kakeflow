@@ -46,8 +46,8 @@ jobs:
       - name: Check application version consistency
         run: npm run check:versions
 
-  rust:
-    name: Rust (${{ matrix.name }})
+  desktop-smoke:
+    name: Desktop smoke (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -61,11 +61,18 @@ jobs:
 
     defaults:
       run:
-        working-directory: src-tauri
+        shell: bash
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install Rust 1.97.0
         shell: bash
@@ -81,11 +88,8 @@ jobs:
           cache-on-failure: false
           save-if: ${{ github.event_name == 'push' }}
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Install frontend dependencies
+        run: npm ci
 
-      - name: Run Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-      - name: Run Rust tests
-        run: cargo test --locked --all-features
+      - name: Run non-destructive desktop validation
+        run: npm run desktop:smoke
