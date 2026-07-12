@@ -448,6 +448,10 @@ pub fn master_key_fingerprint(master_key: &[u8; 32]) -> [u8; 32] {
 
 fn validate_candidate_data(paths: &RestorePaths, master_key: &[u8; 32]) -> Result<()> {
     let database = paths.candidate_database().join("kakeflow.db");
+    persistence::validate_existing_database(&database, master_key)
+        .map_err(|_| RestoreError::Validation)?;
+    persistence::clear_restored_device_local_state(&database, master_key)
+        .map_err(|_| RestoreError::Validation)?;
     let restored = persistence::validate_existing_database(&database, master_key)
         .map_err(|_| RestoreError::Validation)?;
     let vault = DocumentVault::new(paths.candidate_documents(), master_key)

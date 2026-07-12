@@ -195,6 +195,28 @@ pub fn validate_existing_database(
     })
 }
 
+/// Remove grants that are meaningful only on the device where they were
+/// selected. Portable restores must require a fresh native folder selection.
+pub fn clear_restored_device_local_state(
+    database_path: &std::path::Path,
+    key_material: &[u8],
+) -> Result<(), PersistenceError> {
+    let mut connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    apply_key(&connection, key_material)?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    let version = schema_version(&connection)?;
+    if version >= 8 {
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM watched_folders", [])?;
+        transaction.commit()?;
+        connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+    }
+    Ok(())
+}
+
 fn collect_source_documents(
     connection: &Connection,
     schema_version: i64,
@@ -801,6 +823,43 @@ mod tests {
         assert!(restored.source_documents.is_empty());
         assert!(validate_existing_database(&database_path, b"wrong key").is_err());
 
+        let _ = fs::remove_dir_all(test_directory);
+    }
+
+    #[test]
+    fn portable_restore_clears_device_local_watched_folder_grants() {
+        let test_directory = std::env::temp_dir().join(format!(
+            "kakeflow-device-state-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock should follow epoch")
+                .as_nanos()
+        ));
+        let database_path = test_directory.join("kakeflow.db");
+        let state =
+            AppState::open_with_key(database_path.clone(), TEST_KEY).expect("open database");
+        state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households (id, name) VALUES ('family', 'Family')", [])?;
+                connection.execute(
+                    "INSERT INTO watched_folders (id, household_id, label, canonical_path) VALUES ('folder', 'family', 'Inbox', '/device/private/inbox')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .expect("seed watched folder");
+        drop(state);
+
+        clear_restored_device_local_state(&database_path, TEST_KEY).expect("clear device state");
+
+        let connection = Connection::open(&database_path).expect("reopen database");
+        apply_key(&connection, TEST_KEY).expect("apply key");
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM watched_folders", [], |row| row.get(0))
+            .expect("count watched folders");
+        assert_eq!(count, 0);
+        drop(connection);
         let _ = fs::remove_dir_all(test_directory);
     }
 }
