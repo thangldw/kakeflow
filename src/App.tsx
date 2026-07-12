@@ -30,7 +30,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
-import { save } from '@tauri-apps/plugin-dialog'
+import { open, save } from '@tauri-apps/plugin-dialog'
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
 import { sha256Text } from './features/import/importService'
@@ -39,7 +39,7 @@ import { buildReceiptImport } from './features/import/receiptText'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
+import type { AccountDto, AppBootstrapDto, BackupSummaryDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -516,6 +516,11 @@ function SettingsPage() {
   const [confirmation, setConfirmation] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  const [restorePassphrase, setRestorePassphrase] = useState('')
+  const [restoreConfirmation, setRestoreConfirmation] = useState('')
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false)
+  const [restoreNotice, setRestoreNotice] = useState('')
+  const [restoreBusy, setRestoreBusy] = useState(false)
 
   const createBackup = async () => {
     if (passphrase.length < 12) { setNotice('12文字以上のパスフレーズを入力してください。'); return }
@@ -532,7 +537,32 @@ function SettingsPage() {
     } finally { setBusy(false) }
   }
 
-  return <><PageHeader eyebrow="ローカルデータ" title="設定" description="暗号化データの保護とバックアップを管理します。" /><section className="panel settings-panel"><div><h2>暗号化バックアップ</h2><p>SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。</p></div><div className="backup-form"><label htmlFor="backup-passphrase">パスフレーズ</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="12文字以上" /><label htmlFor="backup-confirmation">パスフレーズを確認</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? 'データを固定中…' : 'バックアップを作成'}</button>{platformClient.runtime === 'web' && <small>デスクトップ版で利用できます。</small>}{notice && <p role="status">{notice}</p>}</div></section></>
+  const restoreBackup = async () => {
+    if (restorePassphrase.length < 12) { setRestoreNotice('バックアップ作成時の12文字以上のパスフレーズを入力してください。'); return }
+    if (restorePassphrase !== restoreConfirmation) { setRestoreNotice('復元用パスフレーズが一致しません。'); return }
+    if (!replaceConfirmed) { setRestoreNotice('現在のデータが置き換わることを確認してください。'); return }
+    setRestoreBusy(true); setRestoreNotice('')
+    let result: BackupSummaryDto
+    try {
+      const archivePath = await open({ multiple: false, directory: false, filters: [{ name: 'KakeFlow Backup', extensions: ['kakeflow-backup'] }] })
+      if (typeof archivePath !== 'string') { setRestoreBusy(false); return }
+      result = await platformClient.stageBackupRestore(archivePath, restorePassphrase)
+    } catch {
+      setRestoreNotice('バックアップを復元できませんでした。ファイルとパスフレーズを確認してください。現在のデータは変更されていません。')
+      setRestoreBusy(false)
+      return
+    }
+    setRestorePassphrase(''); setRestoreConfirmation(''); setReplaceConfirmed(false)
+    setRestoreNotice(`Portable v${result.formatVersion} の復元準備が完了しました。安全に再起動します…`)
+    try {
+      await platformClient.restartForRestore()
+    } catch {
+      setRestoreNotice('復元準備は完了しています。復元を適用するため、KakeFlowを終了してもう一度起動してください。')
+      setRestoreBusy(false)
+    }
+  }
+
+  return <><PageHeader eyebrow="ローカルデータ" title="設定" description="暗号化データの保護とバックアップを管理します。" /><section className="panel settings-panel"><div><h2>暗号化バックアップ</h2><p>SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。</p></div><div className="backup-form"><label htmlFor="backup-passphrase">パスフレーズ</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="12文字以上" /><label htmlFor="backup-confirmation">パスフレーズを確認</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? 'データを固定中…' : 'バックアップを作成'}</button>{platformClient.runtime === 'web' && <small>デスクトップ版で利用できます。</small>}{notice && <p role="status">{notice}</p>}</div></section><section className="panel settings-panel restore-panel"><div><h2>バックアップから復元</h2><p><strong>注意:</strong> 現在の台帳と原本は、選択したバックアップの内容に置き換わります。復元前に現在のバックアップを作成してください。</p></div><div className="backup-form"><label htmlFor="restore-passphrase">復元用パスフレーズ</label><input id="restore-passphrase" type="password" autoComplete="off" value={restorePassphrase} onChange={(event) => setRestorePassphrase(event.target.value)} placeholder="バックアップ作成時のパスフレーズ" /><label htmlFor="restore-confirmation">復元用パスフレーズを確認</label><input id="restore-confirmation" type="password" autoComplete="off" value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} /><label className="restore-confirmation"><input type="checkbox" checked={replaceConfirmed} onChange={(event) => setReplaceConfirmed(event.target.checked)} /><span>現在のデータが置き換わり、アプリが再起動することを理解しました。</span></label><button className="danger-btn" disabled={restoreBusy || platformClient.runtime !== 'tauri'} onClick={() => void restoreBackup()}>{restoreBusy ? 'バックアップを検証中…' : 'バックアップを選択して復元'}</button>{platformClient.runtime === 'web' && <small>復元はデスクトップ版で利用できます。</small>}{restoreNotice && <p role="status">{restoreNotice}</p>}</div></section></>
 }
 
 function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => void }) {
