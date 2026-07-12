@@ -1,14 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ExtractedRegionDto } from '../../platform'
 import type { DocumentEvidenceReadModel } from './documentEvidence'
 import { EvidencePageOverlay } from './EvidencePageOverlay'
 import type { EvidencePageImage } from './EvidencePageOverlay'
+import { createSourcePdfPagePreviewPlatform, pdfPreviewToEvidenceImage } from './sourcePdfPagePreviewPlatform'
 import './documentEvidenceViewer.css'
+
+const pdfPagePlatform = createSourcePdfPagePreviewPlatform()
 
 export interface DocumentEvidenceViewerProps {
   readonly evidence: DocumentEvidenceReadModel
   readonly filename?: string
   readonly pageImages?: Readonly<Record<number, EvidencePageImage>>
+  readonly pdfSource?: { readonly householdId: string; readonly sourceDocumentId: string }
+  readonly pdfPageLoader?: (pageNumber: number) => Promise<EvidencePageImage>
   readonly onSelectRegion?: (pageNumber: number, region: ExtractedRegionDto, regionIndex: number) => void
 }
 
@@ -22,9 +27,39 @@ function RegionLocation({ region }: { readonly region: ExtractedRegionDto }) {
   return <span>{region.coordinateSpace === 'PIXELS' ? 'px' : 'pt'}: x {box.left}, y {box.top}, w {box.width}, h {box.height}</span>
 }
 
-export function DocumentEvidenceViewer({ evidence, filename, pageImages, onSelectRegion }: DocumentEvidenceViewerProps) {
+export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSource, pdfPageLoader, onSelectRegion }: DocumentEvidenceViewerProps) {
   const receipt = evidence.receipt
   const [selected, setSelected] = useState<{ pageNumber: number; regionIndex: number } | null>(null)
+  const [renderedPdfPages, setRenderedPdfPages] = useState<Readonly<Record<number, EvidencePageImage>>>({})
+  const [pendingPdfPages, setPendingPdfPages] = useState<readonly number[]>([])
+  const [failedPdfPages, setFailedPdfPages] = useState<readonly number[]>([])
+  const pageNumbers = useMemo(() => evidence.pages.map((page) => page.pageNumber), [evidence.pages])
+  const pageKey = pageNumbers.join(',')
+  useEffect(() => {
+    setRenderedPdfPages({})
+    setFailedPdfPages([])
+    const missingPages = pageNumbers.filter((pageNumber) => !pageImages?.[pageNumber])
+    if (missingPages.length === 0 || (!pdfSource && !pdfPageLoader)) {
+      setPendingPdfPages([])
+      return
+    }
+    let active = true
+    setPendingPdfPages(missingPages)
+    const loadPage = pdfPageLoader ?? (async (pageNumber: number) => pdfPreviewToEvidenceImage(await pdfPagePlatform.get(pdfSource!.householdId, pdfSource!.sourceDocumentId, pageNumber)))
+    void Promise.all(missingPages.map(async (pageNumber) => {
+      try { return { pageNumber, image: await loadPage(pageNumber) } }
+      catch { return { pageNumber, image: null } }
+    })).then((results) => {
+      if (!active) return
+      setRenderedPdfPages(Object.fromEntries(results.filter((result): result is { pageNumber: number; image: EvidencePageImage } => result.image !== null).map((result) => [result.pageNumber, result.image])))
+      setFailedPdfPages(results.filter((result) => result.image === null).map((result) => result.pageNumber))
+      setPendingPdfPages([])
+    })
+    return () => { active = false }
+    // pageKey is a stable representation of the source evidence pages.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evidence.sourceRecordId, pageKey, pdfSource?.householdId, pdfSource?.sourceDocumentId, pdfPageLoader])
+  const resolvedPageImages = { ...renderedPdfPages, ...pageImages }
   const selectRegion = (pageNumber: number, region: ExtractedRegionDto, regionIndex: number) => {
     setSelected({ pageNumber, regionIndex })
     onSelectRegion?.(pageNumber, region, regionIndex)
@@ -48,7 +83,7 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, onSelec
     </section>}
 
     <section className="evidence-pages" aria-labelledby="evidence-pages-title"><header><div><p>Located evidence</p><h3 id="evidence-pages-title">ページ・領域</h3></div><span>{evidence.pages.length}ページ</span></header>
-      {evidence.pages.length === 0 ? <p className="evidence-empty">この抽出結果には座標情報がありません。</p> : evidence.pages.map((page) => <section className="evidence-page" key={page.pageNumber} aria-labelledby={`evidence-page-${page.pageNumber}`}><header><h4 id={`evidence-page-${page.pageNumber}`}>Page {page.pageNumber}</h4><span>{page.regions.length} regions</span></header><EvidencePageOverlay pageNumber={page.pageNumber} regions={page.regions} image={pageImages?.[page.pageNumber]} selectedRegionIndexes={selected?.pageNumber === page.pageNumber ? [selected.regionIndex] : []} onSelectRegion={(region, index) => selectRegion(page.pageNumber, region, index)} /><ol>{page.regions.map((region, index) => {
+      {evidence.pages.length === 0 ? <p className="evidence-empty">この抽出結果には座標情報がありません。</p> : evidence.pages.map((page) => <section className="evidence-page" key={page.pageNumber} aria-labelledby={`evidence-page-${page.pageNumber}`}><header><h4 id={`evidence-page-${page.pageNumber}`}>Page {page.pageNumber}</h4><span>{pendingPdfPages.includes(page.pageNumber) ? '原本を描画中…' : failedPdfPages.includes(page.pageNumber) ? '原本プレビュー unavailable' : `${page.regions.length} regions`}</span></header><EvidencePageOverlay pageNumber={page.pageNumber} regions={page.regions} image={resolvedPageImages[page.pageNumber]} selectedRegionIndexes={selected?.pageNumber === page.pageNumber ? [selected.regionIndex] : []} onSelectRegion={(region, index) => selectRegion(page.pageNumber, region, index)} /><ol>{page.regions.map((region, index) => {
           const content = <><div className="region-copy"><q>{region.text || '（空の領域）'}</q><span>{region.provenance}</span></div><div className="region-meta"><RegionLocation region={region} /><strong>{confidence(region.confidenceBps)}</strong></div></>
           return <li key={`${region.provenance}-${index}`} className={selected?.pageNumber === page.pageNumber && selected.regionIndex === index ? 'selected' : ''}><button type="button" onClick={() => selectRegion(page.pageNumber, region, index)} aria-label={`Page ${page.pageNumber} region ${index + 1}を表示`}>{content}</button></li>
         })}</ol></section>)}

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { DocumentEvidenceReadModel } from './documentEvidence'
 import { DocumentEvidenceViewer } from './DocumentEvidenceViewer'
@@ -26,5 +26,18 @@ describe('DocumentEvidenceViewer', () => {
     render(<DocumentEvidenceViewer evidence={evidence} onSelectRegion={onSelectRegion} />)
     fireEvent.click(screen.getByRole('button', { name: 'Page 1 region 1を表示' }))
     expect(onSelectRegion).toHaveBeenCalledWith(1, evidence.pages[0].regions[0], 0)
+  })
+
+  it('renders PDF pages behind evidence regions and keeps failures non-blocking', async () => {
+    const pdfPageLoader = vi.fn().mockResolvedValue({
+      src: 'data:image/png;base64,AA==', width: 1224, height: 1584,
+      pageWidthPoints: 612, pageHeightPoints: 792, alt: 'statement.pdf Page 1',
+    })
+    render(<DocumentEvidenceViewer evidence={evidence} pdfPageLoader={pdfPageLoader} />)
+
+    expect(screen.getByText('原本を描画中…')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByAltText('statement.pdf Page 1')).toBeInTheDocument())
+    expect(pdfPageLoader).toHaveBeenCalledWith(1)
+    expect(screen.getByText('原本プレビュー')).toBeInTheDocument()
   })
 })

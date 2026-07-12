@@ -7,6 +7,8 @@ export interface EvidencePageImage {
   readonly src: string
   readonly width: number
   readonly height: number
+  readonly pageWidthPoints?: number
+  readonly pageHeightPoints?: number
   readonly alt: string
 }
 
@@ -36,7 +38,9 @@ export function EvidencePageOverlay({ pageNumber, regions, image, selectedRegion
       {located.map(({ region, index }) => {
         const box = region.boundingBox!
         const selected = selectedRegionIndexes.includes(index)
-        return <button type="button" key={`${region.provenance}-${index}`} className={selected ? 'selected' : ''} style={{ left: `${box.left / width * 100}%`, top: `${box.top / height * 100}%`, width: `${Math.max(box.width / width * 100, 1)}%`, height: `${Math.max(box.height / height * 100, 1)}%` }} aria-label={`Region ${index + 1}: ${region.text || 'empty'}`} aria-pressed={selected} title={region.text} onClick={() => onSelectRegion?.(region, index)}><span>{index + 1}</span></button>
+        const coordinateWidth = region.coordinateSpace === 'PDF_POINTS' ? image?.pageWidthPoints ?? width : width
+        const coordinateHeight = region.coordinateSpace === 'PDF_POINTS' ? image?.pageHeightPoints ?? height : height
+        return <button type="button" key={`${region.provenance}-${index}`} className={selected ? 'selected' : ''} style={{ left: `${box.left / coordinateWidth * 100}%`, top: `${box.top / coordinateHeight * 100}%`, width: `${Math.max(box.width / coordinateWidth * 100, 1)}%`, height: `${Math.max(box.height / coordinateHeight * 100, 1)}%` }} aria-label={`Region ${index + 1}: ${region.text || 'empty'}`} aria-pressed={selected} title={region.text} onClick={() => onSelectRegion?.(region, index)}><span>{index + 1}</span></button>
       })}
     </div></div>
   </section>

@@ -21,4 +21,11 @@ describe('EvidencePageOverlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '拡大' }))
     expect(screen.getByRole('status', { name: 'ズーム率' })).toHaveTextContent('125%')
   })
+
+  it('maps PDF-point boxes against page points instead of rendered pixels', () => {
+    const pdfRegions = [{ ...regions[0], coordinateSpace: 'PDF_POINTS' as const, boundingBox: { left: 306, top: 396, width: 61, height: 79 } }]
+    render(<EvidencePageOverlay pageNumber={1} regions={pdfRegions} image={{ src: 'data:image/png;base64,AA==', width: 1224, height: 1584, pageWidthPoints: 612, pageHeightPoints: 792, alt: 'statement' }} />)
+
+    expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({ left: '50%', top: '50%' })
+  })
 })
