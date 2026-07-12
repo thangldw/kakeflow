@@ -5,6 +5,7 @@ pub mod import_workflow;
 mod key_store;
 pub mod ocr;
 mod persistence;
+pub mod portfolio;
 mod private_fs;
 mod read_model;
 pub mod restore;
@@ -18,6 +19,9 @@ use import_workflow::{
 };
 use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
+use portfolio::{
+    ImportPortfolioSnapshotInput, PortfolioSnapshotDetailDto, PortfolioSnapshotSummaryDto,
+};
 use read_model::{
     AccountDto, AccountingBasis, AppliedClassificationDto, ApplyClassificationRuleInput,
     ArchiveAccountInput, CardSettlementDto, ClassificationPreviewDto, ClassificationPreviewInput,
@@ -346,6 +350,16 @@ fn repository_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn portfolio_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> Result<T, portfolio::PortfolioError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Portfolio database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 #[tauri::command]
 fn households_list(state: tauri::State<'_, AppState>) -> Result<Vec<HouseholdDto>, String> {
     repository_result(&state, read_model::list_households)
@@ -548,6 +562,37 @@ fn savings_goal_delete(
 ) -> Result<(), String> {
     repository_result(&state, |connection| {
         read_model::delete_savings_goal(connection, &household_id, &goal_id)
+    })
+}
+
+#[tauri::command]
+fn portfolio_snapshot_import(
+    state: tauri::State<'_, AppState>,
+    input: ImportPortfolioSnapshotInput,
+) -> Result<PortfolioSnapshotDetailDto, String> {
+    portfolio_result(&state, |connection| {
+        portfolio::import_snapshot(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn portfolio_snapshots_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<PortfolioSnapshotSummaryDto>, String> {
+    portfolio_result(&state, |connection| {
+        portfolio::list_snapshots(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn portfolio_snapshot_get(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    snapshot_id: String,
+) -> Result<PortfolioSnapshotDetailDto, String> {
+    portfolio_result(&state, |connection| {
+        portfolio::get_snapshot(connection, &household_id, &snapshot_id)
     })
 }
 
@@ -1165,6 +1210,9 @@ pub fn run() {
             savings_goal_create,
             savings_goal_update,
             savings_goal_delete,
+            portfolio_snapshot_import,
+            portfolio_snapshots_list,
+            portfolio_snapshot_get,
             classification_rules_list,
             classification_rule_create,
             classification_rule_update,
