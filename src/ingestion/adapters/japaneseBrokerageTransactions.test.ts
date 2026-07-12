@@ -68,4 +68,21 @@ describe('Japanese brokerage transaction adapter', () => {
       expect.objectContaining({ code: 'BROKERAGE_AMOUNT_MISSING', row: 3 }),
     ]))
   })
+
+  it('recognizes common Japanese aliases and zero-value split and merger actions', () => {
+    const corporateActions = [
+      '約定年月日,取引内容,銘柄,商品コード,受渡金額,分割比率,交換比率,交換先コード,交換先銘柄名,通貨名',
+      '2026/08/01,株式分割,旧会社,1111,,1:2,,,,JPY',
+      '2026/09/01,株式交換（合併）,旧会社,1111,,,1:0.5,2222,新会社,JPY',
+    ].join('\n')
+    const result = japaneseBrokerageTransactionsAdapter.parse({ text: corporateActions, filename: '楽天証券_取引履歴.csv' })
+    expect(result.records).toHaveLength(2)
+    expect(result.records[0]).toMatchObject({ eventType: 'SPLIT', grossAmount: 0, settlementAmount: 0, corporateActionRatio: 2 })
+    expect(result.records[1]).toMatchObject({ eventType: 'MERGER', corporateActionRatio: 0.5, targetInstrumentCode: '2222', targetInstrumentName: '新会社' })
+    expect(result.records[0].legs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'SECURITY', signedAmount: 0, signedQuantity: -1 }),
+      expect.objectContaining({ kind: 'SECURITY', signedAmount: 0, signedQuantity: 2 }),
+    ]))
+    expect(result.issues).toHaveLength(0)
+  })
 })

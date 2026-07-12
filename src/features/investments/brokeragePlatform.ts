@@ -36,6 +36,10 @@ export interface ImportBrokerageEventDto {
   readonly reconciliationDifference: number
   readonly affectsHouseholdExpense: false
   readonly rawTransactionType: string
+  readonly corporateActionRatio?: number
+  readonly targetInstrumentCode?: string
+  readonly targetInstrumentName?: string
+  readonly targetCurrency?: string
   readonly legs: readonly ImportBrokerageLegDto[]
 }
 
@@ -68,10 +72,14 @@ export interface BrokerageHistoryDto {
   readonly totalsByCurrency: readonly BrokerageCurrencyTotalsDto[]
 }
 
-export interface BrokerageEventDto extends Omit<ImportBrokerageEventDto, 'legs'> {
+export interface BrokerageEventDto extends Omit<ImportBrokerageEventDto, 'legs' | 'corporateActionRatio' | 'targetInstrumentCode' | 'targetInstrumentName' | 'targetCurrency'> {
   readonly accountId: string
   readonly accountName: string
   readonly sourceDocumentId: string
+  readonly corporateActionRatio: number | null
+  readonly targetInstrumentCode: string | null
+  readonly targetInstrumentName: string | null
+  readonly targetCurrency: string | null
   readonly legs: readonly BrokerageLegDto[]
 }
 
@@ -129,6 +137,10 @@ export function mapBrokerageEventsImport(
         reconciliationDifference: candidate.reconciliationDifference,
         affectsHouseholdExpense: false,
         rawTransactionType: candidate.rawTransactionType,
+        corporateActionRatio: candidate.corporateActionRatio,
+        targetInstrumentCode: candidate.targetInstrumentCode,
+        targetInstrumentName: candidate.targetInstrumentName,
+        targetCurrency: candidate.targetCurrency,
         legs: candidate.legs.map((leg, legIndex) => ({ ...leg, id: `${eventId}-l-${legIndex + 1}` })),
       }
     }),
@@ -159,12 +171,14 @@ function parseHistory(value: unknown): BrokerageHistoryDto {
 function parseEvent(value: unknown): BrokerageEventDto {
   const item = record(value, 'brokerage event')
   for (const key of ['id', 'accountId', 'accountName', 'sourceDocumentId', 'eventType', 'instrumentCode', 'instrumentName', 'accountType', 'currency', 'reconciliationStatus', 'rawTransactionType']) string(item[key], key)
-  if (!['BUY', 'SELL', 'DIVIDEND', 'FEE', 'TAX', 'DEPOSIT', 'WITHDRAWAL'].includes(item.eventType as string)) throw new TypeError('Invalid eventType')
+  if (!['BUY', 'SELL', 'DIVIDEND', 'FEE', 'TAX', 'DEPOSIT', 'WITHDRAWAL', 'SPLIT', 'REVERSE_SPLIT', 'MERGER'].includes(item.eventType as string)) throw new TypeError('Invalid eventType')
   if (!['BALANCED', 'ADJUSTED'].includes(item.reconciliationStatus as string)) throw new TypeError('Invalid reconciliationStatus')
   if (!/^[A-Z]{3}$/.test(item.currency as string)) throw new TypeError('Invalid currency')
   safeInteger(item.sourceRow, 'sourceRow')
   for (const key of ['tradeDate', 'settlementDate']) nullableString(item[key], key)
   for (const key of ['quantity', 'unitPrice']) nullableFinite(item[key], key)
+  nullableFinite(item.corporateActionRatio, 'corporateActionRatio')
+  for (const key of ['targetInstrumentCode', 'targetInstrumentName', 'targetCurrency']) nullableString(item[key], key)
   for (const key of ['grossAmount', 'feeAmount', 'taxAmount', 'settlementAmount', 'reconciliationDifference']) finite(item[key], key)
   if (item.affectsHouseholdExpense !== false || !Array.isArray(item.legs)) throw new TypeError('Invalid brokerage event accounting fields')
   return { ...item, legs: item.legs.map(parseLeg) } as unknown as BrokerageEventDto

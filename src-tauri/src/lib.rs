@@ -7,6 +7,7 @@ pub mod financial_calendar;
 mod folder_discovery;
 pub mod forecast_action;
 pub mod import_workflow;
+pub mod investment_fx;
 pub mod investment_performance;
 mod key_store;
 pub mod ocr;
@@ -31,6 +32,10 @@ use document_vault::DocumentVault;
 use import_workflow::{
     CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
     StartImport,
+};
+use investment_fx::{
+    ImportInvestmentFxRatesInput, InvestmentFxImportSummaryDto, InvestmentFxRateDto,
+    InvestmentFxRatesRequest, InvestmentReportingDto, InvestmentReportingRequest,
 };
 use investment_performance::{
     InvestmentHoldingsDto, InvestmentHoldingsRequest, InvestmentPerformanceDto,
@@ -508,6 +513,16 @@ fn investment_performance_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn investment_fx_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> Result<T, investment_fx::InvestmentFxError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Investment FX database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 #[tauri::command]
 fn households_list(state: tauri::State<'_, AppState>) -> Result<Vec<HouseholdDto>, String> {
     repository_result(&state, read_model::list_households)
@@ -795,6 +810,36 @@ fn investment_performance_query(
 ) -> Result<InvestmentPerformanceDto, String> {
     investment_performance_result(&state, |connection| {
         investment_performance::query_performance(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn investment_fx_rates_import(
+    state: tauri::State<'_, AppState>,
+    input: ImportInvestmentFxRatesInput,
+) -> Result<InvestmentFxImportSummaryDto, String> {
+    investment_fx_result(&state, |connection| {
+        investment_fx::import_rates(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn investment_fx_rates_query(
+    state: tauri::State<'_, AppState>,
+    request: InvestmentFxRatesRequest,
+) -> Result<Vec<InvestmentFxRateDto>, String> {
+    investment_fx_result(&state, |connection| {
+        investment_fx::query_rates(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn investment_reporting_query(
+    state: tauri::State<'_, AppState>,
+    request: InvestmentReportingRequest,
+) -> Result<InvestmentReportingDto, String> {
+    investment_fx_result(&state, |connection| {
+        investment_fx::query_reporting(connection, &request)
     })
 }
 
@@ -1571,6 +1616,9 @@ pub fn run() {
             brokerage_history_query,
             investment_holdings_query,
             investment_performance_query,
+            investment_fx_rates_import,
+            investment_fx_rates_query,
+            investment_reporting_query,
             account_groups_list,
             account_group_create,
             account_group_update,

@@ -59,6 +59,7 @@ pub struct InvestmentHoldingsDto {
     pub realized_allocations: Vec<RealizedAllocationDto>,
     pub uncovered_sales: Vec<UncoveredSaleDto>,
     pub skipped_event_ids: Vec<String>,
+    pub corporate_action_event_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -138,6 +139,7 @@ pub struct InvestmentPerformanceDto {
     pub realized_allocations: Vec<RealizedAllocationDto>,
     pub uncovered_sales: Vec<UncoveredSaleDto>,
     pub skipped_event_ids: Vec<String>,
+    pub corporate_action_event_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -168,6 +170,9 @@ struct TradeEvent {
     gross_amount: f64,
     fee_amount: f64,
     tax_amount: f64,
+    corporate_action_ratio: Option<f64>,
+    target_instrument_code: Option<String>,
+    target_instrument_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -198,6 +203,7 @@ struct Analysis {
     allocations: Vec<RealizedAllocationDto>,
     uncovered_sales: Vec<UncoveredSaleDto>,
     skipped_event_ids: Vec<String>,
+    corporate_action_event_ids: Vec<String>,
 }
 
 pub fn query_holdings(
@@ -233,6 +239,7 @@ pub fn query_holdings(
         realized_allocations: analysis.allocations,
         uncovered_sales: analysis.uncovered_sales,
         skipped_event_ids: analysis.skipped_event_ids,
+        corporate_action_event_ids: analysis.corporate_action_event_ids,
     })
 }
 
@@ -311,12 +318,20 @@ pub fn query_performance(
             .filter(|item| in_period(&item.sold_on))
             .collect(),
         skipped_event_ids: analysis.skipped_event_ids,
+        corporate_action_event_ids: analysis.corporate_action_event_ids,
     })
 }
 
 fn analyze(events: &[TradeEvent]) -> Analysis {
     let mut result = Analysis::default();
     for event in events {
+        if matches!(
+            event.event_type.as_str(),
+            "SPLIT" | "REVERSE_SPLIT" | "MERGER"
+        ) {
+            apply_corporate_action(&mut result, event);
+            continue;
+        }
         if !matches!(event.event_type.as_str(), "BUY" | "SELL") {
             continue;
         }
@@ -399,6 +414,61 @@ fn analyze(events: &[TradeEvent]) -> Analysis {
     result
 }
 
+fn apply_corporate_action(result: &mut Analysis, event: &TradeEvent) {
+    let Some(ratio) = event
+        .corporate_action_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio > EPSILON)
+    else {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    };
+    let old_key = instrument_key(event);
+    let Some(mut lots) = result.open_lots.remove(&old_key) else {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    };
+    let is_merger = event.event_type == "MERGER";
+    let target_code = if is_merger {
+        event.target_instrument_code.as_deref().unwrap_or("")
+    } else {
+        &event.instrument_code
+    };
+    let target_name = if is_merger {
+        event.target_instrument_name.as_deref().unwrap_or("")
+    } else {
+        &event.instrument_name
+    };
+    let identity = if target_code.trim().is_empty() {
+        format!("NAME:{}", target_name.trim().to_uppercase())
+    } else {
+        format!("CODE:{}", target_code.trim().to_uppercase())
+    };
+    let target_key = InstrumentKey {
+        account_id: event.account_id.clone(),
+        currency: event.currency.clone(),
+        identity,
+    };
+    for lot in &mut lots {
+        lot.original_quantity *= ratio;
+        lot.remaining_quantity *= ratio;
+        lot.unit_cost /= ratio;
+        lot.instrument_code = target_code.to_owned();
+        lot.instrument_name = target_name.to_owned();
+    }
+    let target = result.open_lots.entry(target_key).or_default();
+    target.append(&mut lots);
+    let mut ordered = target.drain(..).collect::<Vec<_>>();
+    ordered.sort_by(|left, right| {
+        (&left.acquired_on, left.source_row, &left.event_id).cmp(&(
+            &right.acquired_on,
+            right.source_row,
+            &right.event_id,
+        ))
+    });
+    target.extend(ordered);
+    result.corporate_action_event_ids.push(event.id.clone());
+}
+
 fn build_positions(
     lots: &BTreeMap<InstrumentKey, VecDeque<LotState>>,
     events: &[TradeEvent],
@@ -475,7 +545,7 @@ fn read_events(
     through: Option<&str>,
 ) -> Result<Vec<TradeEvent>, InvestmentPerformanceError> {
     let mut statement = connection.prepare(
-        "SELECT event_id, account_id, account_name, source_document_id, source_row, event_type, event_date, instrument_code, instrument_name, currency, quantity, gross_amount, fee_amount, tax_amount
+        "SELECT event_id, account_id, account_name, source_document_id, source_row, event_type, event_date, instrument_code, instrument_name, currency, quantity, gross_amount, fee_amount, tax_amount, corporate_action_ratio, target_instrument_code, target_instrument_name
          FROM investment_trade_events_v1
          WHERE household_id = ?1 AND (?2 IS NULL OR account_id = ?2) AND (?3 IS NULL OR event_date <= ?3)
          ORDER BY event_date, source_row, event_id"
@@ -497,6 +567,9 @@ fn read_events(
                 gross_amount: row.get(11)?,
                 fee_amount: row.get(12)?,
                 tax_amount: row.get(13)?,
+                corporate_action_ratio: row.get(14)?,
+                target_instrument_code: row.get(15)?,
+                target_instrument_name: row.get(16)?,
             })
         })
         .map_err(db_error)?;
@@ -594,6 +667,7 @@ mod tests {
             include_str!("../migrations/0002_import_provenance.sql"),
             include_str!("../migrations/0012_brokerage_events.sql"),
             include_str!("../migrations/0013_investment_performance.sql"),
+            include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
@@ -692,6 +766,46 @@ mod tests {
         assert!((result.positions[0].quantity - 5.0).abs() < EPSILON);
         assert!((result.positions[0].cost_basis - 1000.0).abs() < EPSILON);
         assert_eq!(result.open_lots[0].buy_event_id, "buy-2");
+    }
+
+    #[test]
+    fn split_and_merger_preserve_fifo_cost_without_realized_gain() {
+        let connection = connection();
+        insert_event(
+            &connection,
+            "buy-1",
+            "doc1",
+            1,
+            "BUY",
+            "2026-01-01",
+            "JPY",
+            Some(10.0),
+            1000.0,
+            0.0,
+            0.0,
+        );
+        connection.execute(
+            "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type,corporate_action_ratio) VALUES('split','home','broker','doc2',2,'SPLIT','2026-02-01','ABC','Acme','TAXABLE','JPY',NULL,NULL,0,0,0,0,'BALANCED',0,'株式分割',2)", [],
+        ).unwrap();
+        connection.execute(
+            "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type,corporate_action_ratio,target_instrument_code,target_instrument_name,target_currency) VALUES('merger','home','broker','doc3',3,'MERGER','2026-03-01','ABC','Acme','TAXABLE','JPY',NULL,NULL,0,0,0,0,'BALANCED',0,'合併','0.5','XYZ','Combined','JPY')", [],
+        ).unwrap();
+        let result = query_holdings(
+            &connection,
+            &InvestmentHoldingsRequest {
+                household_id: "home".into(),
+                account_id: None,
+                as_of: "2026-12-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.positions[0].instrument_code, "XYZ");
+        assert!((result.positions[0].quantity - 10.0).abs() < EPSILON);
+        assert!((result.positions[0].cost_basis - 1000.0).abs() < EPSILON);
+        assert!((result.positions[0].average_cost - 100.0).abs() < EPSILON);
+        assert!(result.realized_allocations.is_empty());
+        assert_eq!(result.corporate_action_event_ids, ["split", "merger"]);
     }
 
     #[test]
