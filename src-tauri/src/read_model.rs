@@ -746,6 +746,10 @@ pub fn archive_account(
                UNION ALL
                SELECT 1 FROM monthly_category_budgets b
                WHERE b.category_account_id = ?1 AND b.household_id = ?2
+               UNION ALL
+               SELECT 1 FROM card_settlement_bank_mappings m
+               WHERE m.household_id = ?2
+                 AND (m.card_account_id = ?1 OR m.bank_account_id = ?1)
              )",
             params![input.account_id, input.household_id],
             |row| row.get(0),
@@ -3383,6 +3387,11 @@ mod tests {
                    account_id TEXT NOT NULL REFERENCES accounts(id), sort_order INTEGER NOT NULL,
                    PRIMARY KEY (account_group_id, account_id)
                  );
+                 CREATE TABLE card_settlement_bank_mappings (
+                   household_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
+                   bank_account_id TEXT NOT NULL,
+                   PRIMARY KEY(household_id,card_account_id)
+                 );
                  CREATE TABLE import_runs (id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
                  CREATE TABLE source_documents (
                    id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT,
@@ -3819,6 +3828,8 @@ mod tests {
             "payment-account",
             "staged-account",
             "budget-account",
+            "mapped-card-account",
+            "mapped-bank-account",
         ] {
             create_test_account(&connection, "family", id);
         }
@@ -3850,7 +3861,10 @@ mod tests {
                          '2026-07-01', '2026-07-31', 1);
                  INSERT INTO monthly_category_budgets
                    (household_id, month, category_account_id, budget_jpy)
-                 VALUES ('family', '2026-07', 'budget-account', 1);",
+                 VALUES ('family', '2026-07', 'budget-account', 1);
+                 INSERT INTO card_settlement_bank_mappings
+                   (household_id,card_account_id,bank_account_id)
+                 VALUES ('family','mapped-card-account','mapped-bank-account');",
             )
             .unwrap();
 
@@ -3861,6 +3875,8 @@ mod tests {
             "payment-account",
             "staged-account",
             "budget-account",
+            "mapped-card-account",
+            "mapped-bank-account",
         ] {
             assert!(matches!(
                 archive_account(

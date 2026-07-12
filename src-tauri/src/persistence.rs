@@ -55,6 +55,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0022_transaction_calculation_target.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0023_card_settlement_bank_mappings.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -315,6 +318,21 @@ fn validate_restored_semantics(
         reject_if_exists(
             connection,
             "SELECT 1 FROM transactions WHERE calculation_target NOT IN (0,1) LIMIT 1",
+        )?;
+    }
+    if schema_version >= 23 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM card_settlement_bank_mappings m
+             LEFT JOIN accounts card ON card.id=m.card_account_id
+             LEFT JOIN accounts bank ON bank.id=m.bank_account_id
+             WHERE card.id IS NULL OR bank.id IS NULL
+                OR card.household_id != m.household_id
+                OR bank.household_id != m.household_id
+                OR card.is_archived != 0 OR card.account_kind != 'LIABILITY'
+                OR card.account_subtype != 'CREDIT_CARD'
+                OR bank.is_archived != 0 OR bank.account_kind != 'ASSET'
+                OR bank.account_subtype != 'BANK' LIMIT 1",
         )?;
     }
     if schema_version >= 2 {
@@ -732,6 +750,26 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_card_settlement_bank_mapping_scope() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        let result = state.with_connection(|connection| {
+            connection.execute_batch(
+                "INSERT INTO households (id,name) VALUES ('family','Family'),('other','Other');
+                 INSERT INTO accounts
+                   (id,household_id,name,account_kind,account_subtype,currency)
+                 VALUES
+                   ('card','family','Card','LIABILITY','CREDIT_CARD','JPY'),
+                   ('foreign-bank','other','Bank','ASSET','BANK','JPY');
+                 INSERT INTO card_settlement_bank_mappings
+                   (household_id,card_account_id,bank_account_id)
+                 VALUES ('family','card','foreign-bank');",
+            )?;
+            validate_restored_semantics(connection, 23)
+        });
+        assert!(result.is_err());
     }
 
     #[test]

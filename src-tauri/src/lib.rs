@@ -2,6 +2,7 @@ pub mod account_groups_export;
 pub mod aggregate_asset_history;
 pub mod backup;
 pub mod brokerage;
+pub mod card_settlement_mapping;
 pub mod document_extract;
 pub mod document_vault;
 pub mod financial_calendar;
@@ -2142,6 +2143,10 @@ pub fn run() {
             financial_calendar::financial_report_monthly_query,
             financial_calendar::financial_report_yearly_query,
             financial_calendar::annual_household_review_csv_generate,
+            card_settlement_mapping::card_settlement_bank_mappings_list,
+            card_settlement_mapping::card_settlement_bank_mapping_upsert,
+            card_settlement_mapping::card_settlement_bank_mapping_delete,
+            card_settlement_mapping::card_settlement_balance_coverage_query,
             fixed_cost_review::fixed_cost_review_query,
             forecast_action::forecast_action_query,
             dashboard_query,
