@@ -52,7 +52,7 @@ export function InvestmentPeriodReport({ householdId, revision, initialYear = ne
       <div><h2>年間投資実績・税金</h2><p>確定した証券取引を元通貨別に集計</p></div>
       <label>対象年<input aria-label="投資実績の対象年" type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(Number(event.target.value))} /></label>
     </div>
-    {loading && !report ? <p role="status">投資実績を集計しています…</p> : notice ? <p role="status">{notice}</p> : report && report.totalsByCurrency.length > 0 ? <>
+    {loading && !report ? <p role="status">投資実績を集計しています…</p> : notice ? <p role="status">{notice}</p> : report && (report.totalsByCurrency.length > 0 || report.corporateActionAllocations.length > 0) ? <>
       <div className="investment-period-totals">
         {report.totalsByCurrency.map((total) => <article key={total.currency}>
           <span>{total.currency}</span>
@@ -70,6 +70,16 @@ export function InvestmentPeriodReport({ householdId, revision, initialYear = ne
           <span><small>売却手取</small><b>{formatAmount(allocation.currency, allocation.allocatedNetProceeds)}</b></span>
           <span><small>実現損益</small><b className={allocation.realizedPnl >= 0 ? 'amount-positive' : ''}>{formatAmount(allocation.currency, allocation.realizedPnl)}</b></span>
           <small>買付原本 行 {allocation.buySourceRow} → 売却原本 行 {allocation.sellSourceRow}</small>
+        </article>)}
+      </div>}
+      {report.corporateActionAllocations.length > 0 && <div className="investment-realized-list" aria-label="コーポレートアクションの原価配分">
+        <h3>コーポレートアクションの原価配分</h3>
+        {report.corporateActionAllocations.slice(0, 20).map((allocation) => <article key={`${allocation.actionEventId}-${allocation.sourceBuyEventId ?? 'new'}`}>
+          <span><strong>{{ SPIN_OFF: 'スピンオフ', RIGHTS_SUBSCRIPTION: '権利行使', CASH_IN_LIEU: '端数株現金化' }[allocation.actionType]}</strong><small>{allocation.actionOn} ・ {allocation.fromInstrumentCode}{allocation.targetInstrumentCode && allocation.targetInstrumentCode !== allocation.fromInstrumentCode ? ` → ${allocation.targetInstrumentCode}` : ''}</small></span>
+          <span><small>対象数量</small><b>{allocation.quantity.toLocaleString('ja-JP')}株</b></span>
+          <span><small>配分原価</small><b>{formatAmount(allocation.currency, allocation.allocatedCostBasis)}</b></span>
+          <span><small>{allocation.realizedPnl == null ? '現金' : '実現損益'}</small><b className={(allocation.realizedPnl ?? 0) >= 0 ? 'amount-positive' : ''}>{formatAmount(allocation.currency, allocation.realizedPnl ?? allocation.cashAmount)}</b></span>
+          <small>原本 行 {allocation.actionSourceRow} ・ {allocation.sourceBuyEventId ? '元のFIFOロットに追跡可能' : '新規取得ロット'}</small>
         </article>)}
       </div>}
       {(report.uncoveredSales.length > 0 || report.skippedEventIds.length > 0) && <p className="performance-warning">原価未確認の売却 {report.uncoveredSales.length}件・計算対象外 {report.skippedEventIds.length}件。集計値を確定する前に原本を確認してください。</p>}

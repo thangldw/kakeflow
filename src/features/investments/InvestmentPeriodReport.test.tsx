@@ -8,7 +8,7 @@ const report: InvestmentPerformanceDto = {
   dateFrom: '2026-01-01', dateTo: '2026-12-31', costBasisMethod: 'FIFO',
   totalsByCurrency: [{ currency: 'JPY', buyGross: 100_000, sellGross: 140_000, realizedPnl: 35_000, dividendGross: 5_000, fees: 1_000, taxes: 4_000 }],
   realizedAllocations: [{ sellEventId: 'sell', buyEventId: 'buy', accountId: 'broker', instrumentCode: '7203', instrumentName: 'トヨタ自動車', currency: 'JPY', soldOn: '2026-07-01', acquiredOn: '2025-01-01', quantity: 10, allocatedCostBasis: 100_000, allocatedNetProceeds: 135_000, realizedPnl: 35_000, buySourceDocumentId: 'buy-doc', buySourceRow: 2, sellSourceDocumentId: 'sell-doc', sellSourceRow: 8 }],
-  uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [],
+  uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: ['spin'], corporateActionAllocations: [{ actionEventId: 'spin', actionType: 'SPIN_OFF', actionOn: '2026-04-01', actionSourceDocumentId: 'action-doc', actionSourceRow: 12, sourceBuyEventId: 'buy', fromInstrumentCode: '7203', targetInstrumentCode: '7203B', currency: 'JPY', quantity: 5, allocatedCostBasis: 20_000, cashAmount: 0, realizedPnl: null }],
 }
 
 describe('InvestmentPeriodReport', () => {
@@ -17,6 +17,8 @@ describe('InvestmentPeriodReport', () => {
     render(<InvestmentPeriodReport householdId="home" revision={1} initialYear={2026} queryPerformance={query} />)
     expect(await screen.findByText('実現損益 ¥35,000')).toBeInTheDocument()
     expect(screen.getByText('買付原本 行 2 → 売却原本 行 8')).toBeInTheDocument()
+    expect(screen.getByText('スピンオフ')).toBeInTheDocument()
+    expect(screen.getByText('原本 行 12 ・ 元のFIFOロットに追跡可能')).toBeInTheDocument()
     expect(query).toHaveBeenCalledWith({ householdId: 'home', dateFrom: '2026-01-01', dateTo: '2026-12-31' })
   })
 
