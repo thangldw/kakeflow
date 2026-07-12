@@ -206,7 +206,7 @@ pub fn query_fixed_cost_review(
         limitations: vec![
             "Only posted expense and card-purchase entries in the six complete calendar months before the as-of month are analyzed".to_owned(),
             "Recurring detection is deterministic: OTHER_RECURRING requires stable amounts, while recognized fixed-cost segments may accept variable amounts with strong cadence and lower confidence".to_owned(),
-            "Cadence detection may inspect up to 36 prior complete months so annual patterns can be identified, but all displayed totals use only the six-month reporting window".to_owned(),
+            "Cadence detection and cadence-normalized annual estimates may use up to 36 prior complete months; monthly points and three-month comparisons use only the six-month reporting window".to_owned(),
             "Segments are inferred from payee and expense-category text and may require user review".to_owned(),
             "This review reports observed costs only and does not estimate market prices or potential savings".to_owned(),
             "Three-month averages use integer JPY division and therefore discard fractional yen".to_owned(),
