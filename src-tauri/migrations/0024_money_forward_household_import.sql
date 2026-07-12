@@ -23,3 +23,41 @@ CREATE TABLE transaction_external_keys (
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX idx_transaction_external_keys_transaction ON transaction_external_keys (transaction_id);
+
+CREATE TRIGGER trg_money_forward_candidate_insert
+BEFORE INSERT ON transaction_candidates
+WHEN (NEW.external_source IS NULL AND NEW.external_fact_hash IS NOT NULL)
+  OR (NEW.external_source IS NOT NULL AND (NEW.external_transaction_id IS NULL OR NEW.external_fact_hash IS NULL))
+  OR (NEW.suggested_transaction_type = 'TRANSFER' AND NEW.calculation_target != 0)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid imported external semantics');
+END;
+
+CREATE TRIGGER trg_money_forward_candidate_update
+BEFORE UPDATE OF external_source, external_transaction_id, external_fact_hash, calculation_target, suggested_transaction_type ON transaction_candidates
+WHEN (NEW.external_source IS NULL AND NEW.external_fact_hash IS NOT NULL)
+  OR (NEW.external_source IS NOT NULL AND (NEW.external_transaction_id IS NULL OR NEW.external_fact_hash IS NULL))
+  OR (NEW.suggested_transaction_type = 'TRANSFER' AND NEW.calculation_target != 0)
+BEGIN
+  SELECT RAISE(ABORT, 'invalid imported external semantics');
+END;
+
+CREATE TRIGGER trg_transaction_external_key_scope_insert
+BEFORE INSERT ON transaction_external_keys
+WHEN NOT EXISTS (
+  SELECT 1 FROM transactions t
+  WHERE t.id=NEW.transaction_id AND t.household_id=NEW.household_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'external transaction key outside household');
+END;
+
+CREATE TRIGGER trg_transaction_external_key_scope_update
+BEFORE UPDATE ON transaction_external_keys
+WHEN NOT EXISTS (
+  SELECT 1 FROM transactions t
+  WHERE t.id=NEW.transaction_id AND t.household_id=NEW.household_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'external transaction key outside household');
+END;

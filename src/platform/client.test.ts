@@ -120,6 +120,8 @@ describe('platform client', () => {
           id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
           amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
           externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000,
+          externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+          institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
           attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
           reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
         }],
@@ -160,6 +162,8 @@ describe('platform client', () => {
         id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
         amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
         externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000,
+        externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+        institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
         attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
         reviewStatus: 'READY', evidence: [{ sourceRecordId: 'record-1', role: 'PRIMARY' }],
       }],
@@ -168,6 +172,7 @@ describe('platform client', () => {
     const decisions: readonly PostingDecisionDto[] = [{
       candidateId: 'candidate-1', transactionId: 'transaction-1', transactionType: 'EXPENSE',
       payee: 'STORE', description: null,
+      calculationTarget: true,
       attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
       entries: [
         { id: 'entry-1', accountId: 'family-expense-other', side: 'DEBIT', amountJpy: 1200 },

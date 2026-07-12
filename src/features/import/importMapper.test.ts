@@ -53,6 +53,23 @@ describe('import mapper', () => {
     expect(result.request.records[0]).toMatchObject({ rowNumber: 8 })
   })
 
+  it('carries every Money Forward semantic hint and named source field into staging', async () => {
+    const sourceFields = { 計算対象: '1', 日付: '2026/07/12', 内容: 'カード引落', '金額(円)': '-1000', 保有金融機関: 'MUFG', 大項目: '振替', 中項目: 'カード', メモ: 'July', 振替: '1', ID: 'mf-1' }
+    const parsed: ParsedImport<unknown> = { adapterId: 'money-forward-me-household-ledger-v1', issues: [], metadata: {}, records: [{
+      kind: 'money-forward-household-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: Object.values(sourceFields) },
+      sourceFields, calculationTarget: false, transactionDate: '2026-07-12', content: 'カード引落', signedAmountJpy: -1000,
+      institution: 'MUFG', majorCategory: '振替', minorCategory: 'カード', memo: 'July', isTransfer: true, externalTransactionId: 'mf-1',
+    }] }
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+    expect(result.request.candidates[0]).toMatchObject({
+      accountId: 'account-1', direction: 'OUT', amountJpy: 1000, calculationTarget: false,
+      suggestedTransactionType: 'TRANSFER', externalSource: 'MONEY_FORWARD_ME', externalTransactionId: 'mf-1',
+      institutionRaw: 'MUFG', categoryMajorRaw: '振替', categoryMinorRaw: 'カード', memoRaw: 'July',
+    })
+    expect(result.request.candidates[0].externalFactHash).toHaveLength(64)
+    expect(JSON.parse(result.request.records[0].payloadJson)).toMatchObject({ fields: sourceFields })
+  })
+
   it('groups PayPay legs while preserving primary, supporting, and split-funding evidence', async () => {
     const parsed: ParsedImport<unknown> = { adapterId: 'paypay-history-v1', issues: [], metadata: {}, records: [{
       kind: 'wallet-event', transactionId: 'pay-1', occurredAt: '2026-07-10T12:30:00+09:00', counterparty: '店舗', eventType: 'Payment + Points, Balance Earned',

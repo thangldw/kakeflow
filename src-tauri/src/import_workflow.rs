@@ -5,7 +5,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use crate::record_scope::{
@@ -110,6 +110,22 @@ pub struct NormalizedCandidate {
     pub description_raw: Option<String>,
     pub merchant_raw: Option<String>,
     pub external_transaction_id: Option<String>,
+    #[serde(default)]
+    pub external_source: Option<String>,
+    #[serde(default)]
+    pub external_fact_hash: Option<String>,
+    #[serde(default = "default_true")]
+    pub calculation_target: bool,
+    #[serde(default)]
+    pub suggested_transaction_type: Option<String>,
+    #[serde(default)]
+    pub institution_raw: Option<String>,
+    #[serde(default)]
+    pub category_major_raw: Option<String>,
+    #[serde(default)]
+    pub category_minor_raw: Option<String>,
+    #[serde(default)]
+    pub memo_raw: Option<String>,
     pub extraction_confidence_bps: Option<i64>,
     pub normalization_confidence_bps: Option<i64>,
     pub review_status: String,
@@ -167,6 +183,14 @@ pub struct PreviewCandidate {
     pub description_raw: Option<String>,
     pub merchant_raw: Option<String>,
     pub external_transaction_id: Option<String>,
+    pub external_source: Option<String>,
+    pub external_fact_hash: Option<String>,
+    pub calculation_target: bool,
+    pub suggested_transaction_type: Option<String>,
+    pub institution_raw: Option<String>,
+    pub category_major_raw: Option<String>,
+    pub category_minor_raw: Option<String>,
+    pub memo_raw: Option<String>,
     pub extraction_confidence_bps: Option<i64>,
     pub normalization_confidence_bps: Option<i64>,
     pub review_status: String,
@@ -187,6 +211,8 @@ pub struct PostingDecision {
     pub transaction_type: String,
     pub payee: Option<String>,
     pub description: Option<String>,
+    #[serde(default = "default_true")]
+    pub calculation_target: bool,
     #[serde(default)]
     pub attribution_kind: AttributionKind,
     #[serde(default)]
@@ -222,7 +248,23 @@ pub struct CardMatchConfirmation {
     pub reconciliation_status: String,
 }
 
-type CandidatePostingRow = (String, Option<String>, String, Option<String>, i64, String);
+type CandidatePostingRow = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    i64,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+const fn default_true() -> bool {
+    true
+}
 
 /// Atomically creates a run, its immutable extracted records and normalized
 /// candidates. Re-importing the same household SHA returns the existing import.
@@ -307,7 +349,41 @@ pub fn start_import(
             ],
         )?;
     }
+    let mut staged_candidate_count = 0_u64;
+    let mut request_external_keys: HashMap<(String, String), String> = HashMap::new();
     for candidate in &request.candidates {
+        if let (Some(source), Some(external_id), Some(fact_hash)) = (
+            candidate.external_source.as_deref(),
+            candidate.external_transaction_id.as_deref(),
+            candidate.external_fact_hash.as_deref(),
+        ) {
+            let key = (source.to_owned(), external_id.to_owned());
+            if request_external_keys.contains_key(&key) {
+                return Err(ImportWorkflowError::Validation(
+                    "duplicate external transaction ID in one import".into(),
+                ));
+            }
+            request_external_keys.insert(key, fact_hash.to_owned());
+            let existing: Option<(String, String)> = tx.query_row(
+                "SELECT fact_hash,transaction_id FROM transaction_external_keys WHERE household_id=?1 AND external_source=?2 AND external_id=?3",
+                params![request.household_id, source, external_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+            if let Some((existing_hash, transaction_id)) = existing {
+                if existing_hash == fact_hash {
+                    for evidence in &candidate.evidence {
+                        tx.execute(
+                            "INSERT OR IGNORE INTO transaction_sources (transaction_id,source_record_id,candidate_id) VALUES (?1,?2,NULL)",
+                            params![transaction_id, evidence.source_record_id],
+                        )?;
+                    }
+                    continue;
+                }
+                return Err(ImportWorkflowError::Validation(
+                    "external transaction ID conflicts with previously posted facts".into(),
+                ));
+            }
+        }
         ensure_members_belong(
             &tx,
             &request.household_id,
@@ -333,9 +409,11 @@ pub fn start_import(
              (id, household_id, account_id, occurred_on, posted_on, amount_jpy, direction, \
               description_raw, merchant_raw, external_transaction_id, \
               extraction_confidence_bps, normalization_confidence_bps, review_status, \
-              attribution_kind, attributed_member_id, audience_visibility, audience_member_id) \
+              attribution_kind, attributed_member_id, audience_visibility, audience_member_id, \
+              external_source, external_fact_hash, calculation_target, suggested_transaction_type, \
+              institution_raw, category_major_raw, category_minor_raw, memo_raw) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
-                     ?14, ?15, ?16, ?17)",
+                     ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 candidate.id,
                 request.household_id,
@@ -353,9 +431,18 @@ pub fn start_import(
                 candidate.attribution_kind.as_sql(),
                 candidate.attributed_member_id,
                 candidate.audience_visibility.as_sql(),
-                candidate.audience_member_id
+                candidate.audience_member_id,
+                candidate.external_source,
+                candidate.external_fact_hash,
+                candidate.calculation_target,
+                candidate.suggested_transaction_type,
+                candidate.institution_raw,
+                candidate.category_major_raw,
+                candidate.category_minor_raw,
+                candidate.memo_raw
             ],
         )?;
+        staged_candidate_count += 1;
         for evidence in &candidate.evidence {
             tx.execute(
                 "INSERT INTO candidate_sources (candidate_id, source_record_id, evidence_role) \
@@ -413,7 +500,7 @@ pub fn start_import(
         document_id: request.document_id.clone(),
         status: "REVIEW_REQUIRED".into(),
         record_count: request.records.len() as u64,
-        candidate_count: request.candidates.len() as u64,
+        candidate_count: staged_candidate_count,
         reused_existing: false,
     })
 }
@@ -467,6 +554,9 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
     let mut statement = connection.prepare(
         "SELECT DISTINCT tc.id, tc.account_id, tc.occurred_on, tc.posted_on, tc.amount_jpy, \
                 tc.direction, tc.description_raw, tc.merchant_raw, tc.external_transaction_id, \
+                tc.external_source, tc.external_fact_hash, tc.calculation_target, \
+                tc.suggested_transaction_type, tc.institution_raw, tc.category_major_raw, \
+                tc.category_minor_raw, tc.memo_raw, \
                 tc.extraction_confidence_bps, tc.normalization_confidence_bps, tc.review_status, \
                 tc.attribution_kind, tc.attributed_member_id, \
                 tc.audience_visibility, tc.audience_member_id \
@@ -487,13 +577,21 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             row.get::<_, Option<String>>(6)?,
             row.get::<_, Option<String>>(7)?,
             row.get::<_, Option<String>>(8)?,
-            row.get::<_, Option<i64>>(9)?,
-            row.get::<_, Option<i64>>(10)?,
-            row.get::<_, String>(11)?,
-            row.get::<_, String>(12)?,
+            row.get::<_, Option<String>>(9)?,
+            row.get::<_, Option<String>>(10)?,
+            row.get::<_, bool>(11)?,
+            row.get::<_, Option<String>>(12)?,
             row.get::<_, Option<String>>(13)?,
-            row.get::<_, String>(14)?,
+            row.get::<_, Option<String>>(14)?,
             row.get::<_, Option<String>>(15)?,
+            row.get::<_, Option<String>>(16)?,
+            row.get::<_, Option<i64>>(17)?,
+            row.get::<_, Option<i64>>(18)?,
+            row.get::<_, String>(19)?,
+            row.get::<_, String>(20)?,
+            row.get::<_, Option<String>>(21)?,
+            row.get::<_, String>(22)?,
+            row.get::<_, Option<String>>(23)?,
         ))
     })?;
     let mut candidates = Vec::new();
@@ -508,6 +606,14 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             description_raw,
             merchant_raw,
             external_transaction_id,
+            external_source,
+            external_fact_hash,
+            calculation_target,
+            suggested_transaction_type,
+            institution_raw,
+            category_major_raw,
+            category_minor_raw,
+            memo_raw,
             extraction,
             normalization,
             review_status,
@@ -543,6 +649,14 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             description_raw,
             merchant_raw,
             external_transaction_id,
+            external_source,
+            external_fact_hash,
+            calculation_target,
+            suggested_transaction_type,
+            institution_raw,
+            category_major_raw,
+            category_minor_raw,
+            memo_raw,
             extraction_confidence_bps: extraction,
             normalization_confidence_bps: normalization,
             review_status,
@@ -585,6 +699,7 @@ pub fn commit_import(
 ) -> Result<CommitSummary> {
     validate_id("run_id", run_id)?;
     let mut candidate_ids = HashSet::new();
+    let mut posted_count = 0_u64;
     for decision in decisions {
         validate_posting_decision(decision)?;
         if !candidate_ids.insert(decision.candidate_id.as_str()) {
@@ -631,7 +746,9 @@ pub fn commit_import(
         let candidate: Option<CandidatePostingRow> = tx
             .query_row(
                 "SELECT tc.household_id, tc.account_id, tc.occurred_on, tc.posted_on, \
-                        tc.amount_jpy, tc.review_status \
+                        tc.amount_jpy, tc.review_status, tc.calculation_target, \
+                        tc.suggested_transaction_type, tc.external_source, tc.external_fact_hash, \
+                        tc.external_transaction_id \
                  FROM transaction_candidates tc WHERE tc.id = ?1 AND EXISTS ( \
                    SELECT 1 FROM candidate_sources cs \
                    JOIN source_records sr ON sr.id = cs.source_record_id \
@@ -646,19 +763,69 @@ pub fn commit_import(
                         row.get(3)?,
                         row.get(4)?,
                         row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                        row.get(9)?,
+                        row.get(10)?,
                     ))
                 },
             )
             .optional()?;
-        let (candidate_household, _, occurred_on, posted_on, candidate_amount, review_status) =
-            candidate.ok_or_else(|| {
-                ImportWorkflowError::CandidateOutsideRun(decision.candidate_id.clone())
-            })?;
+        let (
+            candidate_household,
+            _,
+            occurred_on,
+            posted_on,
+            candidate_amount,
+            review_status,
+            _candidate_calculation_target,
+            suggested_transaction_type,
+            external_source,
+            external_fact_hash,
+            external_transaction_id,
+        ) = candidate.ok_or_else(|| {
+            ImportWorkflowError::CandidateOutsideRun(decision.candidate_id.clone())
+        })?;
         if candidate_household != household_id
             || !matches!(review_status.as_str(), "PENDING" | "READY")
         {
             return Err(ImportWorkflowError::CandidateOutsideRun(
                 decision.candidate_id.clone(),
+            ));
+        }
+        if let (Some(source), Some(external_id), Some(fact_hash)) = (
+            external_source.as_deref(),
+            external_transaction_id.as_deref(),
+            external_fact_hash.as_deref(),
+        ) {
+            let existing: Option<(String, String)> = tx.query_row(
+                "SELECT fact_hash,transaction_id FROM transaction_external_keys WHERE household_id=?1 AND external_source=?2 AND external_id=?3",
+                params![household_id, source, external_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            ).optional()?;
+            if let Some((existing_hash, transaction_id)) = existing {
+                if existing_hash != fact_hash {
+                    return Err(ImportWorkflowError::Validation(
+                        "external transaction ID conflicts with previously posted facts".into(),
+                    ));
+                }
+                tx.execute(
+                    "INSERT OR IGNORE INTO transaction_sources (transaction_id,source_record_id,candidate_id) SELECT ?1,source_record_id,?2 FROM candidate_sources WHERE candidate_id=?2",
+                    params![transaction_id, decision.candidate_id],
+                )?;
+                tx.execute(
+                    "UPDATE transaction_candidates SET review_status='DUPLICATE' WHERE id=?1",
+                    [&decision.candidate_id],
+                )?;
+                continue;
+            }
+        }
+        if suggested_transaction_type.as_deref() == Some("TRANSFER")
+            && (decision.transaction_type != "TRANSFER" || decision.calculation_target)
+        {
+            return Err(ImportWorkflowError::Validation(
+                "Money Forward transfer must remain a calculation-excluded TRANSFER".into(),
             ));
         }
         ensure_members_belong(
@@ -673,6 +840,7 @@ pub fn commit_import(
         let mut debit = 0_i64;
         let mut credit = 0_i64;
         let mut card_payment_account = None;
+        let mut has_income_or_expense_leg = false;
         for entry in &decision.entries {
             let (account_kind, account_subtype): (String, String) = tx
                 .query_row(
@@ -687,6 +855,7 @@ pub fn commit_import(
                         entry.account_id
                     ))
                 })?;
+            has_income_or_expense_leg |= matches!(account_kind.as_str(), "INCOME" | "EXPENSE");
             if decision.transaction_type == "CARD_PAYMENT" && account_kind == "EXPENSE" {
                 return Err(ImportWorkflowError::Validation(
                     "CARD_PAYMENT cannot post to an expense account".into(),
@@ -718,6 +887,11 @@ pub fn commit_import(
                 _ => unreachable!("entry side was validated before opening the transaction"),
             }
         }
+        if suggested_transaction_type.as_deref() == Some("TRANSFER") && has_income_or_expense_leg {
+            return Err(ImportWorkflowError::Validation(
+                "Money Forward transfer cannot post to income or expense accounts".into(),
+            ));
+        }
         if debit != credit || debit != candidate_amount {
             return Err(ImportWorkflowError::UnbalancedJournal(
                 decision.candidate_id.clone(),
@@ -727,8 +901,8 @@ pub fn commit_import(
         tx.execute(
             "INSERT INTO transactions \
              (id, household_id, occurred_on, posted_on, transaction_type, payee, description, status, \
-              attribution_kind, attributed_member_id, audience_visibility, audience_member_id) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED', ?8, ?9, ?10, ?11)",
+              attribution_kind, attributed_member_id, audience_visibility, audience_member_id, calculation_target) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED', ?8, ?9, ?10, ?11, ?12)",
             params![
                 decision.transaction_id,
                 household_id,
@@ -740,9 +914,21 @@ pub fn commit_import(
                 decision.attribution_kind.as_sql(),
                 decision.attributed_member_id,
                 decision.audience_visibility.as_sql(),
-                decision.audience_member_id
+                decision.audience_member_id,
+                decision.calculation_target
             ],
         )?;
+        posted_count += 1;
+        if let (Some(source), Some(external_id), Some(fact_hash)) = (
+            external_source.as_deref(),
+            external_transaction_id.as_deref(),
+            external_fact_hash.as_deref(),
+        ) {
+            tx.execute(
+                "INSERT INTO transaction_external_keys (household_id,external_source,external_id,fact_hash,transaction_id) VALUES (?1,?2,?3,?4,?5)",
+                params![household_id, source, external_id, fact_hash, decision.transaction_id],
+            )?;
+        }
         if decision.transaction_type == "CARD_PAYMENT" {
             let card_account_id = card_payment_account.ok_or_else(|| {
                 ImportWorkflowError::Validation(
@@ -800,7 +986,7 @@ pub fn commit_import(
     tx.commit()?;
     Ok(CommitSummary {
         run_id: run_id.into(),
-        posted_count: decisions.len() as u64,
+        posted_count,
     })
 }
 
@@ -1026,6 +1212,12 @@ pub fn rollback_import(connection: &Connection, run_id: &str) -> Result<()> {
            ON sd.id = sr.source_document_id WHERE sd.import_run_id = ?1)",
         [run_id],
     )?;
+    tx.execute(
+        "DELETE FROM transaction_sources WHERE candidate_id IS NULL AND source_record_id IN ( \
+           SELECT sr.id FROM source_records sr JOIN source_documents sd \
+           ON sd.id=sr.source_document_id WHERE sd.import_run_id=?1)",
+        [run_id],
+    )?;
     for candidate_id in candidate_ids {
         tx.execute(
             "DELETE FROM transaction_candidates WHERE id = ?1 AND review_status != 'POSTED' \
@@ -1184,6 +1376,37 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
                 "invalid initial review status".into(),
             ));
         }
+        match (
+            candidate.external_source.as_deref(),
+            candidate.external_transaction_id.as_deref(),
+            candidate.external_fact_hash.as_deref(),
+        ) {
+            (None, _, None) => {}
+            (Some("MONEY_FORWARD_ME"), Some(external_id), Some(fact_hash)) => {
+                validate_text("external transaction ID", external_id, MAX_TEXT_BYTES)?;
+                validate_sha("external fact hash", fact_hash)?;
+            }
+            _ => {
+                return Err(ImportWorkflowError::Validation(
+                    "external source, ID, and fact hash must form a supported complete tuple"
+                        .into(),
+                ))
+            }
+        }
+        if candidate.suggested_transaction_type.as_deref() == Some("TRANSFER")
+            && candidate.calculation_target
+        {
+            return Err(ImportWorkflowError::Validation(
+                "imported transfer must be excluded from calculations".into(),
+            ));
+        }
+        if candidate.suggested_transaction_type.is_some()
+            && candidate.suggested_transaction_type.as_deref() != Some("TRANSFER")
+        {
+            return Err(ImportWorkflowError::Validation(
+                "unsupported suggested transaction type".into(),
+            ));
+        }
         if candidate.evidence.is_empty() || candidate.evidence.len() > MAX_EVIDENCE_PER_CANDIDATE {
             return Err(ImportWorkflowError::Validation(
                 "invalid evidence count".into(),
@@ -1211,6 +1434,10 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
             &candidate.description_raw,
             &candidate.merchant_raw,
             &candidate.external_transaction_id,
+            &candidate.institution_raw,
+            &candidate.category_major_raw,
+            &candidate.category_minor_raw,
+            &candidate.memo_raw,
         ]
         .into_iter()
         .flatten()
@@ -1486,6 +1713,9 @@ mod tests {
                    normalization_confidence_bps INTEGER, review_status TEXT NOT NULL DEFAULT 'PENDING',
                    attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
                    audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT,
+                   external_source TEXT, external_fact_hash TEXT, calculation_target INTEGER NOT NULL DEFAULT 1,
+                   suggested_transaction_type TEXT, institution_raw TEXT, category_major_raw TEXT,
+                   category_minor_raw TEXT, memo_raw TEXT,
                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
                  CREATE TABLE candidate_sources (
                    candidate_id TEXT NOT NULL REFERENCES transaction_candidates(id) ON DELETE CASCADE,
@@ -1504,6 +1734,11 @@ mod tests {
                    source_record_id TEXT NOT NULL REFERENCES source_records(id),
                    candidate_id TEXT REFERENCES transaction_candidates(id),
                    PRIMARY KEY(transaction_id,source_record_id));
+                 CREATE TABLE transaction_external_keys (
+                   household_id TEXT NOT NULL REFERENCES households(id), external_source TEXT NOT NULL,
+                   external_id TEXT NOT NULL, fact_hash TEXT NOT NULL,
+                   transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                   PRIMARY KEY(household_id,external_source,external_id));
                  CREATE TABLE journal_entries (
                    id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
                    account_id TEXT NOT NULL REFERENCES accounts(id), entry_side TEXT NOT NULL,
@@ -1584,6 +1819,14 @@ mod tests {
                 description_raw: Some("Store".into()),
                 merchant_raw: Some("Store".into()),
                 external_transaction_id: None,
+                external_source: None,
+                external_fact_hash: None,
+                calculation_target: true,
+                suggested_transaction_type: None,
+                institution_raw: None,
+                category_major_raw: None,
+                category_minor_raw: None,
+                memo_raw: None,
                 extraction_confidence_bps: Some(9_900),
                 normalization_confidence_bps: Some(9_500),
                 review_status: "READY".into(),
@@ -1613,6 +1856,7 @@ mod tests {
             transaction_type: "EXPENSE".into(),
             payee: Some("Store".into()),
             description: None,
+            calculation_target: true,
             attribution_kind: AttributionKind::Household,
             attributed_member_id: None,
             audience_visibility: AudienceVisibility::Shared,
@@ -1857,6 +2101,88 @@ mod tests {
     }
 
     #[test]
+    fn money_forward_transfer_preserves_calculation_target_and_external_id_dedup() {
+        let connection = database();
+        let mut first = request("mf-run", "mf-doc", '1');
+        let candidate = &mut first.candidates[0];
+        candidate.external_transaction_id = Some("mf-transaction-1".into());
+        candidate.external_source = Some("MONEY_FORWARD_ME".into());
+        candidate.external_fact_hash = Some("a".repeat(64));
+        candidate.calculation_target = false;
+        candidate.suggested_transaction_type = Some("TRANSFER".into());
+        candidate.institution_raw = Some("Main bank".into());
+        candidate.category_major_raw = Some("振替".into());
+        candidate.category_minor_raw = Some("カード支払".into());
+        candidate.memo_raw = Some("source memo".into());
+        start_import(&connection, &first, "vault://mf").unwrap();
+        let mut posting = decision("mf-run", 1_000);
+        posting.transaction_type = "TRANSFER".into();
+        posting.calculation_target = false;
+        posting.entries[0].account_id = "card".into();
+        commit_import(&connection, "mf-run", &[posting]).unwrap();
+
+        let stored: (i64, String, String) = connection.query_row(
+            "SELECT t.calculation_target,k.external_id,k.fact_hash FROM transactions t JOIN transaction_external_keys k ON k.transaction_id=t.id WHERE t.id='mf-run-transaction'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(stored, (0, "mf-transaction-1".into(), "a".repeat(64)));
+
+        let mut duplicate = request("mf-duplicate", "mf-duplicate-doc", '2');
+        duplicate.candidates[0].external_transaction_id = Some("mf-transaction-1".into());
+        duplicate.candidates[0].external_source = Some("MONEY_FORWARD_ME".into());
+        duplicate.candidates[0].external_fact_hash = Some("a".repeat(64));
+        let summary = start_import(&connection, &duplicate, "vault://mf-duplicate").unwrap();
+        assert_eq!(summary.candidate_count, 0);
+        let evidence_count: i64 = connection.query_row(
+            "SELECT count(*) FROM transaction_sources WHERE transaction_id='mf-run-transaction'", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(evidence_count, 4);
+        assert!(preview_import(&connection, "mf-duplicate")
+            .unwrap()
+            .candidates
+            .is_empty());
+        rollback_import(&connection, "mf-duplicate").unwrap();
+        let evidence_after_rollback: i64 = connection.query_row(
+            "SELECT count(*) FROM transaction_sources WHERE transaction_id='mf-run-transaction'", [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(evidence_after_rollback, 2);
+
+        let mut duplicate_posted = request("mf-duplicate-posted", "mf-duplicate-posted-doc", '4');
+        duplicate_posted.candidates[0].external_transaction_id = Some("mf-transaction-1".into());
+        duplicate_posted.candidates[0].external_source = Some("MONEY_FORWARD_ME".into());
+        duplicate_posted.candidates[0].external_fact_hash = Some("a".repeat(64));
+        start_import(
+            &connection,
+            &duplicate_posted,
+            "vault://mf-duplicate-posted",
+        )
+        .unwrap();
+        assert_eq!(
+            commit_import(&connection, "mf-duplicate-posted", &[])
+                .unwrap()
+                .posted_count,
+            0
+        );
+
+        let mut conflict = request("mf-conflict", "mf-conflict-doc", '3');
+        conflict.candidates[0].external_transaction_id = Some("mf-transaction-1".into());
+        conflict.candidates[0].external_source = Some("MONEY_FORWARD_ME".into());
+        conflict.candidates[0].external_fact_hash = Some("b".repeat(64));
+        assert!(matches!(
+            start_import(&connection, &conflict, "vault://mf-conflict"),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("conflicts")
+        ));
+        let conflict_run: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM import_runs WHERE id='mf-conflict'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(conflict_run, 0);
+    }
+
+    #[test]
     fn unbalanced_commit_is_rejected_atomically() {
         let connection = database();
         start_import(&connection, &request("run", "doc", 'a'), "vault://one").unwrap();
@@ -1956,6 +2282,7 @@ mod tests {
             transaction_type: "CARD_PURCHASE".into(),
             payee: Some("Store".into()),
             description: None,
+            calculation_target: true,
             attribution_kind: AttributionKind::Household,
             attributed_member_id: None,
             audience_visibility: AudienceVisibility::Shared,
@@ -1986,6 +2313,7 @@ mod tests {
             transaction_type: "CARD_PAYMENT".into(),
             payee: Some("Rakuten Card".into()),
             description: None,
+            calculation_target: true,
             attribution_kind: AttributionKind::Household,
             attributed_member_id: None,
             audience_visibility: AudienceVisibility::Shared,

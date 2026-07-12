@@ -318,12 +318,22 @@ function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
   if (!Array.isArray(record.evidenceRoles) || !record.evidenceRoles.every((role) => typeof role === 'string') || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('candidate details')
   const attribution = parseAttribution(record)
   const audience = parseAudience(record)
+  if (typeof record.calculationTarget !== 'boolean') throw new TypeError('candidate calculation target')
+  if (record.externalSource !== null && typeof record.externalSource !== 'undefined' && record.externalSource !== 'MONEY_FORWARD_ME') throw new TypeError('candidate external source')
+  if (record.suggestedTransactionType !== null && typeof record.suggestedTransactionType !== 'undefined' && record.suggestedTransactionType !== 'TRANSFER') throw new TypeError('candidate suggested type')
+  const externalFactHash = asNullableString(record.externalFactHash)
+  if (externalFactHash !== null && !/^[0-9a-f]{64}$/.test(externalFactHash)) throw new TypeError('candidate fact hash')
   return {
     id: asRequiredString(record.id), accountId: asNullableString(record.accountId),
     occurredOn: asRequiredString(record.occurredOn), postedOn: asNullableString(record.postedOn),
     amountJpy: asSafeInteger(record.amountJpy), direction: record.direction,
     descriptionRaw: asNullableString(record.descriptionRaw), merchantRaw: asNullableString(record.merchantRaw),
     externalTransactionId: asNullableString(record.externalTransactionId),
+    externalSource: record.externalSource === 'MONEY_FORWARD_ME' ? record.externalSource : null,
+    externalFactHash, calculationTarget: record.calculationTarget,
+    suggestedTransactionType: record.suggestedTransactionType === 'TRANSFER' ? record.suggestedTransactionType : null,
+    institutionRaw: asNullableString(record.institutionRaw), categoryMajorRaw: asNullableString(record.categoryMajorRaw),
+    categoryMinorRaw: asNullableString(record.categoryMinorRaw), memoRaw: asNullableString(record.memoRaw),
     extractionConfidenceBps: asNullableSafeInteger(record.extractionConfidenceBps),
     normalizationConfidenceBps: asNullableSafeInteger(record.normalizationConfidenceBps),
     ...attribution, ...audience,

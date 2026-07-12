@@ -505,7 +505,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '新しいファイルを確認' }))
     expect(await screen.findByText('history.csv')).toBeInTheDocument()
     expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'プレビュー' }))
+    fireEvent.click(screen.getByRole('button', { name: /プレビュー$/ }))
 
     await waitFor(() => expect(desktop.readWatchedFile).toHaveBeenCalledWith('family', 'folder', 'PayPay/history.csv'))
   })

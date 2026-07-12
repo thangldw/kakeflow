@@ -338,6 +338,21 @@ fn validate_restored_semantics(
                 OR bank.account_subtype != 'BANK' LIMIT 1",
         )?;
     }
+    if schema_version >= 24 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM transaction_external_keys k
+             LEFT JOIN transactions t ON t.id=k.transaction_id
+             WHERE t.id IS NULL OR t.household_id!=k.household_id LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM transaction_candidates
+             WHERE (external_source IS NULL AND external_fact_hash IS NOT NULL)
+                OR (external_source IS NOT NULL AND (external_transaction_id IS NULL OR external_fact_hash IS NULL))
+                OR (suggested_transaction_type='TRANSFER' AND calculation_target!=0) LIMIT 1",
+        )?;
+    }
     if schema_version >= 2 {
         reject_if_exists(
             connection,
