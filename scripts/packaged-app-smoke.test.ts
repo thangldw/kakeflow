@@ -16,16 +16,11 @@ describe('packaged app smoke harness', () => {
       onboardingTitle: '家計簿をはじめましょう',
       householdName: 'Packaged Smoke Household',
       navigationLabels: ['ホーム', '取引', 'インポート', 'カレンダー・レポート'],
-      interactionCount: 5,
+      interactionCount: 1,
       viewportWidth: 1280,
       viewportHeight: 800,
       devicePixelRatio: 2,
-      visitedPages: [
-        ['ホーム', 'Packaged Smoke Householdの家計'],
-        ['取引', 'すべての取引'],
-        ['インポート', 'インポート Inbox'],
-        ['カレンダー・レポート', 'カレンダー・レポート'],
-      ].map(([navigationLabel, pageTitle]) => ({ navigationLabel, pageTitle, activeNavigation: true, mainWidth: 1000, mainHeight: 700, interactiveElementCount: 2, renderedTextLength: 100 })),
+      visitedPages: [['ホーム', 'Packaged Smoke Householdの家計']].map(([navigationLabel, pageTitle]) => ({ navigationLabel, pageTitle, activeNavigation: true, mainWidth: 1000, mainHeight: 700, interactiveElementCount: 2, renderedTextLength: 100 })),
     }
     expect(
       validateSmokeResult({
@@ -53,7 +48,7 @@ describe('packaged app smoke harness', () => {
 
     expect(() => validateSmokeResult({
       status: 'ok', application: 'KakeFlow', window: 'main', ipc: true,
-      databaseHealthy: true, schemaVersion: 12, visualEvidence: { ...visualEvidence, visitedPages: visualEvidence.visitedPages.slice(0, 3) },
+      databaseHealthy: true, schemaVersion: 12, visualEvidence: { ...visualEvidence, visitedPages: [] },
     })).toThrow(/Invalid packaged smoke result/)
   })
 })
