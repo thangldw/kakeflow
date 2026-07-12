@@ -54,6 +54,10 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .topbar { height: 72px; padding: 0 34px; display: flex; align-items: center; justify-content: space-between; background: rgba(250,251,248,.85); border-bottom: 1px solid var(--line); backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 10; }
 .period-picker { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; }
 .period-picker input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: #fff; color: var(--ink); font: inherit; }
+.planning-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0 18px; }
+.planning-form input, .planning-form select, .goal-editor input { min-height: 38px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; color: var(--ink); }
+.goal-editor { width: 100%; padding: 14px 0; display: grid; gap: 8px; border-top: 1px solid var(--line); }
+.goal-editor > div:last-child { display: flex; gap: 8px; align-items: center; }
 .search { width: 320px; height: 38px; padding: 0 11px; display: flex; align-items: center; gap: 8px; color: #8b938d; background: #f1f3ef; border: 1px solid #e7e9e4; border-radius: 9px; }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
 .search:focus-within { border-color: #78876b; box-shadow: 0 0 0 3px rgba(100,121,83,.16); }

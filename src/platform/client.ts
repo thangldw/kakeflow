@@ -19,9 +19,11 @@ import type {
   ImportRunCountsDto,
   ImportSummaryDto,
   Invoke,
+  MonthlyCategoryBudgetDto,
   PlatformClient,
   PreviewCandidateDto,
   TransactionPageDto,
+  SavingsGoalDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -93,6 +95,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listAccounts: async () => [],
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
+      listBudgets: async () => [],
+      upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
+      listSavingsGoals: async () => [],
+      createSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_create') },
+      updateSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_update') },
+      deleteSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_delete') },
       importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 }),
       startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
@@ -118,6 +126,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     listAccounts: (householdId) => invokeValidated(invoke, 'accounts_list', parseAccounts, { householdId }),
     queryTransactions: (request) => invokeValidated(invoke, 'transactions_query', parseTransactionPage, { request }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
+    listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
+    upsertBudget: (input) => invokeValidated(invoke, 'budget_upsert', parseBudget, { input }),
+    listSavingsGoals: (householdId) => invokeValidated(invoke, 'savings_goals_list', parseSavingsGoals, { householdId }),
+    createSavingsGoal: (input) => invokeValidated(invoke, 'savings_goal_create', parseSavingsGoal, { input }),
+    updateSavingsGoal: (input) => invokeValidated(invoke, 'savings_goal_update', parseSavingsGoal, { input }),
+    deleteSavingsGoal: async (householdId, goalId) => { await invokeValidated(invoke, 'savings_goal_delete', parseVoid, { householdId, goalId }) },
     importSummary: (householdId) => invokeValidated(invoke, 'import_summary', parseImportSummary, { householdId }),
     startImport: (request, fileBytes) => invokeValidated(invoke, 'import_start', parseImportSummaryDto, { request: { import: request, fileBytes: Array.from(fileBytes) } }),
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
@@ -270,6 +284,37 @@ function parseCardMatchConfirmation(value: unknown): CardMatchConfirmationDto {
 
 function parseVoid(value: unknown): void {
   if (value !== null) throw new TypeError('void')
+}
+
+function parseBudget(value: unknown): MonthlyCategoryBudgetDto {
+  const record = asRecord(value)
+  return {
+    householdId: asRequiredString(record.householdId), month: asRequiredString(record.month),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
+    budgetJpy: asSafeInteger(record.budgetJpy), actualJpy: asSafeSignedInteger(record.actualJpy), remainingJpy: asSafeSignedInteger(record.remainingJpy),
+  }
+}
+
+function parseBudgets(value: unknown): readonly MonthlyCategoryBudgetDto[] {
+  if (!Array.isArray(value)) throw new TypeError('budgets')
+  return value.map(parseBudget)
+}
+
+const GOAL_STATUSES = ['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'] as const
+
+function parseSavingsGoal(value: unknown): SavingsGoalDto {
+  const record = asRecord(value)
+  if (!GOAL_STATUSES.includes(record.status as typeof GOAL_STATUSES[number])) throw new TypeError('goal status')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), name: asRequiredString(record.name),
+    targetJpy: asSafeInteger(record.targetJpy), savedJpy: asSafeInteger(record.savedJpy), targetDate: asRequiredString(record.targetDate),
+    status: record.status as SavingsGoalDto['status'], createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+function parseSavingsGoals(value: unknown): readonly SavingsGoalDto[] {
+  if (!Array.isArray(value)) throw new TypeError('goals')
+  return value.map(parseSavingsGoal)
 }
 
 function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {

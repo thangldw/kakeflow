@@ -165,6 +165,29 @@ describe('platform client', () => {
     })
   })
 
+  it('validates planning DTOs and keeps household scope in every command', async () => {
+    const responses: Record<string, unknown> = {
+      budgets_query: [{ householdId: 'family', month: '2026-07', categoryAccountId: 'food', categoryName: '食費', budgetJpy: 50000, actualJpy: 12000, remainingJpy: 38000 }],
+      budget_upsert: { householdId: 'family', month: '2026-07', categoryAccountId: 'food', categoryName: '食費', budgetJpy: 50000, actualJpy: 12000, remainingJpy: 38000 },
+      savings_goals_list: [{ id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 20000, targetDate: '2027-07-01', status: 'ACTIVE', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-01T00:00:00Z' }],
+      savings_goal_create: { id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 0, targetDate: '2027-07-01', status: 'ACTIVE', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-01T00:00:00Z' },
+      savings_goal_update: { id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 20000, targetDate: '2027-07-01', status: 'ACTIVE', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-02T00:00:00Z' },
+      savings_goal_delete: null,
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => { invokeSpy(command, args); return responses[command] as T } })
+    const goal = { id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 0, targetDate: '2027-07-01', status: 'ACTIVE' as const }
+
+    await expect(client.listBudgets('family', '2026-07')).resolves.toHaveLength(1)
+    await expect(client.upsertBudget({ householdId: 'family', month: '2026-07', categoryAccountId: 'food', budgetJpy: 50000 })).resolves.toMatchObject({ remainingJpy: 38000 })
+    await expect(client.listSavingsGoals('family')).resolves.toHaveLength(1)
+    await expect(client.createSavingsGoal(goal)).resolves.toMatchObject({ savedJpy: 0 })
+    await expect(client.updateSavingsGoal({ ...goal, savedJpy: 20000 })).resolves.toMatchObject({ savedJpy: 20000 })
+    await expect(client.deleteSavingsGoal('family', 'goal')).resolves.toBeUndefined()
+    expect(invokeSpy).toHaveBeenCalledWith('budgets_query', { householdId: 'family', month: '2026-07' })
+    expect(invokeSpy).toHaveBeenCalledWith('savings_goal_delete', { householdId: 'family', goalId: 'goal' })
+  })
+
   it('does not expose raw invoke errors', async () => {
     const secret = '/Users/example/private/kakeflow.db: SQLCipher key rejected'
     const invoke: Invoke = async () => { throw new Error(secret) }
