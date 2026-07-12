@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 — 2026-07-13
+
+- Add a 42-day financial calendar with accrual/cash views, no-spend days, card closing dates, payment due dates, and settlement events.
+- Add monthly and yearly household reports with period comparisons, savings rate, budget/goal progress, spending drivers, reconciliation status, and data-quality context.
+- Detect recurring payments and subscriptions, predict the next occurrence, and explain price changes from confirmed household history.
+- Detect unusual expenses using robust household/payee baselines without sending financial data to an external model.
+- Add reusable ordered account groups for family, personal, daily-spending, investment, business, tax, education, and custom scopes.
+- Export confirmed transaction ledgers and portfolio snapshots as scoped, date-bounded UTF-8 BOM CSV files.
+- Add strict native IPC validation, a new account-group migration, responsive report views, and desktop integration tests.
+
 ## 0.3.0 — 2026-07-13
 
 - Parse and persist Japanese securities `assetbalance(all)_*.csv` snapshots separately from household transactions.

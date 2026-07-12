@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.3 adds automatic 60-second sync-folder discovery, immutable source-row viewing, persisted merchant/description classification rules with labels and tags, and `assetbalance(all)_*.csv` investment snapshots with asset allocation, positions, FX rates, market value, and unrealized/realized P&L. Investment snapshots remain separate from household expense and cash-flow totals.
+Version 0.4 adds a source-backed financial calendar, monthly/yearly comparison reports, recurring-payment and anomaly insights, reusable account scopes, and CSV exports. It keeps the v0.3 investment snapshots, automatic sync-folder discovery, source-row viewing, and persisted classification rules. Investment snapshots remain separate from household expense and cash-flow totals.
 
 ## Product tour
 
@@ -109,8 +109,12 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.3 capabilities
+## Current v0.4 capabilities
 
+- Financial calendar with accrual/cash views, no-spend days, card schedules, and drill-down.
+- Monthly/yearly reports with MoM/YoY comparisons, budget/goal progress, spending drivers, reconciliation, and data-quality status.
+- Explainable recurring/subscription and unusual-spending detection derived locally from confirmed ledger history.
+- Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export.
 - Automatic reviewed ingestion from registered local, iCloud Drive, Google Drive, OneDrive, or NAS folders while the Import Inbox is open.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
@@ -121,5 +125,5 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 1. Add OS-native background filesystem notifications even when the Import Inbox is not open.
 2. Add brokerage transaction adapters for buys, sells, dividends, fees, taxes, and deposits/withdrawals; snapshots alone are not transaction history.
-3. Add item-level receipt OCR, PDF bounding-box highlighting, calendar/action-center reports, forecasting, and anomaly detection.
+3. Add item-level receipt OCR, PDF bounding-box highlighting, a unified action center, and cash-flow/savings forecasting.
 4. Add packaged UI launch/E2E coverage, production signing/notarization, update keys, and a signed release channel.
