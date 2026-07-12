@@ -2,6 +2,7 @@ pub mod account_groups_export;
 pub mod backup;
 pub mod document_extract;
 pub mod document_vault;
+pub mod financial_calendar;
 pub mod import_workflow;
 mod key_store;
 pub mod ocr;
@@ -1327,6 +1328,9 @@ pub fn run() {
             source_document_get,
             source_document_records_query,
             transaction_source_records_list,
+            financial_calendar::financial_calendar_query,
+            financial_calendar::financial_report_monthly_query,
+            financial_calendar::financial_report_yearly_query,
             dashboard_query,
             financial_intelligence_query,
             budgets_query,
