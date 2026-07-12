@@ -1,0 +1,64 @@
+name: Unsigned desktop build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS app
+            runner: macos-14
+            bundles: app
+          - name: Windows installer
+            runner: windows-2022
+            bundles: nsis
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install Rust 1.97.0
+        shell: bash
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal
+          rustup default 1.97.0
+
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-all-crates: false
+          cache-on-failure: false
+          save-if: false
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build unsigned Tauri bundle
+        uses: tauri-apps/tauri-action@v1
+        env:
+          # Tauri's documented pseudo-identity creates an ad-hoc macOS signature.
+          # Windows ignores this empty value and builds without a signing certificate.
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        with:
+          args: --bundles ${{ matrix.bundles }}
