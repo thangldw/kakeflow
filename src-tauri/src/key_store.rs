@@ -58,9 +58,9 @@ pub trait CredentialBackend: Send + Sync {
 
 /// Loads or creates the database master key.
 ///
-/// `key` returns zeroizing key material suitable for adapting to
-/// `persistence::DatabaseKeyProvider`. The provider itself does not cache the
-/// key, so an owned plaintext copy is kept only for the caller's lifetime.
+/// `key` returns zeroizing key material. The provider itself does not cache the
+/// key, so startup resolves it once and keeps the plaintext copy only for the
+/// caller's lifetime.
 pub struct OsDatabaseKeyProvider {
     backend: Arc<dyn CredentialBackend>,
     generation_lock: Mutex<()>,

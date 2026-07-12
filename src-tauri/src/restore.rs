@@ -704,8 +704,7 @@ mod tests {
 
     use super::*;
     use crate::backup::create_portable_backup;
-    use crate::persistence::{AppState, DatabaseKeyProvider, PersistenceError};
-    use zeroize::Zeroizing;
+    use crate::persistence::AppState;
 
     struct TempRoot(PathBuf);
 
@@ -791,14 +790,6 @@ mod tests {
         }
     }
 
-    struct TestDatabaseKey([u8; 32]);
-
-    impl DatabaseKeyProvider for TestDatabaseKey {
-        fn key(&self) -> std::result::Result<Zeroizing<Vec<u8>>, PersistenceError> {
-            Ok(Zeroizing::new(self.0.to_vec()))
-        }
-    }
-
     fn fixture() -> (TempRoot, PathBuf, PathBuf, [u8; 32], [u8; 32]) {
         let root = TempRoot::new();
         let app_data = root.0.join("app-data");
@@ -816,7 +807,7 @@ mod tests {
         let archive = root.0.join("portable.kfb");
         let old_key = [0x21; 32];
         let new_key = [0x73; 32];
-        let state = AppState::open(source_database.clone(), &TestDatabaseKey(new_key))
+        let state = AppState::open_with_key(source_database.clone(), &new_key)
             .expect("encrypted source database");
         let vault = DocumentVault::new(source.join("vault"), &new_key).expect("source vault");
         let stored = vault

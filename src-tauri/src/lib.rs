@@ -561,7 +561,10 @@ pub fn run() {
             let mut portable_backup_key = Zeroizing::new([0_u8; 32]);
             portable_backup_key.copy_from_slice(&master_key);
             let vault = DocumentVault::new(&vault_path, &vault_master_key)?;
-            let state = AppState::open(database_path.clone(), &key_provider)?;
+            // Reuse the exact credential resolved above. Looking it up again
+            // would create a race where a disappearing keychain item could be
+            // replaced while the vault still holds the original key.
+            let state = AppState::open_with_key(database_path.clone(), &master_key)?;
             app.manage(state);
             app.manage(vault);
             app.manage(BackupMasterKey(portable_backup_key));

@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::key_store::OsDatabaseKeyProvider;
 use crate::private_fs;
 
 const MIGRATIONS: &[M<'static>] = &[
@@ -23,8 +22,6 @@ const MIGRATIONS: &[M<'static>] = &[
 
 #[derive(Debug, Error)]
 pub enum PersistenceError {
-    #[error("database key is unavailable")]
-    KeyUnavailable,
     #[error("database directory could not be prepared")]
     Directory,
     #[error("database operation failed")]
@@ -37,37 +34,30 @@ pub enum PersistenceError {
     CipherUnavailable,
 }
 
-pub trait DatabaseKeyProvider {
-    fn key(&self) -> Result<Zeroizing<Vec<u8>>, PersistenceError>;
-}
-
-impl DatabaseKeyProvider for OsDatabaseKeyProvider {
-    fn key(&self) -> Result<Zeroizing<Vec<u8>>, PersistenceError> {
-        OsDatabaseKeyProvider::key(self).map_err(|_| PersistenceError::KeyUnavailable)
-    }
-}
-
 pub struct AppState {
     connection: Mutex<Connection>,
 }
 
 impl AppState {
-    pub fn open(
+    /// Opens the database with key material that was already resolved by the
+    /// caller. Startup uses this path so an existing installation never does a
+    /// second, potentially generative credential lookup after its key has been
+    /// loaded for the document vault.
+    pub fn open_with_key(
         database_path: PathBuf,
-        key_provider: &dyn DatabaseKeyProvider,
+        key_material: &[u8],
     ) -> Result<Self, PersistenceError> {
         let parent = database_path.parent().ok_or(PersistenceError::Directory)?;
         fs::create_dir_all(parent).map_err(|_| PersistenceError::Directory)?;
         restrict_directory_permissions(parent)?;
 
-        let key = key_provider.key()?;
         let mut connection = Connection::open_with_flags(
             &database_path,
             OpenFlags::SQLITE_OPEN_READ_WRITE
                 | OpenFlags::SQLITE_OPEN_CREATE
                 | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
-        apply_key(&connection, &key)?;
+        apply_key(&connection, key_material)?;
         configure_connection(&connection)?;
         migrate(&mut connection)?;
         restrict_database_file_permissions(&database_path)?;
@@ -220,14 +210,6 @@ mod tests {
 
     const TEST_KEY: &[u8] = b"test-only-key-material-at-least-32-bytes";
 
-    struct TestKeyProvider;
-
-    impl DatabaseKeyProvider for TestKeyProvider {
-        fn key(&self) -> Result<Zeroizing<Vec<u8>>, PersistenceError> {
-            Ok(Zeroizing::new(TEST_KEY.to_vec()))
-        }
-    }
-
     #[test]
     fn all_migrations_apply_and_integrity_is_valid() {
         let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
@@ -336,7 +318,7 @@ mod tests {
         ));
         let database_path = test_directory.join("kakeflow.db");
 
-        let state = AppState::open(database_path.clone(), &TestKeyProvider)
+        let state = AppState::open_with_key(database_path.clone(), TEST_KEY)
             .expect("encrypted database should open");
         state
             .with_connection(|connection| {
