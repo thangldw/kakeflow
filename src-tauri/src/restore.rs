@@ -452,8 +452,18 @@ fn validate_candidate_data(paths: &RestorePaths, master_key: &[u8; 32]) -> Resul
         .map_err(|_| RestoreError::Validation)?;
     let vault = DocumentVault::new(paths.candidate_documents(), master_key)
         .map_err(|_| RestoreError::Validation)?;
-    for hash in restored.source_hashes {
-        vault.read(&hash).map_err(|_| RestoreError::Validation)?;
+    for expected in restored.source_documents {
+        let document = vault
+            .read(&expected.sha256)
+            .map_err(|_| RestoreError::Validation)?;
+        let byte_size =
+            u64::try_from(document.bytes.len()).map_err(|_| RestoreError::Validation)?;
+        if document.sha256 != expected.sha256
+            || document.mime_type != expected.media_type
+            || byte_size != expected.byte_size
+        {
+            return Err(RestoreError::Validation);
+        }
     }
     Ok(())
 }
@@ -888,12 +898,12 @@ mod tests {
         )
         .expect("new database validates");
         assert_eq!(restored.household_count, 1);
-        assert_eq!(restored.source_hashes.len(), 1);
+        assert_eq!(restored.source_documents.len(), 1);
         let vault = DocumentVault::new(app_data.join("documents"), new_key)
             .expect("new document vault opens");
         assert_eq!(
             vault
-                .read(&restored.source_hashes[0])
+                .read(&restored.source_documents[0].sha256)
                 .expect("new document authenticates")
                 .bytes,
             b"new document"
@@ -991,6 +1001,53 @@ mod tests {
             credentials.staged_key_fingerprint().expect("pending key"),
             None
         );
+    }
+
+    #[test]
+    fn validation_rejects_source_metadata_that_disagrees_with_vault() {
+        for update in [
+            "UPDATE source_documents SET byte_size = byte_size + 1",
+            "UPDATE source_documents SET media_type = 'text/plain'",
+        ] {
+            let (root, app_data, _archive, old_key, new_key) = fixture();
+            let source = root.0.join("source");
+            let state = AppState::open_with_key(source.join("kakeflow.db"), &new_key)
+                .expect("source database");
+            state
+                .with_connection(|connection| {
+                    connection.execute(update, [])?;
+                    connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+                    Ok(())
+                })
+                .expect("mutate source metadata");
+            drop(state);
+            let mismatched_archive = root.0.join("metadata-mismatch.kfb");
+            create_portable_backup(
+                source.join("kakeflow.db"),
+                source.join("vault"),
+                &mismatched_archive,
+                "restore correct horse battery staple",
+                &new_key,
+            )
+            .expect("archive with mismatched source metadata");
+            let credentials = MemoryCredentials::new(Some(old_key));
+
+            assert_eq!(
+                stage_portable_restore(
+                    &app_data,
+                    mismatched_archive,
+                    "restore correct horse battery staple",
+                    &credentials,
+                ),
+                Err(RestoreError::Validation)
+            );
+            assert_old_layout(&app_data);
+            assert_eq!(credentials.key(), Some(old_key));
+            assert_eq!(
+                credentials.staged_key_fingerprint().expect("pending key"),
+                None
+            );
+        }
     }
 
     #[test]
