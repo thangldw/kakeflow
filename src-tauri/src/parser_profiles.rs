@@ -113,6 +113,22 @@ pub enum AmountMode {
     DebitCredit,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SignedPositiveDirection {
+    In,
+    Out,
+}
+
+impl SignedPositiveDirection {
+    fn as_sql(self) -> &'static str {
+        match self {
+            Self::In => "IN",
+            Self::Out => "OUT",
+        }
+    }
+}
+
 impl AmountMode {
     fn as_sql(self) -> &'static str {
         match self {
@@ -136,6 +152,7 @@ pub struct DelimitedParserProfileDto {
     pub description_column: Option<String>,
     pub payee_column: Option<String>,
     pub amount_mode: String,
+    pub signed_positive_direction: Option<String>,
     pub signed_amount_column: Option<String>,
     pub debit_column: Option<String>,
     pub credit_column: Option<String>,
@@ -162,6 +179,7 @@ pub struct CreateDelimitedParserProfileInput {
     pub description_column: Option<String>,
     pub payee_column: Option<String>,
     pub amount_mode: AmountMode,
+    pub signed_positive_direction: Option<SignedPositiveDirection>,
     pub signed_amount_column: Option<String>,
     pub debit_column: Option<String>,
     pub credit_column: Option<String>,
@@ -186,6 +204,7 @@ pub struct UpdateDelimitedParserProfileInput {
     pub description_column: Option<String>,
     pub payee_column: Option<String>,
     pub amount_mode: AmountMode,
+    pub signed_positive_direction: Option<SignedPositiveDirection>,
     pub signed_amount_column: Option<String>,
     pub debit_column: Option<String>,
     pub credit_column: Option<String>,
@@ -222,6 +241,7 @@ struct ProfileFields<'a> {
     description_column: Option<&'a str>,
     payee_column: Option<&'a str>,
     amount_mode: AmountMode,
+    signed_positive_direction: Option<SignedPositiveDirection>,
     signed_amount_column: Option<&'a str>,
     debit_column: Option<&'a str>,
     credit_column: Option<&'a str>,
@@ -261,6 +281,7 @@ pub fn create_profile(
         description_column: input.description_column.as_deref(),
         payee_column: input.payee_column.as_deref(),
         amount_mode: input.amount_mode,
+        signed_positive_direction: input.signed_positive_direction,
         signed_amount_column: input.signed_amount_column.as_deref(),
         debit_column: input.debit_column.as_deref(),
         credit_column: input.credit_column.as_deref(),
@@ -285,10 +306,10 @@ pub fn create_profile(
             "INSERT INTO delimited_parser_profiles
              (id, household_id, name, delimiter, encoding, header_row, date_column,
               date_format, description_column, payee_column, amount_mode,
-              signed_amount_column, debit_column, credit_column, external_id_column,
+              signed_positive_direction, signed_amount_column, debit_column, credit_column, external_id_column,
               account_hint_column, is_enabled, priority)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                     ?13, ?14, ?15, ?16, ?17, ?18)",
+                     ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
             params![
                 input.id,
                 input.household_id,
@@ -301,6 +322,7 @@ pub fn create_profile(
                 profile.description_column,
                 profile.payee_column,
                 input.amount_mode.as_sql(),
+                input.signed_positive_direction.map(SignedPositiveDirection::as_sql),
                 profile.signed_amount_column,
                 profile.debit_column,
                 profile.credit_column,
@@ -331,6 +353,7 @@ pub fn update_profile(
         description_column: input.description_column.as_deref(),
         payee_column: input.payee_column.as_deref(),
         amount_mode: input.amount_mode,
+        signed_positive_direction: input.signed_positive_direction,
         signed_amount_column: input.signed_amount_column.as_deref(),
         debit_column: input.debit_column.as_deref(),
         credit_column: input.credit_column.as_deref(),
@@ -343,12 +366,12 @@ pub fn update_profile(
             "UPDATE delimited_parser_profiles SET
                name = ?1, delimiter = ?2, encoding = ?3, header_row = ?4,
                date_column = ?5, date_format = ?6, description_column = ?7,
-               payee_column = ?8, amount_mode = ?9, signed_amount_column = ?10,
-               debit_column = ?11, credit_column = ?12, external_id_column = ?13,
-               account_hint_column = ?14, is_enabled = ?15, priority = ?16,
+               payee_column = ?8, amount_mode = ?9, signed_positive_direction = ?10,
+               signed_amount_column = ?11, debit_column = ?12, credit_column = ?13,
+               external_id_column = ?14, account_hint_column = ?15, is_enabled = ?16, priority = ?17,
                version = version + 1,
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ?17 AND household_id = ?18 AND version = ?19",
+             WHERE id = ?18 AND household_id = ?19 AND version = ?20",
             params![
                 profile.name,
                 input.delimiter.as_sql(),
@@ -359,6 +382,7 @@ pub fn update_profile(
                 profile.description_column,
                 profile.payee_column,
                 input.amount_mode.as_sql(),
+                input.signed_positive_direction.map(SignedPositiveDirection::as_sql),
                 profile.signed_amount_column,
                 profile.debit_column,
                 profile.credit_column,
@@ -440,7 +464,7 @@ fn get_profile(
 fn profile_select() -> &'static str {
     "SELECT id, household_id, name, delimiter, encoding, header_row, date_column,
             date_format, description_column, payee_column, amount_mode,
-            signed_amount_column, debit_column, credit_column, external_id_column,
+            signed_positive_direction, signed_amount_column, debit_column, credit_column, external_id_column,
             account_hint_column, is_enabled, priority, version, created_at, updated_at
      FROM delimited_parser_profiles"
 }
@@ -458,16 +482,17 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DelimitedParser
         description_column: row.get(8)?,
         payee_column: row.get(9)?,
         amount_mode: row.get(10)?,
-        signed_amount_column: row.get(11)?,
-        debit_column: row.get(12)?,
-        credit_column: row.get(13)?,
-        external_id_column: row.get(14)?,
-        account_hint_column: row.get(15)?,
-        is_enabled: row.get(16)?,
-        priority: row.get(17)?,
-        version: row.get(18)?,
-        created_at: row.get(19)?,
-        updated_at: row.get(20)?,
+        signed_positive_direction: row.get(11)?,
+        signed_amount_column: row.get(12)?,
+        debit_column: row.get(13)?,
+        credit_column: row.get(14)?,
+        external_id_column: row.get(15)?,
+        account_hint_column: row.get(16)?,
+        is_enabled: row.get(17)?,
+        priority: row.get(18)?,
+        version: row.get(19)?,
+        created_at: row.get(20)?,
+        updated_at: row.get(21)?,
     })
 }
 
@@ -498,11 +523,13 @@ fn validate_profile<'a>(
     let credit_column = validate_optional_column(fields.credit_column)?;
     match fields.amount_mode {
         AmountMode::Signed
-            if signed_amount_column.is_some()
+            if fields.signed_positive_direction.is_some()
+                && signed_amount_column.is_some()
                 && debit_column.is_none()
                 && credit_column.is_none() => {}
         AmountMode::DebitCredit
-            if signed_amount_column.is_none()
+            if fields.signed_positive_direction.is_none()
+                && signed_amount_column.is_none()
                 && debit_column.is_some()
                 && credit_column.is_some() => {}
         _ => {
@@ -630,6 +657,7 @@ mod tests {
             description_column: Some("Description".into()),
             payee_column: None,
             amount_mode: AmountMode::Signed,
+            signed_positive_direction: Some(SignedPositiveDirection::Out),
             signed_amount_column: Some("Amount".into()),
             debit_column: None,
             credit_column: None,
@@ -654,6 +682,7 @@ mod tests {
             description_column: profile.description_column.clone(),
             payee_column: profile.payee_column.clone(),
             amount_mode: AmountMode::DebitCredit,
+            signed_positive_direction: None,
             signed_amount_column: None,
             debit_column: Some("Debit".into()),
             credit_column: Some("Credit".into()),
@@ -729,6 +758,12 @@ mod tests {
             Err(ParserProfileError::InvalidInput(_))
         ));
         invalid.debit_column = None;
+        invalid.signed_positive_direction = None;
+        assert!(matches!(
+            create_profile(&connection, &invalid),
+            Err(ParserProfileError::InvalidInput(_))
+        ));
+        invalid.signed_positive_direction = Some(SignedPositiveDirection::Out);
         invalid.header_row = 0;
         assert!(matches!(
             create_profile(&connection, &invalid),
@@ -763,10 +798,10 @@ mod tests {
                  INSERT INTO delimited_parser_profiles
                    (id, household_id, name, delimiter, encoding, header_row,
                     date_column, date_format, description_column, amount_mode,
-                    signed_amount_column, is_enabled, priority)
+                    signed_positive_direction, signed_amount_column, is_enabled, priority)
                  SELECT printf('profile-%04d', value), 'home',
                         printf('Profile %04d', value), 'AUTO', 'AUTO', 1,
-                        'Date', 'AUTO', 'Description', 'SIGNED', 'Amount', 1, 10
+                        'Date', 'AUTO', 'Description', 'SIGNED', 'OUT', 'Amount', 1, 10
                  FROM sequence;",
             )
             .unwrap();

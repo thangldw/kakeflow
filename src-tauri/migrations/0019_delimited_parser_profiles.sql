@@ -16,6 +16,7 @@ CREATE TABLE delimited_parser_profiles (
         payee_column IS NULL OR length(trim(payee_column)) BETWEEN 1 AND 120
     ),
     amount_mode TEXT NOT NULL CHECK (amount_mode IN ('SIGNED', 'DEBIT_CREDIT')),
+    signed_positive_direction TEXT CHECK (signed_positive_direction IN ('IN', 'OUT')),
     signed_amount_column TEXT CHECK (
         signed_amount_column IS NULL OR length(trim(signed_amount_column)) BETWEEN 1 AND 120
     ),
@@ -38,10 +39,12 @@ CREATE TABLE delimited_parser_profiles (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     CHECK (description_column IS NOT NULL OR payee_column IS NOT NULL),
     CHECK (
-        (amount_mode = 'SIGNED' AND signed_amount_column IS NOT NULL
+        (amount_mode = 'SIGNED' AND signed_positive_direction IS NOT NULL
+            AND signed_amount_column IS NOT NULL
             AND debit_column IS NULL AND credit_column IS NULL)
         OR
-        (amount_mode = 'DEBIT_CREDIT' AND signed_amount_column IS NULL
+        (amount_mode = 'DEBIT_CREDIT' AND signed_positive_direction IS NULL
+            AND signed_amount_column IS NULL
             AND debit_column IS NOT NULL AND credit_column IS NOT NULL)
     ),
     CHECK (updated_at >= created_at),
