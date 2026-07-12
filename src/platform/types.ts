@@ -85,6 +85,9 @@ export interface NormalizedCandidateDto {
   readonly id: string; readonly accountId: string | null; readonly occurredOn: string; readonly postedOn: string | null
   readonly amountJpy: number; readonly direction: 'IN' | 'OUT'; readonly descriptionRaw: string | null
   readonly merchantRaw: string | null; readonly externalTransactionId: string | null
+  readonly externalSource: 'MONEY_FORWARD_ME' | null; readonly externalFactHash: string | null
+  readonly calculationTarget: boolean; readonly suggestedTransactionType: 'TRANSFER' | null
+  readonly institutionRaw: string | null; readonly categoryMajorRaw: string | null; readonly categoryMinorRaw: string | null; readonly memoRaw: string | null
   readonly extractionConfidenceBps: number | null; readonly normalizationConfidenceBps: number | null
   readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
@@ -118,6 +121,7 @@ export interface PostingDecisionDto {
   readonly payee: string | null; readonly description: string | null; readonly entries: readonly JournalEntryDecisionDto[]
   readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
+  readonly calculationTarget: boolean
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }

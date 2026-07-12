@@ -3,6 +3,7 @@ import type {
   BankTransactionCandidate,
   CardStatementCandidate,
   CardTransactionCandidate,
+  MoneyForwardHouseholdTransactionCandidate,
   ParsedImport,
   SourceLineage,
   WalletEventCandidate,
@@ -59,6 +60,14 @@ export interface StartImportCandidate {
   descriptionRaw: string | null
   merchantRaw: string | null
   externalTransactionId: string | null
+  externalSource: 'MONEY_FORWARD_ME' | null
+  externalFactHash: string | null
+  calculationTarget: boolean
+  suggestedTransactionType: 'TRANSFER' | null
+  institutionRaw: string | null
+  categoryMajorRaw: string | null
+  categoryMinorRaw: string | null
+  memoRaw: string | null
   extractionConfidenceBps: number | null
   normalizationConfidenceBps: number | null
   attributionKind: 'HOUSEHOLD' | 'MEMBER'
@@ -121,12 +130,12 @@ interface MappingContext {
   lineageRecords: Map<string, StartImportSourceRecord | null>
 }
 
-function lineagePayload(lineage: SourceLineage): string {
-  return JSON.stringify({ sourceRow: lineage.sourceRow, sourceRowEnd: lineage.sourceRowEnd, rawFields: lineage.rawFields })
+function lineagePayload(lineage: SourceLineage, namedFields?: Readonly<Record<string, string>>): string {
+  return JSON.stringify({ sourceRow: lineage.sourceRow, sourceRowEnd: lineage.sourceRowEnd, rawFields: lineage.rawFields, ...(namedFields ? { fields: namedFields } : {}) })
 }
 
-async function sourceRecord(context: MappingContext, lineage: SourceLineage): Promise<StartImportSourceRecord | null> {
-  const payloadJson = lineagePayload(lineage)
+async function sourceRecord(context: MappingContext, lineage: SourceLineage, namedFields?: Readonly<Record<string, string>>): Promise<StartImportSourceRecord | null> {
+  const payloadJson = lineagePayload(lineage, namedFields)
   const key = payloadJson
   const existing = context.lineageRecords.get(key)
   if (existing !== undefined || context.lineageRecords.has(key)) return existing ?? null
@@ -160,11 +169,13 @@ function issueInvalid(context: MappingContext, code: 'INVALID_DATE' | 'INVALID_A
   context.issues.push({ code, message, severity: 'error', ...(row === undefined ? {} : { sourceRow: row }) })
 }
 
-function candidate(context: MappingContext, values: Omit<StartImportCandidate, 'id' | 'accountId' | 'reviewStatus' | 'extractionConfidenceBps' | 'normalizationConfidenceBps' | 'attributionKind' | 'attributedMemberId' | 'audienceVisibility' | 'audienceMemberId'>): StartImportCandidate {
+function candidate(context: MappingContext, values: Omit<StartImportCandidate, 'id' | 'accountId' | 'reviewStatus' | 'extractionConfidenceBps' | 'normalizationConfidenceBps' | 'attributionKind' | 'attributedMemberId' | 'audienceVisibility' | 'audienceMemberId' | 'externalSource' | 'externalFactHash' | 'calculationTarget' | 'suggestedTransactionType' | 'institutionRaw' | 'categoryMajorRaw' | 'categoryMinorRaw' | 'memoRaw'> & Partial<Pick<StartImportCandidate, 'externalSource' | 'externalFactHash' | 'calculationTarget' | 'suggestedTransactionType' | 'institutionRaw' | 'categoryMajorRaw' | 'categoryMinorRaw' | 'memoRaw'>>): StartImportCandidate {
   return {
     id: context.ids.next('candidate'), accountId: context.accountId, reviewStatus: 'PENDING',
     extractionConfidenceBps: null, normalizationConfidenceBps: null,
     attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
+    externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+    institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
     ...values,
   }
 }
@@ -241,9 +252,32 @@ async function mapCardTransaction(transaction: CardTransactionCandidate, context
   })]
 }
 
+async function mapMoneyForward(record: MoneyForwardHouseholdTransactionCandidate, context: MappingContext): Promise<StartImportCandidate[]> {
+  const evidence = await sourceRecord(context, record.lineage, record.sourceFields)
+  const date = isoDate(record.transactionDate)
+  const amount = positiveInteger(record.signedAmountJpy)
+  if (!date) issueInvalid(context, 'INVALID_DATE', 'Money Forward transaction has no valid ISO date.', record.lineage.sourceRow)
+  if (amount == null) issueInvalid(context, 'INVALID_AMOUNT', 'Money Forward transaction has no non-zero integer JPY amount.', record.lineage.sourceRow)
+  if (!evidence || !date || amount == null) return []
+  const factHash = record.externalTransactionId ? await context.hash(JSON.stringify({
+    date, amount, direction: record.signedAmountJpy! < 0 ? 'OUT' : 'IN', content: record.content,
+    institution: record.institution, isTransfer: record.isTransfer,
+  })) : null
+  return [candidate(context, {
+    occurredOn: date, postedOn: null, amountJpy: amount, direction: record.signedAmountJpy! < 0 ? 'OUT' : 'IN',
+    descriptionRaw: record.memo || null, merchantRaw: record.content || null,
+    externalTransactionId: record.externalTransactionId || null, externalSource: record.externalTransactionId ? 'MONEY_FORWARD_ME' : null,
+    externalFactHash: factHash, calculationTarget: record.isTransfer ? false : record.calculationTarget,
+    suggestedTransactionType: record.isTransfer ? 'TRANSFER' : null, institutionRaw: record.institution,
+    categoryMajorRaw: record.majorCategory || null, categoryMinorRaw: record.minorCategory || null, memoRaw: record.memo || null,
+    evidence: [{ sourceRecordId: evidence.id, role: 'PRIMARY' }],
+  })]
+}
+
 function isBank(value: unknown): value is BankTransactionCandidate { return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'bank-transaction' }
 function isWallet(value: unknown): value is WalletEventCandidate { return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'wallet-event' }
 function isStatement(value: unknown): value is CardStatementCandidate { return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'card-statement' }
+function isMoneyForward(value: unknown): value is MoneyForwardHouseholdTransactionCandidate { return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'money-forward-household-transaction' }
 
 export async function mapParsedImportToStartImport(input: ImportMapperInput, ids: IdFactory, hash: HashFn): Promise<ImportMappingResult> {
   const runId = ids.next('run')
@@ -257,6 +291,7 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
     for (const record of input.parsed.records) {
       if (isBank(record)) candidates.push(...await mapBank(record, context))
       else if (isWallet(record)) candidates.push(...await mapPayPay(record, context))
+      else if (isMoneyForward(record)) candidates.push(...await mapMoneyForward(record, context))
       else if (isStatement(record)) {
         const statementCandidates: { candidate: StartImportCandidate; billedAmountJpy: number }[] = []
         for (const transaction of record.transactions) {
