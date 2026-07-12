@@ -43,6 +43,9 @@ jobs:
       - name: Audit dependencies
         run: npm audit --audit-level=high
 
+      - name: Check application version consistency
+        run: npm run check:versions
+
   rust:
     name: Rust (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}

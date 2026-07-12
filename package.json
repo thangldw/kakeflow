@@ -15,7 +15,11 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build --no-bundle",
+    "desktop:build:mac": "tauri build --bundles app",
+    "desktop:build:windows": "tauri build --bundles nsis",
+    "desktop:release": "tauri build",
+    "check:versions": "node scripts/check-versions.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
