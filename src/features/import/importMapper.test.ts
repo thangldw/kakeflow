@@ -32,12 +32,12 @@ describe('import mapper', () => {
     const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
 
     expect(result.issues).toEqual([])
-    expect(result.request).toMatchObject({ householdId: 'household-1', adapterId: parsed.adapterId, byteSize: 42 })
+    expect(result.request).toMatchObject({ householdId: 'household-1', adapterId: parsed.adapterId, byteSize: 42, audienceVisibility: 'SHARED', audienceMemberId: null })
     expect(result.request).not.toHaveProperty('fileBytes')
     expect(result.request.records).toHaveLength(1)
     expect(JSON.parse(result.request.records[0].payloadJson)).toEqual({ sourceRow: 2, sourceRowEnd: 2, rawFields: ['2026/07/27', 'ラクテンカード', '204987'] })
     expect(result.request.records[0].recordHash).toHaveLength(64)
-    expect(result.request.candidates[0]).toMatchObject({ amountJpy: 204987, direction: 'OUT', occurredOn: '2026-07-27', accountId: 'account-1', reviewStatus: 'PENDING' })
+    expect(result.request.candidates[0]).toMatchObject({ amountJpy: 204987, direction: 'OUT', occurredOn: '2026-07-27', accountId: 'account-1', reviewStatus: 'PENDING', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })
     expect(result.request.cardStatements).toEqual([])
   })
 

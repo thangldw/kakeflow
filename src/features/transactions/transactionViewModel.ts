@@ -65,5 +65,7 @@ export function toTransactionViewModel(row: TransactionRowDto): Transaction {
     status: row.status.trim().toUpperCase() === 'POSTED' ? 'confirmed' : 'review',
     icon: presentation.icon,
     accountingEffect: presentation.accountingEffect,
+    attributionLabel: row.attributionKind === 'HOUSEHOLD' ? '世帯共通' : row.attributedMemberName ?? 'メンバー',
+    audienceLabel: row.audienceVisibility === 'SHARED' ? '共有' : `個人・${row.audienceMemberName ?? 'メンバー'}`,
   }
 }

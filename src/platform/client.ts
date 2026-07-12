@@ -32,6 +32,8 @@ import type {
   WatchedFileMetadataDto,
   SavingsGoalDto,
   AppliedClassificationDto,
+  AttributionKindDto,
+  AudienceVisibilityDto,
   ClassificationPreviewDto,
   ClassificationRuleDto,
 } from './types'
@@ -116,6 +118,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       getTransactionDetail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_detail_get') },
       updateTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_update') },
       getSourceDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_get') },
+      updateSourceDocumentAudience: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_audience_update') },
       querySourceDocumentRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_records_query') },
       listTransactionSourceRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_source_records_list') },
       listWatchedFolders: async () => [],
@@ -172,6 +175,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     getTransactionDetail: (householdId, transactionId) => invokeValidated(invoke, 'transaction_detail_get', parseTransactionDetail, { householdId, transactionId }),
     updateTransaction: (input) => invokeValidated(invoke, 'transaction_update', parseTransactionDetail, { input }),
     getSourceDocument: (householdId, sourceDocumentId) => invokeValidated(invoke, 'source_document_get', parseSourceDocument, { householdId, sourceDocumentId }),
+    updateSourceDocumentAudience: (input) => invokeValidated(invoke, 'source_document_audience_update', parseSourceDocument, { input }),
     querySourceDocumentRecords: (request) => invokeValidated(invoke, 'source_document_records_query', parseSourceRecordPage, { request }),
     listTransactionSourceRecords: (householdId, transactionId) => invokeValidated(invoke, 'transaction_source_records_list', parseSourceRecords, { householdId, transactionId }),
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
@@ -293,7 +297,7 @@ function parseImportPreview(value: unknown): ImportPreviewDto {
   if (!Array.isArray(record.candidates) || typeof source.sourceType !== 'string' || typeof source.originalFilename !== 'string' || typeof source.mediaType !== 'string' || typeof source.sha256 !== 'string') throw new TypeError('import preview')
   return {
     summary: parseImportSummaryDto(record.summary),
-    source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256 },
+    source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256, ...parseAudience(source) },
     candidates: record.candidates.map(parsePreviewCandidate),
   }
 }
@@ -302,6 +306,8 @@ function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
   const record = asRecord(value)
   if ((record.direction !== 'IN' && record.direction !== 'OUT') || !['PENDING', 'READY', 'DUPLICATE', 'EXCLUDED'].includes(String(record.reviewStatus))) throw new TypeError('candidate')
   if (!Array.isArray(record.evidenceRoles) || !record.evidenceRoles.every((role) => typeof role === 'string') || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('candidate details')
+  const attribution = parseAttribution(record)
+  const audience = parseAudience(record)
   return {
     id: asRequiredString(record.id), accountId: asNullableString(record.accountId),
     occurredOn: asRequiredString(record.occurredOn), postedOn: asNullableString(record.postedOn),
@@ -310,6 +316,7 @@ function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
     externalTransactionId: asNullableString(record.externalTransactionId),
     extractionConfidenceBps: asNullableSafeInteger(record.extractionConfidenceBps),
     normalizationConfidenceBps: asNullableSafeInteger(record.normalizationConfidenceBps),
+    ...attribution, ...audience,
     reviewStatus: record.reviewStatus as PreviewCandidateDto['reviewStatus'],
     evidenceCount: asSafeInteger(record.evidenceCount), evidenceRoles: record.evidenceRoles, issues: record.issues,
   }
@@ -479,6 +486,8 @@ function parseTransactionPage(value: unknown): TransactionPageDto {
 function parseTransactionRow(value: unknown): TransactionPageDto['items'][number] {
   const row = asRecord(value)
   if (typeof row.id !== 'string' || typeof row.occurredOn !== 'string' || typeof row.transactionType !== 'string' || typeof row.status !== 'string') throw new TypeError('transaction')
+  const attribution = parseAttribution(row, true)
+  const audience = parseAudience(row, true)
   return {
     id: row.id,
     occurredOn: row.occurredOn,
@@ -494,6 +503,7 @@ function parseTransactionRow(value: unknown): TransactionPageDto['items'][number
     creditAccountName: asNullableString(row.creditAccountName),
     categoryAccountId: asNullableString(row.categoryAccountId),
     categoryName: asNullableString(row.categoryName),
+    ...attribution, ...audience,
   }
 }
 
@@ -501,12 +511,15 @@ function parseTransactionDetail(value: unknown): TransactionDetailDto {
   const record = asRecord(value)
   const allowedTypes = ['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT']
   if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.occurredOn !== 'string' || typeof record.status !== 'string' || typeof record.createdAt !== 'string' || typeof record.updatedAt !== 'string' || typeof record.editable !== 'boolean' || typeof record.transactionType !== 'string' || !allowedTypes.includes(record.transactionType) || !Array.isArray(record.entries) || !Array.isArray(record.sourceEvidence)) throw new TypeError('transaction detail')
+  const attribution = parseAttribution(record, true)
+  const audience = parseAudience(record, true)
   return {
     id: record.id, householdId: record.householdId, occurredOn: record.occurredOn, postedOn: asNullableString(record.postedOn),
     transactionType: record.transactionType as TransactionDetailDto['transactionType'], payee: asNullableString(record.payee), description: asNullableString(record.description),
+    ...attribution, ...audience,
     status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable,
     entries: record.entries.map((item) => { const entry = asRecord(item); if (entry.side !== 'DEBIT' && entry.side !== 'CREDIT') throw new TypeError('journal entry'); return { id: asRequiredString(entry.id), accountId: asRequiredString(entry.accountId), accountName: asRequiredString(entry.accountName), accountKind: asRequiredString(entry.accountKind), side: entry.side, amountJpy: asSafeSignedInteger(entry.amountJpy), lineNumber: asSafeInteger(entry.lineNumber) } }),
-    sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole) } }),
+    sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole), ...parseAudience(evidence, true) } }),
   }
 }
 
@@ -517,8 +530,38 @@ function parseSourceDocument(value: unknown): SourceDocumentViewDto {
     sourceType: asRequiredString(record.sourceType), originalFilename: asRequiredString(record.originalFilename), mediaType: asRequiredString(record.mediaType),
     byteSize: asSafeInteger(record.byteSize), sha256: asRequiredString(record.sha256), sourceModifiedAt: asNullableString(record.sourceModifiedAt),
     importedAt: asRequiredString(record.importedAt), adapterId: asNullableString(record.adapterId), adapterVersion: asNullableString(record.adapterVersion),
-    recordCount: asSafeInteger(record.recordCount),
+    recordCount: asSafeInteger(record.recordCount), ...parseAudience(record, true),
   }
+}
+
+function parseAttribution(record: Record<string, unknown>): { attributionKind: AttributionKindDto; attributedMemberId: string | null }
+function parseAttribution(record: Record<string, unknown>, withName: true): { attributionKind: AttributionKindDto; attributedMemberId: string | null; attributedMemberName: string | null }
+function parseAttribution(record: Record<string, unknown>, withName = false): { attributionKind: AttributionKindDto; attributedMemberId: string | null; attributedMemberName?: string | null } {
+  if (record.attributionKind !== 'HOUSEHOLD' && record.attributionKind !== 'MEMBER') throw new TypeError('attribution kind')
+  if (!Object.hasOwn(record, 'attributedMemberId')) throw new TypeError('attributed member')
+  const attributedMemberId = asNullableString(record.attributedMemberId)
+  if ((record.attributionKind === 'HOUSEHOLD') !== (attributedMemberId === null)) throw new TypeError('attribution tuple')
+  const attributionKind = record.attributionKind as AttributionKindDto
+  if (!withName) return { attributionKind, attributedMemberId }
+  if (!Object.hasOwn(record, 'attributedMemberName')) throw new TypeError('attributed member name')
+  const attributedMemberName = asNullableString(record.attributedMemberName)
+  if ((record.attributionKind === 'HOUSEHOLD') !== (attributedMemberName === null)) throw new TypeError('attribution name tuple')
+  return { attributionKind, attributedMemberId, attributedMemberName }
+}
+
+function parseAudience(record: Record<string, unknown>): { audienceVisibility: AudienceVisibilityDto; audienceMemberId: string | null }
+function parseAudience(record: Record<string, unknown>, withName: true): { audienceVisibility: AudienceVisibilityDto; audienceMemberId: string | null; audienceMemberName: string | null }
+function parseAudience(record: Record<string, unknown>, withName = false): { audienceVisibility: AudienceVisibilityDto; audienceMemberId: string | null; audienceMemberName?: string | null } {
+  if (record.audienceVisibility !== 'SHARED' && record.audienceVisibility !== 'PERSONAL') throw new TypeError('audience visibility')
+  if (!Object.hasOwn(record, 'audienceMemberId')) throw new TypeError('audience member')
+  const audienceMemberId = asNullableString(record.audienceMemberId)
+  if ((record.audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('audience tuple')
+  const audienceVisibility = record.audienceVisibility as AudienceVisibilityDto
+  if (!withName) return { audienceVisibility, audienceMemberId }
+  if (!Object.hasOwn(record, 'audienceMemberName')) throw new TypeError('audience member name')
+  const audienceMemberName = asNullableString(record.audienceMemberName)
+  if ((record.audienceVisibility === 'SHARED') !== (audienceMemberName === null)) throw new TypeError('audience name tuple')
+  return { audienceVisibility, audienceMemberId, audienceMemberName }
 }
 
 function parseSourceRecord(value: unknown): SourceRecordViewDto {
