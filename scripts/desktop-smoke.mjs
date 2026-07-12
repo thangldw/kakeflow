@@ -14,6 +14,9 @@ function run(label, command, args, cwd = root) {
     cwd,
     env: process.env,
     stdio: 'inherit',
+    // npm.cmd and cargo.exe are resolved through cmd.exe on GitHub's Windows
+    // runners. Node 22 otherwise rejects direct .cmd execution with EINVAL.
+    shell: process.platform === 'win32',
   })
 
   if (result.error) {
