@@ -76,4 +76,17 @@ describe('receipt text normalization', () => {
     ])
     expect(receipt).toMatchObject({ subtotalJpy: 1000, changeJpy: 0, paymentMethod: 'クレジット', taxMode: 'EXCLUDED' })
   })
+
+  it('normalizes full-width receipt text and Japanese era dates', () => {
+    const receipt = parseReceiptText([
+      'コンビニ東京店',
+      '令和８年７月１３日',
+      'おにぎり ２個 ３２０円',
+      '税込合計 ￥３２０',
+      'Ｓｕｉｃａ お支払額 ￥３２０',
+    ].join('\n'))
+
+    expect(receipt).toMatchObject({ occurredOn: '2026-07-13', amountJpy: 320, paymentMethod: 'Suica', taxMode: 'INCLUDED' })
+    expect(receipt.items).toEqual([expect.objectContaining({ description: 'おにぎり', quantity: 2, amountJpy: 320 })])
+  })
 })
