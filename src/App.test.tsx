@@ -12,7 +12,7 @@ describe('KakeFlow application shell', () => {
   it('renders the household overview with accounting KPIs', async () => {
     await renderApp()
 
-    expect(screen.getByRole('heading', { name: 'こんにちは、田中さん' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '家計の概要' })).toBeInTheDocument()
     expect(screen.getByText('純資産')).toBeInTheDocument()
     expect(screen.getByText('¥8,246,320')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'カード支払い' })).toBeInTheDocument()
@@ -63,7 +63,7 @@ describe('KakeFlow application shell', () => {
 
   it('explains reconciled card payments separately from expenses', async () => {
     await renderApp()
-    fireEvent.click(screen.getByRole('button', { name: 'カード照合 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
 
     expect(screen.getByRole('heading', { name: '請求・口座引落の照合' })).toBeInTheDocument()
     expect(screen.getByText(/カード利用は支出、銀行引落は負債の返済/)).toBeInTheDocument()
