@@ -584,11 +584,6 @@ pub fn commit_import(
     decisions: &[PostingDecision],
 ) -> Result<CommitSummary> {
     validate_id("run_id", run_id)?;
-    if decisions.is_empty() {
-        return Err(ImportWorkflowError::Validation(
-            "no posting decisions".into(),
-        ));
-    }
     let mut candidate_ids = HashSet::new();
     for decision in decisions {
         validate_posting_decision(decision)?;
@@ -1799,6 +1794,57 @@ mod tests {
                 })
                 .unwrap(),
             "POSTED"
+        );
+    }
+
+    #[test]
+    fn zero_candidate_raw_import_commits_without_ledger_rows() {
+        let connection = database();
+        let mut raw = request("raw", "raw-doc", 'a');
+        raw.candidates.clear();
+        start_import(&connection, &raw, "vault://raw").unwrap();
+
+        let result = commit_import(&connection, "raw", &[]).unwrap();
+        assert_eq!(result.posted_count, 0);
+        assert_eq!(
+            connection
+                .query_row("SELECT status FROM import_runs WHERE id='raw'", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "POSTED"
+        );
+        let ledger_rows: i64 = connection
+            .query_row(
+                "SELECT (SELECT count(*) FROM transactions)
+                      + (SELECT count(*) FROM journal_entries)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ledger_rows, 0);
+        assert!(matches!(
+            commit_import(&connection, "raw", &[]),
+            Err(ImportWorkflowError::AlreadyPosted)
+        ));
+    }
+
+    #[test]
+    fn candidate_import_still_rejects_zero_posting_decisions() {
+        let connection = database();
+        start_import(&connection, &request("run", "doc", 'a'), "vault://one").unwrap();
+        assert!(matches!(
+            commit_import(&connection, "run", &[]),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "every reviewable candidate needs one posting decision"
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT status FROM import_runs WHERE id='run'", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .unwrap(),
+            "REVIEW_REQUIRED"
         );
     }
 
