@@ -203,3 +203,40 @@ export interface ImportRun {
   committedCount: number
   errorCount: number
 }
+
+/** Canonical point-in-time investment data. Snapshot changes do not create ledger transactions. */
+export interface PortfolioSnapshot {
+  id: EntityId
+  householdId: EntityId
+  accountId: EntityId
+  asOf: IsoDateTime
+  marketValueJpy: JpyAmount
+  cashValueJpy: JpyAmount
+  unrealizedPnlJpy?: JpyAmount
+  realizedPnlJpy?: JpyAmount
+  sourceDocumentId: EntityId
+}
+
+export interface PositionSnapshot {
+  id: EntityId
+  portfolioSnapshotId: EntityId
+  instrumentCode?: string
+  instrumentName: string
+  productType: string
+  accountType?: string
+  quantity: number
+  averageCost?: number
+  marketPrice?: number
+  marketValueJpy: JpyAmount
+  unrealizedPnlJpy?: JpyAmount
+  realizedPnlJpy?: JpyAmount
+  currency: string
+}
+
+export interface FxRateSnapshot {
+  id: EntityId
+  portfolioSnapshotId: EntityId
+  baseCurrency: string
+  quoteCurrency: 'JPY'
+  rate: number
+}

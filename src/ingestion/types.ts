@@ -3,6 +3,7 @@ export type AdapterId =
   | 'paypay-history-v1'
   | 'amazon-mastercard-statement-v1'
   | 'rakuten-enavi-v1'
+  | 'securities-asset-snapshot-v1'
 
 export type ParseIssueSeverity = 'warning' | 'error'
 
@@ -113,4 +114,50 @@ export interface CardStatementCandidate {
   statementMonth?: string
   statementTotal: number | null
   transactions: readonly CardTransactionCandidate[]
+}
+
+export interface PortfolioAssetClassCandidate {
+  lineage: SourceLineage
+  name: string
+  marketValueJpy: number
+  unrealizedPnlJpy: number | null
+}
+
+export interface PositionSnapshotCandidate {
+  kind: 'position-snapshot'
+  lineage: SourceLineage
+  productType: string
+  accountType: string
+  instrumentCode: string
+  instrumentName: string
+  quantity: number | null
+  averageCost: number | null
+  marketPrice: number | null
+  marketValueJpy: number | null
+  unrealizedPnlJpy: number | null
+  realizedPnlJpy: number | null
+  currency: string
+}
+
+export interface FxRateSnapshotCandidate {
+  kind: 'fx-rate-snapshot'
+  lineage: SourceLineage
+  baseCurrency: string
+  quoteCurrency: 'JPY'
+  rate: number
+}
+
+/** A point-in-time brokerage account view. It must never be posted as a transaction. */
+export interface PortfolioSnapshotCandidate {
+  kind: 'portfolio-snapshot'
+  lineage: SourceLineage
+  accountHint?: string
+  asOf: string | null
+  marketValueJpy: number | null
+  cashValueJpy: number | null
+  unrealizedPnlJpy: number | null
+  realizedPnlJpy: number | null
+  assetClasses: readonly PortfolioAssetClassCandidate[]
+  positions: readonly PositionSnapshotCandidate[]
+  fxRates: readonly FxRateSnapshotCandidate[]
 }
