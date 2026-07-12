@@ -1,3 +1,6 @@
+use crate::card_settlement_mapping::{
+    balance_coverage, CardSettlementBalanceCoverageRequest, CardSettlementCoverageStatus,
+};
 use crate::persistence::AppState;
 use crate::record_scope::{validate_attribution_scope, AttributionScope};
 use crate::recurring_analytics::{
@@ -79,6 +82,8 @@ pub enum ActionKind {
     ImportFailed,
     CardMismatch,
     CardPaymentDue,
+    CardBalanceShortfall,
+    CardMappingRequired,
     BudgetOverrun,
     GoalDue,
     SpendingAnomaly,
@@ -428,6 +433,12 @@ fn action_items(
         as_of_day,
         &mut actions,
     )?;
+    append_card_balance_shortfall_actions(
+        connection,
+        &request.household_id,
+        &format_iso_day(as_of_day),
+        &mut actions,
+    )?;
     append_budget_actions(
         connection,
         &request.household_id,
@@ -487,6 +498,112 @@ fn action_items(
     });
     actions.truncate(MAX_ACTION_ITEMS);
     Ok(actions)
+}
+
+fn append_card_balance_shortfall_actions(
+    connection: &Connection,
+    household_id: &str,
+    as_of: &str,
+    actions: &mut Vec<ActionItemDto>,
+) -> Result<(), String> {
+    let coverage = balance_coverage(
+        connection,
+        &CardSettlementBalanceCoverageRequest {
+            household_id: household_id.to_owned(),
+            as_of: as_of.to_owned(),
+            horizon_days: None,
+        },
+    )
+    .map_err(|error| error.public_message().to_owned())?;
+    for bank in coverage.banks {
+        if bank.max_shortfall_jpy <= 0 {
+            continue;
+        }
+        let due_on = bank
+            .statements
+            .iter()
+            .find(|statement| statement.shortfall_jpy > 0)
+            .map(|statement| statement.payment_due_on.clone());
+        let has_overdue_shortfall = bank.statements.iter().any(|statement| {
+            statement.shortfall_jpy > 0 && statement.status == CardSettlementCoverageStatus::Overdue
+        });
+        actions.push(ActionItemDto {
+            id: format!("card-balance-shortfall:{}", bank.bank_account_id),
+            kind: ActionKind::CardBalanceShortfall,
+            priority: if has_overdue_shortfall {
+                ActionPriority::Critical
+            } else {
+                ActionPriority::High
+            },
+            title: format!(
+                "Fund {} for upcoming card settlements",
+                bank.bank_account_name
+            ),
+            detail: format!(
+                "Projected mapped card settlements exceed the bank balance by ¥{}",
+                bank.max_shortfall_jpy
+            ),
+            due_on,
+            amount_jpy: Some(bank.max_shortfall_jpy),
+            entity_id: Some(bank.bank_account_id),
+            reasons: vec![
+                "This household-wide warning uses only explicit card-to-bank mappings".to_owned(),
+                "Bank balance includes every posted journal entry regardless of calculation target"
+                    .to_owned(),
+            ],
+        });
+    }
+    for statement in coverage.unmapped_statements {
+        actions.push(ActionItemDto {
+            id: format!("card-mapping-required:{}", statement.statement_id),
+            kind: ActionKind::CardMappingRequired,
+            priority: if statement.status
+                == crate::card_settlement_mapping::UnmappedCardSettlementStatus::Overdue
+            {
+                ActionPriority::Critical
+            } else {
+                ActionPriority::High
+            },
+            title: format!("Choose a payment bank for {}", statement.card_account_name),
+            detail: format!(
+                "¥{} remains outstanding, but no explicit card-to-bank mapping exists",
+                statement.outstanding_amount_jpy
+            ),
+            due_on: Some(statement.payment_due_on),
+            amount_jpy: Some(statement.outstanding_amount_jpy),
+            entity_id: Some(statement.card_account_id),
+            reasons: vec![
+                "KakeFlow never guesses card settlement bank relationships".to_owned(),
+                "This warning is household-wide and independent of analytical filters".to_owned(),
+            ],
+        });
+    }
+    for statement in coverage.missing_due_statements {
+        actions.push(ActionItemDto {
+            id: format!("card-due-date-required:{}", statement.statement_id),
+            kind: ActionKind::CardMappingRequired,
+            priority: ActionPriority::High,
+            title: format!("Add a payment due date for {}", statement.card_account_name),
+            detail: format!(
+                "¥{} remains outstanding but cannot be projected without a due date",
+                statement.outstanding_amount_jpy
+            ),
+            due_on: None,
+            amount_jpy: Some(statement.outstanding_amount_jpy),
+            entity_id: Some(statement.card_account_id),
+            reasons: vec![
+                if statement.mapping_configured {
+                    "A bank mapping exists, but the statement payment due date is missing"
+                        .to_owned()
+                } else {
+                    "Both a bank mapping and statement payment due date are required".to_owned()
+                },
+                "The undated obligation is disclosed but excluded from chronological projection"
+                    .to_owned(),
+            ],
+        });
+    }
+    Ok(())
 }
 
 fn append_import_actions(
@@ -844,12 +961,12 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(
             "CREATE TABLE households(id TEXT PRIMARY KEY);
-             CREATE TABLE accounts(id TEXT PRIMARY KEY, household_id TEXT, name TEXT, account_kind TEXT, account_subtype TEXT);
+             CREATE TABLE accounts(id TEXT PRIMARY KEY, household_id TEXT, name TEXT, account_kind TEXT, account_subtype TEXT, is_archived INTEGER NOT NULL DEFAULT 0);
              CREATE TABLE transactions(id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, transaction_type TEXT, payee TEXT, description TEXT, status TEXT, attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT, calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1)));
              CREATE TABLE journal_entries(transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER);
              CREATE TABLE import_runs(id TEXT, household_id TEXT, status TEXT);
              CREATE TABLE card_statements(id TEXT, household_id TEXT, card_account_id TEXT, payment_due_on TEXT, statement_amount_jpy INTEGER, reconciliation_status TEXT);
-             CREATE TABLE card_payments(id TEXT, household_id TEXT, statement_id TEXT, payment_amount_jpy INTEGER);
+             CREATE TABLE card_payments(id TEXT, household_id TEXT, statement_id TEXT, payment_amount_jpy INTEGER, payment_on TEXT, reconciliation_status TEXT);
              CREATE TABLE monthly_category_budgets(household_id TEXT, month TEXT, category_account_id TEXT, budget_jpy INTEGER);
              CREATE TABLE savings_goals(id TEXT, household_id TEXT, name TEXT, target_jpy INTEGER, saved_jpy INTEGER, target_date TEXT, status TEXT);
              CREATE TABLE account_groups(id TEXT PRIMARY KEY, household_id TEXT);
@@ -857,11 +974,16 @@ mod tests {
              CREATE TABLE household_members(id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
              CREATE TABLE card_statement_transactions(statement_id TEXT, transaction_id TEXT, billed_amount_jpy INTEGER);
              INSERT INTO households VALUES ('family'), ('other');
-             INSERT INTO accounts VALUES ('bank','family','Bank','ASSET','BANK'),('income','family','Salary','INCOME','OTHER'),('expense','family','Food','EXPENSE','OTHER'),('card','family','Card','LIABILITY','CREDIT_CARD'),('excluded-bank','family','Other Bank','ASSET','BANK'),('excluded-income','family','Other Income','INCOME','OTHER'),('excluded-expense','family','Other Expense','EXPENSE','OTHER'),('excluded-card','family','Other Card','LIABILITY','CREDIT_CARD'),('other-expense','other','Other','EXPENSE','OTHER');
+             INSERT INTO accounts VALUES ('bank','family','Bank','ASSET','BANK',0),('income','family','Salary','INCOME','OTHER',0),('expense','family','Food','EXPENSE','OTHER',0),('card','family','Card','LIABILITY','CREDIT_CARD',0),('excluded-bank','family','Other Bank','ASSET','BANK',0),('excluded-income','family','Other Income','INCOME','OTHER',0),('excluded-expense','family','Other Expense','EXPENSE','OTHER',0),('excluded-card','family','Other Card','LIABILITY','CREDIT_CARD',0),('other-expense','other','Other','EXPENSE','OTHER',0);
              INSERT INTO account_groups VALUES ('daily','family'),('foreign','other');
              INSERT INTO account_group_members VALUES ('family','daily','bank'),('family','daily','expense'),('family','daily','card');
              INSERT INTO household_members VALUES ('alice','family','ACTIVE'),('archived','family','ARCHIVED'),('foreign-member','other','ACTIVE');"
         ).unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0023_card_settlement_bank_mappings.sql"
+            ))
+            .unwrap();
         connection
     }
 
@@ -948,6 +1070,44 @@ mod tests {
             .actions
             .iter()
             .any(|action| action.kind == ActionKind::BudgetOverrun));
+    }
+
+    #[test]
+    fn action_center_uses_explicit_mapping_and_discloses_projection_gaps() {
+        let connection = connection();
+        connection
+            .execute_batch(
+                "INSERT INTO card_settlement_bank_mappings VALUES
+                   ('family','card','bank','2026-07-01','2026-07-01');
+                 INSERT INTO card_statements VALUES
+                   ('mapped','family','card','2026-07-20',10000,'UNMATCHED'),
+                   ('unmapped','family','excluded-card','2026-07-21',20000,'UNMATCHED'),
+                   ('missing-due','family','card',NULL,30000,'UNMATCHED');",
+            )
+            .unwrap();
+        let result = query_forecast_action(
+            &connection,
+            &ForecastActionRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-13".into(),
+                account_group_id: Some("daily".into()),
+                attribution_scope: AttributionScope::Member {
+                    member_id: "alice".into(),
+                },
+            },
+        )
+        .unwrap();
+        assert!(result.actions.iter().any(|action| {
+            action.kind == ActionKind::CardBalanceShortfall && action.amount_jpy == Some(10_000)
+        }));
+        assert!(result.actions.iter().any(|action| {
+            action.kind == ActionKind::CardMappingRequired
+                && action.id == "card-mapping-required:unmapped"
+        }));
+        assert!(result.actions.iter().any(|action| {
+            action.kind == ActionKind::CardMappingRequired
+                && action.id == "card-due-date-required:missing-due"
+        }));
     }
 
     #[test]
