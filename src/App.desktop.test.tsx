@@ -7,6 +7,13 @@ const desktop = vi.hoisted(() => ({
   queryDashboard: vi.fn(),
   queryTransactions: vi.fn(),
   createManualTransaction: vi.fn(),
+  getTransactionDetail: vi.fn(),
+  updateTransaction: vi.fn(),
+  listWatchedFolders: vi.fn(),
+  selectWatchedFolder: vi.fn(),
+  removeWatchedFolder: vi.fn(),
+  scanWatchedFolder: vi.fn(),
+  readWatchedFile: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
   stageBackupRestore: vi.fn(),
@@ -51,6 +58,13 @@ vi.mock('./platform', async () => {
       deleteSavingsGoal: desktop.deleteSavingsGoal,
       queryTransactions: desktop.queryTransactions,
       createManualTransaction: desktop.createManualTransaction,
+      getTransactionDetail: desktop.getTransactionDetail,
+      updateTransaction: desktop.updateTransaction,
+      listWatchedFolders: desktop.listWatchedFolders,
+      selectWatchedFolder: desktop.selectWatchedFolder,
+      removeWatchedFolder: desktop.removeWatchedFolder,
+      scanWatchedFolder: desktop.scanWatchedFolder,
+      readWatchedFile: desktop.readWatchedFile,
       importSummary: vi.fn(),
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
@@ -100,6 +114,13 @@ describe('KakeFlow desktop read models', () => {
     desktop.renameAccount.mockReset()
     desktop.archiveAccount.mockReset()
     desktop.createManualTransaction.mockReset().mockResolvedValue({ id: 'manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: '八百屋', description: null, amountJpy: 1500, status: 'POSTED', debitAccountId: 'family-other-expense', debitAccountName: 'その他', creditAccountId: 'family-bank', creditAccountName: '銀行', categoryAccountId: 'family-other-expense', categoryName: 'その他' })
+    desktop.getTransactionDetail.mockReset().mockResolvedValue({ id: 'purchase', householdId: 'family', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', status: 'POSTED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z', editable: true, entries: [{ id: 'debit', accountId: 'family-other-expense', accountName: 'その他', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 120000, lineNumber: 1 }, { id: 'credit', accountId: 'family-card', accountName: 'カード', accountKind: 'LIABILITY', side: 'CREDIT', amountJpy: 120000, lineNumber: 2 }], sourceEvidence: [{ sourceRecordId: 'record', sourceDocumentId: 'document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }] })
+    desktop.updateTransaction.mockReset().mockImplementation(async (input) => ({ ...(await desktop.getTransactionDetail()), ...input, id: input.transactionId }))
+    desktop.listWatchedFolders.mockReset().mockResolvedValue([])
+    desktop.selectWatchedFolder.mockReset().mockResolvedValue(null)
+    desktop.removeWatchedFolder.mockReset().mockResolvedValue(undefined)
+    desktop.scanWatchedFolder.mockReset().mockResolvedValue({ watchedFolderId: 'folder', files: [] })
+    desktop.readWatchedFile.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
@@ -208,6 +229,42 @@ describe('KakeFlow desktop read models', () => {
       ]),
     })))
     expect(await screen.findByText('手動取引を台帳に記録しました。')).toBeInTheDocument()
+  })
+
+  it('drills into source evidence and saves balanced transaction corrections', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    const merchant = await screen.findByText('生協')
+    fireEvent.click(merchant.closest('button')!)
+
+    expect(await screen.findByText('card.csv')).toBeInTheDocument()
+    expect(screen.getByText(/行 2/)).toBeInTheDocument()
+    fireEvent.change(screen.getByDisplayValue('食料品'), { target: { value: '週末の食料品' } })
+    fireEvent.click(screen.getByRole('button', { name: '変更を保存' }))
+
+    await waitFor(() => expect(desktop.updateTransaction).toHaveBeenCalledWith(expect.objectContaining({
+      householdId: 'family', transactionId: 'purchase', description: '週末の食料品',
+      entries: expect.arrayContaining([expect.objectContaining({ side: 'DEBIT', amountJpy: 120000 }), expect.objectContaining({ side: 'CREDIT', amountJpy: 120000 })]),
+    })))
+    expect(await screen.findByText('取引と仕訳を更新しました。')).toBeInTheDocument()
+  })
+
+  it('scans a registered sync folder and previews a file without exposing its absolute path', async () => {
+    desktop.listWatchedFolders.mockResolvedValue([{ id: 'folder', householdId: 'family', label: '家計簿 Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }])
+    desktop.scanWatchedFolder.mockResolvedValue({ watchedFolderId: 'folder', files: [{ relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000 }] })
+    desktop.readWatchedFile.mockResolvedValue({ relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fileBytes: [97, 44, 98] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByText('KakeFlow')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '新しいファイルを確認' }))
+    expect(await screen.findByText('history.csv')).toBeInTheDocument()
+    expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'プレビュー' }))
+
+    await waitFor(() => expect(desktop.readWatchedFile).toHaveBeenCalledWith('family', 'folder', 'PayPay/history.csv'))
   })
 
   it('renders and confirms a persisted card-payment match', async () => {

@@ -23,6 +23,9 @@ import type {
   PlatformClient,
   PreviewCandidateDto,
   TransactionPageDto,
+  TransactionDetailDto,
+  WatchedFolderDto,
+  WatchedFileMetadataDto,
   SavingsGoalDto,
 } from './types'
 
@@ -98,6 +101,13 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       archiveAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_archive') },
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
       createManualTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_manual_create') },
+      getTransactionDetail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_detail_get') },
+      updateTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_update') },
+      listWatchedFolders: async () => [],
+      selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
+      removeWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_remove') },
+      scanWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_scan') },
+      readWatchedFile: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_file_read') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
@@ -133,6 +143,13 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     archiveAccount: async (input) => { await invokeValidated(invoke, 'account_archive', parseVoid, { input }) },
     queryTransactions: (request) => invokeValidated(invoke, 'transactions_query', parseTransactionPage, { request }),
     createManualTransaction: (input) => invokeValidated(invoke, 'transaction_manual_create', parseTransactionRow, { input }),
+    getTransactionDetail: (householdId, transactionId) => invokeValidated(invoke, 'transaction_detail_get', parseTransactionDetail, { householdId, transactionId }),
+    updateTransaction: (input) => invokeValidated(invoke, 'transaction_update', parseTransactionDetail, { input }),
+    listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
+    selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
+    removeWatchedFolder: async (householdId, watchedFolderId) => { await invokeValidated(invoke, 'watched_folder_remove', parseVoid, { householdId, watchedFolderId }) },
+    scanWatchedFolder: (householdId, watchedFolderId) => invokeValidated(invoke, 'watched_folder_scan', parseWatchedFolderScan, { householdId, watchedFolderId }),
+    readWatchedFile: (householdId, watchedFolderId, relativePath) => invokeValidated(invoke, 'watched_folder_file_read', parseWatchedFile, { householdId, watchedFolderId, relativePath }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
     upsertBudget: (input) => invokeValidated(invoke, 'budget_upsert', parseBudget, { input }),
@@ -384,6 +401,30 @@ function parseTransactionRow(value: unknown): TransactionPageDto['items'][number
     categoryName: asNullableString(row.categoryName),
   }
 }
+
+function parseTransactionDetail(value: unknown): TransactionDetailDto {
+  const record = asRecord(value)
+  const allowedTypes = ['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT']
+  if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.occurredOn !== 'string' || typeof record.status !== 'string' || typeof record.createdAt !== 'string' || typeof record.updatedAt !== 'string' || typeof record.editable !== 'boolean' || typeof record.transactionType !== 'string' || !allowedTypes.includes(record.transactionType) || !Array.isArray(record.entries) || !Array.isArray(record.sourceEvidence)) throw new TypeError('transaction detail')
+  return {
+    id: record.id, householdId: record.householdId, occurredOn: record.occurredOn, postedOn: asNullableString(record.postedOn),
+    transactionType: record.transactionType as TransactionDetailDto['transactionType'], payee: asNullableString(record.payee), description: asNullableString(record.description),
+    status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable,
+    entries: record.entries.map((item) => { const entry = asRecord(item); if (entry.side !== 'DEBIT' && entry.side !== 'CREDIT') throw new TypeError('journal entry'); return { id: asRequiredString(entry.id), accountId: asRequiredString(entry.accountId), accountName: asRequiredString(entry.accountName), accountKind: asRequiredString(entry.accountKind), side: entry.side, amountJpy: asSafeSignedInteger(entry.amountJpy), lineNumber: asSafeInteger(entry.lineNumber) } }),
+    sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole) } }),
+  }
+}
+
+function parseWatchedFolder(value: unknown): WatchedFolderDto {
+  const record = asRecord(value)
+  if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.label !== 'string' || typeof record.displayName !== 'string' || typeof record.isEnabled !== 'boolean' || typeof record.createdAt !== 'string') throw new TypeError('watched folder')
+  return { id: record.id, householdId: record.householdId, label: record.label, displayName: record.displayName, isEnabled: record.isEnabled, createdAt: record.createdAt }
+}
+function parseWatchedFolders(value: unknown): readonly WatchedFolderDto[] { if (!Array.isArray(value)) throw new TypeError('watched folders'); return value.map(parseWatchedFolder) }
+function parseNullableWatchedFolder(value: unknown): WatchedFolderDto | null { return value === null ? null : parseWatchedFolder(value) }
+function parseWatchedFileMetadata(value: unknown): WatchedFileMetadataDto { const record = asRecord(value); return { relativePath: asRequiredString(record.relativePath), fileName: asRequiredString(record.fileName), mediaType: asRequiredString(record.mediaType), byteSize: asSafeInteger(record.byteSize), modifiedUnixMs: record.modifiedUnixMs === null ? null : asSafeInteger(record.modifiedUnixMs) } }
+function parseWatchedFolderScan(value: unknown) { const record = asRecord(value); if (!Array.isArray(record.files)) throw new TypeError('watched folder scan'); return { watchedFolderId: asRequiredString(record.watchedFolderId), files: record.files.map(parseWatchedFileMetadata) } }
+function parseWatchedFile(value: unknown) { const record = asRecord(value); if (!Array.isArray(record.fileBytes) || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('watched file'); return { ...parseWatchedFileMetadata(record), fileBytes: record.fileBytes as number[] } }
 
 function parseImportSummary(value: unknown): ImportRunCountsDto {
   const record = asRecord(value)

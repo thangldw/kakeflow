@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, investment, PDF, spreadsheet, and receipt sources into a reconciled household ledger.
 
-This repository contains a runnable desktop application slice: responsive ledger dashboards, accrual/cash accounting views, CSV/XLSX/PDF/image ingestion, review-before-posting, searchable and paginated double-entry transactions, manual balanced posting, persisted budgets and savings goals, credit-card settlement reconciliation, a Tauri 2 shell, and an encrypted SQLCipher database with forward-only migrations.
+This repository contains a runnable desktop application slice: responsive ledger dashboards, accrual/cash accounting views, CSV/XLSX/PDF/image ingestion, native sync-folder scanning, review-before-posting, searchable and paginated double-entry transactions, balanced split editing with source-evidence drill-down, persisted budgets and savings goals, credit-card settlement reconciliation, a Tauri 2 shell, and an encrypted SQLCipher database with forward-only migrations.
 
 ## Run locally
 
@@ -90,7 +90,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Finish transaction editing, split postings, and source-evidence drill-down.
-2. Add native watched-folder ingestion for local, Google Drive, iCloud Drive, OneDrive, and NAS-synced folders.
-3. Add packaged desktop smoke/E2E coverage on macOS and Windows.
-4. Configure production signing, notarization, update keys, and a signed release channel.
+1. Add background filesystem change notifications and reviewed batch import on top of the current bounded native sync-folder scanner.
+2. Add packaged UI launch/E2E coverage on macOS and Windows; current CI compiles the real native executable without launching user data.
+3. Configure production signing, notarization, update keys, and a signed release channel.

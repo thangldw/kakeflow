@@ -31,7 +31,7 @@ import { buildReceiptImport } from './features/import/receiptText'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, TransactionRowDto } from './platform'
+import type { AccountDto, AppBootstrapDto, CardSettlementDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -175,17 +175,20 @@ function SpendingCard({ expense = currentMonthMetrics.expense, categories, onDet
 
 const txIcons = { food: Utensils, home: Zap, transport: TrainFront, income: ArrowDownLeft, subscription: Sparkles }
 
-function TransactionRows({ rows = transactions }: { rows?: Transaction[] }) {
+function TransactionRows({ rows = transactions, onSelect }: { rows?: readonly Transaction[]; onSelect?: (id: string) => void }) {
   return <div className="transaction-list">{rows.map((tx) => {
     const Icon = txIcons[tx.icon]
-    return <div className="transaction-row" key={tx.id}>
+    const content = <>
       <div className={`transaction-icon ${tx.amount > 0 ? 'positive' : ''}`}><Icon size={18} /></div>
       <div className="transaction-main"><strong>{tx.merchant}</strong><span>{tx.date} ・ {tx.detail}</span></div>
       <span className="category-pill">{tx.category}</span>
       <span className="account-label">{tx.account}</span>
       <strong className={tx.amount > 0 ? 'amount-positive' : ''}>{yen(tx.amount)}</strong>
       {tx.status === 'review' && <span className="review-dot" title="要確認" />}
-    </div>
+    </>
+    return onSelect
+      ? <button type="button" className="transaction-row selectable" key={tx.id} onClick={() => onSelect(tx.id)}>{content}</button>
+      : <div className="transaction-row" key={tx.id}>{content}</div>
   })}</div>
 }
 
@@ -242,6 +245,34 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
   </>
 }
 
+function TransactionDetailPanel({ detail, accounts, onClose, onSave }: { detail: TransactionDetailDto; accounts: readonly AccountDto[]; onClose: () => void; onSave: (input: UpdatePostedTransactionInputDto) => Promise<void> }) {
+  const [occurredOn, setOccurredOn] = useState(detail.occurredOn)
+  const [transactionType, setTransactionType] = useState(detail.transactionType)
+  const [payee, setPayee] = useState(detail.payee ?? '')
+  const [description, setDescription] = useState(detail.description ?? '')
+  const [entries, setEntries] = useState(() => detail.entries.map((entry) => ({ id: entry.id, accountId: entry.accountId, side: entry.side, amountJpy: String(entry.amountJpy) })))
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  const debitTotal = entries.filter((entry) => entry.side === 'DEBIT').reduce((sum, entry) => sum + (Number(entry.amountJpy) || 0), 0)
+  const creditTotal = entries.filter((entry) => entry.side === 'CREDIT').reduce((sum, entry) => sum + (Number(entry.amountJpy) || 0), 0)
+  const updateEntry = (index: number, change: Partial<(typeof entries)[number]>) => setEntries((current) => current.map((entry, currentIndex) => currentIndex === index ? { ...entry, ...change } : entry))
+  const save = async () => {
+    if (entries.length < 2 || debitTotal <= 0 || debitTotal !== creditTotal || entries.some((entry) => !entry.accountId || !/^\d+$/.test(entry.amountJpy) || Number(entry.amountJpy) <= 0)) {
+      setNotice('借方と貸方を同額にし、すべての口座と金額を入力してください。'); return
+    }
+    setBusy(true); setNotice('')
+    try {
+      await onSave({
+        householdId: detail.householdId, transactionId: detail.id, occurredOn, postedOn: detail.postedOn,
+        transactionType, payee: payee.trim() || null, description: description.trim() || null,
+        entries: entries.map((entry) => ({ id: entry.id || crypto.randomUUID(), accountId: entry.accountId, side: entry.side, amountJpy: Number(entry.amountJpy) })),
+      })
+    } catch { setNotice('変更を保存できませんでした。入力内容を確認してください。') }
+    finally { setBusy(false) }
+  }
+  return <div className="detail-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><section className="transaction-detail-panel" role="dialog" aria-modal="true" aria-labelledby="transaction-detail-title"><div className="panel-head"><div><p>取引詳細</p><h2 id="transaction-detail-title">{detail.payee ?? detail.description ?? detail.id}</h2></div><button className="icon-btn" aria-label="取引詳細を閉じる" onClick={onClose}><X size={18} /></button></div><div className="detail-fields"><label>取引日<input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} /></label><label>取引種別<select value={transactionType} onChange={(event) => setTransactionType(event.target.value as ManualTransactionTypeDto)}>{['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT'].map((type) => <option key={type}>{type}</option>)}</select></label><label>支払先<input value={payee} onChange={(event) => setPayee(event.target.value)} /></label><label>メモ<input value={description} onChange={(event) => setDescription(event.target.value)} /></label></div><div className="detail-section-head"><div><h3>仕訳</h3><span>借方 {yen(debitTotal)} / 貸方 {yen(creditTotal)}</span></div><button className="secondary-btn" onClick={() => setEntries((current) => [...current, { id: crypto.randomUUID(), accountId: '', side: 'DEBIT' as const, amountJpy: '' }])}>分割行を追加</button></div><div className="journal-editor">{entries.map((entry, index) => <div className="journal-line" key={entry.id}><select aria-label={`仕訳${index + 1}の借貸`} value={entry.side} onChange={(event) => updateEntry(index, { side: event.target.value as 'DEBIT' | 'CREDIT' })}><option value="DEBIT">借方</option><option value="CREDIT">貸方</option></select><select aria-label={`仕訳${index + 1}の口座`} value={entry.accountId} onChange={(event) => updateEntry(index, { accountId: event.target.value })}><option value="">口座を選択</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={`仕訳${index + 1}の金額`} inputMode="numeric" value={entry.amountJpy} onChange={(event) => updateEntry(index, { amountJpy: event.target.value })} /><button className="text-btn" aria-label={`仕訳${index + 1}を削除`} disabled={entries.length <= 2} onClick={() => setEntries((current) => current.filter((_, currentIndex) => currentIndex !== index))}>削除</button></div>)}</div><div className="evidence-list"><h3>原本・証跡</h3>{detail.sourceEvidence.length === 0 ? <p>手動入力のため原本はありません。</p> : detail.sourceEvidence.map((evidence) => <div key={`${evidence.sourceRecordId}-${evidence.evidenceRole}`}><FileCheck2 size={16} /><span><strong>{evidence.originalFilename}</strong><small>{evidence.sourceType} ・ 行 {evidence.rowNumber} ・ {evidence.evidenceRole}</small></span></div>)}</div>{notice && <p role="status">{notice}</p>}<div className="detail-actions"><span>{detail.sourceEvidence.length > 0 ? '原本とのリンクを保持したまま修正します。' : '手動取引'}</span><button className="secondary-btn" onClick={onClose}>キャンセル</button><button className="primary-btn" disabled={busy || debitTotal !== creditTotal} onClick={() => void save()}>{busy ? '保存中…' : '変更を保存'}</button></div></section></div>
+}
+
 function TransactionsPage({ householdId, revision, month, accounts, onChanged }: { householdId: string | null; revision: number; month: string; accounts: readonly AccountDto[]; onChanged: () => void }) {
   const [query, setQuery] = useState('')
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
@@ -261,6 +292,8 @@ function TransactionsPage({ householdId, revision, month, accounts, onChanged }:
   const [manualCredit, setManualCredit] = useState('')
   const [manualBusy, setManualBusy] = useState(false)
   const [manualNotice, setManualNotice] = useState('')
+  const [selectedDetail, setSelectedDetail] = useState<TransactionDetailDto | null>(null)
+  const [detailNotice, setDetailNotice] = useState('')
   const desktop = platformClient.runtime === 'tauri'
 
   useEffect(() => {
@@ -287,6 +320,16 @@ function TransactionsPage({ householdId, revision, month, accounts, onChanged }:
   const visible = desktop ? displayRows : displayRows.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
   const basisExpense = desktop ? liveTotals?.expenseJpy ?? 0 : basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
   const basisIncome = desktop ? liveTotals?.incomeJpy ?? 0 : currentMonthMetrics.income
+  const openDetail = async (transactionId: string) => {
+    if (!desktop || !householdId) return
+    setDetailNotice('')
+    try { setSelectedDetail(await platformClient.getTransactionDetail(householdId, transactionId)) }
+    catch { setDetailNotice('取引詳細を読み込めませんでした。') }
+  }
+  const saveDetail = async (input: UpdatePostedTransactionInputDto) => {
+    await platformClient.updateTransaction(input)
+    setSelectedDetail(null); onChanged(); setDetailNotice('取引と仕訳を更新しました。')
+  }
   const createManual = async () => {
     const amount = Number(manualAmount)
     if (!householdId || !/^\d+$/.test(manualAmount) || !Number.isSafeInteger(amount) || amount <= 0 || !manualDebit || !manualCredit || manualDebit === manualCredit) {
@@ -313,12 +356,14 @@ function TransactionsPage({ householdId, revision, month, accounts, onChanged }:
     </PageHeader>
     {showManual && <section className="panel manual-transaction-form"><div className="panel-head"><div><h2>複式簿記で手動入力</h2><p>同額の借方・貸方を確定台帳へ記録します。</p></div></div><div className="planning-form"><input aria-label="取引日" type="date" value={manualDate} onChange={(event) => setManualDate(event.target.value)} /><select aria-label="手動取引種別" value={manualType} onChange={(event) => setManualType(event.target.value as ManualTransactionTypeDto)}>{['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT'].map((type) => <option key={type}>{type}</option>)}</select><input aria-label="手動取引の支払先" value={manualPayee} onChange={(event) => setManualPayee(event.target.value)} placeholder="店舗・支払先" /><input aria-label="手動取引のメモ" value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} placeholder="メモ（任意）" /><input aria-label="手動取引の金額" inputMode="numeric" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} placeholder="金額 (JPY)" /><select aria-label="手動取引の借方口座" value={manualDebit} onChange={(event) => setManualDebit(event.target.value)}><option value="">借方口座</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label="手動取引の貸方口座" value={manualCredit} onChange={(event) => setManualCredit(event.target.value)}><option value="">貸方口座</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><button className="primary-btn" disabled={manualBusy} onClick={() => void createManual()}>{manualBusy ? '記録中…' : '取引を記録'}</button></div>{manualNotice && <p role="status">{manualNotice}</p>}</section>}
     {!showManual && manualNotice && <div className="import-notice" role="status">{manualNotice}</div>}
+    {detailNotice && <div className="import-notice" role="status">{detailNotice}</div>}
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
       <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{desktop ? `${totalItems}件中 ${visible.length}件` : `${visible.length}件を表示`}</em></div>
-      {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
+      {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} onSelect={desktop ? (id) => void openDetail(id) : undefined} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
       {desktop && totalPages > 1 && <div className="pagination"><button className="secondary-btn" disabled={ledgerPage <= 1} onClick={() => setLedgerPage((value) => value - 1)}>前へ</button><span>{ledgerPage} / {totalPages}</span><button className="secondary-btn" disabled={ledgerPage >= totalPages} onClick={() => setLedgerPage((value) => value + 1)}>次へ</button></div>}
     </section>
+    {selectedDetail && <TransactionDetailPanel key={selectedDetail.updatedAt} detail={selectedDetail} accounts={accounts} onClose={() => setSelectedDetail(null)} onSave={saveDetail} />}
   </>
 }
 
@@ -378,17 +423,59 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [activeRun, setActiveRun] = useState<string | null>(null)
   const [staged, setStaged] = useState<Record<string, ImportPreviewDto>>({})
   const [notice, setNotice] = useState('')
+  const [watchedFolders, setWatchedFolders] = useState<readonly WatchedFolderDto[]>([])
+  const [watchedFiles, setWatchedFiles] = useState<Record<string, readonly WatchedFileMetadataDto[]>>({})
+  const [folderBusy, setFolderBusy] = useState<string | null>(null)
 
-  const processFiles = async (files: FileList | readonly File[]) => {
+  const processFiles = async (files: FileList | readonly File[], sourceType: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' = 'MANUAL_UPLOAD') => {
     if (files.length === 0) return
     setBusy(true)
-    const next = await previewImportFiles(files)
+    const next = (await previewImportFiles(files)).map((preview) => ({ ...preview, sourceType }))
     setPreviews((current) => {
       const merged = new Map(current.map((item) => [item.id, item]))
       next.forEach((item) => merged.set(item.id, item))
       return Array.from(merged.values()).reverse()
     })
     setBusy(false)
+  }
+
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) { setWatchedFolders([]); return }
+    void platformClient.listWatchedFolders(householdId).then(setWatchedFolders).catch(() => setNotice('監視フォルダーを読み込めませんでした。'))
+  }, [householdId])
+
+  const addWatchedFolder = async () => {
+    if (!householdId) return
+    setFolderBusy('select'); setNotice('')
+    try {
+      const selected = await platformClient.selectWatchedFolder(householdId, '家計簿 Inbox')
+      if (selected) setWatchedFolders((current) => [...current.filter((folder) => folder.id !== selected.id), selected])
+    } catch { setNotice('フォルダーを登録できませんでした。シンボリックリンクではないローカルフォルダーを選択してください。') }
+    finally { setFolderBusy(null) }
+  }
+  const scanWatchedFolder = async (folder: WatchedFolderDto) => {
+    if (!householdId) return
+    setFolderBusy(folder.id); setNotice('')
+    try { const scan = await platformClient.scanWatchedFolder(householdId, folder.id); setWatchedFiles((current) => ({ ...current, [folder.id]: scan.files })); setNotice(`${scan.files.length}件の対応ファイルを検出しました。`) }
+    catch { setNotice('フォルダーを安全にスキャンできませんでした。同期状態とアクセス権を確認してください。') }
+    finally { setFolderBusy(null) }
+  }
+  const previewWatchedFile = async (folder: WatchedFolderDto, file: WatchedFileMetadataDto) => {
+    if (!householdId) return
+    setFolderBusy(`${folder.id}:${file.relativePath}`); setNotice('')
+    try {
+      const loaded = await platformClient.readWatchedFile(householdId, folder.id, file.relativePath)
+      const browserFile = new File([new Uint8Array(loaded.fileBytes)], loaded.fileName, { type: loaded.mediaType, lastModified: loaded.modifiedUnixMs ?? Date.now() })
+      await processFiles([browserFile], 'LOCAL_FOLDER'); setNotice(`${loaded.fileName} をローカルフォルダーからプレビューしました。`)
+    } catch { setNotice('ファイルを安全に読み込めませんでした。同期完了後に再試行してください。') }
+    finally { setFolderBusy(null) }
+  }
+  const removeWatchedFolder = async (folder: WatchedFolderDto) => {
+    if (!householdId) return
+    setFolderBusy(folder.id)
+    try { await platformClient.removeWatchedFolder(householdId, folder.id); setWatchedFolders((current) => current.filter((item) => item.id !== folder.id)); setWatchedFiles((current) => { const next = { ...current }; delete next[folder.id]; return next }) }
+    catch { setNotice('監視フォルダーを解除できませんでした。') }
+    finally { setFolderBusy(null) }
   }
 
   const stageImport = async (item: ImportPreview) => {
@@ -405,7 +492,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
             : item.detectedAdapterId === 'amazon-mastercard-statement-v1' ? amazonCard ?? `${householdId}-card` : `${householdId}-card`
       const mapping = await mapParsedImportToStartImport({
         file: {
-          householdId, sourceType: 'MANUAL_UPLOAD', originalFilename: item.filename,
+          householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename,
           mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength,
           sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null,
           accountId: defaultAccount, adapterVersion: '1',
@@ -442,7 +529,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         : await platformClient.extractDocument(item.fileBytes, item.mediaType)
       const normalized = await buildReceiptImport(extracted, {
         householdId, filename: item.filename, mediaType: item.mediaType, byteSize: item.fileBytes.byteLength,
-        sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, accountId: `${householdId}-cash`,
+        sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, accountId: `${householdId}-cash`, sourceType: item.sourceType,
       }, () => globalThis.crypto.randomUUID(), sha256Text)
       if (!normalized.request) {
         setNotice(normalized.fields.issues.includes('STATEMENT_LIKELY') ? 'この書類は明細書の可能性があるため、1件の支出としては取り込みません。' : '日付または合計金額を読み取れませんでした。内容を確認してください。')
@@ -489,6 +576,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
 
   return <>
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
+      {platformClient.runtime === 'tauri' && <button className="secondary-btn" disabled={folderBusy === 'select'} onClick={() => void addWatchedFolder()}>{folderBusy === 'select' ? '選択中…' : '同期フォルダーを追加'}</button>}
       <button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
       <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,text/csv,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
@@ -500,6 +588,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         ['ソース行', String(summary?.sourceRecords ?? (platformClient.runtime === 'web' ? 4 : 0)), '監査証跡'],
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
+    {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>Google Drive・iCloud Drive・OneDrive・ローカル/NASの同期先を安全にスキャンします。</p></div></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{watchedFiles[folder.id]?.map((file) => <div className="watched-file" key={file.relativePath}><FileCheck2 size={15} /><span><strong>{file.fileName}</strong><small>{file.relativePath} ・ {(file.byteSize / 1024).toFixed(1)} KB</small></span><button className="mini-btn" disabled={folderBusy === `${folder.id}:${file.relativePath}`} onClick={() => void previewWatchedFile(folder, file)}>{folderBusy === `${folder.id}:${file.relativePath}` ? '読込中…' : 'プレビュー'}</button></div>)}</div>)}</section>}
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / Excel / PDF / レシート画像をここにドロップ</span><small>PayPay・銀行・カード・PNG / JPEGレシート</small></button>

@@ -20,6 +20,7 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0006_import_card_statements.sql"
     )),
     M::up(include_str!("../migrations/0007_planning.sql")),
+    M::up(include_str!("../migrations/0008_watched_folders.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -421,7 +422,7 @@ mod tests {
         let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
         state
             .with_connection(|connection| {
-                assert_eq!(schema_version(connection)?, 7);
+                assert_eq!(schema_version(connection)?, 8);
                 assert!(integrity_check(connection)?);
                 Ok(())
             })

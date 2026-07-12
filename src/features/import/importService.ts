@@ -16,6 +16,7 @@ export interface ImportPreview {
   detectedAdapterId?: AdapterId
   mediaType?: string
   sourceModifiedAt?: string
+  sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER'
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
