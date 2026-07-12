@@ -158,6 +158,21 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ fromDate: '2026-06-01', toDate: '2026-06-30' })))
   })
 
+  it('paginates through more than one ledger page', async () => {
+    desktop.queryTransactions.mockImplementation(async ({ page, pageSize }: { page: number; pageSize: number }) => ({
+      items: [{ id: `transaction-${page}`, occurredOn: '2026-07-10', postedOn: null, transactionType: 'EXPENSE', payee: `店舗${page}`, description: null, amountJpy: 1000, status: 'POSTED' }],
+      page, pageSize, totalItems: 26, totalPages: 2,
+    }))
+    render(<App />)
+    await screen.findByText('店舗1')
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: '次へ' }))
+
+    expect(await screen.findByText('店舗2')).toBeInTheDocument()
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ page: 2, pageSize: 25 })))
+  })
+
   it('renders and confirms a persisted card-payment match', async () => {
     desktop.listCardSettlements.mockResolvedValue([{
       id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: '•••• 8106',
