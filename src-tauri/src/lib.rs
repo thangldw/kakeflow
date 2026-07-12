@@ -6,6 +6,7 @@ pub mod document_vault;
 pub mod financial_calendar;
 pub mod forecast_action;
 pub mod import_workflow;
+pub mod investment_performance;
 mod key_store;
 pub mod ocr;
 mod persistence;
@@ -29,6 +30,10 @@ use document_vault::DocumentVault;
 use import_workflow::{
     CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
     StartImport,
+};
+use investment_performance::{
+    InvestmentHoldingsDto, InvestmentHoldingsRequest, InvestmentPerformanceDto,
+    InvestmentPerformanceRequest,
 };
 use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
@@ -491,6 +496,18 @@ fn brokerage_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn investment_performance_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(
+        &rusqlite::Connection,
+    ) -> Result<T, investment_performance::InvestmentPerformanceError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Investment database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 #[tauri::command]
 fn households_list(state: tauri::State<'_, AppState>) -> Result<Vec<HouseholdDto>, String> {
     repository_result(&state, read_model::list_households)
@@ -758,6 +775,26 @@ fn brokerage_history_query(
 ) -> Result<BrokerageHistoryDto, String> {
     brokerage_result(&state, |connection| {
         brokerage::query_history(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn investment_holdings_query(
+    state: tauri::State<'_, AppState>,
+    request: InvestmentHoldingsRequest,
+) -> Result<InvestmentHoldingsDto, String> {
+    investment_performance_result(&state, |connection| {
+        investment_performance::query_holdings(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn investment_performance_query(
+    state: tauri::State<'_, AppState>,
+    request: InvestmentPerformanceRequest,
+) -> Result<InvestmentPerformanceDto, String> {
+    investment_performance_result(&state, |connection| {
+        investment_performance::query_performance(connection, &request)
     })
 }
 
@@ -1527,6 +1564,8 @@ pub fn run() {
             portfolio_snapshot_get,
             brokerage_events_import,
             brokerage_history_query,
+            investment_holdings_query,
+            investment_performance_query,
             account_groups_list,
             account_group_create,
             account_group_update,
