@@ -77,8 +77,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Persist budgets and savings goals instead of presenting template fixtures.
+1. Finish transaction editing, split postings, source-evidence drill-down, and account management.
 2. Add native watched-folder ingestion for local, Google Drive, iCloud Drive, OneDrive, and NAS-synced folders.
-3. Finish transaction editing, split postings, source-evidence drill-down, and account management.
-4. Add packaged desktop smoke/E2E coverage on macOS and Windows.
-5. Configure production signing, notarization, update keys, and a signed release channel.
+3. Add packaged desktop smoke/E2E coverage on macOS and Windows.
+4. Configure production signing, notarization, update keys, and a signed release channel.
