@@ -473,6 +473,8 @@ fn validate_restored_semantics(
                     'AUTO', 'YYYY_MM_DD', 'YYYYMMDD', 'MM_DD_YYYY', 'DD_MM_YYYY'
                 )
                 OR p.amount_mode NOT IN ('SIGNED', 'DEBIT_CREDIT')
+                OR (p.signed_positive_direction IS NOT NULL
+                    AND p.signed_positive_direction NOT IN ('IN', 'OUT'))
                 OR p.header_row NOT BETWEEN 1 AND 1000
                 OR p.priority NOT BETWEEN 0 AND 10000
                 OR p.version <= 0
@@ -481,10 +483,12 @@ fn validate_restored_semantics(
                 OR length(trim(p.date_column)) NOT BETWEEN 1 AND 120
                 OR (p.description_column IS NULL AND p.payee_column IS NULL)
                 OR (p.amount_mode = 'SIGNED' AND (
-                    p.signed_amount_column IS NULL OR p.debit_column IS NOT NULL
+                    p.signed_positive_direction IS NULL
+                    OR p.signed_amount_column IS NULL OR p.debit_column IS NOT NULL
                     OR p.credit_column IS NOT NULL))
                 OR (p.amount_mode = 'DEBIT_CREDIT' AND (
-                    p.signed_amount_column IS NOT NULL OR p.debit_column IS NULL
+                    p.signed_positive_direction IS NOT NULL
+                    OR p.signed_amount_column IS NOT NULL OR p.debit_column IS NULL
                     OR p.credit_column IS NULL))
                 OR p.updated_at < p.created_at
                 OR EXISTS (
@@ -832,9 +836,9 @@ mod tests {
                      INSERT INTO delimited_parser_profiles
                        (id, household_id, name, delimiter, encoding, header_row,
                         date_column, date_format, description_column, amount_mode,
-                        signed_amount_column, is_enabled, priority)
+                        signed_positive_direction, signed_amount_column, is_enabled, priority)
                      VALUES ('profile', 'family', 'Profile', 'AUTO', 'AUTO', 1,
-                        'Date', 'AUTO', 'Description', 'SIGNED', 'Amount', 1, 10);",
+                        'Date', 'AUTO', 'Description', 'SIGNED', 'OUT', 'Amount', 1, 10);",
                 )?;
                 assert!(validate_restored_semantics(connection, 19).is_ok());
 
