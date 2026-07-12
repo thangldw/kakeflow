@@ -67,6 +67,15 @@ struct ExpenseObservation {
     amount_jpy: i64,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct StableRecurringPattern {
+    pub cadence: &'static str,
+    pub median_interval_days: i64,
+    pub typical_amount_jpy: i64,
+    pub confidence_bps: u16,
+    pub reasons: Vec<String>,
+}
+
 pub fn query_financial_intelligence(
     connection: &Connection,
     request: &FinancialIntelligenceRequest,
@@ -277,37 +286,9 @@ fn detect_recurring(
     normalized_payee: &str,
     group: &[&ExpenseObservation],
 ) -> Option<RecurringItemDto> {
-    if group.len() < 3 {
-        return None;
-    }
-    let intervals: Vec<i64> = group
-        .windows(2)
-        .map(|pair| pair[1].day - pair[0].day)
-        .collect();
-    let median_interval = median(&intervals);
-    let (cadence, cadence_min, cadence_max) = cadence_for(median_interval)?;
-    let matching_intervals = intervals
-        .iter()
-        .filter(|interval| **interval >= cadence_min && **interval <= cadence_max)
-        .count();
-    if matching_intervals * 3 < intervals.len() * 2 {
-        return None;
-    }
-
+    let days = group.iter().map(|item| item.day).collect::<Vec<_>>();
     let amounts: Vec<i64> = group.iter().map(|item| item.amount_jpy).collect();
-    let typical_amount = median(&amounts);
-    let amount_tolerance = (typical_amount.abs() * 15 / 100).max(200);
-    let stable_amounts = amounts
-        .iter()
-        .filter(|amount| (**amount - typical_amount).abs() <= amount_tolerance)
-        .count();
-    if stable_amounts * 3 < amounts.len() * 2 {
-        return None;
-    }
-
-    let cadence_ratio_bps = matching_intervals as i64 * 10_000 / intervals.len() as i64;
-    let amount_ratio_bps = stable_amounts as i64 * 10_000 / amounts.len() as i64;
-    let confidence = (5_000 + cadence_ratio_bps / 4 + amount_ratio_bps / 4).min(10_000) as u16;
+    let pattern = detect_stable_recurring_pattern(&days, &amounts)?;
     let latest = *group.last()?;
     let prior_typical = median(&amounts[..amounts.len() - 1]);
     let price_change_bps = if prior_typical > 0
@@ -318,24 +299,13 @@ fn detect_recurring(
     } else {
         None
     };
-    let next_expected_on = if cadence == "MONTHLY" {
+    let next_expected_on = if pattern.cadence == "MONTHLY" {
         add_months(&latest.occurred_on, 1)
-            .unwrap_or_else(|| format_iso_day(latest.day + median_interval))
+            .unwrap_or_else(|| format_iso_day(latest.day + pattern.median_interval_days))
     } else {
-        format_iso_day(latest.day + median_interval)
+        format_iso_day(latest.day + pattern.median_interval_days)
     };
-    let mut reasons = vec![format!(
-        "{} of {} intervals match a {} cadence",
-        matching_intervals,
-        intervals.len(),
-        cadence.to_lowercase()
-    )];
-    reasons.push(format!(
-        "{} of {} amounts are within ¥{} of the typical amount",
-        stable_amounts,
-        amounts.len(),
-        amount_tolerance
-    ));
+    let mut reasons = pattern.reasons.clone();
     if let Some(change) = price_change_bps {
         reasons.push(format!(
             "Latest amount increased {}% from the earlier median",
@@ -347,15 +317,103 @@ fn detect_recurring(
         normalized_payee: normalized_payee.to_owned(),
         display_payee: latest.display_payee.clone(),
         occurrence_count: group.len() as u32,
-        cadence: cadence.to_owned(),
-        median_interval_days: median_interval as u32,
-        typical_amount_jpy: typical_amount,
+        cadence: pattern.cadence.to_owned(),
+        median_interval_days: pattern.median_interval_days as u32,
+        typical_amount_jpy: pattern.typical_amount_jpy,
         latest_amount_jpy: latest.amount_jpy,
         last_seen_on: latest.occurred_on.clone(),
         next_expected_on,
-        confidence_bps: confidence,
+        confidence_bps: pattern.confidence_bps,
         price_change_bps,
         reasons,
+    })
+}
+
+pub(crate) fn detect_stable_recurring_pattern(
+    sorted_days: &[i64],
+    amounts: &[i64],
+) -> Option<StableRecurringPattern> {
+    if sorted_days.len() < 3 || sorted_days.len() != amounts.len() {
+        return None;
+    }
+    let intervals = sorted_days
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect::<Vec<_>>();
+    let median_interval = median(&intervals);
+    let (cadence, cadence_min, cadence_max) = cadence_for(median_interval)?;
+    let matching_intervals = intervals
+        .iter()
+        .filter(|interval| **interval >= cadence_min && **interval <= cadence_max)
+        .count();
+    if matching_intervals * 3 < intervals.len() * 2 {
+        return None;
+    }
+    let typical_amount = median(amounts);
+    let amount_tolerance = (typical_amount.abs() * 15 / 100).max(200);
+    let stable_amounts = amounts
+        .iter()
+        .filter(|amount| (**amount - typical_amount).abs() <= amount_tolerance)
+        .count();
+    if stable_amounts * 3 < amounts.len() * 2 {
+        return None;
+    }
+    let cadence_ratio_bps = matching_intervals as i64 * 10_000 / intervals.len() as i64;
+    let amount_ratio_bps = stable_amounts as i64 * 10_000 / amounts.len() as i64;
+    Some(StableRecurringPattern {
+        cadence,
+        median_interval_days: median_interval,
+        typical_amount_jpy: typical_amount,
+        confidence_bps: (5_000 + cadence_ratio_bps / 4 + amount_ratio_bps / 4).min(10_000) as u16,
+        reasons: vec![
+            format!(
+                "{} of {} intervals match a {} cadence",
+                matching_intervals,
+                intervals.len(),
+                cadence.to_lowercase()
+            ),
+            format!(
+                "{} of {} amounts are within ¥{} of the typical amount",
+                stable_amounts,
+                amounts.len(),
+                amount_tolerance
+            ),
+        ],
+    })
+}
+
+pub(crate) fn detect_recurring_cadence_pattern(
+    sorted_days: &[i64],
+    amounts: &[i64],
+) -> Option<StableRecurringPattern> {
+    if sorted_days.len() < 3 || sorted_days.len() != amounts.len() {
+        return None;
+    }
+    let intervals = sorted_days
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect::<Vec<_>>();
+    let median_interval = median(&intervals);
+    let (cadence, cadence_min, cadence_max) = cadence_for(median_interval)?;
+    let matching_intervals = intervals
+        .iter()
+        .filter(|interval| **interval >= cadence_min && **interval <= cadence_max)
+        .count();
+    if matching_intervals * 3 < intervals.len() * 2 {
+        return None;
+    }
+    let cadence_ratio_bps = matching_intervals as i64 * 10_000 / intervals.len() as i64;
+    Some(StableRecurringPattern {
+        cadence,
+        median_interval_days: median_interval,
+        typical_amount_jpy: median(amounts),
+        confidence_bps: (5_000 + cadence_ratio_bps / 4).min(7_500) as u16,
+        reasons: vec![format!(
+            "{} of {} intervals match a {} cadence",
+            matching_intervals,
+            intervals.len(),
+            cadence.to_lowercase()
+        )],
     })
 }
 
