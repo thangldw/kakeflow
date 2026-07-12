@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 const BALANCE_TOLERANCE: f64 = 0.000_001;
+const MAX_MERGER_CASH_AMOUNT: f64 = 1.0e18;
+const MAX_MERGER_FX_RATE: f64 = 1.0e12;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum BrokerageError {
@@ -75,6 +77,16 @@ pub struct ImportBrokerageEventInput {
     pub cash_in_lieu_amount: Option<f64>,
     #[serde(default)]
     pub cash_in_lieu_quantity: Option<f64>,
+    #[serde(default)]
+    pub merger_cash_amount: Option<f64>,
+    #[serde(default)]
+    pub merger_cash_currency: Option<String>,
+    #[serde(default)]
+    pub merger_stock_cost_basis_ratio: Option<f64>,
+    #[serde(default)]
+    pub source_to_target_fx_rate: Option<f64>,
+    #[serde(default)]
+    pub source_to_cash_fx_rate: Option<f64>,
     pub legs: Vec<ImportBrokerageLegInput>,
 }
 
@@ -148,6 +160,11 @@ pub struct BrokerageEventDto {
     pub subscription_amount: Option<f64>,
     pub cash_in_lieu_amount: Option<f64>,
     pub cash_in_lieu_quantity: Option<f64>,
+    pub merger_cash_amount: Option<f64>,
+    pub merger_cash_currency: Option<String>,
+    pub merger_stock_cost_basis_ratio: Option<f64>,
+    pub source_to_target_fx_rate: Option<f64>,
+    pub source_to_cash_fx_rate: Option<f64>,
     pub legs: Vec<BrokerageLegDto>,
 }
 
@@ -189,8 +206,8 @@ pub fn import_events(
     let mut leg_count = 0_i64;
     for event in &input.events {
         transaction.execute(
-            "INSERT INTO brokerage_events (id, household_id, account_id, source_document_id, source_row, event_type, trade_date, settlement_date, instrument_code, instrument_name, brokerage_account_type, currency, quantity, unit_price, gross_amount, fee_amount, tax_amount, settlement_amount, reconciliation_status, reconciliation_difference, affects_household_expense, raw_transaction_type, corporate_action_ratio, target_instrument_code, target_instrument_name, target_currency, cost_basis_allocation_ratio, subscription_amount, cash_in_lieu_amount, cash_in_lieu_quantity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 0, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
-            params![event.id, input.household_id, input.account_id, input.source_document_id, event.source_row, event.event_type, event.trade_date, event.settlement_date, event.instrument_code, event.instrument_name, event.account_type, event.currency, event.quantity, event.unit_price, event.gross_amount, event.fee_amount, event.tax_amount, event.settlement_amount, event.reconciliation_status, event.reconciliation_difference, event.raw_transaction_type, event.corporate_action_ratio, event.target_instrument_code, event.target_instrument_name, event.target_currency, event.cost_basis_allocation_ratio, event.subscription_amount, event.cash_in_lieu_amount, event.cash_in_lieu_quantity],
+            "INSERT INTO brokerage_events (id, household_id, account_id, source_document_id, source_row, event_type, trade_date, settlement_date, instrument_code, instrument_name, brokerage_account_type, currency, quantity, unit_price, gross_amount, fee_amount, tax_amount, settlement_amount, reconciliation_status, reconciliation_difference, affects_household_expense, raw_transaction_type, corporate_action_ratio, target_instrument_code, target_instrument_name, target_currency, cost_basis_allocation_ratio, subscription_amount, cash_in_lieu_amount, cash_in_lieu_quantity, merger_cash_amount, merger_cash_currency, merger_stock_cost_basis_ratio, source_to_target_fx_rate, source_to_cash_fx_rate) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 0, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34)",
+            params![event.id, input.household_id, input.account_id, input.source_document_id, event.source_row, event.event_type, event.trade_date, event.settlement_date, event.instrument_code, event.instrument_name, event.account_type, event.currency, event.quantity, event.unit_price, event.gross_amount, event.fee_amount, event.tax_amount, event.settlement_amount, event.reconciliation_status, event.reconciliation_difference, event.raw_transaction_type, event.corporate_action_ratio, event.target_instrument_code, event.target_instrument_name, event.target_currency, event.cost_basis_allocation_ratio, event.subscription_amount, event.cash_in_lieu_amount, event.cash_in_lieu_quantity, event.merger_cash_amount, event.merger_cash_currency, event.merger_stock_cost_basis_ratio, event.source_to_target_fx_rate, event.source_to_cash_fx_rate],
         ).map_err(insert_error)?;
         for (index, leg) in event.legs.iter().enumerate() {
             transaction.execute(
@@ -223,7 +240,7 @@ pub fn query_history(
         }
     }
     let mut statement = connection.prepare(
-        "SELECT e.id, e.account_id, a.name, e.source_document_id, e.source_row, e.event_type, e.trade_date, e.settlement_date, e.instrument_code, e.instrument_name, e.brokerage_account_type, e.currency, e.quantity, e.unit_price, e.gross_amount, e.fee_amount, e.tax_amount, e.settlement_amount, e.reconciliation_status, e.reconciliation_difference, e.affects_household_expense, e.raw_transaction_type, e.corporate_action_ratio, e.target_instrument_code, e.target_instrument_name, e.target_currency, e.cost_basis_allocation_ratio, e.subscription_amount, e.cash_in_lieu_amount, e.cash_in_lieu_quantity
+        "SELECT e.id, e.account_id, a.name, e.source_document_id, e.source_row, e.event_type, e.trade_date, e.settlement_date, e.instrument_code, e.instrument_name, e.brokerage_account_type, e.currency, e.quantity, e.unit_price, e.gross_amount, e.fee_amount, e.tax_amount, e.settlement_amount, e.reconciliation_status, e.reconciliation_difference, e.affects_household_expense, e.raw_transaction_type, e.corporate_action_ratio, e.target_instrument_code, e.target_instrument_name, e.target_currency, e.cost_basis_allocation_ratio, e.subscription_amount, e.cash_in_lieu_amount, e.cash_in_lieu_quantity, e.merger_cash_amount, e.merger_cash_currency, e.merger_stock_cost_basis_ratio, e.source_to_target_fx_rate, e.source_to_cash_fx_rate
          FROM brokerage_events e JOIN accounts a ON a.id = e.account_id
          WHERE e.household_id = ?1
            AND (?2 IS NULL OR e.account_id = ?2)
@@ -271,6 +288,11 @@ pub fn query_history(
                     subscription_amount: row.get(27)?,
                     cash_in_lieu_amount: row.get(28)?,
                     cash_in_lieu_quantity: row.get(29)?,
+                    merger_cash_amount: row.get(30)?,
+                    merger_cash_currency: row.get(31)?,
+                    merger_stock_cost_basis_ratio: row.get(32)?,
+                    source_to_target_fx_rate: row.get(33)?,
+                    source_to_cash_fx_rate: row.get(34)?,
                     legs: Vec::new(),
                 })
             },
@@ -315,31 +337,36 @@ fn read_legs(
 fn calculate_totals(events: &[BrokerageEventDto]) -> Vec<BrokerageCurrencyTotalsDto> {
     let mut totals = BTreeMap::<String, BrokerageCurrencyTotalsDto>::new();
     for event in events {
-        let total =
-            totals
-                .entry(event.currency.clone())
-                .or_insert_with(|| BrokerageCurrencyTotalsDto {
+        {
+            let total = totals.entry(event.currency.clone()).or_insert_with(|| {
+                BrokerageCurrencyTotalsDto {
                     currency: event.currency.clone(),
                     ..Default::default()
-                });
-        match event.event_type.as_str() {
-            "BUY" | "RIGHTS_SUBSCRIPTION" => total.buy_gross += event.gross_amount,
-            "SELL" | "CASH_IN_LIEU" => total.sell_gross += event.gross_amount,
-            "DIVIDEND" => total.dividend_gross += event.gross_amount,
-            "FEE" if event.fee_amount == 0.0 => total.fees += event.gross_amount,
-            "TAX" if event.tax_amount == 0.0 => total.taxes += event.gross_amount,
-            "DEPOSIT" => total.deposits += event.settlement_amount,
-            "WITHDRAWAL" => total.withdrawals += event.settlement_amount,
-            _ => {}
+                }
+            });
+            match event.event_type.as_str() {
+                "BUY" | "RIGHTS_SUBSCRIPTION" => total.buy_gross += event.gross_amount,
+                "SELL" | "CASH_IN_LIEU" => total.sell_gross += event.gross_amount,
+                "DIVIDEND" => total.dividend_gross += event.gross_amount,
+                "FEE" if event.fee_amount == 0.0 => total.fees += event.gross_amount,
+                "TAX" if event.tax_amount == 0.0 => total.taxes += event.gross_amount,
+                "DEPOSIT" => total.deposits += event.settlement_amount,
+                "WITHDRAWAL" => total.withdrawals += event.settlement_amount,
+                _ => {}
+            }
+            total.fees += event.fee_amount;
+            total.taxes += event.tax_amount;
         }
-        total.fees += event.fee_amount;
-        total.taxes += event.tax_amount;
-        total.net_cash_movement += event
-            .legs
-            .iter()
-            .filter(|leg| leg.kind == "CASH")
-            .map(|leg| leg.signed_amount)
-            .sum::<f64>();
+        for leg in event.legs.iter().filter(|leg| leg.kind == "CASH") {
+            let total =
+                totals
+                    .entry(leg.currency.clone())
+                    .or_insert_with(|| BrokerageCurrencyTotalsDto {
+                        currency: leg.currency.clone(),
+                        ..Default::default()
+                    });
+            total.net_cash_movement += leg.signed_amount;
+        }
     }
     totals.into_values().collect()
 }
@@ -442,7 +469,12 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         || event
             .target_currency
             .as_deref()
-            .is_some_and(|value| !valid_currency(value) || value != event.currency)
+            .is_some_and(|value| !valid_currency(value))
+        || event.event_type != "MERGER"
+            && event
+                .target_currency
+                .as_deref()
+                .is_some_and(|value| value != event.currency)
         || matches!(event.event_type.as_str(), "SPLIT" | "REVERSE_SPLIT")
             && (event.target_instrument_code.is_some()
                 || event.target_instrument_name.is_some()
@@ -459,11 +491,7 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
                     .as_deref()
                     .unwrap_or("")
                     .trim()
-                    .is_empty()
-                || event
-                    .target_currency
-                    .as_deref()
-                    .is_some_and(|value| !valid_currency(value) || value != event.currency))
+                    .is_empty())
         || !matches!(event.event_type.as_str(), "SPIN_OFF")
             && event.cost_basis_allocation_ratio.is_some()
         || event.event_type == "SPIN_OFF"
@@ -490,6 +518,13 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
                 || event.subscription_amount.is_some()
                 || event.cash_in_lieu_amount.is_some()
                 || event.cash_in_lieu_quantity.is_some())
+        || event.event_type == "MERGER" && !valid_merger_terms(event)
+        || event.event_type != "MERGER"
+            && (event.merger_cash_amount.is_some()
+                || event.merger_cash_currency.is_some()
+                || event.merger_stock_cost_basis_ratio.is_some()
+                || event.source_to_target_fx_rate.is_some()
+                || event.source_to_cash_fx_rate.is_some())
     {
         return false;
     }
@@ -503,19 +538,20 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         "ADJUSTMENT",
     ];
     let mut leg_ids = std::collections::BTreeSet::new();
-    let mut balance = 0.0;
+    let mut balances = BTreeMap::<&str, f64>::new();
     for leg in &event.legs {
         if !leg_ids.insert(leg.id.as_str())
             || leg.id.trim().is_empty()
             || !leg_kinds.contains(&leg.kind.as_str())
-            || leg.currency != event.currency
+            || !valid_currency(&leg.currency)
+            || event.event_type != "MERGER" && leg.currency != event.currency
             || !leg.signed_amount.is_finite()
             || leg.signed_quantity.is_some_and(|value| !value.is_finite())
             || leg.description.trim().is_empty()
         {
             return false;
         }
-        balance += leg.signed_amount;
+        *balances.entry(&leg.currency).or_default() += leg.signed_amount;
     }
     let has = |kind: &str, positive: bool| {
         event
@@ -531,7 +567,7 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         "TAX" => has("INVESTMENT_TAX", true) && has("CASH", false),
         "DEPOSIT" => has("CASH", true) && has("TRANSFER", false),
         "WITHDRAWAL" => has("CASH", false) && has("TRANSFER", true),
-        "SPLIT" | "REVERSE_SPLIT" | "MERGER" | "SPIN_OFF" => {
+        "SPLIT" | "REVERSE_SPLIT" | "SPIN_OFF" => {
             event.gross_amount == 0.0
                 && event.fee_amount == 0.0
                 && event.tax_amount == 0.0
@@ -549,6 +585,7 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
                     leg.kind == "SECURITY" && leg.signed_quantity.is_some_and(|value| value > 0.0)
                 })
         }
+        "MERGER" => valid_merger_legs(event),
         "RIGHTS_SUBSCRIPTION" => {
             event.subscription_amount == Some(event.gross_amount)
                 && event.settlement_amount == event.gross_amount
@@ -563,7 +600,164 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         }
         _ => false,
     };
-    balance.abs() <= BALANCE_TOLERANCE && semantic_legs
+    balances
+        .values()
+        .all(|balance| balance.abs() <= BALANCE_TOLERANCE)
+        && semantic_legs
+}
+
+fn valid_merger_terms(event: &ImportBrokerageEventInput) -> bool {
+    let Some(target_currency) = event.target_currency.as_deref() else {
+        return false;
+    };
+    if event
+        .target_instrument_code
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .is_empty()
+        && event
+            .target_instrument_name
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .is_empty()
+        || !valid_currency(target_currency)
+        || !valid_conditional_fx_rate(
+            event.source_to_target_fx_rate,
+            target_currency != event.currency,
+        )
+    {
+        return false;
+    }
+    match (
+        event.merger_cash_amount,
+        event.merger_cash_currency.as_deref(),
+    ) {
+        (None, None) => {
+            event.merger_stock_cost_basis_ratio == Some(1.0)
+                && event.source_to_cash_fx_rate.is_none()
+        }
+        (Some(amount), Some(cash_currency)) => {
+            amount.is_finite()
+                && amount > 0.0
+                && amount <= MAX_MERGER_CASH_AMOUNT
+                && valid_currency(cash_currency)
+                && event
+                    .merger_stock_cost_basis_ratio
+                    .is_some_and(|ratio| ratio.is_finite() && ratio > 0.0 && ratio < 1.0)
+                && valid_conditional_fx_rate(
+                    event.source_to_cash_fx_rate,
+                    cash_currency != event.currency,
+                )
+        }
+        _ => false,
+    }
+}
+
+fn valid_conditional_fx_rate(rate: Option<f64>, required: bool) -> bool {
+    match (rate, required) {
+        (Some(value), true) => value.is_finite() && value > 0.0 && value <= MAX_MERGER_FX_RATE,
+        (None, false) => true,
+        _ => false,
+    }
+}
+
+fn valid_merger_legs(event: &ImportBrokerageEventInput) -> bool {
+    if event.gross_amount != 0.0
+        || event.fee_amount != 0.0
+        || event.tax_amount != 0.0
+        || event.settlement_amount != 0.0
+    {
+        return false;
+    }
+    let Some(target_currency) = event.target_currency.as_deref() else {
+        return false;
+    };
+    let source_security = event.legs.iter().filter(|leg| {
+        leg.kind == "SECURITY"
+            && leg.currency == event.currency
+            && leg.signed_amount == 0.0
+            && leg.signed_quantity.is_some_and(|quantity| quantity < 0.0)
+            && instrument_matches(
+                leg,
+                Some(event.instrument_code.as_str()),
+                Some(event.instrument_name.as_str()),
+            )
+    });
+    let target_security = event.legs.iter().filter(|leg| {
+        leg.kind == "SECURITY"
+            && leg.currency == target_currency
+            && leg.signed_amount == 0.0
+            && leg.signed_quantity.is_some_and(|quantity| quantity > 0.0)
+            && instrument_matches(
+                leg,
+                event.target_instrument_code.as_deref(),
+                event.target_instrument_name.as_deref(),
+            )
+    });
+    let source_quantities = source_security
+        .map(|leg| leg.signed_quantity.unwrap_or_default())
+        .collect::<Vec<_>>();
+    let target_quantities = target_security
+        .map(|leg| leg.signed_quantity.unwrap_or_default())
+        .collect::<Vec<_>>();
+    if source_quantities.len() != 1 || target_quantities.len() != 1 {
+        return false;
+    }
+    let expected_target = -source_quantities[0] * event.corporate_action_ratio.unwrap_or_default();
+    if (target_quantities[0] - expected_target).abs() > BALANCE_TOLERANCE {
+        return false;
+    }
+    match (
+        event.merger_cash_amount,
+        event.merger_cash_currency.as_deref(),
+    ) {
+        (None, None) => event.legs.len() == 2,
+        (Some(amount), Some(currency)) => {
+            event.legs.len() == 4
+                && event
+                    .legs
+                    .iter()
+                    .filter(|leg| {
+                        leg.kind == "CASH"
+                            && leg.currency == currency
+                            && (leg.signed_amount - amount).abs() <= BALANCE_TOLERANCE
+                            && leg.signed_quantity.is_none()
+                    })
+                    .count()
+                    == 1
+                && event
+                    .legs
+                    .iter()
+                    .filter(|leg| {
+                        leg.kind == "ADJUSTMENT"
+                            && leg.currency == currency
+                            && (leg.signed_amount + amount).abs() <= BALANCE_TOLERANCE
+                            && leg.signed_quantity.is_none()
+                    })
+                    .count()
+                    == 1
+        }
+        _ => false,
+    }
+}
+
+fn instrument_matches(
+    leg: &ImportBrokerageLegInput,
+    expected_code: Option<&str>,
+    expected_name: Option<&str>,
+) -> bool {
+    expected_code
+        .filter(|value| !value.trim().is_empty())
+        .map_or_else(
+            || {
+                expected_name
+                    .filter(|value| !value.trim().is_empty())
+                    .is_some_and(|value| leg.instrument_name.as_deref() == Some(value))
+            },
+            |value| leg.instrument_code.as_deref() == Some(value),
+        )
 }
 
 fn validate_scope(
@@ -660,6 +854,7 @@ mod tests {
             include_str!("../migrations/0013_investment_performance.sql"),
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
             include_str!("../migrations/0016_complex_corporate_actions.sql"),
+            include_str!("../migrations/0020_mixed_currency_mergers.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
@@ -704,6 +899,11 @@ mod tests {
             subscription_amount: None,
             cash_in_lieu_amount: None,
             cash_in_lieu_quantity: None,
+            merger_cash_amount: None,
+            merger_cash_currency: None,
+            merger_stock_cost_basis_ratio: None,
+            source_to_target_fx_rate: None,
+            source_to_cash_fx_rate: None,
             legs: vec![
                 ImportBrokerageLegInput {
                     id: format!("{id}-1"),
@@ -737,6 +937,46 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn merger(id: &str, row: i64) -> ImportBrokerageEventInput {
+        let mut merger = event(id, row, "MERGER");
+        merger.currency = "USD".into();
+        merger.quantity = None;
+        merger.unit_price = None;
+        merger.gross_amount = 0.0;
+        merger.fee_amount = 0.0;
+        merger.tax_amount = 0.0;
+        merger.settlement_amount = 0.0;
+        merger.corporate_action_ratio = Some(0.5);
+        merger.target_instrument_code = Some("TM".into());
+        merger.target_instrument_name = Some("Toyota ADR successor".into());
+        merger.target_currency = Some("JPY".into());
+        merger.merger_stock_cost_basis_ratio = Some(1.0);
+        merger.source_to_target_fx_rate = Some(150.0);
+        merger.legs = vec![
+            ImportBrokerageLegInput {
+                id: format!("{id}-source"),
+                kind: "SECURITY".into(),
+                signed_amount: 0.0,
+                currency: "USD".into(),
+                instrument_code: Some("7203".into()),
+                instrument_name: Some("Toyota".into()),
+                signed_quantity: Some(-2.0),
+                description: "Source shares".into(),
+            },
+            ImportBrokerageLegInput {
+                id: format!("{id}-target"),
+                kind: "SECURITY".into(),
+                signed_amount: 0.0,
+                currency: "JPY".into(),
+                instrument_code: Some("TM".into()),
+                instrument_name: Some("Toyota ADR successor".into()),
+                signed_quantity: Some(1.0),
+                description: "Target shares".into(),
+            },
+        ];
+        merger
     }
 
     #[test]
@@ -846,6 +1086,112 @@ mod tests {
         assert_eq!(history.events[0].event_type, "SPLIT");
         assert_eq!(history.events[0].corporate_action_ratio, Some(2.0));
         assert_eq!(history.totals_by_currency[0].net_cash_movement, 0.0);
+    }
+
+    #[test]
+    fn validates_and_persists_all_stock_and_mixed_currency_mergers() {
+        let connection = connection();
+        let all_stock = merger("all-stock", 2);
+        assert!(validate_event(&all_stock));
+
+        let mut mixed = merger("mixed", 3);
+        mixed.merger_cash_amount = Some(25.0);
+        mixed.merger_cash_currency = Some("EUR".into());
+        mixed.merger_stock_cost_basis_ratio = Some(0.75);
+        mixed.source_to_cash_fx_rate = Some(0.9);
+        mixed.legs.extend([
+            ImportBrokerageLegInput {
+                id: "mixed-cash".into(),
+                kind: "CASH".into(),
+                signed_amount: 25.0,
+                currency: "EUR".into(),
+                instrument_code: None,
+                instrument_name: None,
+                signed_quantity: None,
+                description: "Cash consideration".into(),
+            },
+            ImportBrokerageLegInput {
+                id: "mixed-cash-offset".into(),
+                kind: "ADJUSTMENT".into(),
+                signed_amount: -25.0,
+                currency: "EUR".into(),
+                instrument_code: None,
+                instrument_name: None,
+                signed_quantity: None,
+                description: "Merger consideration offset".into(),
+            },
+        ]);
+        assert!(validate_event(&mixed));
+
+        import_events(
+            &connection,
+            &ImportBrokerageEventsInput {
+                household_id: "home".into(),
+                account_id: "broker".into(),
+                source_document_id: "doc".into(),
+                events: vec![all_stock, mixed],
+            },
+        )
+        .unwrap();
+        let history = query_history(
+            &connection,
+            &BrokerageHistoryRequest {
+                household_id: "home".into(),
+                account_id: None,
+                date_from: None,
+                date_to: None,
+            },
+        )
+        .unwrap();
+        let persisted = history
+            .events
+            .iter()
+            .find(|event| event.id == "mixed")
+            .unwrap();
+        assert_eq!(persisted.merger_cash_amount, Some(25.0));
+        assert_eq!(persisted.merger_cash_currency.as_deref(), Some("EUR"));
+        assert_eq!(persisted.merger_stock_cost_basis_ratio, Some(0.75));
+        assert_eq!(persisted.source_to_target_fx_rate, Some(150.0));
+        assert_eq!(persisted.source_to_cash_fx_rate, Some(0.9));
+        let eur = history
+            .totals_by_currency
+            .iter()
+            .find(|total| total.currency == "EUR")
+            .unwrap();
+        let usd = history
+            .totals_by_currency
+            .iter()
+            .find(|total| total.currency == "USD")
+            .unwrap();
+        assert_eq!(eur.net_cash_movement, 25.0);
+        assert_eq!(usd.net_cash_movement, 0.0);
+    }
+
+    #[test]
+    fn rejects_incomplete_or_non_merger_allocation_terms() {
+        let mut candidate = merger("invalid", 2);
+        candidate.source_to_target_fx_rate = None;
+        assert!(!validate_event(&candidate));
+        candidate.source_to_target_fx_rate = Some(f64::INFINITY);
+        assert!(!validate_event(&candidate));
+        candidate.source_to_target_fx_rate = Some(150.0);
+        candidate.merger_cash_amount = Some(25.0);
+        assert!(!validate_event(&candidate));
+        candidate.merger_cash_currency = Some("USD".into());
+        candidate.merger_stock_cost_basis_ratio = Some(1.0);
+        assert!(!validate_event(&candidate));
+
+        let mut same_currency = merger("same-currency", 3);
+        same_currency.target_currency = Some("USD".into());
+        same_currency.legs[1].currency = "USD".into();
+        same_currency.source_to_target_fx_rate = None;
+        assert!(validate_event(&same_currency));
+        same_currency.source_to_target_fx_rate = Some(1.0);
+        assert!(!validate_event(&same_currency));
+
+        let mut buy = event("buy-with-merger-terms", 4, "BUY");
+        buy.merger_stock_cost_basis_ratio = Some(1.0);
+        assert!(!validate_event(&buy));
     }
 
     #[test]
