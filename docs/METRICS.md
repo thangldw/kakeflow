@@ -77,13 +77,28 @@ members, so doing so could expose or omit the wrong counterpart. A later member
 reporting/access-control layer must use explicit transaction and document
 audiences.
 
-Transactions now store attribution and audience independently. Source documents
+Transactions store attribution and audience independently. Source documents
 store their own audience, which may intentionally differ from every linked
-transaction. Current household metrics continue to use all posted transactions;
-v0.12 does not silently apply member filters to only part of the dashboard.
+transaction. The v0.13 analytical scope is a tagged value: `ALL`,
+`HOUSEHOLD_COMMON`, or `MEMBER(memberId)`. It combines with account-group scope
+using logical AND and applies to posted transaction facts across the dashboard,
+ledger, calendar, reports, intelligence, forecast history, action actuals, and
+transaction export. Archived members remain valid historical scopes; foreign
+members are rejected rather than widening the query.
+
+Balance facts do not become member balances merely because their contributing
+activity is filtered. Net worth, opening cash, investment valuation, portfolio
+snapshots, goals, import status, and statement settlement amounts remain
+household-wide and are labeled as such. A linked card statement is relevant to a
+member scope when at least one linked transaction matches, but its full payment
+obligation is not allocated to that member without explicit allocation evidence.
+Audience remains a local organization label and is never used as an analytical
+scope or authorization decision.
 
 ## Export
 
 Exports contain posted records only, use UTF-8 with BOM for Japanese Excel
-compatibility, preserve integer JPY amounts, identify the accounting basis and
-scope, and remain bounded by the requested date range and row limit.
+compatibility, preserve integer JPY amounts, identify the accounting basis,
+account-group scope, and attribution scope, and remain bounded by the requested
+date range and row limit. Attribution filters transaction exports only;
+portfolio snapshots remain account-scoped household balance facts.

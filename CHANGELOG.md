@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.13.0 — 2026-07-13
+
+- Add one persisted tagged attribution scope—whole household, household-common activity, or one member—to the desktop workspace.
+- Apply attribution and account-group scopes together to transaction lists, dashboard activity metrics, financial calendar, monthly/yearly reports, recurring and anomaly analysis, forecasts, Action Center actuals, and transaction CSV export.
+- Validate member scopes against the active household while preserving archived members for historical reporting and rejecting cross-household scope widening.
+- Keep balance facts such as net worth, opening cash, investment valuation, portfolio export, goals, and import status household-wide, with explicit UI and forecast disclosures instead of misleading partial totals.
+- Select card statements by linked transaction attribution when available, retain unlinked household obligations, and never allocate a full settlement amount to a member without evidence.
+- Keep audience labels independent from analytical attribution and from authentication or access control.
+
 ## 0.12.0 — 2026-07-13
 
 - Add explicit, independent household/member attribution and shared/personal audience tuples to transactions, import candidates, and source documents without deriving them from account ownership or account groups.
