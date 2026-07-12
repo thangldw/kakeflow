@@ -17,6 +17,7 @@ mod private_fs;
 mod read_model;
 pub mod recurring_analytics;
 pub mod restore;
+pub mod source_preview;
 mod source_viewer;
 pub mod watched_folders;
 
@@ -628,6 +629,26 @@ fn source_document_records_query(
     repository_result(&state, |connection| {
         source_viewer::list_source_document_records(connection, &request)
     })
+}
+
+#[tauri::command]
+fn source_image_preview_get(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+    source_document_id: String,
+) -> Result<source_preview::SourceImagePreviewDto, String> {
+    state
+        .with_connection(|connection| {
+            Ok(source_preview::read_source_image_preview(
+                connection,
+                &vault,
+                &household_id,
+                &source_document_id,
+            ))
+        })
+        .map_err(|_| "Source preview is temporarily unavailable".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
 }
 
 #[tauri::command]
@@ -1596,6 +1617,7 @@ pub fn run() {
             transaction_update,
             source_document_get,
             source_document_records_query,
+            source_image_preview_get,
             transaction_source_records_list,
             financial_calendar::financial_calendar_query,
             financial_calendar::financial_report_monthly_query,
