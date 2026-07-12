@@ -39,6 +39,28 @@ const RECORD_END: u8 = 3;
 const RECORD_KEY_CAPSULE: u8 = 4;
 const KEY_CAPSULE_MAGIC: &[u8; 8] = b"KFLWKEY\0";
 const KEY_CAPSULE_LEN: usize = KEY_CAPSULE_MAGIC.len() + 32;
+const MAX_ARCHIVE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+const MAX_ENTRY_COUNT: u64 = 100_000;
+const MAX_RECORD_COUNT: u64 = 1_000_000;
+const MAX_TOTAL_PLAINTEXT: u64 = 8 * 1024 * 1024 * 1024;
+const MAX_ENTRY_PLAINTEXT: u64 = 4 * 1024 * 1024 * 1024;
+
+#[derive(Clone, Copy)]
+struct BackupLimits {
+    archive_bytes: u64,
+    entries: u64,
+    records: u64,
+    total_plaintext: u64,
+    entry_plaintext: u64,
+}
+
+const DEFAULT_LIMITS: BackupLimits = BackupLimits {
+    archive_bytes: MAX_ARCHIVE_BYTES,
+    entries: MAX_ENTRY_COUNT,
+    records: MAX_RECORD_COUNT,
+    total_plaintext: MAX_TOTAL_PLAINTEXT,
+    entry_plaintext: MAX_ENTRY_PLAINTEXT,
+};
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum BackupError {
@@ -54,6 +76,8 @@ pub enum BackupError {
     Corrupt,
     #[error("backup key derivation failed")]
     KeyDerivation,
+    #[error("backup exceeds supported resource limits")]
+    LimitExceeded,
 }
 
 pub type Result<T> = std::result::Result<T, BackupError>;
@@ -267,6 +291,7 @@ fn collect_entries(
     if objects.exists() {
         collect_vault_files(&objects, &objects, &mut entries)?;
     }
+    validate_source_entries(&entries, format_version, DEFAULT_LIMITS)?;
     entries.sort_by(|left, right| left.archive_path.cmp(&right.archive_path));
     Ok(entries)
 }
@@ -295,6 +320,9 @@ fn collect_vault_files(
         if metadata.file_type().is_dir() {
             collect_vault_files(root, &path, entries)?;
         } else if metadata.file_type().is_file() {
+            if entries.len() as u64 >= DEFAULT_LIMITS.entries {
+                return Err(BackupError::LimitExceeded);
+            }
             let relative = path
                 .strip_prefix(root)
                 .map_err(|_| BackupError::InvalidInput)?;
@@ -309,6 +337,13 @@ fn collect_vault_files(
 
 fn source_entry(source: &Path, archive_path: String) -> Result<SourceEntry> {
     validate_archive_path(&archive_path)?;
+    let metadata = fs::symlink_metadata(source).map_err(|_| BackupError::Io)?;
+    if !metadata.file_type().is_file() {
+        return Err(BackupError::InvalidInput);
+    }
+    if metadata.len() > DEFAULT_LIMITS.entry_plaintext {
+        return Err(BackupError::LimitExceeded);
+    }
     let mut file = File::open(source).map_err(|_| BackupError::Io)?;
     let mut hasher = Sha256::new();
     let size = std::io::copy(&mut file, &mut hasher).map_err(|_| BackupError::Io)?;
@@ -318,6 +353,45 @@ fn source_entry(source: &Path, archive_path: String) -> Result<SourceEntry> {
         size,
         digest: hasher.finalize().into(),
     })
+}
+
+fn validate_source_entries(
+    entries: &[SourceEntry],
+    format_version: u16,
+    limits: BackupLimits,
+) -> Result<()> {
+    if entries.len() as u64 > limits.entries {
+        return Err(BackupError::LimitExceeded);
+    }
+    let mut total = 0_u64;
+    let mut records = if format_version == FORMAT_VERSION_V2 {
+        1_u64
+    } else {
+        0_u64
+    };
+    for entry in entries {
+        let (_, next_total) = enforce_new_entry_limits(
+            0,
+            total,
+            entry.size,
+            BackupLimits {
+                entries: u64::MAX,
+                ..limits
+            },
+        )?;
+        total = next_total;
+        let chunks = entry.size.div_ceil(CHUNK_SIZE as u64);
+        records = records
+            .checked_add(1)
+            .and_then(|value| value.checked_add(chunks))
+            .ok_or(BackupError::LimitExceeded)?;
+    }
+    // Every archive ends with one authenticated summary record.
+    records = records.checked_add(1).ok_or(BackupError::LimitExceeded)?;
+    if records > limits.records {
+        return Err(BackupError::LimitExceeded);
+    }
+    Ok(())
 }
 
 fn write_archive(
@@ -478,6 +552,23 @@ fn read_archive(
     passphrase: &str,
     mode: RestoreMode,
 ) -> Result<RestoredArchive> {
+    read_archive_with_limits(path, staging, passphrase, mode, DEFAULT_LIMITS)
+}
+
+fn read_archive_with_limits(
+    path: &Path,
+    staging: &Path,
+    passphrase: &str,
+    mode: RestoreMode,
+    limits: BackupLimits,
+) -> Result<RestoredArchive> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| BackupError::Io)?;
+    if !metadata.file_type().is_file() {
+        return Err(BackupError::InvalidInput);
+    }
+    if metadata.len() > limits.archive_bytes {
+        return Err(BackupError::LimitExceeded);
+    }
     let mut input = File::open(path).map_err(|_| BackupError::Io)?;
     let mut header = [0_u8; HEADER_LEN];
     input
@@ -508,6 +599,9 @@ fn read_archive(
     let mut master_key = None;
     let mut database_seen = false;
     loop {
+        if index >= limits.records {
+            return Err(BackupError::LimitExceeded);
+        }
         let (record_type, plaintext) =
             read_record(&mut input, &cipher, &header, &decoded.nonce_prefix, index)?;
         index = index.checked_add(1).ok_or(BackupError::Corrupt)?;
@@ -543,6 +637,7 @@ fn read_archive(
                     database_seen = true;
                 }
                 let target = safe_destination(staging, &entry.path)?;
+                enforce_new_entry_limits(entry_count, total_bytes, entry.size, limits)?;
                 if target.exists() {
                     return Err(BackupError::Corrupt);
                 }
@@ -562,6 +657,9 @@ fn read_archive(
                 });
             }
             RECORD_DATA => {
+                if plaintext.is_empty() {
+                    return Err(BackupError::Corrupt);
+                }
                 let entry = active.as_mut().ok_or(BackupError::Corrupt)?;
                 entry.written = entry
                     .written
@@ -622,6 +720,27 @@ fn read_archive(
                 .ok_or(BackupError::Corrupt)?;
         }
     }
+}
+
+fn enforce_new_entry_limits(
+    entry_count: u64,
+    total_bytes: u64,
+    entry_size: u64,
+    limits: BackupLimits,
+) -> Result<(u64, u64)> {
+    let next_count = entry_count
+        .checked_add(1)
+        .ok_or(BackupError::LimitExceeded)?;
+    let next_total = total_bytes
+        .checked_add(entry_size)
+        .ok_or(BackupError::LimitExceeded)?;
+    if next_count > limits.entries
+        || entry_size > limits.entry_plaintext
+        || next_total > limits.total_plaintext
+    {
+        return Err(BackupError::LimitExceeded);
+    }
+    Ok((next_count, next_total))
 }
 
 struct RestoreEntry {
@@ -1031,6 +1150,53 @@ mod tests {
                     .starts_with(".kakeflow-restore")
             })
             .count()
+    }
+
+    #[test]
+    fn entry_limits_reject_count_size_and_aggregate_overflow_before_writes() {
+        let limits = BackupLimits {
+            archive_bytes: 1024,
+            entries: 2,
+            records: 8,
+            total_plaintext: 10,
+            entry_plaintext: 8,
+        };
+
+        assert_eq!(enforce_new_entry_limits(0, 0, 8, limits), Ok((1, 8)));
+        assert_eq!(
+            enforce_new_entry_limits(2, 0, 1, limits),
+            Err(BackupError::LimitExceeded)
+        );
+        assert_eq!(
+            enforce_new_entry_limits(0, 0, 9, limits),
+            Err(BackupError::LimitExceeded)
+        );
+        assert_eq!(
+            enforce_new_entry_limits(1, 8, 3, limits),
+            Err(BackupError::LimitExceeded)
+        );
+        assert_eq!(
+            enforce_new_entry_limits(u64::MAX, 0, 0, limits),
+            Err(BackupError::LimitExceeded)
+        );
+    }
+
+    #[test]
+    fn oversized_archive_is_rejected_before_parsing_or_staging() {
+        let root = TestDir::new();
+        let archive = root.0.join("oversized.kfb");
+        let file = File::create(&archive).expect("sparse archive");
+        file.set_len(MAX_ARCHIVE_BYTES + 1)
+            .expect("extend sparse archive");
+        drop(file);
+        let destination = root.0.join("restored");
+
+        assert_eq!(
+            restore_backup(&archive, &destination, "correct horse battery staple"),
+            Err(BackupError::LimitExceeded)
+        );
+        assert!(!destination.exists());
+        assert_eq!(restore_staging_count(&root.0), 0);
     }
 
     #[test]
