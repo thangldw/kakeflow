@@ -17,6 +17,7 @@ mod private_fs;
 mod read_model;
 pub mod recurring_analytics;
 pub mod restore;
+pub mod source_pdf_preview;
 pub mod source_preview;
 mod source_viewer;
 pub mod watched_folders;
@@ -648,6 +649,28 @@ fn source_image_preview_get(
             ))
         })
         .map_err(|_| "Source preview is temporarily unavailable".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
+fn source_pdf_page_preview_get(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+    source_document_id: String,
+    page_number: u32,
+) -> Result<source_pdf_preview::SourcePdfPagePreviewDto, String> {
+    state
+        .with_connection(|connection| {
+            Ok(source_pdf_preview::render_source_pdf_page(
+                connection,
+                &vault,
+                &household_id,
+                &source_document_id,
+                page_number,
+            ))
+        })
+        .map_err(|_| "Source PDF preview is temporarily unavailable".to_owned())?
         .map_err(|error| error.public_message().to_owned())
 }
 
@@ -1618,6 +1641,7 @@ pub fn run() {
             source_document_get,
             source_document_records_query,
             source_image_preview_get,
+            source_pdf_page_preview_get,
             transaction_source_records_list,
             financial_calendar::financial_calendar_query,
             financial_calendar::financial_report_monthly_query,

@@ -6,7 +6,7 @@ authors = ["KakeFlow contributors"]
 license = "MIT"
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.97"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -34,6 +34,7 @@ hkdf = "0.12"
 argon2 = { version = "0.5", features = ["zeroize"] }
 pdf-extract = "0.12"
 notify = "8.2.0"
+hayro = "0.7.1"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
