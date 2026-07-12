@@ -49,6 +49,8 @@ jobs:
   desktop-smoke:
     name: Desktop smoke (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
+    env:
+      PERL: ${{ matrix.perl }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -56,8 +58,10 @@ jobs:
         include:
           - name: macOS
             runner: macos-14
+            perl: perl
           - name: Windows
             runner: windows-2022
+            perl: C:\Strawberry\perl\bin\perl.exe
 
     defaults:
       run:
