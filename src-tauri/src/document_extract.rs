@@ -6,6 +6,7 @@ const MAX_EXTRACTED_TEXT_BYTES: usize = 1024 * 1024;
 const MAX_PDF_OBJECTS: usize = 100_000;
 const MAX_PDF_PAGES: usize = 2_000;
 const MAX_PDF_STREAM_MARKERS: usize = 20_000;
+const MAX_PDF_PASSWORD_BYTES: usize = 256;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractError {
@@ -17,6 +18,12 @@ pub enum ExtractError {
     Extraction,
     #[error("document requires OCR")]
     OcrRequired,
+    #[error("PDF password is required")]
+    PasswordRequired,
+    #[error("PDF password is invalid")]
+    PasswordInvalid,
+    #[error("PDF password encryption is unsupported")]
+    PasswordUnsupported,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -53,15 +60,33 @@ pub struct ExtractedDocument {
     pub regions: Vec<ExtractedRegion>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentExtractionAttempt {
+    pub status: &'static str,
+    pub document: Option<ExtractedDocument>,
+}
+
 pub fn extract_document(bytes: &[u8], media_type: &str) -> Result<ExtractedDocument, ExtractError> {
+    extract_document_with_password(bytes, media_type, None)
+}
+
+pub fn extract_document_with_password(
+    bytes: &[u8],
+    media_type: &str,
+    password: Option<&str>,
+) -> Result<ExtractedDocument, ExtractError> {
     if bytes.is_empty() || bytes.len() > MAX_DOCUMENT_BYTES {
+        return Err(ExtractError::InvalidInput);
+    }
+    if password.is_some_and(|value| value.len() > MAX_PDF_PASSWORD_BYTES) {
         return Err(ExtractError::InvalidInput);
     }
     if media_type != "application/pdf" && !bytes.starts_with(b"%PDF-") {
         return Err(ExtractError::Unsupported);
     }
     preflight_pdf(bytes)?;
-    let extracted = std::panic::catch_unwind(|| extract_text_capped(bytes))
+    let extracted = std::panic::catch_unwind(|| extract_text_capped(bytes, password))
         .map_err(|_| ExtractError::Extraction)??;
     let text = extracted.replace('\0', "").trim().to_owned();
     if text.len() > MAX_EXTRACTED_TEXT_BYTES {
@@ -104,6 +129,32 @@ pub fn extract_document(bytes: &[u8], media_type: &str) -> Result<ExtractedDocum
     })
 }
 
+pub fn attempt_document_extraction(
+    bytes: &[u8],
+    media_type: &str,
+    password: Option<&str>,
+) -> Result<DocumentExtractionAttempt, ExtractError> {
+    match extract_document_with_password(bytes, media_type, password) {
+        Ok(document) => Ok(DocumentExtractionAttempt {
+            status: "SUCCESS",
+            document: Some(document),
+        }),
+        Err(ExtractError::PasswordRequired) => Ok(DocumentExtractionAttempt {
+            status: "PASSWORD_REQUIRED",
+            document: None,
+        }),
+        Err(ExtractError::PasswordInvalid) => Ok(DocumentExtractionAttempt {
+            status: "PASSWORD_INVALID",
+            document: None,
+        }),
+        Err(ExtractError::PasswordUnsupported) => Ok(DocumentExtractionAttempt {
+            status: "PASSWORD_UNSUPPORTED",
+            document: None,
+        }),
+        Err(error) => Err(error),
+    }
+}
+
 fn preflight_pdf(bytes: &[u8]) -> Result<(), ExtractError> {
     if count_occurrences(bytes, b" stream") > MAX_PDF_STREAM_MARKERS
         || declared_pdf_size(bytes).is_some_and(|size| size > MAX_PDF_OBJECTS)
@@ -113,14 +164,18 @@ fn preflight_pdf(bytes: &[u8]) -> Result<(), ExtractError> {
     Ok(())
 }
 
-fn extract_text_capped(bytes: &[u8]) -> Result<String, ExtractError> {
+fn extract_text_capped(bytes: &[u8], password: Option<&str>) -> Result<String, ExtractError> {
     let mut document =
         pdf_extract::Document::load_mem(bytes).map_err(|_| ExtractError::Extraction)?;
+    if document.is_encrypted() {
+        document = pdf_extract::Document::load_mem_with_options(
+            bytes,
+            pdf_extract::LoadOptions::with_password(password.unwrap_or("")),
+        )
+        .map_err(|error| classify_decryption_error(error, password.is_some()))?;
+    }
     if document.objects.len() > MAX_PDF_OBJECTS || document.get_pages().len() > MAX_PDF_PAGES {
         return Err(ExtractError::InvalidInput);
-    }
-    if document.is_encrypted() {
-        document.decrypt("").map_err(|_| ExtractError::Extraction)?;
     }
 
     let mut text = CappedBytes::new(MAX_EXTRACTED_TEXT_BYTES);
@@ -133,7 +188,38 @@ fn extract_text_capped(bytes: &[u8]) -> Result<String, ExtractError> {
         return Err(ExtractError::InvalidInput);
     }
     output_result.map_err(|_| ExtractError::Extraction)?;
+    if text.value.iter().all(u8::is_ascii_whitespace) {
+        let page_numbers = document.get_pages().keys().copied().collect::<Vec<_>>();
+        let fallback = document
+            .extract_text(&page_numbers)
+            .map_err(|_| ExtractError::Extraction)?;
+        if fallback.len() > MAX_EXTRACTED_TEXT_BYTES {
+            return Err(ExtractError::InvalidInput);
+        }
+        return Ok(fallback);
+    }
     String::from_utf8(text.value).map_err(|_| ExtractError::Extraction)
+}
+
+fn classify_decryption_error(error: pdf_extract::Error, password_supplied: bool) -> ExtractError {
+    use pdf_extract::encryption::DecryptionError;
+    match error {
+        pdf_extract::Error::InvalidPassword
+        | pdf_extract::Error::Decryption(DecryptionError::IncorrectPassword) => {
+            if password_supplied {
+                ExtractError::PasswordInvalid
+            } else {
+                ExtractError::PasswordRequired
+            }
+        }
+        pdf_extract::Error::UnsupportedSecurityHandler(_)
+        | pdf_extract::Error::Decryption(
+            DecryptionError::UnsupportedEncryption
+            | DecryptionError::UnsupportedVersion
+            | DecryptionError::UnsupportedRevision,
+        ) => ExtractError::PasswordUnsupported,
+        _ => ExtractError::Extraction,
+    }
 }
 
 fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
@@ -206,6 +292,7 @@ impl std::io::Write for CappedBytes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     use std::io::Write as _;
 
     fn text_pdf(text: &str) -> Vec<u8> {
@@ -244,6 +331,12 @@ mod tests {
         pdf
     }
 
+    fn password_protected_pdf() -> Vec<u8> {
+        STANDARD
+            .decode(include_str!("../testdata/password-protected-reportlab.pdf.b64").trim())
+            .unwrap()
+    }
+
     #[test]
     fn extracts_embedded_pdf_text_without_ocr() {
         let result = extract_document(&text_pdf("STORE TOTAL 1200"), "application/pdf").unwrap();
@@ -252,6 +345,35 @@ mod tests {
         assert!(result.issues.is_empty());
         assert_eq!(result.regions[0].page_number, 1);
         assert_eq!(result.regions[0].coordinate_space, "UNLOCATED");
+    }
+
+    #[test]
+    fn extracts_password_protected_pdf_only_with_the_ephemeral_password() {
+        let bytes = password_protected_pdf();
+        assert_eq!(
+            attempt_document_extraction(&bytes, "application/pdf", None).unwrap(),
+            DocumentExtractionAttempt {
+                status: "PASSWORD_REQUIRED",
+                document: None,
+            }
+        );
+        assert_eq!(
+            attempt_document_extraction(&bytes, "application/pdf", Some("wrong")).unwrap(),
+            DocumentExtractionAttempt {
+                status: "PASSWORD_INVALID",
+                document: None,
+            }
+        );
+        let attempt =
+            attempt_document_extraction(&bytes, "application/pdf", Some("one-time-password"))
+                .unwrap();
+        assert_eq!(attempt.status, "SUCCESS");
+        let document = attempt.document.unwrap();
+        assert!(
+            document.text.contains("PRIVATE TOTAL 2400"),
+            "extracted text was {:?}",
+            document.text
+        );
     }
 
     #[test]

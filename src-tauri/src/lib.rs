@@ -862,6 +862,31 @@ fn source_pdf_page_preview_get(
 }
 
 #[tauri::command]
+fn source_pdf_page_preview_attempt(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+    source_document_id: String,
+    page_number: u32,
+    password: Option<String>,
+) -> Result<source_pdf_preview::SourcePdfPagePreviewAttemptDto, String> {
+    let password = password.map(zeroize::Zeroizing::new);
+    state
+        .with_connection(|connection| {
+            Ok(source_pdf_preview::attempt_source_pdf_page_preview(
+                connection,
+                &vault,
+                &household_id,
+                &source_document_id,
+                page_number,
+                password.as_ref().map(|value| value.as_str()),
+            ))
+        })
+        .map_err(|_| "Source PDF preview is temporarily unavailable".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 fn transaction_source_records_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -1616,6 +1641,39 @@ fn document_extract(
             document_extract::ExtractError::Unsupported => "Document format is unsupported",
             document_extract::ExtractError::OcrRequired => "Document requires OCR",
             document_extract::ExtractError::Extraction => "Document extraction failed",
+            document_extract::ExtractError::PasswordRequired => "PDF password is required",
+            document_extract::ExtractError::PasswordInvalid => "PDF password is invalid",
+            document_extract::ExtractError::PasswordUnsupported => {
+                "PDF password encryption is unsupported"
+            }
+        }
+        .to_owned()
+    })
+}
+
+#[tauri::command]
+fn document_extract_attempt(
+    file_bytes: Vec<u8>,
+    media_type: String,
+    password: Option<String>,
+) -> Result<document_extract::DocumentExtractionAttempt, String> {
+    let password = password.map(zeroize::Zeroizing::new);
+    document_extract::attempt_document_extraction(
+        &file_bytes,
+        &media_type,
+        password.as_ref().map(|value| value.as_str()),
+    )
+    .map_err(|error| {
+        match error {
+            document_extract::ExtractError::InvalidInput => "Document input is invalid",
+            document_extract::ExtractError::Unsupported => "Document format is unsupported",
+            document_extract::ExtractError::OcrRequired => "Document requires OCR",
+            document_extract::ExtractError::Extraction => "Document extraction failed",
+            document_extract::ExtractError::PasswordRequired => "PDF password is required",
+            document_extract::ExtractError::PasswordInvalid => "PDF password is invalid",
+            document_extract::ExtractError::PasswordUnsupported => {
+                "PDF password encryption is unsupported"
+            }
         }
         .to_owned()
     })
@@ -1855,6 +1913,7 @@ pub fn run() {
             source_document_records_query,
             source_image_preview_get,
             source_pdf_page_preview_get,
+            source_pdf_page_preview_attempt,
             transaction_source_records_list,
             financial_calendar::financial_calendar_query,
             financial_calendar::financial_report_monthly_query,
@@ -1910,6 +1969,7 @@ pub fn run() {
             backup_restore_stage,
             app_restart_for_restore,
             document_extract,
+            document_extract_attempt,
             document_ocr
         ])
         .run(tauri::generate_context!())

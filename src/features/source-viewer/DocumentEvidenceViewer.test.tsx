@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { DocumentEvidenceReadModel } from './documentEvidence'
 import { DocumentEvidenceViewer } from './DocumentEvidenceViewer'
+import { PdfPreviewAccessError } from './sourcePdfPagePreviewPlatform'
 
 const evidence: DocumentEvidenceReadModel = {
   sourceRecordId: 'record-1', evidenceVersion: 2, method: 'OCR', text: 'スーパー\n牛乳 238', confidenceBps: 9100, issues: ['LOW_CONTRAST'],
@@ -39,5 +40,21 @@ describe('DocumentEvidenceViewer', () => {
     await waitFor(() => expect(screen.getByAltText('statement.pdf Page 1')).toBeInTheDocument())
     expect(pdfPageLoader).toHaveBeenCalledWith(1)
     expect(screen.getByText('原本プレビュー')).toBeInTheDocument()
+  })
+
+  it('requests an ephemeral password and retries the protected PDF page', async () => {
+    const pdfPageLoader = vi.fn().mockImplementation(async (_pageNumber: number, password?: string) => {
+      if (password !== 'one-time-password') throw new PdfPreviewAccessError(password ? 'PASSWORD_INVALID' : 'PASSWORD_REQUIRED')
+      return { src: 'data:image/png;base64,AA==', width: 600, height: 800, pageWidthPoints: 300, pageHeightPoints: 400, alt: 'protected page' }
+    })
+    render(<DocumentEvidenceViewer evidence={evidence} filename="protected.pdf" pdfPageLoader={pdfPageLoader} />)
+
+    expect(await screen.findByText('このPDFはパスワードで保護されています')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('PDFパスワード'), { target: { value: 'one-time-password' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ロックを解除' }))
+
+    await waitFor(() => expect(screen.getByAltText('protected page')).toBeInTheDocument())
+    expect(pdfPageLoader).toHaveBeenLastCalledWith(1, 'one-time-password')
+    expect(screen.queryByLabelText('PDFパスワード')).not.toBeInTheDocument()
   })
 })

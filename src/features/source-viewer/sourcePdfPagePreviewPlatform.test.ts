@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createSourcePdfPagePreviewPlatform, pdfPreviewToEvidenceImage } from './sourcePdfPagePreviewPlatform'
+import { createSourcePdfPagePreviewPlatform, PdfPreviewAccessError, pdfPreviewToEvidenceImage } from './sourcePdfPagePreviewPlatform'
 
 const preview = {
   sourceDocumentId: 'document', filename: 'statement.pdf', pageNumber: 2, pageCount: 3,
@@ -23,5 +23,16 @@ describe('source PDF page preview platform', () => {
     await expect(createSourcePdfPagePreviewPlatform(vi.fn().mockResolvedValue({ ...preview, pageNumber: 4 })).get('family', 'document', 4)).rejects.toThrow(TypeError)
     await expect(createSourcePdfPagePreviewPlatform(vi.fn().mockResolvedValue({ ...preview, widthPixels: 50_000 })).get('family', 'document', 2)).rejects.toThrow(TypeError)
     await expect(createSourcePdfPagePreviewPlatform(vi.fn().mockResolvedValue({ ...preview, dataUrl: 'https://example.test/page.png' })).get('family', 'document', 2)).rejects.toThrow(TypeError)
+  })
+
+  it('returns password-protected pages only after a successful ephemeral attempt', async () => {
+    const invoke = vi.fn()
+      .mockResolvedValueOnce({ status: 'PASSWORD_REQUIRED', preview: null })
+      .mockResolvedValueOnce({ status: 'SUCCESS', preview })
+    const platform = createSourcePdfPagePreviewPlatform(invoke)
+
+    await expect(platform.getWithPassword('family', 'document', 2)).rejects.toEqual(new PdfPreviewAccessError('PASSWORD_REQUIRED'))
+    await expect(platform.getWithPassword('family', 'document', 2, 'one-time-password')).resolves.toEqual(preview)
+    expect(invoke).toHaveBeenLastCalledWith('source_pdf_page_preview_attempt', { householdId: 'family', sourceDocumentId: 'document', pageNumber: 2, password: 'one-time-password' })
   })
 })

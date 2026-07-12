@@ -61,6 +61,9 @@ import { buildDocumentEvidence } from './features/source-viewer/documentEvidence
 import { DocumentEvidenceViewer } from './features/source-viewer/DocumentEvidenceViewer'
 import { createSourceImagePreviewPlatform } from './features/source-viewer/sourceImagePreviewPlatform'
 import type { SourceImagePreviewDto } from './features/source-viewer/sourceImagePreviewPlatform'
+import { PdfPasswordPrompt } from './features/source-viewer/PdfPasswordPrompt'
+import { createProtectedPdfPlatform } from './features/source-viewer/protectedPdfPlatform'
+import type { PdfPasswordStatus } from './features/source-viewer/protectedPdfPlatform'
 import type { BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
 import {
   DEFAULT_FOLDER_SCAN_INTERVAL_MS,
@@ -74,7 +77,7 @@ import type { WatchedFileCheckpoints } from './features/import/folderAutomation'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AppBootstrapDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -84,6 +87,7 @@ const investmentPerformancePlatform = createInvestmentPerformancePlatform()
 const investmentMarketPlatform = createInvestmentMarketPlatform()
 const watchedFolderDiscoveryPlatform = createWatchedFolderDiscoveryPlatform()
 const sourceImagePreviewPlatform = createSourceImagePreviewPlatform()
+const protectedPdfPlatform = createProtectedPdfPlatform()
 const accountGroupExportPlatform = createAccountGroupExportPlatform()
 const financialCalendarPlatform = createFinancialCalendarPlatform()
 const forecastActionPlatform = createForecastActionPlatform()
@@ -525,6 +529,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
+  const [protectedPdf, setProtectedPdf] = useState<{ itemId: string; status: Exclude<PdfPasswordStatus, 'SUCCESS'> } | null>(null)
   const [staged, setStaged] = useState<Record<string, ImportPreviewDto>>({})
   const [notice, setNotice] = useState('')
   const [watchedFolders, setWatchedFolders] = useState<readonly WatchedFolderDto[]>([])
@@ -674,14 +679,23 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     }
   }
 
-  const extractDocument = async (item: ImportPreview) => {
+  const extractDocument = async (item: ImportPreview, password?: string) => {
     if (!householdId || !item.fileBytes || !item.mediaType) return
     setActiveRun(item.id); setNotice('')
     try {
       const isImage = item.mediaType.startsWith('image/')
-      const extracted = isImage
-        ? await platformClient.ocrDocument(item.fileBytes, item.mediaType)
-        : await platformClient.extractDocument(item.fileBytes, item.mediaType)
+      let extracted: ExtractedDocumentDto
+      if (isImage) extracted = await platformClient.ocrDocument(item.fileBytes, item.mediaType)
+      else {
+        const attempt = await protectedPdfPlatform.extract(item.fileBytes, password)
+        if (attempt.status !== 'SUCCESS') {
+          setProtectedPdf({ itemId: item.id, status: attempt.status })
+          setNotice(attempt.status === 'PASSWORD_UNSUPPORTED' ? 'このPDFの暗号方式には対応していません。保護を解除したコピーを取り込んでください。' : 'PDFを開くためのパスワードを入力してください。')
+          return
+        }
+        extracted = attempt.document
+        setProtectedPdf(null)
+      }
       const normalized = await buildReceiptImport(extracted, {
         householdId, filename: item.filename, mediaType: item.mediaType, byteSize: item.fileBytes.byteLength,
         sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, accountId: `${householdId}-cash`, sourceType: item.sourceType,
@@ -801,6 +815,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
+      {protectedPdf && (() => { const item = previews.find((preview) => preview.id === protectedPdf.itemId); return item ? <PdfPasswordPrompt filename={item.filename} status={protectedPdf.status} onSubmit={(ephemeralPassword) => extractDocument(item, ephemeralPassword)} onCancel={() => setProtectedPdf(null)} /> : null })()}
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} />)}

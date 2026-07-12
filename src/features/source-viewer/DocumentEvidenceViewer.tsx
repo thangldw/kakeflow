@@ -3,7 +3,9 @@ import type { ExtractedRegionDto } from '../../platform'
 import type { DocumentEvidenceReadModel } from './documentEvidence'
 import { EvidencePageOverlay } from './EvidencePageOverlay'
 import type { EvidencePageImage } from './EvidencePageOverlay'
-import { createSourcePdfPagePreviewPlatform, pdfPreviewToEvidenceImage } from './sourcePdfPagePreviewPlatform'
+import { PdfPasswordPrompt } from './PdfPasswordPrompt'
+import { createSourcePdfPagePreviewPlatform, PdfPreviewAccessError, pdfPreviewToEvidenceImage } from './sourcePdfPagePreviewPlatform'
+import type { PdfPasswordStatus } from './protectedPdfPlatform'
 import './documentEvidenceViewer.css'
 
 const pdfPagePlatform = createSourcePdfPagePreviewPlatform()
@@ -13,13 +15,22 @@ export interface DocumentEvidenceViewerProps {
   readonly filename?: string
   readonly pageImages?: Readonly<Record<number, EvidencePageImage>>
   readonly pdfSource?: { readonly householdId: string; readonly sourceDocumentId: string }
-  readonly pdfPageLoader?: (pageNumber: number) => Promise<EvidencePageImage>
+  readonly pdfPageLoader?: (pageNumber: number, password?: string) => Promise<EvidencePageImage>
   readonly onSelectRegion?: (pageNumber: number, region: ExtractedRegionDto, regionIndex: number) => void
 }
 
 const yen = (value: number) => `¥${value.toLocaleString('ja-JP')}`
 const confidence = (value: number) => `${(value / 100).toFixed(0)}%`
 const methodLabels = { EMBEDDED_TEXT: '埋込テキスト', OCR: 'OCR', UNKNOWN: '不明' } as const
+
+type PageLoadResult = { readonly pageNumber: number; readonly image: EvidencePageImage | null; readonly passwordStatus: Exclude<PdfPasswordStatus, 'SUCCESS'> | null }
+
+async function loadPdfEvidencePages(pageNumbers: readonly number[], loader: (pageNumber: number) => Promise<EvidencePageImage>): Promise<readonly PageLoadResult[]> {
+  return Promise.all(pageNumbers.map(async (pageNumber) => {
+    try { return { pageNumber, image: await loader(pageNumber), passwordStatus: null } }
+    catch (error) { return { pageNumber, image: null, passwordStatus: error instanceof PdfPreviewAccessError ? error.status : null } }
+  }))
+}
 
 function RegionLocation({ region }: { readonly region: ExtractedRegionDto }) {
   if (!region.boundingBox || region.coordinateSpace === 'UNLOCATED') return <span>位置情報なし</span>
@@ -33,11 +44,13 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
   const [renderedPdfPages, setRenderedPdfPages] = useState<Readonly<Record<number, EvidencePageImage>>>({})
   const [pendingPdfPages, setPendingPdfPages] = useState<readonly number[]>([])
   const [failedPdfPages, setFailedPdfPages] = useState<readonly number[]>([])
+  const [pdfPasswordStatus, setPdfPasswordStatus] = useState<Exclude<PdfPasswordStatus, 'SUCCESS'> | null>(null)
   const pageNumbers = useMemo(() => evidence.pages.map((page) => page.pageNumber), [evidence.pages])
   const pageKey = pageNumbers.join(',')
   useEffect(() => {
     setRenderedPdfPages({})
     setFailedPdfPages([])
+    setPdfPasswordStatus(null)
     const missingPages = pageNumbers.filter((pageNumber) => !pageImages?.[pageNumber])
     if (missingPages.length === 0 || (!pdfSource && !pdfPageLoader)) {
       setPendingPdfPages([])
@@ -45,20 +58,28 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
     }
     let active = true
     setPendingPdfPages(missingPages)
-    const loadPage = pdfPageLoader ?? (async (pageNumber: number) => pdfPreviewToEvidenceImage(await pdfPagePlatform.get(pdfSource!.householdId, pdfSource!.sourceDocumentId, pageNumber)))
-    void Promise.all(missingPages.map(async (pageNumber) => {
-      try { return { pageNumber, image: await loadPage(pageNumber) } }
-      catch { return { pageNumber, image: null } }
-    })).then((results) => {
+    const loadPage = pdfPageLoader ?? (async (pageNumber: number) => pdfPreviewToEvidenceImage(await pdfPagePlatform.getWithPassword(pdfSource!.householdId, pdfSource!.sourceDocumentId, pageNumber)))
+    void loadPdfEvidencePages(missingPages, loadPage).then((results) => {
       if (!active) return
-      setRenderedPdfPages(Object.fromEntries(results.filter((result): result is { pageNumber: number; image: EvidencePageImage } => result.image !== null).map((result) => [result.pageNumber, result.image])))
+      setRenderedPdfPages(Object.fromEntries(results.filter((result): result is PageLoadResult & { image: EvidencePageImage } => result.image !== null).map((result) => [result.pageNumber, result.image])))
       setFailedPdfPages(results.filter((result) => result.image === null).map((result) => result.pageNumber))
+      setPdfPasswordStatus(results.find((result) => result.passwordStatus)?.passwordStatus ?? null)
       setPendingPdfPages([])
     })
     return () => { active = false }
     // pageKey is a stable representation of the source evidence pages.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [evidence.sourceRecordId, pageKey, pdfSource?.householdId, pdfSource?.sourceDocumentId, pdfPageLoader])
+  const retryPdfPassword = async (password: string) => {
+    if (!pdfSource && !pdfPageLoader) return
+    setPendingPdfPages(pageNumbers)
+    const loadPage = pdfPageLoader ?? (async (pageNumber: number, ephemeralPassword?: string) => pdfPreviewToEvidenceImage(await pdfPagePlatform.getWithPassword(pdfSource!.householdId, pdfSource!.sourceDocumentId, pageNumber, ephemeralPassword)))
+    const results = await loadPdfEvidencePages(pageNumbers, (pageNumber) => loadPage(pageNumber, password))
+    setRenderedPdfPages(Object.fromEntries(results.filter((result): result is PageLoadResult & { image: EvidencePageImage } => result.image !== null).map((result) => [result.pageNumber, result.image])))
+    setFailedPdfPages(results.filter((result) => result.image === null).map((result) => result.pageNumber))
+    setPdfPasswordStatus(results.find((result) => result.passwordStatus)?.passwordStatus ?? null)
+    setPendingPdfPages([])
+  }
   const resolvedPageImages = { ...renderedPdfPages, ...pageImages }
   const selectRegion = (pageNumber: number, region: ExtractedRegionDto, regionIndex: number) => {
     setSelected({ pageNumber, regionIndex })
@@ -67,6 +88,7 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
   return <article className="evidence-viewer" aria-labelledby="evidence-title">
     <header className="evidence-header"><div><p>Source Evidence · v{evidence.evidenceVersion}</p><h2 id="evidence-title">{filename ?? `ソースレコード ${evidence.sourceRecordId}`}</h2></div><div className="evidence-confidence"><span>{methodLabels[evidence.method]}</span><strong>{confidence(evidence.confidenceBps)}</strong></div></header>
     {evidence.issues.length > 0 && <aside className="evidence-issues" role="status"><strong>抽出時の注意</strong><ul>{evidence.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></aside>}
+    {pdfPasswordStatus && <PdfPasswordPrompt filename={filename} status={pdfPasswordStatus} onSubmit={retryPdfPassword} onCancel={() => setPdfPasswordStatus(null)} />}
 
     {receipt && <section className="receipt-evidence" aria-labelledby="receipt-evidence-title">
       <header><div><p>Receipt</p><h3 id="receipt-evidence-title">{receipt.merchant ?? '店舗名未確認'}</h3></div><div><span>{receipt.occurredOn ?? '日付未確認'}</span><strong>{receipt.totalAmountJpy == null ? '金額未確認' : yen(receipt.totalAmountJpy)}</strong></div></header>
