@@ -30,11 +30,11 @@ describe('AnnualReviewView', () => {
   it('shows equal-window KPIs and clearly excludes partial and future months', () => {
     render(<AnnualReviewView data={data} />)
     expect(screen.getByRole('heading', { name: '2026年' })).toBeInTheDocument()
-    expect(screen.getByText(/2026-06までを前年同期間と比較/)).toBeInTheDocument()
+    expect(screen.getByText(/2026-06までの計算対象取引を前年同期間と比較/)).toBeInTheDocument()
     expect(screen.getAllByText('未完了')).toHaveLength(1)
     expect(screen.getAllByText('将来')).toHaveLength(5)
     expect(screen.getByText('¥600,000')).toBeInTheDocument()
-    expect(screen.getByText(/未完了月と将来月は年間KPIから除外/)).toBeInTheDocument()
+    expect(screen.getByText(/集計対象外・現在の未完了月・将来月は年間KPIから除外/)).toBeInTheDocument()
   })
 
   it('supports driver drill-down, actions and CSV saving', () => {

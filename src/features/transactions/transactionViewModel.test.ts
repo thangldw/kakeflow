@@ -12,6 +12,7 @@ function row(overrides: Partial<TransactionRowDto> = {}): TransactionRowDto {
     description: '食料品',
     amountJpy: 4_280,
     status: 'POSTED',
+    calculationTarget: true,
     debitAccountId: 'family-groceries',
     debitAccountName: '食費',
     creditAccountId: 'family-bank',
@@ -41,6 +42,7 @@ describe('toTransactionViewModel', () => {
       status: 'confirmed',
       icon: 'subscription',
       accountingEffect: 'ACCRUAL_AND_CASH',
+      calculationTarget: true,
       attributionLabel: '世帯共通',
       audienceLabel: '共有',
     })
@@ -98,5 +100,9 @@ describe('toTransactionViewModel', () => {
 
   it('does not normalize an impossible calendar date', () => {
     expect(toTransactionViewModel(row({ occurredOn: '2026-02-31' })).date).toBe('2026-02-31')
+  })
+
+  it('preserves the calculation-target flag for ledger badges', () => {
+    expect(toTransactionViewModel(row({ calculationTarget: false }))).toMatchObject({ calculationTarget: false })
   })
 })

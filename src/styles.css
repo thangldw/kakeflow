@@ -171,6 +171,7 @@ main { max-width: 1560px; padding: 34px 38px 26px; margin: 0 auto; }
 .category-pill { width: fit-content; padding: 4px 7px; color: #6f766f; background: #f1f3ef; border-radius: 6px; font-size: 9px; }
 .transaction-row > strong { text-align: right; font-size: 11px; }.amount-positive { color: #5e8158; }
 .transaction-family-labels { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 3px; }.transaction-family-labels span { padding: 2px 6px; border-radius: 999px; color: #64705f; background: #eef2ea; font-size: 8px; }
+.transaction-family-labels .calculation-badge,.calculation-badge { width: fit-content; padding: 3px 6px; border-radius: 5px; font-size: 8px; font-weight: 700; }.calculation-badge.included { color: #4f7048; background: #e7f0e3; }.calculation-badge.excluded { color: #865f3f; background: #f4e8da; }.calculation-target-control { display: flex; align-items: flex-start; gap: 10px; padding: 12px 13px; margin: 14px 0; border: 1px solid #dfe5dc; border-radius: 9px; background: #f6f8f4; cursor: pointer; }.calculation-target-control input { width: 16px; height: 16px; flex: none; margin-top: 2px; accent-color: var(--green); }.calculation-target-control span { display: flex; flex-direction: column; gap: 3px; }.calculation-target-control strong { font-size: 10px; }.calculation-target-control small { color: var(--muted); font-size: 8px; line-height: 1.55; }
 .review-dot { width: 7px; height: 7px; background: #e1a54a; border-radius: 50%; }
 .card-stack { display: flex; flex-direction: column; gap: 12px; }
 .settlement { padding: 13px; border: 1px solid #eceee9; border-radius: 10px; background: #fbfcfa; }
@@ -182,10 +183,11 @@ main { max-width: 1560px; padding: 34px 38px 26px; margin: 0 auto; }
 .data-footnote { display: flex; align-items: center; gap: 7px; padding: 16px 4px 0; color: #909792; font-size: 9px; }.data-footnote span { margin-left: auto; color: #66775a; }
 
 .table-panel { padding: 0; overflow: hidden; }
-.table-toolbar { padding: 15px 18px; display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); }
+.table-toolbar { padding: 15px 18px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; border-bottom: 1px solid var(--line); }
 .table-search { width: 300px; height: 35px; }
 .basis-toggle { padding: 3px; display: flex; background: #f0f2ee; border-radius: 8px; }
 .basis-toggle button { padding: 0 12px; border: 0; border-radius: 6px; background: none; color: #89908b; font-size: 9px; cursor: pointer; }.basis-toggle button.active { background: #fff; color: var(--ink); box-shadow: 0 1px 3px #dfe2dc; }
+.calculation-filter { display: inline-flex; padding: 3px; border-radius: 8px; background: #eef1eb; }.calculation-filter button { min-height: 30px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 8px; cursor: pointer; }.calculation-filter button.active { color: var(--ink); background: #fff; box-shadow: 0 1px 3px #d9ded5; }
 .table-summary { padding: 12px 18px; display: flex; align-items: center; gap: 25px; background: #fafbf9; color: #737b75; font-size: 10px; }.table-summary > span { font-weight: 700; color: var(--ink); }.table-summary em { margin-left: auto; color: #9aa09b; font-style: normal; }
 .table-panel .transaction-list { margin: 0; padding: 3px 18px 12px; }.table-panel .transaction-row { min-height: 64px; grid-template-columns: 40px minmax(180px,1.4fr) 110px 150px 100px 8px; }
 .empty-state { padding: 28px 18px; margin: 0; color: #8b938d; text-align: center; font-size: 10px; }

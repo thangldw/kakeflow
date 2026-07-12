@@ -49,7 +49,7 @@ export function CashSavingsForecast({ data }: { readonly data: ForecastActionDto
         <dl><div><dt>予測収入</dt><dd>{yen(month.projectedIncomeJpy)}</dd></div><div><dt>通常支出</dt><dd>{yen(month.projectedNonRecurringExpenseJpy)}</dd></div><div><dt>定期支出</dt><dd>{yen(month.projectedRecurringExpenseJpy)}</dd></div><div><dt>カード引落</dt><dd>{yen(month.knownCardPaymentsJpy)}</dd></div><div className="forecast-closing"><dt>月末現預金</dt><dd>{yen(month.closingCashJpy)}</dd></div></dl>
       </article>)}
     </div>
-    <details className="forecast-assumptions"><summary>予測の前提と説明</summary><div className="assumption-grid"><span>履歴期間<strong>{data.assumptions.historyFrom} — {data.assumptions.historyThrough}</strong></span><span>平均月収<strong>{yen(data.assumptions.averageMonthlyIncomeJpy)}</strong></span><span>平均月支出<strong>{yen(data.assumptions.averageMonthlyExpenseJpy)}</strong></span><span>定期支出<strong>{yen(data.assumptions.recurringMonthlyExpenseJpy)}（{data.assumptions.recurringItemCount}件）</strong></span></div><ul>{data.assumptions.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></details>
+    <details className="forecast-assumptions"><summary>予測の前提と説明</summary><p>計算対象の確定取引のみを使用し、集計対象外は履歴平均・定期支出・予測から除きます。</p><div className="assumption-grid"><span>履歴期間<strong>{data.assumptions.historyFrom} — {data.assumptions.historyThrough}</strong></span><span>平均月収<strong>{yen(data.assumptions.averageMonthlyIncomeJpy)}</strong></span><span>平均月支出<strong>{yen(data.assumptions.averageMonthlyExpenseJpy)}</strong></span><span>定期支出<strong>{yen(data.assumptions.recurringMonthlyExpenseJpy)}（{data.assumptions.recurringItemCount}件）</strong></span></div><ul>{data.assumptions.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></details>
   </section>
 }
 

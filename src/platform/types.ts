@@ -192,6 +192,7 @@ export interface TransactionPageRequestDto {
   readonly fromDate?: string | null
   readonly toDate?: string | null
   readonly search?: string | null
+  readonly calculationTargetFilter?: 'ALL' | 'INCLUDED' | 'EXCLUDED'
   readonly page: number
   readonly pageSize: number
 }
@@ -205,6 +206,7 @@ export interface TransactionRowDto {
   readonly description: string | null
   readonly amountJpy: number
   readonly status: string
+  readonly calculationTarget: boolean
   readonly debitAccountId: string | null
   readonly debitAccountName: string | null
   readonly creditAccountId: string | null
@@ -236,9 +238,10 @@ export interface TransactionDetailDto {
   readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null; readonly attributedMemberName: string | null
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName: string | null
   readonly status: string; readonly createdAt: string; readonly updatedAt: string; readonly editable: boolean
+  readonly calculationTarget: boolean
   readonly entries: readonly TransactionJournalEntryDto[]; readonly sourceEvidence: readonly TransactionSourceEvidenceDto[]
 }
-export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string }
+export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string; readonly calculationTarget: boolean }
 export interface SourceDocumentViewDto {
   readonly id: string; readonly householdId: string; readonly importRunId: string; readonly sourceType: string
   readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
