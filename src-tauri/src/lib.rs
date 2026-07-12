@@ -8,6 +8,7 @@ mod persistence;
 pub mod portfolio;
 mod private_fs;
 mod read_model;
+pub mod recurring_analytics;
 pub mod restore;
 mod source_viewer;
 pub mod watched_folders;
@@ -32,6 +33,7 @@ use read_model::{
     UpdateClassificationRuleInput, UpdatePostedTransactionInput, UpdateSavingsGoalInput,
     UpsertMonthlyCategoryBudgetInput,
 };
+use recurring_analytics::{FinancialIntelligenceDto, FinancialIntelligenceRequest};
 use serde::{Deserialize, Serialize};
 use source_viewer::{
     SourceDocumentViewDto, SourceRecordPageDto, SourceRecordPageRequest, SourceRecordViewDto,
@@ -501,6 +503,20 @@ fn dashboard_query(
             request.accounting_basis,
         )
     })
+}
+
+#[tauri::command]
+fn financial_intelligence_query(
+    state: tauri::State<'_, AppState>,
+    request: FinancialIntelligenceRequest,
+) -> Result<FinancialIntelligenceDto, String> {
+    state
+        .with_connection(|connection| {
+            Ok(recurring_analytics::query_financial_intelligence(
+                connection, &request,
+            ))
+        })
+        .map_err(|_| "Financial intelligence is temporarily unavailable".to_owned())?
 }
 
 #[tauri::command]
@@ -1204,6 +1220,7 @@ pub fn run() {
             source_document_records_query,
             transaction_source_records_list,
             dashboard_query,
+            financial_intelligence_query,
             budgets_query,
             budget_upsert,
             savings_goals_list,
