@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "MIT"
@@ -34,6 +34,9 @@ hkdf = "0.12"
 argon2 = { version = "0.5", features = ["zeroize"] }
 pdf-extract = "0.12"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
 
@@ -43,4 +46,5 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
 ] }

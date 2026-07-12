@@ -239,29 +239,47 @@ pub fn read_registered_file(
     let relative = validate_relative_path(relative_path)?;
     let root = registered_root(connection, household_id, watched_folder_id)?;
     let path = root.join(relative);
-    let (metadata, media_type) = validate_read_target(&root, &path)?;
-    if metadata.len() > MAX_WATCHED_FILE_BYTES {
+    let media_type = supported_media_type(&path).ok_or(WatchedFolderError::InvalidInput)?;
+    let mut file = open_regular_file_bound_to_path(&root, &path)?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    let opened_identity = file_identity(&file, &opened_metadata)?;
+    let opened_modified = opened_metadata.modified().ok();
+    if opened_metadata.len() > MAX_WATCHED_FILE_BYTES {
         return Err(WatchedFolderError::ScanLimit);
     }
 
-    let file = fs::File::open(&path).map_err(|_| WatchedFolderError::FolderUnavailable)?;
-    let mut file_bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    file.take(MAX_WATCHED_FILE_BYTES + 1)
+    let mut file_bytes = Vec::with_capacity(usize::try_from(opened_metadata.len()).unwrap_or(0));
+    (&mut file)
+        .take(MAX_WATCHED_FILE_BYTES + 1)
         .read_to_end(&mut file_bytes)
         .map_err(|_| WatchedFolderError::FolderUnavailable)?;
     if file_bytes.len() as u64 > MAX_WATCHED_FILE_BYTES {
         return Err(WatchedFolderError::ScanLimit);
     }
 
-    // Detect replacement or growth during the read. The application never
-    // imports bytes if the path no longer resolves to the same safe shape.
-    let (final_metadata, final_media_type) = validate_read_target(&root, &path)?;
-    if final_metadata.len() != file_bytes.len() as u64
-        || final_metadata.len() != metadata.len()
-        || final_media_type != media_type
+    // Recheck both the already-open handle and the pathname. The identity
+    // comparison rejects same-size rename/replacement races that length-only
+    // checks cannot detect.
+    let final_handle_metadata = file
+        .metadata()
+        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    let final_handle_identity = file_identity(&file, &final_handle_metadata)?;
+    if final_handle_identity != opened_identity
+        || final_handle_metadata.len() != opened_metadata.len()
+        || final_handle_metadata.len() != file_bytes.len() as u64
+        || final_handle_metadata.modified().ok() != opened_modified
     {
         return Err(WatchedFolderError::FolderUnavailable);
     }
+    verify_path_matches_open_file(
+        &root,
+        &path,
+        &opened_identity,
+        opened_metadata.len(),
+        opened_modified,
+    )?;
     let relative_path = relative_path.replace('\\', "/");
     let file_name = path
         .file_name()
@@ -272,8 +290,8 @@ pub fn read_registered_file(
         relative_path,
         file_name,
         media_type: media_type.to_owned(),
-        byte_size: final_metadata.len(),
-        modified_unix_ms: modified_unix_ms(&final_metadata),
+        byte_size: final_handle_metadata.len(),
+        modified_unix_ms: modified_unix_ms(&final_handle_metadata),
         file_bytes,
     })
 }
@@ -314,10 +332,7 @@ fn validate_relative_path(relative_path: &str) -> Result<&Path, WatchedFolderErr
     Ok(path)
 }
 
-fn validate_read_target<'a>(
-    root: &Path,
-    path: &'a Path,
-) -> Result<(fs::Metadata, &'a str), WatchedFolderError> {
+fn validate_path_shape(root: &Path, path: &Path) -> Result<fs::Metadata, WatchedFolderError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| WatchedFolderError::FolderUnavailable)?;
     if metadata.file_type().is_symlink() {
         return Err(WatchedFolderError::SymlinkNotAllowed);
@@ -325,12 +340,59 @@ fn validate_read_target<'a>(
     if !metadata.is_file() {
         return Err(WatchedFolderError::FolderUnavailable);
     }
-    let media_type = supported_media_type(path).ok_or(WatchedFolderError::InvalidInput)?;
     let canonical = fs::canonicalize(path).map_err(|_| WatchedFolderError::FolderUnavailable)?;
     if canonical != path || !canonical.starts_with(root) {
         return Err(WatchedFolderError::SymlinkNotAllowed);
     }
-    Ok((metadata, media_type))
+    Ok(metadata)
+}
+
+fn open_regular_file_bound_to_path(
+    root: &Path,
+    path: &Path,
+) -> Result<fs::File, WatchedFolderError> {
+    let path_metadata = validate_path_shape(root, path)?;
+    let file = open_file_no_follow(path)?;
+    let handle_metadata = file
+        .metadata()
+        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    if !handle_metadata.is_file() || handle_metadata.len() != path_metadata.len() {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    let identity = file_identity(&file, &handle_metadata)?;
+    verify_path_matches_open_file(
+        root,
+        path,
+        &identity,
+        handle_metadata.len(),
+        handle_metadata.modified().ok(),
+    )?;
+    Ok(file)
+}
+
+fn verify_path_matches_open_file(
+    root: &Path,
+    path: &Path,
+    expected_identity: &FileIdentity,
+    expected_size: u64,
+    expected_modified: Option<std::time::SystemTime>,
+) -> Result<fs::Metadata, WatchedFolderError> {
+    let path_metadata = validate_path_shape(root, path)?;
+    if path_metadata.len() != expected_size {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    let verification_file = open_file_no_follow(path)?;
+    let verification_metadata = verification_file
+        .metadata()
+        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    if !verification_metadata.is_file()
+        || verification_metadata.len() != expected_size
+        || verification_metadata.modified().ok() != expected_modified
+        || file_identity(&verification_file, &verification_metadata)? != *expected_identity
+    {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    Ok(verification_metadata)
 }
 
 fn scan_directory(root: &Path) -> Result<Vec<WatchedFileMetadataDto>, WatchedFolderError> {
@@ -339,7 +401,7 @@ fn scan_directory(root: &Path) -> Result<Vec<WatchedFileMetadataDto>, WatchedFol
     let mut files = Vec::new();
 
     while let Some((directory, depth)) = pending.pop() {
-        validate_scan_directory(root, &directory)?;
+        let directory_identity = validate_scan_directory(root, &directory)?;
         for entry in fs::read_dir(&directory).map_err(|_| WatchedFolderError::FolderUnavailable)? {
             let entry = entry.map_err(|_| WatchedFolderError::FolderUnavailable)?;
             visited_entries = visited_entries
@@ -372,6 +434,21 @@ fn scan_directory(root: &Path) -> Result<Vec<WatchedFileMetadataDto>, WatchedFol
             if files.len() >= MAX_SUPPORTED_FILES {
                 return Err(WatchedFolderError::ScanLimit);
             }
+            // Bind metadata to an opened no-follow handle and canonical path.
+            // This prevents a scan from returning a symlink target or a file
+            // that was renamed/replaced between directory enumeration and stat.
+            let stable_file = open_regular_file_bound_to_path(root, &path)?;
+            let stable_metadata = stable_file
+                .metadata()
+                .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+            let stable_identity = file_identity(&stable_file, &stable_metadata)?;
+            let final_metadata = verify_path_matches_open_file(
+                root,
+                &path,
+                &stable_identity,
+                stable_metadata.len(),
+                stable_metadata.modified().ok(),
+            )?;
             // Never disclose the configured absolute root to the webview.
             let relative = path
                 .strip_prefix(root)
@@ -389,9 +466,12 @@ fn scan_directory(root: &Path) -> Result<Vec<WatchedFileMetadataDto>, WatchedFol
                 relative_path,
                 file_name,
                 media_type: media_type.to_owned(),
-                byte_size: metadata.len(),
-                modified_unix_ms: modified_unix_ms(&metadata),
+                byte_size: final_metadata.len(),
+                modified_unix_ms: modified_unix_ms(&final_metadata),
             });
+        }
+        if validate_scan_directory(root, &directory)? != directory_identity {
+            return Err(WatchedFolderError::FolderUnavailable);
         }
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
@@ -406,7 +486,10 @@ fn modified_unix_ms(metadata: &fs::Metadata) -> Option<u64> {
         .and_then(|duration| u64::try_from(duration.as_millis()).ok())
 }
 
-fn validate_scan_directory(root: &Path, directory: &Path) -> Result<(), WatchedFolderError> {
+fn validate_scan_directory(
+    root: &Path,
+    directory: &Path,
+) -> Result<DirectoryIdentity, WatchedFolderError> {
     let metadata =
         fs::symlink_metadata(directory).map_err(|_| WatchedFolderError::FolderUnavailable)?;
     if metadata.file_type().is_symlink() {
@@ -420,7 +503,138 @@ fn validate_scan_directory(root: &Path, directory: &Path) -> Result<(), WatchedF
     if canonical != directory || !canonical.starts_with(root) {
         return Err(WatchedFolderError::SymlinkNotAllowed);
     }
-    Ok(())
+    let handle = open_directory_no_follow(directory)?;
+    let handle_metadata = handle
+        .metadata()
+        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    if !handle_metadata.is_dir() {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    Ok(DirectoryIdentity {
+        identity: file_identity(&handle, &handle_metadata)?,
+        modified: handle_metadata.modified().ok(),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FileIdentity {
+    first: u64,
+    second: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DirectoryIdentity {
+    identity: FileIdentity,
+    modified: Option<std::time::SystemTime>,
+}
+
+#[cfg(unix)]
+fn open_file_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| WatchedFolderError::SymlinkNotAllowed)
+}
+
+#[cfg(unix)]
+fn open_directory_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY)
+        .open(path)
+        .map_err(|_| WatchedFolderError::SymlinkNotAllowed)
+}
+
+#[cfg(windows)]
+fn open_file_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| WatchedFolderError::SymlinkNotAllowed)
+}
+
+#[cfg(windows)]
+fn open_directory_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+
+    fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
+        .map_err(|_| WatchedFolderError::SymlinkNotAllowed)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_file_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
+    fs::File::open(path).map_err(|_| WatchedFolderError::FolderUnavailable)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_directory_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
+    fs::File::open(path).map_err(|_| WatchedFolderError::FolderUnavailable)
+}
+
+#[cfg(unix)]
+fn file_identity(
+    _file: &fs::File,
+    metadata: &fs::Metadata,
+) -> Result<FileIdentity, WatchedFolderError> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    Ok(FileIdentity {
+        first: metadata.dev(),
+        second: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn file_identity(
+    file: &fs::File,
+    _metadata: &fs::Metadata,
+) -> Result<FileIdentity, WatchedFolderError> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_REPARSE_POINT,
+    };
+
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is owned by `file` for the duration of this call and
+    // the output points to a fully sized writable structure.
+    let succeeded = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) };
+    if succeeded == 0 {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(WatchedFolderError::SymlinkNotAllowed);
+    }
+    Ok(FileIdentity {
+        first: u64::from(information.dwVolumeSerialNumber),
+        second: (u64::from(information.nFileIndexHigh) << 32)
+            | u64::from(information.nFileIndexLow),
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_identity(
+    _file: &fs::File,
+    metadata: &fs::Metadata,
+) -> Result<FileIdentity, WatchedFolderError> {
+    Ok(FileIdentity {
+        first: metadata.len(),
+        second: modified_unix_ms(metadata).unwrap_or(0),
+    })
 }
 
 fn supported_media_type(path: &Path) -> Option<&'static str> {
@@ -559,6 +773,38 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].relative_path, "receipt.pdf");
         fs::remove_file(linked_root).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn opened_file_identity_rejects_same_size_path_replacement() {
+        let root = temporary_directory();
+        let path = root.join("bank.csv");
+        fs::File::create(&path)
+            .unwrap()
+            .write_all(b"original")
+            .unwrap();
+        let opened = open_regular_file_bound_to_path(&root, &path).unwrap();
+        let opened_metadata = opened.metadata().unwrap();
+        let opened_identity = file_identity(&opened, &opened_metadata).unwrap();
+
+        fs::rename(&path, root.join("old.csv")).unwrap();
+        fs::File::create(&path)
+            .unwrap()
+            .write_all(b"replaced")
+            .unwrap();
+        assert_eq!(opened_metadata.len(), fs::metadata(&path).unwrap().len());
+        assert!(matches!(
+            verify_path_matches_open_file(
+                &root,
+                &path,
+                &opened_identity,
+                opened_metadata.len(),
+                opened_metadata.modified().ok(),
+            ),
+            Err(WatchedFolderError::FolderUnavailable)
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 

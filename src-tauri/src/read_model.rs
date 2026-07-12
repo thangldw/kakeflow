@@ -967,19 +967,12 @@ pub fn create_manual_transaction(
     let transaction = connection
         .unchecked_transaction()
         .map_err(map_database_error)?;
-    for entry in &input.entries {
-        let account_exists: bool = transaction
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM accounts
-                 WHERE id = ?1 AND household_id = ?2 AND is_archived = 0 AND currency = 'JPY')",
-                params![entry.account_id, input.household_id],
-                |row| row.get(0),
-            )
-            .map_err(map_database_error)?;
-        if !account_exists {
-            return Err(RepositoryError::NotFound);
-        }
-    }
+    validate_transaction_account_shape(
+        &transaction,
+        &input.household_id,
+        input.transaction_type,
+        &input.entries,
+    )?;
 
     transaction
         .execute(
@@ -1021,7 +1014,11 @@ pub fn create_manual_transaction(
         connection,
         &TransactionPageRequest {
             household_id: input.household_id.clone(),
-            accounting_basis: AccountingBasis::Accrual,
+            accounting_basis: if input.transaction_type == ManualTransactionType::CardPayment {
+                AccountingBasis::Cash
+            } else {
+                AccountingBasis::Accrual
+            },
             from_date: Some(input.occurred_on.clone()),
             to_date: Some(input.occurred_on.clone()),
             search: Some(input.id.clone()),
@@ -1064,20 +1061,28 @@ pub fn update_posted_transaction(
     if exists.is_none() {
         return Err(RepositoryError::NotFound);
     }
-
-    for entry in &input.entries {
-        let account_exists: bool = transaction
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM accounts
-                 WHERE id = ?1 AND household_id = ?2 AND is_archived = 0 AND currency = 'JPY')",
-                params![entry.account_id, input.household_id],
-                |row| row.get(0),
-            )
-            .map_err(map_database_error)?;
-        if !account_exists {
-            return Err(RepositoryError::NotFound);
-        }
+    let reconciliation_linked: bool = transaction
+        .query_row(
+            "SELECT EXISTS(
+               SELECT 1 FROM card_payments WHERE bank_transaction_id = ?1
+               UNION ALL
+               SELECT 1 FROM card_statement_transactions WHERE transaction_id = ?1
+             )",
+            [&input.transaction_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if reconciliation_linked {
+        return Err(RepositoryError::InvalidInput(
+            "Card-linked transactions must be changed through reconciliation",
+        ));
     }
+    validate_transaction_account_shape(
+        &transaction,
+        &input.household_id,
+        input.transaction_type,
+        &input.entries,
+    )?;
 
     transaction
         .execute(
@@ -1154,6 +1159,56 @@ fn validate_manual_entries(entries: &[ManualJournalEntryInput]) -> Result<(), Re
     if debit != credit {
         return Err(RepositoryError::InvalidInput(
             "Journal debits and credits must balance",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transaction_account_shape(
+    connection: &Connection,
+    household_id: &str,
+    transaction_type: ManualTransactionType,
+    entries: &[ManualJournalEntryInput],
+) -> Result<(), RepositoryError> {
+    let mut shapes = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let account = connection
+            .query_row(
+                "SELECT account_kind, account_subtype FROM accounts
+                 WHERE id = ?1 AND household_id = ?2 AND is_archived = 0 AND currency = 'JPY'",
+                params![entry.account_id, household_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(map_database_error)?
+            .ok_or(RepositoryError::NotFound)?;
+        shapes.push((entry.side, account.0, account.1));
+    }
+    let has = |side: ManualEntrySide, kind: &str, subtype: Option<&str>| {
+        shapes.iter().any(|shape| {
+            shape.0 == side && shape.1 == kind && subtype.map_or(true, |value| shape.2 == value)
+        })
+    };
+    let valid = match transaction_type {
+        ManualTransactionType::Expense
+        | ManualTransactionType::Fee
+        | ManualTransactionType::Interest => has(ManualEntrySide::Debit, "EXPENSE", None),
+        ManualTransactionType::Income => has(ManualEntrySide::Credit, "INCOME", None),
+        ManualTransactionType::CardPurchase => {
+            has(ManualEntrySide::Debit, "EXPENSE", None)
+                && has(ManualEntrySide::Credit, "LIABILITY", Some("CREDIT_CARD"))
+        }
+        ManualTransactionType::CardPayment => {
+            has(ManualEntrySide::Debit, "LIABILITY", Some("CREDIT_CARD"))
+                && has(ManualEntrySide::Credit, "ASSET", Some("BANK"))
+        }
+        ManualTransactionType::Transfer
+        | ManualTransactionType::Refund
+        | ManualTransactionType::Adjustment => true,
+    };
+    if !valid {
+        return Err(RepositoryError::InvalidInput(
+            "Journal accounts do not match the transaction type",
         ));
     }
     Ok(())
@@ -2659,6 +2714,45 @@ mod tests {
         assert_eq!(transaction_count, 0);
     }
 
+    #[test]
+    fn manual_transaction_type_requires_matching_account_shape() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let mut mislabeled = manual_expense("mislabeled", "family", 1_000);
+        mislabeled.transaction_type = ManualTransactionType::CardPayment;
+        assert!(matches!(
+            create_manual_transaction(&connection, &mislabeled),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+
+        let valid = CreateManualTransactionInput {
+            entries: vec![
+                ManualJournalEntryInput {
+                    id: "payment-debit".into(),
+                    account_id: "family-card".into(),
+                    side: ManualEntrySide::Debit,
+                    amount_jpy: 1_000,
+                },
+                ManualJournalEntryInput {
+                    id: "payment-credit".into(),
+                    account_id: "family-bank".into(),
+                    side: ManualEntrySide::Credit,
+                    amount_jpy: 1_000,
+                },
+            ],
+            transaction_type: ManualTransactionType::CardPayment,
+            ..manual_expense("payment", "family", 1_000)
+        };
+        assert!(create_manual_transaction(&connection, &valid).is_ok());
+    }
+
     fn update_from_manual(input: &CreateManualTransactionInput) -> UpdatePostedTransactionInput {
         UpdatePostedTransactionInput {
             household_id: input.household_id.clone(),
@@ -2874,6 +2968,42 @@ mod tests {
         assert_eq!(unchanged.payee.as_deref(), Some("Coffee first"));
         assert_eq!(unchanged.entries[0].id, "first-debit");
         assert_eq!(unchanged.entries.len(), 2);
+    }
+
+    #[test]
+    fn posted_transaction_update_rejects_card_reconciliation_links() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let original = manual_expense("linked", "family", 1_000);
+        create_manual_transaction(&connection, &original).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO card_statements
+                   (id, household_id, card_account_id, period_start, period_end,
+                    statement_amount_jpy, reconciliation_status)
+                 VALUES ('statement', 'family', 'family-card', '2026-07-01',
+                         '2026-07-31', 1000, 'UNMATCHED');
+                 INSERT INTO card_statement_transactions
+                   (statement_id, transaction_id, statement_line_number, billed_amount_jpy)
+                 VALUES ('statement', 'linked', 1, 1000);",
+            )
+            .unwrap();
+
+        let mut update = update_from_manual(&original);
+        update.payee = Some("Must remain unchanged".into());
+        assert!(matches!(
+            update_posted_transaction(&connection, &update),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        let unchanged = get_transaction_detail(&connection, "family", "linked").unwrap();
+        assert_eq!(unchanged.payee.as_deref(), Some("Coffee linked"));
     }
 
     #[test]
