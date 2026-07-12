@@ -112,7 +112,7 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('請求と口座引落を照合済みにしました。')).toBeInTheDocument()
   })
 
-  it('stages an authenticated restore only after explicit replacement confirmation', async () => {
+  it('delegates restore selection and destructive confirmation to the native backend', async () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
@@ -121,14 +121,9 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByLabelText('復元用パスフレーズを確認'), { target: { value: 'correct horse battery' } })
     fireEvent.click(screen.getByRole('button', { name: 'バックアップを選択して復元' }))
 
-    expect(await screen.findByText('現在のデータが置き換わることを確認してください。')).toBeInTheDocument()
-    expect(dialog.open).not.toHaveBeenCalled()
-
-    fireEvent.click(screen.getByRole('checkbox', { name: /現在のデータが置き換わり/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'バックアップを選択して復元' }))
-
-    await waitFor(() => expect(desktop.stageBackupRestore).toHaveBeenCalledWith('/tmp/family.kakeflow-backup', 'correct horse battery'))
+    await waitFor(() => expect(desktop.stageBackupRestore).toHaveBeenCalledWith('correct horse battery'))
     expect(desktop.restartForRestore).toHaveBeenCalledOnce()
-    expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ multiple: false, directory: false }))
+    expect(dialog.open).not.toHaveBeenCalled()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   })
 })

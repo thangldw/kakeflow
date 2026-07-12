@@ -203,7 +203,7 @@ export interface PlatformClient {
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
   createBackup(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
-  stageBackupRestore(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
+  stageBackupRestore(passphrase: string): Promise<BackupSummaryDto | null>
   restartForRestore(): Promise<void>
   extractDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
   ocrDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>

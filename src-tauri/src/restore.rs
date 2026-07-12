@@ -304,6 +304,26 @@ pub fn activate_staged_restore(
     activate_staged_restore_with_faults(app_data_root, credentials, &NoRestoreFaults)
 }
 
+/// Returns the exact target fingerprint only while a fully authenticated
+/// restore is waiting in the Prepared state and its pending OS credential is
+/// still present. UI code uses this value as an unforgeable backend-owned
+/// authorization binding; the webview never supplies it.
+pub fn prepared_restore_fingerprint(
+    app_data_root: impl AsRef<Path>,
+    credentials: &dyn RestoreCredentialStore,
+) -> Result<Option<[u8; 32]>> {
+    let paths = RestorePaths::new(app_data_root.as_ref());
+    let Some(journal) = read_latest_journal(&paths)? else {
+        return Ok(None);
+    };
+    if journal.phase != Phase::Prepared
+        || credentials.staged_key_fingerprint()? != Some(journal.target_key_fingerprint)
+    {
+        return Ok(None);
+    }
+    Ok(Some(journal.target_key_fingerprint))
+}
+
 fn activate_staged_restore_with_faults(
     app_data_root: impl AsRef<Path>,
     credentials: &dyn RestoreCredentialStore,
@@ -925,10 +945,18 @@ mod tests {
             credentials.staged_key_fingerprint().expect("pending key"),
             Some(master_key_fingerprint(&new_key))
         );
+        assert_eq!(
+            prepared_restore_fingerprint(&app_data, &credentials).expect("prepared restore"),
+            Some(master_key_fingerprint(&new_key))
+        );
 
         recover_interrupted_restore(&app_data, &credentials).expect("startup activation");
         assert_new_layout(&app_data, &new_key);
         assert_eq!(credentials.key(), Some(new_key));
+        assert_eq!(
+            prepared_restore_fingerprint(&app_data, &credentials).expect("completed restore"),
+            None
+        );
     }
 
     #[test]
