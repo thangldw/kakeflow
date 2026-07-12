@@ -1,8 +1,8 @@
 # KakeFlow
 
-KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, and receipt sources into a reconciled household ledger, with investment portfolio support planned as a separate snapshot-based module.
+KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-This repository contains a runnable desktop application slice: responsive ledger dashboards, accrual/cash accounting views, CSV/XLSX/PDF/image ingestion, native sync-folder scanning, review-before-posting, searchable and paginated double-entry transactions, balanced split editing with source-evidence drill-down, persisted budgets and savings goals, credit-card settlement reconciliation, a Tauri 2 shell, and an encrypted SQLCipher database with forward-only migrations.
+Version 0.3 adds automatic 60-second sync-folder discovery, immutable source-row viewing, persisted merchant/description classification rules with labels and tags, and `assetbalance(all)_*.csv` investment snapshots with asset allocation, positions, FX rates, market value, and unrealized/realized P&L. Investment snapshots remain separate from household expense and cash-flow totals.
 
 ## Product tour
 
@@ -109,9 +109,17 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
+## Current v0.3 capabilities
+
+- Automatic reviewed ingestion from registered local, iCloud Drive, Google Drive, OneDrive, or NAS folders while the Import Inbox is open.
+- Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
+- Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
+- Securities asset snapshot ingestion and a dedicated investment dashboard.
+- Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
+
 ## Remaining product milestones
 
-1. Add background filesystem change notifications and reviewed batch import on top of the current bounded native sync-folder scanner.
-2. Add an investment and securities portfolio module, starting with the sample `assetbalance(all)_20260712_144756.csv` format. This file is an as-of asset snapshot—not transaction history—so it will populate separate `PortfolioSnapshot`, `PositionSnapshot`, and `FxRateSnapshot` models without changing household expense or cash-flow totals. Planned views include net worth, asset allocation, cash held at brokers, market value, average cost, realized/unrealized profit and loss, and historical portfolio performance. A separate brokerage transaction adapter will later handle buys, sells, dividends, fees, taxes, and deposits/withdrawals.
-3. Add packaged UI launch/E2E coverage on macOS and Windows; current CI compiles the real native executable without launching user data.
-4. Configure production signing, notarization, update keys, and a signed release channel.
+1. Add OS-native background filesystem notifications even when the Import Inbox is not open.
+2. Add brokerage transaction adapters for buys, sells, dividends, fees, taxes, and deposits/withdrawals; snapshots alone are not transaction history.
+3. Add item-level receipt OCR, PDF bounding-box highlighting, calendar/action-center reports, forecasting, and anomaly detection.
+4. Add packaged UI launch/E2E coverage, production signing/notarization, update keys, and a signed release channel.

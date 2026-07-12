@@ -70,7 +70,11 @@ jobs:
           releaseBody: |
             Local-first household finance desktop application for macOS and Windows.
 
-            This automated MVP release is unsigned/ad-hoc. macOS Gatekeeper and
+            v0.3 adds investment asset snapshots, automatic reviewed sync-folder
+            discovery, immutable source-row viewing, and persisted classification
+            rules with categories, labels, and tags. See CHANGELOG.md for details.
+
+            This automated release is unsigned/ad-hoc. macOS Gatekeeper and
             Windows SmartScreen may warn until production signing certificates are configured.
           releaseDraft: false
           prerelease: false
