@@ -657,20 +657,37 @@ fn validate_export_request(
         ));
     }
     ensure_household(connection, &request.household_id)?;
-    if let Some(group_id) = &request.group_id {
-        validate_id(group_id)?;
-        let exists: bool = connection
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM account_groups WHERE household_id = ?1 AND id = ?2)",
-                params![request.household_id, group_id],
-                |row| row.get(0),
-            )
-            .map_err(db_error)?;
-        if !exists {
-            return Err(AccountGroupExportError::NotFound);
-        }
-    }
+    validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.group_id.as_deref(),
+    )?;
     Ok(())
+}
+
+/// Validates the canonical saved-account-group scope used by exports and read models.
+/// A missing scope intentionally preserves the legacy whole-household behaviour.
+pub fn validate_account_group_scope(
+    connection: &Connection,
+    household_id: &str,
+    group_id: Option<&str>,
+) -> Result<(), AccountGroupExportError> {
+    let Some(group_id) = group_id else {
+        return Ok(());
+    };
+    validate_id(group_id)?;
+    let exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM account_groups WHERE household_id = ?1 AND id = ?2)",
+            params![household_id, group_id],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
+    if exists {
+        Ok(())
+    } else {
+        Err(AccountGroupExportError::NotFound)
+    }
 }
 
 fn validate_date(connection: &Connection, value: &str) -> Result<(), AccountGroupExportError> {

@@ -48,6 +48,7 @@ fn db_error(error: rusqlite::Error) -> FinancialCalendarError {
 #[serde(rename_all = "camelCase")]
 pub struct FinancialCalendarRequest {
     pub household_id: String,
+    pub account_group_id: Option<String>,
     pub month: String,
     pub as_of: Option<String>,
 }
@@ -56,6 +57,7 @@ pub struct FinancialCalendarRequest {
 #[serde(rename_all = "camelCase")]
 pub struct MonthlyFinancialReportRequest {
     pub household_id: String,
+    pub account_group_id: Option<String>,
     pub month: String,
     pub as_of: Option<String>,
 }
@@ -64,6 +66,7 @@ pub struct MonthlyFinancialReportRequest {
 #[serde(rename_all = "camelCase")]
 pub struct YearlyFinancialReportRequest {
     pub household_id: String,
+    pub account_group_id: Option<String>,
     pub year: String,
     pub as_of: Option<String>,
 }
@@ -259,6 +262,11 @@ pub fn financial_calendar(
     request: &FinancialCalendarRequest,
 ) -> Result<FinancialCalendarDto, FinancialCalendarError> {
     validate_household(connection, &request.household_id)?;
+    validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+    )?;
     let start = month_start(connection, &request.month)?;
     let end = date_shift(connection, &start, "+1 month")?;
     let as_of = resolve_as_of(connection, request.as_of.as_deref())?;
@@ -279,22 +287,29 @@ pub fn financial_calendar(
              LEFT JOIN accounts a ON a.id = je.account_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
                AND t.occurred_on >= ?2 AND t.occurred_on < ?3
+               AND (?4 IS NULL OR EXISTS (
+                 SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                   ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                 WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?4))
              GROUP BY t.id, t.occurred_on, t.transaction_type, t.payee, t.description
              ORDER BY t.occurred_on, t.id",
         )
         .map_err(db_error)?;
     let rows = statement
-        .query_map(params![request.household_id, start, end], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, i64>(6)?,
-            ))
-        })
+        .query_map(
+            params![request.household_id, start, end, request.account_group_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                ))
+            },
+        )
         .map_err(db_error)?;
     for row in rows {
         let (id, date, transaction_type, title, income, expense, asset_delta) =
@@ -325,7 +340,14 @@ pub fn financial_calendar(
             });
         }
     }
-    append_card_events(connection, &request.household_id, &start, &end, &mut days)?;
+    append_card_events(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+        &start,
+        &end,
+        &mut days,
+    )?;
 
     let days = days
         .into_iter()
@@ -363,22 +385,35 @@ pub fn monthly_report(
     request: &MonthlyFinancialReportRequest,
 ) -> Result<MonthlyFinancialReportDto, FinancialCalendarError> {
     validate_household(connection, &request.household_id)?;
+    validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+    )?;
     let start = month_start(connection, &request.month)?;
     let end = date_shift(connection, &start, "+1 month")?;
     let prior_month_start = date_shift(connection, &start, "-1 month")?;
     let prior_year_start = date_shift(connection, &start, "-1 year")?;
     let prior_year_end = date_shift(connection, &end, "-1 year")?;
     let as_of = resolve_as_of(connection, request.as_of.as_deref())?;
-    let current = period_metrics(connection, &request.household_id, &start, &end)?;
+    let current = period_metrics(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+        &start,
+        &end,
+    )?;
     let prior_month = period_metrics(
         connection,
         &request.household_id,
+        request.account_group_id.as_deref(),
         &prior_month_start,
         &start,
     )?;
     let prior_year = period_metrics(
         connection,
         &request.household_id,
+        request.account_group_id.as_deref(),
         &prior_year_start,
         &prior_year_end,
     )?;
@@ -389,6 +424,7 @@ pub fn monthly_report(
         top_category_drivers: category_drivers(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &start,
             &end,
             &prior_month_start,
@@ -397,6 +433,7 @@ pub fn monthly_report(
         top_merchant_drivers: merchant_drivers(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &start,
             &end,
             &prior_month_start,
@@ -405,7 +442,13 @@ pub fn monthly_report(
         budget: budget_status(connection, &request.household_id, &start, &end)?,
         goals: goals_summary(connection, &request.household_id, &start, &end)?,
         data_quality: data_quality(connection, &request.household_id, &as_of)?,
-        reconciliation: reconciliation_summary(connection, &request.household_id, &start, &end)?,
+        reconciliation: reconciliation_summary(
+            connection,
+            &request.household_id,
+            request.account_group_id.as_deref(),
+            &start,
+            &end,
+        )?,
         current,
         prior_month,
         prior_year,
@@ -417,12 +460,29 @@ pub fn yearly_report(
     request: &YearlyFinancialReportRequest,
 ) -> Result<YearlyFinancialReportDto, FinancialCalendarError> {
     validate_household(connection, &request.household_id)?;
+    validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+    )?;
     let start = year_start(connection, &request.year)?;
     let end = date_shift(connection, &start, "+1 year")?;
     let prior_start = date_shift(connection, &start, "-1 year")?;
     let as_of = resolve_as_of(connection, request.as_of.as_deref())?;
-    let current = period_metrics(connection, &request.household_id, &start, &end)?;
-    let prior_year = period_metrics(connection, &request.household_id, &prior_start, &start)?;
+    let current = period_metrics(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+        &start,
+        &end,
+    )?;
+    let prior_year = period_metrics(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+        &prior_start,
+        &start,
+    )?;
     let months = (0..12)
         .map(|offset| {
             let month_start = date_shift(connection, &start, &format!("+{offset} months"))?;
@@ -432,6 +492,7 @@ pub fn yearly_report(
                 metrics: period_metrics(
                     connection,
                     &request.household_id,
+                    request.account_group_id.as_deref(),
                     &month_start,
                     &month_end,
                 )?,
@@ -445,6 +506,7 @@ pub fn yearly_report(
         top_category_drivers: category_drivers(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &start,
             &end,
             &prior_start,
@@ -453,6 +515,7 @@ pub fn yearly_report(
         top_merchant_drivers: merchant_drivers(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &start,
             &end,
             &prior_start,
@@ -461,7 +524,13 @@ pub fn yearly_report(
         budget: budget_status(connection, &request.household_id, &start, &end)?,
         goals: goals_summary(connection, &request.household_id, &start, &end)?,
         data_quality: data_quality(connection, &request.household_id, &as_of)?,
-        reconciliation: reconciliation_summary(connection, &request.household_id, &start, &end)?,
+        reconciliation: reconciliation_summary(
+            connection,
+            &request.household_id,
+            request.account_group_id.as_deref(),
+            &start,
+            &end,
+        )?,
         current,
         prior_year,
     })
@@ -492,6 +561,7 @@ fn calendar_days(
 fn append_card_events(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     start: &str,
     end: &str,
     days: &mut BTreeMap<String, DailyAccumulator>,
@@ -504,11 +574,14 @@ fn append_card_events(
              WHERE cs.household_id = ?1 AND
                ((cs.period_end >= ?2 AND cs.period_end < ?3) OR
                 (cs.payment_due_on >= ?2 AND cs.payment_due_on < ?3))
+               AND (?4 IS NULL OR EXISTS (
+                 SELECT 1 FROM account_group_members gm WHERE gm.household_id = cs.household_id
+                   AND gm.account_group_id = ?4 AND gm.account_id = cs.card_account_id))
              ORDER BY cs.period_end, cs.id",
         )
         .map_err(db_error)?;
     let rows = statements
-        .query_map(params![household_id, start, end], |row| {
+        .query_map(params![household_id, start, end, account_group_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -545,11 +618,17 @@ fn append_card_events(
             "SELECT cp.id, a.name, cp.payment_on, cp.payment_amount_jpy, cp.reconciliation_status
              FROM card_payments cp JOIN accounts a ON a.id = cp.card_account_id
              WHERE cp.household_id = ?1 AND cp.payment_on >= ?2 AND cp.payment_on < ?3
+               AND (?4 IS NULL OR EXISTS (
+                 SELECT 1 FROM account_group_members gm WHERE gm.household_id = cp.household_id
+                   AND gm.account_group_id = ?4 AND (gm.account_id = cp.card_account_id OR EXISTS (
+                     SELECT 1 FROM journal_entries payment_je
+                     WHERE payment_je.transaction_id = cp.bank_transaction_id
+                       AND payment_je.account_id = gm.account_id))))
              ORDER BY cp.payment_on, cp.id",
         )
         .map_err(db_error)?;
     let rows = payments
-        .query_map(params![household_id, start, end], |row| {
+        .query_map(params![household_id, start, end, account_group_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -577,6 +656,7 @@ fn append_card_events(
 fn period_metrics(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     start: &str,
     end: &str,
 ) -> Result<PeriodMetricsDto, FinancialCalendarError> {
@@ -593,8 +673,12 @@ fn period_metrics(
              LEFT JOIN accounts a ON a.id = je.account_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
                AND t.occurred_on >= ?2 AND t.occurred_on < ?3
-               AND t.transaction_type != 'CARD_PAYMENT'",
-            params![household_id, start, end],
+               AND t.transaction_type != 'CARD_PAYMENT'
+               AND (?4 IS NULL OR EXISTS (
+                 SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                   ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                 WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?4))",
+            params![household_id, start, end, account_group_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(db_error)?;
@@ -725,6 +809,7 @@ fn data_quality(
 fn reconciliation_summary(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     start: &str,
     end: &str,
 ) -> Result<ReconciliationSummaryDto, FinancialCalendarError> {
@@ -737,9 +822,18 @@ fn reconciliation_summary(
                COALESCE(SUM(CASE WHEN reconciliation_status = 'UNMATCHED' THEN 1 ELSE 0 END),0),
                COALESCE(SUM(CASE WHEN reconciliation_status IN ('OVERPAID','UNDERPAID') THEN 1 ELSE 0 END),0),
                COALESCE((SELECT SUM(cp.payment_amount_jpy) FROM card_payments cp
-                 WHERE cp.household_id = ?1 AND cp.payment_on >= ?2 AND cp.payment_on < ?3),0)
-             FROM card_statements WHERE household_id = ?1 AND period_end >= ?2 AND period_end < ?3",
-            params![household_id, start, end],
+                 WHERE cp.household_id = ?1 AND cp.payment_on >= ?2 AND cp.payment_on < ?3
+                   AND (?4 IS NULL OR EXISTS (SELECT 1 FROM account_group_members gm
+                     WHERE gm.household_id = cp.household_id AND gm.account_group_id = ?4
+                       AND (gm.account_id = cp.card_account_id OR EXISTS (
+                         SELECT 1 FROM journal_entries payment_je
+                         WHERE payment_je.transaction_id = cp.bank_transaction_id
+                           AND payment_je.account_id = gm.account_id))))),0)
+             FROM card_statements cs WHERE household_id = ?1 AND period_end >= ?2 AND period_end < ?3
+               AND (?4 IS NULL OR EXISTS (SELECT 1 FROM account_group_members gm
+                 WHERE gm.household_id = cs.household_id AND gm.account_group_id = ?4
+                   AND gm.account_id = cs.card_account_id))",
+            params![household_id, start, end, account_group_id],
             |row| {
                 Ok(ReconciliationSummaryDto {
                     total_statements: row.get(0)?,
@@ -758,6 +852,7 @@ fn reconciliation_summary(
 fn category_drivers(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     current_start: &str,
     current_end: &str,
     previous_start: &str,
@@ -776,9 +871,13 @@ fn category_drivers(
                WHERE t.household_id = ?1 AND t.status = 'POSTED'
                  AND ((t.occurred_on >= ?2 AND t.occurred_on < ?3) OR
                       (t.occurred_on >= ?4 AND t.occurred_on < ?5))
+                 AND (?6 IS NULL OR EXISTS (
+                   SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                     ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                   WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?6))
                GROUP BY a.id, a.name
              ) SELECT id, name, current_jpy, previous_jpy, current_jpy - previous_jpy
-               FROM totals ORDER BY abs(current_jpy - previous_jpy) DESC, current_jpy DESC, name LIMIT ?6",
+               FROM totals ORDER BY abs(current_jpy - previous_jpy) DESC, current_jpy DESC, name LIMIT ?7",
         )
         .map_err(db_error)?;
     let rows = statement
@@ -789,6 +888,7 @@ fn category_drivers(
                 current_end,
                 previous_start,
                 previous_end,
+                account_group_id,
                 TOP_DRIVER_LIMIT
             ],
             |row| {
@@ -808,6 +908,7 @@ fn category_drivers(
 fn merchant_drivers(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     current_start: &str,
     current_end: &str,
     previous_start: &str,
@@ -824,6 +925,10 @@ fn merchant_drivers(
                WHERE t.household_id = ?1 AND t.status = 'POSTED'
                  AND ((t.occurred_on >= ?2 AND t.occurred_on < ?3) OR
                       (t.occurred_on >= ?4 AND t.occurred_on < ?5))
+                 AND (?6 IS NULL OR EXISTS (
+                   SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                     ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                   WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?6))
                GROUP BY t.id, t.occurred_on, t.payee, t.description
              ), totals AS (
                SELECT merchant,
@@ -831,7 +936,7 @@ fn merchant_drivers(
                  SUM(CASE WHEN occurred_on >= ?4 AND occurred_on < ?5 THEN amount ELSE 0 END) previous_jpy
                FROM tx_expense GROUP BY merchant
              ) SELECT merchant, current_jpy, previous_jpy, current_jpy - previous_jpy
-               FROM totals ORDER BY abs(current_jpy - previous_jpy) DESC, current_jpy DESC, merchant LIMIT ?6",
+               FROM totals ORDER BY abs(current_jpy - previous_jpy) DESC, current_jpy DESC, merchant LIMIT ?7",
         )
         .map_err(db_error)?;
     let rows = statement
@@ -842,6 +947,7 @@ fn merchant_drivers(
                 current_end,
                 previous_start,
                 previous_end,
+                account_group_id,
                 TOP_DRIVER_LIMIT
             ],
             |row| {
@@ -907,6 +1013,23 @@ fn validate_household(
         return Err(FinancialCalendarError::NotFound);
     }
     Ok(())
+}
+
+fn validate_account_group_scope(
+    connection: &Connection,
+    household_id: &str,
+    group_id: Option<&str>,
+) -> Result<(), FinancialCalendarError> {
+    crate::account_groups_export::validate_account_group_scope(connection, household_id, group_id)
+        .map_err(|error| match error {
+            crate::account_groups_export::AccountGroupExportError::InvalidInput(message) => {
+                FinancialCalendarError::InvalidInput(message)
+            }
+            crate::account_groups_export::AccountGroupExportError::NotFound => {
+                FinancialCalendarError::NotFound
+            }
+            _ => FinancialCalendarError::Unavailable,
+        })
 }
 
 fn month_start(connection: &Connection, month: &str) -> Result<String, FinancialCalendarError> {
@@ -1076,6 +1199,14 @@ mod tests {
                  CREATE TABLE source_documents (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, imported_at TEXT NOT NULL
                  );
+                 CREATE TABLE account_groups (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL, name TEXT NOT NULL,
+                   group_kind TEXT NOT NULL, sort_order INTEGER NOT NULL
+                 );
+                 CREATE TABLE account_group_members (
+                   household_id TEXT NOT NULL, account_group_id TEXT NOT NULL,
+                   account_id TEXT NOT NULL, sort_order INTEGER NOT NULL
+                 );
                  INSERT INTO households VALUES ('family','Family');
                  INSERT INTO accounts VALUES
                    ('bank','family','Bank','ASSET','BANK'),
@@ -1236,6 +1367,7 @@ mod tests {
             &connection,
             &FinancialCalendarRequest {
                 household_id: "family".into(),
+                account_group_id: None,
                 month: "2026-07".into(),
                 as_of: Some("2026-07-31".into()),
             },
@@ -1275,6 +1407,7 @@ mod tests {
             &connection,
             &MonthlyFinancialReportRequest {
                 household_id: "family".into(),
+                account_group_id: None,
                 month: "2026-07".into(),
                 as_of: Some("2026-07-31".into()),
             },
@@ -1300,6 +1433,7 @@ mod tests {
             &connection,
             &YearlyFinancialReportRequest {
                 household_id: "family".into(),
+                account_group_id: None,
                 year: "2026".into(),
                 as_of: Some("2026-12-31".into()),
             },
@@ -1314,12 +1448,69 @@ mod tests {
     }
 
     #[test]
+    fn saved_account_group_scopes_calendar_and_reports_without_duplicate_transactions() {
+        let connection = database();
+        connection
+            .execute_batch(
+                "INSERT INTO account_groups VALUES ('spending','family','Spending','CUSTOM',0);
+                 INSERT INTO account_group_members VALUES
+                   ('family','spending','groceries',0),
+                   ('family','spending','card',1);
+                 INSERT INTO households VALUES ('other','Other');
+                 INSERT INTO account_groups VALUES ('foreign','other','Foreign','CUSTOM',0);",
+            )
+            .unwrap();
+        let calendar = financial_calendar(
+            &connection,
+            &FinancialCalendarRequest {
+                household_id: "family".into(),
+                account_group_id: Some("spending".into()),
+                month: "2026-07".into(),
+                as_of: Some("2026-07-31".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(calendar.days[9].posted_transaction_count, 1);
+        assert_eq!(calendar.days[9].accrual_expense_jpy, 50_000);
+        assert_eq!(calendar.days[11].posted_transaction_count, 1);
+        assert_eq!(calendar.days[4].posted_transaction_count, 0);
+
+        let report = monthly_report(
+            &connection,
+            &MonthlyFinancialReportRequest {
+                household_id: "family".into(),
+                account_group_id: Some("spending".into()),
+                month: "2026-07".into(),
+                as_of: Some("2026-07-31".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(report.current.income_jpy, 0);
+        assert_eq!(report.current.expense_jpy, 70_000);
+        assert_eq!(report.current.posted_transaction_count, 2);
+
+        assert!(matches!(
+            yearly_report(
+                &connection,
+                &YearlyFinancialReportRequest {
+                    household_id: "family".into(),
+                    account_group_id: Some("foreign".into()),
+                    year: "2026".into(),
+                    as_of: None,
+                }
+            ),
+            Err(FinancialCalendarError::NotFound)
+        ));
+    }
+
+    #[test]
     fn rejects_noncanonical_periods_and_missing_households() {
         let connection = database();
         let invalid_month = financial_calendar(
             &connection,
             &FinancialCalendarRequest {
                 household_id: "family".into(),
+                account_group_id: None,
                 month: "2026-13".into(),
                 as_of: None,
             },
@@ -1332,6 +1523,7 @@ mod tests {
             &connection,
             &YearlyFinancialReportRequest {
                 household_id: "missing".into(),
+                account_group_id: None,
                 year: "2026".into(),
                 as_of: None,
             },
