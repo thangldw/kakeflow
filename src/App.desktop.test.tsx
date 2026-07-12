@@ -103,7 +103,7 @@ describe('KakeFlow desktop read models', () => {
     }])
     render(<App />)
     await screen.findByText('生協')
-    fireEvent.click(screen.getByRole('button', { name: 'カード照合 1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
 
     expect(await screen.findByText('照合候補')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /金額と口座を確認して照合/ }))

@@ -3,25 +3,18 @@ import {
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
-  Bell,
-  BookOpen,
-  CalendarDays,
-  ChevronDown,
   CircleDollarSign,
   CreditCard,
   FileCheck2,
   Goal,
   Home,
   Import,
-  LayoutDashboard,
   Leaf,
   Menu,
   MoreHorizontal,
   Search,
   Settings,
-  SlidersHorizontal,
   Sparkles,
-  Tags,
   TrainFront,
   TrendingUp,
   Utensils,
@@ -56,8 +49,8 @@ function currentTokyoPeriod(now = new Date()) {
 const navigation: NavigationItem[] = [
   { id: 'overview', label: 'ホーム', icon: Home },
   { id: 'transactions', label: '取引', icon: WalletCards },
-  { id: 'import', label: 'インポート', icon: Import, badge: 6 },
-  { id: 'cards', label: 'カード照合', icon: CreditCard, badge: 1 },
+  { id: 'import', label: 'インポート', icon: Import },
+  { id: 'cards', label: 'カード照合', icon: CreditCard },
   { id: 'budgets', label: '予算・目標', icon: Goal },
 ]
 
@@ -72,11 +65,10 @@ function Sidebar({ page, setPage, open, close, bootstrap, householdName }: { pag
           <button className="icon-btn mobile-close" aria-label="メニューを閉じる" onClick={close}><X size={19} /></button>
         </div>
 
-        <button className="household-picker" type="button" aria-label="世帯を切り替える">
+        <div className="household-picker">
           <div className="avatar">TK</div>
-          <div><strong>{householdName}</strong><small>ファミリープラン</small></div>
-          <ChevronDown size={16} />
-        </button>
+          <div><strong>{householdName}</strong><small>ローカル世帯</small></div>
+        </div>
 
         <nav>
           <p className="nav-caption">メニュー</p>
@@ -91,9 +83,6 @@ function Sidebar({ page, setPage, open, close, bootstrap, householdName }: { pag
               {item.badge && <b>{item.badge}</b>}
             </button>
           ))}
-          <p className="nav-caption nav-caption--second">管理</p>
-          <button className="nav-item"><Tags size={19} /><span>カテゴリー・ルール</span></button>
-          <button className="nav-item"><LayoutDashboard size={19} /><span>レポート</span></button>
         </nav>
 
         <div className="sidebar-foot">
@@ -109,11 +98,7 @@ function Topbar({ openMenu }: { openMenu: () => void }) {
   return (
     <header className="topbar">
       <button className="icon-btn menu-btn" aria-label="メニューを開く" onClick={openMenu}><Menu size={21} /></button>
-      <div className="search"><Search size={18} /><input aria-label="検索" placeholder="取引、店舗、金額を検索" /><kbd>⌘ K</kbd></div>
-      <div className="top-actions">
-        <button className="icon-btn notification" aria-label="通知"><Bell size={19} /><span /></button>
-        <div className="top-avatar">TK</div>
-      </div>
+      <div className="top-actions"><div className="top-avatar">TK</div></div>
     </header>
   )
 }
@@ -130,7 +115,7 @@ function PageHeader({ eyebrow, title, description, children }: { eyebrow: string
 function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: string; value: string; meta: string; trend?: string; icon: typeof TrendingUp; accent: string }) {
   return (
     <article className="kpi-card">
-      <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{label}</span><MoreHorizontal size={18} /></div>
+      <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{label}</span></div>
       <strong>{value}</strong>
       <div className="kpi-meta">{trend && <em><ArrowUpRight size={13} />{trend}</em>}<span>{meta}</span></div>
     </article>
@@ -151,7 +136,7 @@ function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month,
       <div className="chart-y"><span>{yen(Math.round(max))}</span><span>{yen(Math.round(max * .67))}</span><span>{yen(Math.round(max * .34))}</span><span>¥0</span></div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="直近6か月の収入と支出">
         {[44, 87, 130, 173].map((line) => <line key={line} x1="18" y1={line} x2="602" y2={line} className="gridline" />)}
-        <path d={`${path('income')} L ${x(5)} ${height - 10} L ${x(0)} ${height - 10} Z`} className="area-income" />
+        <path d={`${path('income')} L ${x(data.length - 1)} ${height - 10} L ${x(0)} ${height - 10} Z`} className="area-income" />
         <path d={path('income')} className="line-income" />
         <path d={path('expense')} className="line-expense" />
         {data.map((d, i) => <circle key={`i${d.month}`} cx={x(i)} cy={y(d.income)} r="3.5" className="dot-income" />)}
@@ -162,7 +147,7 @@ function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month,
   )
 }
 
-function SpendingCard({ expense = currentMonthMetrics.expense, categories }: { expense?: number; categories?: readonly { name: string; amount: number }[] }) {
+function SpendingCard({ expense = currentMonthMetrics.expense, categories, onDetails }: { expense?: number; categories?: readonly { name: string; amount: number }[]; onDetails: () => void }) {
   const palette = ['#ed714d', '#6f7d57', '#e4aa45', '#7f9ba5', '#c7b8a0', '#8d7ca8']
   const source = categories ? categories.filter((item) => item.amount > 0).slice(0, 6).map((item, index) => ({ ...item, color: palette[index % palette.length] })) : categoryData
   const categoryTotal = source.reduce((total, item) => total + item.amount, 0)
@@ -170,7 +155,7 @@ function SpendingCard({ expense = currentMonthMetrics.expense, categories }: { e
   const gradient = legend.length > 0 ? `conic-gradient(${legend.map((d, i) => `${d.color} ${legend.slice(0, i).reduce((a, b) => a + b.pct, 0)}% ${legend.slice(0, i + 1).reduce((a, b) => a + b.pct, 0)}%`).join(',')})` : '#e8ebe4'
   return (
     <article className="panel spending-card">
-      <div className="panel-head"><div><h2>支出の内訳</h2><p>今月のカテゴリー別</p></div><button className="text-btn">詳細を見る <ArrowRight size={14} /></button></div>
+      <div className="panel-head"><div><h2>支出の内訳</h2><p>今月のカテゴリー別</p></div><button className="text-btn" onClick={onDetails}>詳細を見る <ArrowRight size={14} /></button></div>
       <div className="spending-body">
         <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>{yen(expense)}</strong></div></div>
         <div className="legend">{legend.length > 0 ? legend.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>) : <p className="empty-state">支出はまだありません。</p>}</div>
@@ -195,7 +180,7 @@ function TransactionRows({ rows = transactions }: { rows?: Transaction[] }) {
   })}</div>
 }
 
-function ReconciliationMini({ liveCards, desktop }: { liveCards: readonly CardSettlementDto[]; desktop: boolean }) {
+function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonly CardSettlementDto[]; desktop: boolean; onOpen: () => void }) {
   const cards = desktop ? liveCards.map((card) => ({
     name: card.cardName, mask: card.maskedIdentifier ?? '番号未設定', dueDate: card.paymentDueOn ?? card.periodEnd,
     statement: card.statementAmountJpy, bankDebit: card.paymentAmountJpy ?? undefined,
@@ -205,7 +190,7 @@ function ReconciliationMini({ liveCards, desktop }: { liveCards: readonly CardSe
   })) : cardSettlements
   return (
     <article className="panel reconciliation">
-      <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="icon-btn" aria-label="カード照合メニュー"><MoreHorizontal size={18} /></button></div>
+      <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="text-btn" onClick={onOpen}>照合を開く <ArrowRight size={14} /></button></div>
       <div className="card-stack">{cards.length > 0 ? cards.map((card) => <div className="settlement" key={card.name}>
         <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{card.status === 'reconciled' ? '照合済み' : '引落待ち'}</b></div>
         <div className="settlement-values"><span>請求額 <strong>{yen(card.statement)}</strong></span><span>口座引落 <strong>{card.bankDebit ? yen(card.bankDebit) : '—'}</strong></span></div>
@@ -215,7 +200,7 @@ function ReconciliationMini({ liveCards, desktop }: { liveCards: readonly CardSe
   )
 }
 
-function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean }) {
+function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string }) {
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
   const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
@@ -223,8 +208,7 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
   const trend = desktop ? (liveDashboard?.accrualTrend ?? []).map((point) => ({ month: point.month, income: point.incomeJpy, expense: point.expenseJpy })) : undefined
   const categories = desktop ? (liveDashboard?.expenseCategories ?? []).map((item) => ({ name: item.name, amount: item.amountJpy })) : undefined
   return <>
-    <PageHeader eyebrow="2026年7月12日 日曜日" title="こんにちは、田中さん" description={desktop ? `今月の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています。` : `今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
-      <button className="secondary-btn"><CalendarDays size={17} /> 2026年7月 <ChevronDown size={15} /></button>
+    <PageHeader eyebrow={new Intl.DateTimeFormat('ja-JP', { dateStyle: 'full', timeZone: 'Asia/Tokyo' }).format(new Date())} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `今月の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています。` : `今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>
     </PageHeader>
     <section className="kpi-grid">
@@ -238,14 +222,14 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
         <div className="panel-head"><div><h2>収支の推移</h2><p>発生ベース・直近6か月</p></div><div className="chart-legend"><span className="income">収入</span><span className="expense">支出</span></div></div>
         <TrendChart data={trend} />
       </article>
-      <SpendingCard expense={expense} categories={categories} />
+      <SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} />
       <article className="panel recent-panel">
         <div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>
         {displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}
       </article>
-      <ReconciliationMini liveCards={liveCards} desktop={desktop} />
+      <ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} />
     </section>
-    <div className="data-footnote"><FileCheck2 size={15} /> 最終更新: 本日 15:42 ・ MUFG、PayPay、Rakuten Card ほか3件 <span>データ充足率 96%</span></div>
+    <div className="data-footnote"><FileCheck2 size={15} /> 確定済み台帳から集計 ・ 未確認の候補は含みません</div>
   </>
 }
 
@@ -279,9 +263,7 @@ function TransactionsPage({ householdId, revision }: { householdId: string | nul
   const basisExpense = desktop ? liveTotals?.expenseJpy ?? 0 : basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
   const basisIncome = desktop ? liveTotals?.incomeJpy ?? 0 : currentMonthMetrics.income
   return <>
-    <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。">
-      <button className="secondary-btn"><SlidersHorizontal size={17} /> フィルター</button><button className="primary-btn"><BookOpen size={17} /> 手動で追加</button>
-    </PageHeader>
+    <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。" />
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
       <div className="table-summary"><span>{currentTokyoPeriod().month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
@@ -449,7 +431,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
 
   return <>
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
-      <button className="secondary-btn"><Settings size={17} /> 監視フォルダー</button><button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
+      <button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
       <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,text/csv,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
     <section className="status-grid">
@@ -461,11 +443,11 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
     <section className="panel import-panel">
-      <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルの「家計簿 Inbox」から自動検出</p></div><button className="text-btn">処理履歴</button></div>
+      <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / Excel / PDF / レシート画像をここにドロップ</span><small>PayPay・銀行・カード・PNG / JPEGレシート</small></button>
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : <button className="icon-btn" aria-label={`${item.filename}の解析結果`} title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button>}</div>)}
-        {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn" aria-label={`${item.file}のメニュー`}><MoreHorizontal size={18} /></button></div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
+        {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
     </section>
@@ -495,14 +477,13 @@ function CardsPage({ cards, householdId, onChanged }: { cards: readonly CardSett
   }
   return <>
     <PageHeader eyebrow="カード管理" title="請求・口座引落の照合" description="カード利用は支出、銀行引落は負債の返済として正しく区別します。">
-      <button className="secondary-btn"><CalendarDays size={17} /> 2026年7月</button>
     </PageHeader>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     <section className="cards-page-grid">{displayCards.map((card) => <article className="panel card-detail" key={card.id}>
       <div className="card-visual" style={{ background: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a' }}><span>KAKEFLOW CARD</span><strong>{card.cardName}</strong><small>{card.maskedIdentifier ?? '番号未設定'}</small></div>
       <div className="card-detail-head"><div><span>請求額</span><strong>{yen(card.statementAmountJpy)}</strong></div><b className={card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 'possible' : 'pending'}>{card.reconciliationStatus === 'FULLY_RECONCILED' ? '✓ 照合済み' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? '照合候補' : '引落待ち'}</b></div>
       <dl><div><dt>期間</dt><dd>{card.periodStart} – {card.periodEnd}</dd></div><div><dt>口座引落</dt><dd>{card.paymentAmountJpy ? yen(card.paymentAmountJpy) : '未検出'}</dd></div><div><dt>利用明細</dt><dd>{card.lineCount}件</dd></div></dl>
-      {card.reconciliationStatus === 'POSSIBLE_MATCH' ? <button className="full-btn" disabled={busyId === card.id} onClick={() => void confirm(card)}>{busyId === card.id ? '確定中…' : '金額と口座を確認して照合'} <ArrowRight size={15} /></button> : <button className="full-btn">明細を開く <ArrowRight size={15} /></button>}
+      {card.reconciliationStatus === 'POSSIBLE_MATCH' && <button className="full-btn" disabled={busyId === card.id} onClick={() => void confirm(card)}>{busyId === card.id ? '確定中…' : '金額と口座を確認して照合'} <ArrowRight size={15} /></button>}
     </article>)}{desktop && displayCards.length === 0 && <p className="empty-state">カードCSVを取り込むと、ここに請求と照合状況が表示されます。</p>}</section>
   </>
 }
@@ -510,7 +491,7 @@ function CardsPage({ cards, householdId, onChanged }: { cards: readonly CardSett
 function BudgetsPage() {
   const budgets = budgetByCategory
   return <>
-    <PageHeader eyebrow="プランニング" title="予算・貯蓄目標" description="今月使える金額と、家族の将来のための貯蓄を見通します。"><button className="primary-btn"><Goal size={17} /> 目標を追加</button></PageHeader>
+    <PageHeader eyebrow="プランニング" title="予算・貯蓄目標" description="今月使える金額と、家族の将来のための貯蓄を見通します。" />
     <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>7月のカテゴリー予算</h2><p>全体の {(budgetUsage * 100).toFixed(1)}% を使用</p></div><strong>{yen(currentMonthMetrics.expense)} / {yen(currentMonthMetrics.budget)}</strong></div>{budgets.map((b) => <div className="budget-row" key={b.name}><div><i style={{background:b.color}} /><strong>{b.name}</strong></div><span>{yen(b.amount)} <small>/ {yen(b.budget)}</small></span><div className="progress"><span style={{width:`${Math.min(100,b.amount/b.budget*100)}%`,background:b.color}} /></div></div>)}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>貯蓄目標</h2><p>家族旅行 2027</p></div><Sparkles size={20} /></div><div className="goal-ring"><div><strong>68%</strong><span>達成</span></div></div><strong>{yen(680000)} <small>/ {yen(1000000)}</small></strong><span>毎月 ¥40,000 であと8か月</span></article></section>
   </>
 }
@@ -662,7 +643,7 @@ function App() {
   }, [households, ledgerRevision])
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={households[0]?.name ?? '家計'} />,
     transactions: <TransactionsPage householdId={households[0]?.id ?? null} revision={ledgerRevision} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage cards={liveCards} householdId={households[0]?.id ?? null} onChanged={() => setLedgerRevision((value) => value + 1)} />,
