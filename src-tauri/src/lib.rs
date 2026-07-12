@@ -4,6 +4,7 @@ pub mod brokerage;
 pub mod document_extract;
 pub mod document_vault;
 pub mod financial_calendar;
+pub mod fixed_cost_review;
 mod folder_discovery;
 pub mod forecast_action;
 pub mod import_workflow;
@@ -2053,6 +2054,7 @@ pub fn run() {
             financial_calendar::financial_calendar_query,
             financial_calendar::financial_report_monthly_query,
             financial_calendar::financial_report_yearly_query,
+            fixed_cost_review::fixed_cost_review_query,
             forecast_action::forecast_action_query,
             dashboard_query,
             financial_intelligence_query,
