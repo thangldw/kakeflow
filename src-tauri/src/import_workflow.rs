@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
 
+use crate::record_scope::{
+    attribution_shape_is_valid, audience_shape_is_valid, AttributionKind, AudienceVisibility,
+};
+
 const MAX_RECORDS: usize = 100_000;
 const MAX_CANDIDATES: usize = 100_000;
 const MAX_EVIDENCE_PER_CANDIDATE: usize = 128;
@@ -46,6 +50,10 @@ pub struct StartImport {
     pub source_modified_at: Option<String>,
     pub adapter_id: Option<String>,
     pub adapter_version: Option<String>,
+    #[serde(default)]
+    pub audience_visibility: AudienceVisibility,
+    #[serde(default)]
+    pub audience_member_id: Option<String>,
     pub records: Vec<ImportSourceRecord>,
     pub candidates: Vec<NormalizedCandidate>,
     #[serde(default)]
@@ -105,6 +113,14 @@ pub struct NormalizedCandidate {
     pub extraction_confidence_bps: Option<i64>,
     pub normalization_confidence_bps: Option<i64>,
     pub review_status: String,
+    #[serde(default)]
+    pub attribution_kind: AttributionKind,
+    #[serde(default)]
+    pub attributed_member_id: Option<String>,
+    #[serde(default)]
+    pub audience_visibility: AudienceVisibility,
+    #[serde(default)]
+    pub audience_member_id: Option<String>,
     pub evidence: Vec<CandidateEvidence>,
 }
 
@@ -135,6 +151,8 @@ pub struct PreviewSourceMetadata {
     pub media_type: String,
     pub byte_size: i64,
     pub sha256: String,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -155,6 +173,10 @@ pub struct PreviewCandidate {
     pub evidence_count: u64,
     pub evidence_roles: Vec<String>,
     pub issues: Vec<String>,
+    pub attribution_kind: String,
+    pub attributed_member_id: Option<String>,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +187,14 @@ pub struct PostingDecision {
     pub transaction_type: String,
     pub payee: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub attribution_kind: AttributionKind,
+    #[serde(default)]
+    pub attributed_member_id: Option<String>,
+    #[serde(default)]
+    pub audience_visibility: AudienceVisibility,
+    #[serde(default)]
+    pub audience_member_id: Option<String>,
     pub entries: Vec<JournalEntryDecision>,
 }
 
@@ -204,6 +234,12 @@ pub fn start_import(
     validate_start(request, vault_storage_uri)?;
     let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
 
+    ensure_members_belong(
+        &tx,
+        &request.household_id,
+        [request.audience_member_id.as_deref()],
+    )?;
+
     for record in &request.records {
         let valid_json: bool =
             tx.query_row("SELECT json_valid(?1)", [&record.payload_json], |row| {
@@ -238,8 +274,9 @@ pub fn start_import(
     tx.execute(
         "INSERT INTO source_documents \
          (id, household_id, import_run_id, source_type, original_filename, media_type, \
-          byte_size, sha256, storage_path, source_modified_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+          byte_size, sha256, storage_path, source_modified_at, \
+          audience_visibility, audience_member_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             request.document_id,
             request.household_id,
@@ -250,7 +287,9 @@ pub fn start_import(
             request.byte_size,
             request.sha256,
             vault_storage_uri,
-            request.source_modified_at
+            request.source_modified_at,
+            request.audience_visibility.as_sql(),
+            request.audience_member_id
         ],
     )?;
 
@@ -269,6 +308,14 @@ pub fn start_import(
         )?;
     }
     for candidate in &request.candidates {
+        ensure_members_belong(
+            &tx,
+            &request.household_id,
+            [
+                candidate.attributed_member_id.as_deref(),
+                candidate.audience_member_id.as_deref(),
+            ],
+        )?;
         if let Some(account_id) = &candidate.account_id {
             let account_exists: bool = tx.query_row(
                 "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = ?1 AND household_id = ?2)",
@@ -285,8 +332,10 @@ pub fn start_import(
             "INSERT INTO transaction_candidates \
              (id, household_id, account_id, occurred_on, posted_on, amount_jpy, direction, \
               description_raw, merchant_raw, external_transaction_id, \
-              extraction_confidence_bps, normalization_confidence_bps, review_status) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+              extraction_confidence_bps, normalization_confidence_bps, review_status, \
+              attribution_kind, attributed_member_id, audience_visibility, audience_member_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+                     ?14, ?15, ?16, ?17)",
             params![
                 candidate.id,
                 request.household_id,
@@ -300,7 +349,11 @@ pub fn start_import(
                 candidate.external_transaction_id,
                 candidate.extraction_confidence_bps,
                 candidate.normalization_confidence_bps,
-                candidate.review_status
+                candidate.review_status,
+                candidate.attribution_kind.as_sql(),
+                candidate.attributed_member_id,
+                candidate.audience_visibility.as_sql(),
+                candidate.audience_member_id
             ],
         )?;
         for evidence in &candidate.evidence {
@@ -368,29 +421,42 @@ pub fn start_import(
 /// Returns review data without exposing the vault URI or source payload JSON.
 pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPreview> {
     validate_id("run_id", run_id)?;
-    let (document_id, _household_id, status, source_type, filename, media_type, byte_size, sha256) =
-        connection
-            .query_row(
-                "SELECT sd.id, ir.household_id, ir.status, sd.source_type, \
-                        sd.original_filename, sd.media_type, sd.byte_size, sd.sha256 \
+    let (
+        document_id,
+        _household_id,
+        status,
+        source_type,
+        filename,
+        media_type,
+        byte_size,
+        sha256,
+        source_audience_visibility,
+        source_audience_member_id,
+    ) = connection
+        .query_row(
+            "SELECT sd.id, ir.household_id, ir.status, sd.source_type, \
+                        sd.original_filename, sd.media_type, sd.byte_size, sd.sha256, \
+                        sd.audience_visibility, sd.audience_member_id \
                  FROM import_runs ir JOIN source_documents sd ON sd.import_run_id = ir.id \
                  WHERE ir.id = ?1 ORDER BY sd.imported_at LIMIT 1",
-                [run_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, i64>(6)?,
-                        row.get::<_, String>(7)?,
-                    ))
-                },
-            )
-            .optional()?
-            .ok_or(ImportWorkflowError::RunNotFound)?;
+            [run_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(ImportWorkflowError::RunNotFound)?;
 
     let record_count: u64 = connection.query_row(
         "SELECT count(*) FROM source_records sr JOIN source_documents sd \
@@ -401,7 +467,9 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
     let mut statement = connection.prepare(
         "SELECT DISTINCT tc.id, tc.account_id, tc.occurred_on, tc.posted_on, tc.amount_jpy, \
                 tc.direction, tc.description_raw, tc.merchant_raw, tc.external_transaction_id, \
-                tc.extraction_confidence_bps, tc.normalization_confidence_bps, tc.review_status \
+                tc.extraction_confidence_bps, tc.normalization_confidence_bps, tc.review_status, \
+                tc.attribution_kind, tc.attributed_member_id, \
+                tc.audience_visibility, tc.audience_member_id \
          FROM transaction_candidates tc \
          JOIN candidate_sources cs ON cs.candidate_id = tc.id \
          JOIN source_records sr ON sr.id = cs.source_record_id \
@@ -422,6 +490,10 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             row.get::<_, Option<i64>>(9)?,
             row.get::<_, Option<i64>>(10)?,
             row.get::<_, String>(11)?,
+            row.get::<_, String>(12)?,
+            row.get::<_, Option<String>>(13)?,
+            row.get::<_, String>(14)?,
+            row.get::<_, Option<String>>(15)?,
         ))
     })?;
     let mut candidates = Vec::new();
@@ -439,6 +511,10 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             extraction,
             normalization,
             review_status,
+            attribution_kind,
+            attributed_member_id,
+            audience_visibility,
+            audience_member_id,
         ) = row?;
         let mut role_statement = connection.prepare(
             "SELECT cs.evidence_role FROM candidate_sources cs WHERE cs.candidate_id = ?1 \
@@ -473,6 +549,10 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             evidence_count: roles.len() as u64,
             evidence_roles: roles,
             issues,
+            attribution_kind,
+            attributed_member_id,
+            audience_visibility,
+            audience_member_id,
         });
     }
     Ok(ImportPreview {
@@ -490,6 +570,8 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             media_type,
             byte_size,
             sha256,
+            audience_visibility: source_audience_visibility,
+            audience_member_id: source_audience_member_id,
         },
         candidates,
     })
@@ -584,6 +666,14 @@ pub fn commit_import(
                 decision.candidate_id.clone(),
             ));
         }
+        ensure_members_belong(
+            &tx,
+            &household_id,
+            [
+                decision.attributed_member_id.as_deref(),
+                decision.audience_member_id.as_deref(),
+            ],
+        )?;
 
         let mut debit = 0_i64;
         let mut credit = 0_i64;
@@ -641,10 +731,22 @@ pub fn commit_import(
 
         tx.execute(
             "INSERT INTO transactions \
-             (id, household_id, occurred_on, posted_on, transaction_type, payee, description, status) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED')",
-            params![decision.transaction_id, household_id, occurred_on, posted_on,
-                    decision.transaction_type, decision.payee, decision.description],
+             (id, household_id, occurred_on, posted_on, transaction_type, payee, description, status, \
+              attribution_kind, attributed_member_id, audience_visibility, audience_member_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED', ?8, ?9, ?10, ?11)",
+            params![
+                decision.transaction_id,
+                household_id,
+                occurred_on,
+                posted_on,
+                decision.transaction_type,
+                decision.payee,
+                decision.description,
+                decision.attribution_kind.as_sql(),
+                decision.attributed_member_id,
+                decision.audience_visibility.as_sql(),
+                decision.audience_member_id
+            ],
         )?;
         if decision.transaction_type == "CARD_PAYMENT" {
             let card_account_id = card_payment_account.ok_or_else(|| {
@@ -1005,6 +1107,10 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
         ));
     }
     validate_sha("document sha256", &request.sha256)?;
+    validate_audience_input(
+        request.audience_visibility,
+        request.audience_member_id.as_deref(),
+    )?;
     if request.byte_size < 0
         || request.records.len() > MAX_RECORDS
         || request.candidates.len() > MAX_CANDIDATES
@@ -1040,6 +1146,14 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
     let mut candidate_ids = HashSet::new();
     for candidate in &request.candidates {
         validate_id("candidate id", &candidate.id)?;
+        validate_attribution_input(
+            candidate.attribution_kind,
+            candidate.attributed_member_id.as_deref(),
+        )?;
+        validate_audience_input(
+            candidate.audience_visibility,
+            candidate.audience_member_id.as_deref(),
+        )?;
         if !candidate_ids.insert(candidate.id.as_str()) {
             return Err(ImportWorkflowError::Validation(
                 "duplicate candidate id".into(),
@@ -1176,6 +1290,14 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
 fn validate_posting_decision(decision: &PostingDecision) -> Result<()> {
     validate_id("candidate id", &decision.candidate_id)?;
     validate_id("transaction id", &decision.transaction_id)?;
+    validate_attribution_input(
+        decision.attribution_kind,
+        decision.attributed_member_id.as_deref(),
+    )?;
+    validate_audience_input(
+        decision.audience_visibility,
+        decision.audience_member_id.as_deref(),
+    )?;
     if !matches!(
         decision.transaction_type.as_str(),
         "EXPENSE"
@@ -1216,6 +1338,51 @@ fn validate_posting_decision(decision: &PostingDecision) -> Result<()> {
 fn validate_id(name: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
         return Err(ImportWorkflowError::Validation(format!("invalid {name}")));
+    }
+    Ok(())
+}
+
+fn validate_attribution_input(kind: AttributionKind, member_id: Option<&str>) -> Result<()> {
+    if !attribution_shape_is_valid(kind, member_id) {
+        return Err(ImportWorkflowError::Validation(
+            "invalid transaction attribution".into(),
+        ));
+    }
+    if let Some(member_id) = member_id {
+        validate_id("attributed member id", member_id)?;
+    }
+    Ok(())
+}
+
+fn validate_audience_input(visibility: AudienceVisibility, member_id: Option<&str>) -> Result<()> {
+    if !audience_shape_is_valid(visibility, member_id) {
+        return Err(ImportWorkflowError::Validation(
+            "invalid record audience".into(),
+        ));
+    }
+    if let Some(member_id) = member_id {
+        validate_id("audience member id", member_id)?;
+    }
+    Ok(())
+}
+
+fn ensure_members_belong<'a>(
+    connection: &Connection,
+    household_id: &str,
+    member_ids: impl IntoIterator<Item = Option<&'a str>>,
+) -> Result<()> {
+    for member_id in member_ids.into_iter().flatten() {
+        let belongs: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM household_members
+             WHERE id = ?1 AND household_id = ?2)",
+            params![member_id, household_id],
+            |row| row.get(0),
+        )?;
+        if !belongs {
+            return Err(ImportWorkflowError::Validation(
+                "record member does not belong to household".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1291,6 +1458,9 @@ mod tests {
                 "PRAGMA foreign_keys = ON;
                  CREATE TABLE households (
                    id TEXT PRIMARY KEY, name TEXT NOT NULL, base_currency TEXT NOT NULL DEFAULT 'JPY');
+                 CREATE TABLE household_members (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   display_name TEXT NOT NULL, status TEXT NOT NULL);
                  CREATE TABLE accounts (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
@@ -1306,6 +1476,7 @@ mod tests {
                    source_type TEXT NOT NULL, original_filename TEXT NOT NULL, media_type TEXT NOT NULL,
                    byte_size INTEGER NOT NULL, sha256 TEXT NOT NULL, storage_path TEXT NOT NULL,
                    source_modified_at TEXT, imported_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT,
                    UNIQUE(household_id, sha256));
                  CREATE TABLE source_records (
                    id TEXT PRIMARY KEY, source_document_id TEXT NOT NULL REFERENCES source_documents(id) ON DELETE CASCADE,
@@ -1318,6 +1489,8 @@ mod tests {
                    amount_jpy INTEGER NOT NULL, direction TEXT NOT NULL, description_raw TEXT,
                    merchant_raw TEXT, external_transaction_id TEXT, extraction_confidence_bps INTEGER,
                    normalization_confidence_bps INTEGER, review_status TEXT NOT NULL DEFAULT 'PENDING',
+                   attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT,
                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
                  CREATE TABLE candidate_sources (
                    candidate_id TEXT NOT NULL REFERENCES transaction_candidates(id) ON DELETE CASCADE,
@@ -1326,6 +1499,8 @@ mod tests {
                  CREATE TABLE transactions (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id), occurred_on TEXT NOT NULL,
                    posted_on TEXT, transaction_type TEXT NOT NULL, payee TEXT, description TEXT, status TEXT NOT NULL,
+                   attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT,
                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
                  CREATE TABLE transaction_sources (
@@ -1363,6 +1538,8 @@ mod tests {
                    candidate_id TEXT NOT NULL REFERENCES transaction_candidates(id), statement_line_number INTEGER NOT NULL,
                    billed_amount_jpy INTEGER NOT NULL, PRIMARY KEY(statement_id,candidate_id));
                  INSERT INTO households(id,name) VALUES('household','Test');
+                 INSERT INTO household_members(id,household_id,display_name,status)
+                   VALUES('member','household','Member','ARCHIVED');
                  INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
                    VALUES('bank','household','Bank','ASSET','BANK'),
                          ('expense','household','Food','EXPENSE','OTHER'),
@@ -1385,6 +1562,8 @@ mod tests {
             source_modified_at: Some("2026-07-12T10:00:00Z".into()),
             adapter_id: Some("test".into()),
             adapter_version: Some("1".into()),
+            audience_visibility: AudienceVisibility::Shared,
+            audience_member_id: None,
             records: vec![
                 ImportSourceRecord {
                     id: format!("{run}-row-1"),
@@ -1412,6 +1591,10 @@ mod tests {
                 extraction_confidence_bps: Some(9_900),
                 normalization_confidence_bps: Some(9_500),
                 review_status: "READY".into(),
+                attribution_kind: AttributionKind::Household,
+                attributed_member_id: None,
+                audience_visibility: AudienceVisibility::Shared,
+                audience_member_id: None,
                 evidence: vec![
                     CandidateEvidence {
                         source_record_id: format!("{run}-row-1"),
@@ -1434,6 +1617,10 @@ mod tests {
             transaction_type: "EXPENSE".into(),
             payee: Some("Store".into()),
             description: None,
+            attribution_kind: AttributionKind::Household,
+            attributed_member_id: None,
+            audience_visibility: AudienceVisibility::Shared,
+            audience_member_id: None,
             entries: vec![
                 JournalEntryDecision {
                     id: format!("{run}-debit"),
@@ -1468,6 +1655,104 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn import_persists_independent_source_candidate_and_posted_scopes() {
+        let connection = database();
+        let mut input = request("scope", "scope-doc", 'f');
+        input.audience_visibility = AudienceVisibility::Personal;
+        input.audience_member_id = Some("member".into());
+        input.candidates[0].attribution_kind = AttributionKind::Member;
+        input.candidates[0].attributed_member_id = Some("member".into());
+        start_import(&connection, &input, "vault://scope").unwrap();
+        let preview = preview_import(&connection, "scope").unwrap();
+        assert_eq!(preview.source.audience_visibility, "PERSONAL");
+        assert_eq!(preview.candidates[0].attribution_kind, "MEMBER");
+        assert_eq!(preview.candidates[0].audience_visibility, "SHARED");
+
+        let mut posting = decision("scope", 1_000);
+        posting.attribution_kind = AttributionKind::Household;
+        posting.audience_visibility = AudienceVisibility::Personal;
+        posting.audience_member_id = Some("member".into());
+        commit_import(&connection, "scope", &[posting]).unwrap();
+        let stored: (String, Option<String>, String, Option<String>) = connection
+            .query_row(
+                "SELECT attribution_kind, attributed_member_id,
+                        audience_visibility, audience_member_id
+                 FROM transactions WHERE id = 'scope-transaction'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            stored,
+            (
+                "HOUSEHOLD".into(),
+                None,
+                "PERSONAL".into(),
+                Some("member".into())
+            )
+        );
+        let source_visibility: String = connection
+            .query_row(
+                "SELECT audience_visibility FROM source_documents WHERE id = 'scope-doc'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_visibility, "PERSONAL");
+    }
+
+    #[test]
+    fn import_scope_defaults_are_backward_compatible_and_foreign_members_are_atomic() {
+        let serialized = serde_json::to_value(request("legacy", "legacy-doc", '9')).unwrap();
+        let mut legacy = serialized.as_object().unwrap().clone();
+        legacy.remove("audienceVisibility");
+        legacy.remove("audienceMemberId");
+        let candidates = legacy
+            .get_mut("candidates")
+            .and_then(serde_json::Value::as_array_mut)
+            .unwrap();
+        for candidate in candidates {
+            let candidate = candidate.as_object_mut().unwrap();
+            candidate.remove("attributionKind");
+            candidate.remove("attributedMemberId");
+            candidate.remove("audienceVisibility");
+            candidate.remove("audienceMemberId");
+        }
+        let legacy: StartImport = serde_json::from_value(legacy.into()).unwrap();
+        assert_eq!(legacy.audience_visibility, AudienceVisibility::Shared);
+        assert_eq!(
+            legacy.candidates[0].attribution_kind,
+            AttributionKind::Household
+        );
+
+        let connection = database();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('other','Other');
+                 INSERT INTO household_members(id,household_id,display_name,status)
+                   VALUES('other-member','other','Other','ACTIVE');",
+            )
+            .unwrap();
+        let mut invalid = request("invalid-scope", "invalid-doc", '8');
+        invalid.candidates[0].attribution_kind = AttributionKind::Member;
+        invalid.candidates[0].attributed_member_id = Some("other-member".into());
+        assert!(matches!(
+            start_import(&connection, &invalid, "vault://invalid"),
+            Err(ImportWorkflowError::Validation(_))
+        ));
+        let rows: i64 = connection
+            .query_row(
+                "SELECT (SELECT count(*) FROM import_runs)
+                      + (SELECT count(*) FROM source_documents)
+                      + (SELECT count(*) FROM transaction_candidates)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 0);
     }
 
     #[test]
@@ -1617,6 +1902,10 @@ mod tests {
             transaction_type: "CARD_PURCHASE".into(),
             payee: Some("Store".into()),
             description: None,
+            attribution_kind: AttributionKind::Household,
+            attributed_member_id: None,
+            audience_visibility: AudienceVisibility::Shared,
+            audience_member_id: None,
             entries: vec![
                 JournalEntryDecision {
                     id: "purchase-debit".into(),
@@ -1643,6 +1932,10 @@ mod tests {
             transaction_type: "CARD_PAYMENT".into(),
             payee: Some("Rakuten Card".into()),
             description: None,
+            attribution_kind: AttributionKind::Household,
+            attributed_member_id: None,
+            audience_visibility: AudienceVisibility::Shared,
+            audience_member_id: None,
             entries: vec![
                 JournalEntryDecision {
                     id: "payment-debit".into(),

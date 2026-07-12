@@ -2,6 +2,10 @@ use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt};
 
+use crate::record_scope::{
+    attribution_shape_is_valid, audience_shape_is_valid, AttributionKind, AudienceVisibility,
+};
+
 const MAX_PAGE_SIZE: u32 = 100;
 const MAX_HOUSEHOLD_ID_LEN: usize = 48;
 const MAX_LOOKUP_ID_LEN: usize = 64;
@@ -833,6 +837,12 @@ pub struct TransactionRowDto {
     pub credit_account_name: Option<String>,
     pub category_account_id: Option<String>,
     pub category_name: Option<String>,
+    pub attribution_kind: String,
+    pub attributed_member_id: Option<String>,
+    pub attributed_member_name: Option<String>,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
+    pub audience_member_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -939,8 +949,12 @@ pub fn list_transactions(
                      ORDER BY je.line_number LIMIT 1),
                     (SELECT a.name FROM journal_entries je JOIN accounts a ON a.id = je.account_id
                      WHERE je.transaction_id = t.id AND a.account_kind IN ('EXPENSE', 'INCOME')
-                     ORDER BY je.line_number LIMIT 1)
+                     ORDER BY je.line_number LIMIT 1),
+                    t.attribution_kind, t.attributed_member_id, attributed.display_name,
+                    t.audience_visibility, t.audience_member_id, audience.display_name
              FROM transactions t
+             LEFT JOIN household_members attributed ON attributed.id = t.attributed_member_id
+             LEFT JOIN household_members audience ON audience.id = t.audience_member_id
              WHERE t.household_id = ?1
                AND t.status = 'POSTED'
                AND (?2 IS NULL OR t.occurred_on >= ?2)
@@ -997,6 +1011,12 @@ pub fn list_transactions(
                     credit_account_name: row.get(11)?,
                     category_account_id: row.get(12)?,
                     category_name: row.get(13)?,
+                    attribution_kind: row.get(14)?,
+                    attributed_member_id: row.get(15)?,
+                    attributed_member_name: row.get(16)?,
+                    audience_visibility: row.get(17)?,
+                    audience_member_id: row.get(18)?,
+                    audience_member_name: row.get(19)?,
                 })
             },
         )
@@ -1083,6 +1103,14 @@ pub struct CreateManualTransactionInput {
     pub transaction_type: ManualTransactionType,
     pub payee: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub attribution_kind: AttributionKind,
+    #[serde(default)]
+    pub attributed_member_id: Option<String>,
+    #[serde(default)]
+    pub audience_visibility: AudienceVisibility,
+    #[serde(default)]
+    pub audience_member_id: Option<String>,
     pub entries: Vec<ManualJournalEntryInput>,
 }
 
@@ -1096,6 +1124,14 @@ pub struct UpdatePostedTransactionInput {
     pub transaction_type: ManualTransactionType,
     pub payee: Option<String>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub attribution_kind: AttributionKind,
+    #[serde(default)]
+    pub attributed_member_id: Option<String>,
+    #[serde(default)]
+    pub audience_visibility: AudienceVisibility,
+    #[serde(default)]
+    pub audience_member_id: Option<String>,
     pub entries: Vec<ManualJournalEntryInput>,
 }
 
@@ -1122,6 +1158,9 @@ pub struct TransactionSourceEvidenceDto {
     pub row_number: u64,
     pub imported_at: String,
     pub evidence_role: String,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
+    pub audience_member_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1138,6 +1177,12 @@ pub struct TransactionDetailDto {
     pub created_at: String,
     pub updated_at: String,
     pub editable: bool,
+    pub attribution_kind: String,
+    pub attributed_member_id: Option<String>,
+    pub attributed_member_name: Option<String>,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
+    pub audience_member_name: Option<String>,
     pub entries: Vec<TransactionJournalEntryDto>,
     pub source_evidence: Vec<TransactionSourceEvidenceDto>,
 }
@@ -1155,8 +1200,12 @@ pub fn get_transaction_detail(
         .query_row(
             "SELECT t.id, t.household_id, t.occurred_on, t.posted_on,
                     t.transaction_type, t.payee, t.description, t.status,
-                    t.created_at, t.updated_at, 1
+                    t.created_at, t.updated_at, 1,
+                    t.attribution_kind, t.attributed_member_id, attributed.display_name,
+                    t.audience_visibility, t.audience_member_id, audience.display_name
              FROM transactions t
+             LEFT JOIN household_members attributed ON attributed.id = t.attributed_member_id
+             LEFT JOIN household_members audience ON audience.id = t.audience_member_id
              WHERE t.id = ?1 AND t.household_id = ?2 AND t.status = 'POSTED'",
             params![transaction_id, household_id],
             |row| {
@@ -1172,6 +1221,12 @@ pub fn get_transaction_detail(
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
                     editable: row.get(10)?,
+                    attribution_kind: row.get(11)?,
+                    attributed_member_id: row.get(12)?,
+                    attributed_member_name: row.get(13)?,
+                    audience_visibility: row.get(14)?,
+                    audience_member_id: row.get(15)?,
+                    audience_member_name: row.get(16)?,
                     entries: Vec::new(),
                     source_evidence: Vec::new(),
                 })
@@ -1222,13 +1277,15 @@ pub fn get_transaction_detail(
         .prepare(
             "SELECT sr.id, sd.id, sd.source_type, sd.original_filename,
                     sd.media_type, sr.row_number, sd.imported_at,
-                    COALESCE(cs.evidence_role, 'PRIMARY')
+                    COALESCE(cs.evidence_role, 'PRIMARY'),
+                    sd.audience_visibility, sd.audience_member_id, audience.display_name
              FROM transaction_sources ts
              JOIN source_records sr ON sr.id = ts.source_record_id
              JOIN source_documents sd ON sd.id = sr.source_document_id
              LEFT JOIN candidate_sources cs
                ON cs.candidate_id = ts.candidate_id
               AND cs.source_record_id = ts.source_record_id
+             LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
              WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
              ORDER BY sd.imported_at, sd.id, sr.row_number, sr.id
              LIMIT ?3",
@@ -1252,6 +1309,9 @@ pub fn get_transaction_detail(
                     row_number: row.get(5)?,
                     imported_at: row.get(6)?,
                     evidence_role: row.get(7)?,
+                    audience_visibility: row.get(8)?,
+                    audience_member_id: row.get(9)?,
+                    audience_member_name: row.get(10)?,
                 })
             },
         )
@@ -1307,6 +1367,14 @@ pub fn create_manual_transaction(
     }
 
     ensure_household_exists(connection, &input.household_id)?;
+    validate_transaction_scope(
+        connection,
+        &input.household_id,
+        input.attribution_kind,
+        input.attributed_member_id.as_deref(),
+        input.audience_visibility,
+        input.audience_member_id.as_deref(),
+    )?;
     let transaction = connection
         .unchecked_transaction()
         .map_err(map_database_error)?;
@@ -1320,8 +1388,10 @@ pub fn create_manual_transaction(
     transaction
         .execute(
             "INSERT INTO transactions
-               (id, household_id, occurred_on, posted_on, transaction_type, payee, description, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED')",
+               (id, household_id, occurred_on, posted_on, transaction_type, payee, description,
+                status, attribution_kind, attributed_member_id,
+                audience_visibility, audience_member_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'POSTED', ?8, ?9, ?10, ?11)",
             params![
                 input.id,
                 input.household_id,
@@ -1329,7 +1399,11 @@ pub fn create_manual_transaction(
                 input.posted_on,
                 input.transaction_type.as_sql_value(),
                 input.payee,
-                input.description
+                input.description,
+                input.attribution_kind.as_sql(),
+                input.attributed_member_id,
+                input.audience_visibility.as_sql(),
+                input.audience_member_id
             ],
         )
         .map_err(map_database_error)?;
@@ -1388,6 +1462,14 @@ pub fn update_posted_transaction(
     validate_optional_transaction_text(input.description.as_deref())?;
     validate_manual_entries(&input.entries)?;
     ensure_household_exists(connection, &input.household_id)?;
+    validate_transaction_scope(
+        connection,
+        &input.household_id,
+        input.attribution_kind,
+        input.attributed_member_id.as_deref(),
+        input.audience_visibility,
+        input.audience_member_id.as_deref(),
+    )?;
 
     let transaction = connection
         .unchecked_transaction()
@@ -1432,15 +1514,21 @@ pub fn update_posted_transaction(
         .execute(
             "UPDATE transactions
              SET occurred_on = ?1, posted_on = ?2, transaction_type = ?3,
-                 payee = ?4, description = ?5,
+                 payee = ?4, description = ?5, attribution_kind = ?6,
+                 attributed_member_id = ?7, audience_visibility = ?8,
+                 audience_member_id = ?9,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ?6 AND household_id = ?7 AND status = 'POSTED'",
+             WHERE id = ?10 AND household_id = ?11 AND status = 'POSTED'",
             params![
                 input.occurred_on,
                 input.posted_on,
                 input.transaction_type.as_sql_value(),
                 input.payee,
                 input.description,
+                input.attribution_kind.as_sql(),
+                input.attributed_member_id,
+                input.audience_visibility.as_sql(),
+                input.audience_member_id,
                 input.transaction_id,
                 input.household_id
             ],
@@ -2917,6 +3005,41 @@ fn validate_account_ownership(
     Ok(())
 }
 
+fn validate_transaction_scope(
+    connection: &Connection,
+    household_id: &str,
+    attribution_kind: AttributionKind,
+    attributed_member_id: Option<&str>,
+    audience_visibility: AudienceVisibility,
+    audience_member_id: Option<&str>,
+) -> Result<(), RepositoryError> {
+    if !attribution_shape_is_valid(attribution_kind, attributed_member_id)
+        || !audience_shape_is_valid(audience_visibility, audience_member_id)
+    {
+        return Err(RepositoryError::InvalidInput(
+            "Invalid transaction attribution or audience",
+        ));
+    }
+    for member_id in [attributed_member_id, audience_member_id]
+        .into_iter()
+        .flatten()
+    {
+        validate_id(member_id, MAX_LOOKUP_ID_LEN)?;
+        let belongs: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM household_members
+                 WHERE id = ?1 AND household_id = ?2)",
+                params![member_id, household_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if !belongs {
+            return Err(RepositoryError::InvalidInput("Invalid transaction member"));
+        }
+    }
+    Ok(())
+}
+
 fn household_member_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HouseholdMemberDto> {
     Ok(HouseholdMemberDto {
         id: row.get(0)?,
@@ -3083,6 +3206,10 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    occurred_on TEXT NOT NULL, posted_on TEXT, transaction_type TEXT NOT NULL,
                    payee TEXT, description TEXT, status TEXT NOT NULL,
+                   attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD',
+                   attributed_member_id TEXT,
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED',
+                   audience_member_id TEXT,
                    created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
                    updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z'
                  );
@@ -3106,6 +3233,8 @@ mod tests {
                    source_type TEXT, original_filename TEXT, media_type TEXT,
                    byte_size INTEGER, sha256 TEXT, storage_path TEXT,
                    source_modified_at TEXT,
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED',
+                   audience_member_id TEXT,
                    imported_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z');
                  CREATE TABLE source_records (
                    id TEXT PRIMARY KEY, source_document_id TEXT, row_number INTEGER,
@@ -3113,7 +3242,11 @@ mod tests {
                    created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z');
                  CREATE TABLE transaction_candidates (
                    id TEXT PRIMARY KEY, household_id TEXT, account_id TEXT REFERENCES accounts(id),
-                   review_status TEXT);
+                   review_status TEXT,
+                   attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD',
+                   attributed_member_id TEXT,
+                   audience_visibility TEXT NOT NULL DEFAULT 'SHARED',
+                   audience_member_id TEXT);
                  CREATE TABLE candidate_sources (
                    candidate_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
                    evidence_role TEXT NOT NULL DEFAULT 'PRIMARY',
@@ -3347,6 +3480,10 @@ mod tests {
             transaction_type: ManualTransactionType::Expense,
             payee: Some(format!("Coffee {id}")),
             description: Some("Manual entry".into()),
+            attribution_kind: AttributionKind::Household,
+            attributed_member_id: None,
+            audience_visibility: AudienceVisibility::Shared,
+            audience_member_id: None,
             entries: vec![
                 ManualJournalEntryInput {
                     id: format!("{id}-debit"),
@@ -3931,6 +4068,71 @@ mod tests {
     }
 
     #[test]
+    fn transaction_attribution_and_audience_are_explicit_independent_history() {
+        let connection = database();
+        for household_id in ["family", "other"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: household_id.into(),
+                    name: household_id.into(),
+                },
+            )
+            .unwrap();
+        }
+        create_household_member(
+            &connection,
+            &CreateHouseholdMemberInput {
+                id: "family-alice".into(),
+                household_id: "family".into(),
+                display_name: "Alice".into(),
+                relationship_label: None,
+            },
+        )
+        .unwrap();
+        archive_household_member(&connection, "family", "family-alice").unwrap();
+
+        let mut input = manual_expense("alice-spend", "family", 800);
+        input.attribution_kind = AttributionKind::Member;
+        input.attributed_member_id = Some("family-alice".into());
+        input.audience_visibility = AudienceVisibility::Shared;
+        let row = create_manual_transaction(&connection, &input).unwrap();
+        assert_eq!(row.attribution_kind, "MEMBER");
+        assert_eq!(row.attributed_member_name.as_deref(), Some("Alice"));
+        assert_eq!(row.audience_visibility, "SHARED");
+        assert!(row.audience_member_id.is_none());
+
+        let mut update = update_from_manual(&input);
+        update.audience_visibility = AudienceVisibility::Personal;
+        update.audience_member_id = Some("family-alice".into());
+        let detail = update_posted_transaction(&connection, &update).unwrap();
+        assert_eq!(detail.attribution_kind, "MEMBER");
+        assert_eq!(detail.audience_visibility, "PERSONAL");
+        assert_eq!(detail.audience_member_name.as_deref(), Some("Alice"));
+
+        let before: i64 = connection
+            .query_row("SELECT count(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        let mut foreign = manual_expense("foreign-scope", "family", 100);
+        foreign.attribution_kind = AttributionKind::Member;
+        foreign.attributed_member_id = Some("other-member-primary".into());
+        assert!(matches!(
+            create_manual_transaction(&connection, &foreign),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        let mut malformed = manual_expense("malformed-scope", "family", 100);
+        malformed.audience_visibility = AudienceVisibility::Personal;
+        assert!(matches!(
+            create_manual_transaction(&connection, &malformed),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        let after: i64 = connection
+            .query_row("SELECT count(*) FROM transactions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(after, before);
+    }
+
+    #[test]
     fn manual_transaction_rejects_unbalanced_and_duplicate_entries_atomically() {
         let connection = database();
         create_household(
@@ -4009,6 +4211,10 @@ mod tests {
             transaction_type: input.transaction_type,
             payee: input.payee.clone(),
             description: input.description.clone(),
+            attribution_kind: input.attribution_kind,
+            attributed_member_id: input.attributed_member_id.clone(),
+            audience_visibility: input.audience_visibility,
+            audience_member_id: input.audience_member_id.clone(),
             entries: input.entries.clone(),
         }
     }
