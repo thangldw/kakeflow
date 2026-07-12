@@ -154,6 +154,7 @@ describe('KakeFlow desktop read models', () => {
       const deltas = { income: { amountJpy: 10000, rateBps: 204 }, expense: { amountJpy: -5000, rateBps: -400 }, savings: { amountJpy: 15000, rateBps: 411 } }
       if (command === 'financial_calendar_query') return { month: '2026-07', asOf: '2026-07-31', days: [{ date: '2026-07-10', accrualIncomeJpy: 0, accrualExpenseJpy: 120000, cashInflowJpy: 0, cashOutflowJpy: 0, postedTransactionCount: 1, noSpendDay: false, events: [] }], budget, goals, dataQuality: quality }
       if (command === 'financial_report_monthly_query') return { period: '2026-07', current: metrics, priorMonth: { ...metrics, expenseJpy: 125000 }, priorYear: { ...metrics, incomeJpy: 490000 }, vsPriorMonth: deltas, vsPriorYear: deltas, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 70000, previousJpy: 60000, deltaJpy: 10000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 50000, previousJpy: 40000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 1, fullyReconciled: 1, possibleMatches: 0, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
+      if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }] }
       if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
       if (command === 'account_groups_list') return []
       throw new Error(`Unexpected native command: ${command}`)
@@ -199,6 +200,11 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('Monthly Review')).toBeInTheDocument()
     expect(screen.getByText('食費')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', expect.any(Object))
+
+    fireEvent.click(screen.getByRole('tab', { name: /予測・アクション/ }))
+    expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
+    expect(screen.getByText('食費予算を超過')).toBeInTheDocument()
+    expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', expect.any(Object))
   })
 
   it('re-queries the ledger when switching to cash basis', async () => {
