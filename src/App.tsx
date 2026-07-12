@@ -248,6 +248,9 @@ function TransactionsPage({ householdId, revision, month }: { householdId: strin
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [liveRows, setLiveRows] = useState<readonly TransactionRowDto[]>([])
   const [liveTotals, setLiveTotals] = useState<DashboardMonthlyTotalsDto | null>(null)
+  const [ledgerPage, setLedgerPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(0)
+  const [totalItems, setTotalItems] = useState(0)
   const [loadError, setLoadError] = useState(false)
   const desktop = platformClient.runtime === 'tauri'
 
@@ -257,15 +260,17 @@ function TransactionsPage({ householdId, revision, month }: { householdId: strin
     const period = periodFromMonth(month)
     setLoadError(false)
     void Promise.all([
-      platformClient.queryTransactions({ householdId, accountingBasis: basis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 100 }),
+      platformClient.queryTransactions({ householdId, accountingBasis: basis, fromDate: period.fromDate, toDate: period.toDate, page: ledgerPage, pageSize: 25 }),
       platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: basis }),
     ]).then(([page, totals]) => {
-      if (active) { setLiveRows(page.items); setLiveTotals(totals) }
+      if (active) { setLiveRows(page.items); setLiveTotals(totals); setTotalPages(page.totalPages); setTotalItems(page.totalItems) }
     }).catch(() => {
-      if (active) { setLiveRows([]); setLiveTotals(null); setLoadError(true) }
+      if (active) { setLiveRows([]); setLiveTotals(null); setTotalPages(0); setTotalItems(0); setLoadError(true) }
     })
     return () => { active = false }
-  }, [basis, desktop, householdId, month, revision])
+  }, [basis, desktop, householdId, ledgerPage, month, revision])
+
+  useEffect(() => { setLedgerPage(1) }, [basis, householdId, month])
 
   const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
   const displayRows = desktop ? liveRows.map(toTransactionViewModel) : basisTransactions
@@ -276,8 +281,9 @@ function TransactionsPage({ householdId, revision, month }: { householdId: strin
     <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。" />
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
-      <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
+      <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{desktop ? `${totalItems}件中 ${visible.length}件` : `${visible.length}件を表示`}</em></div>
       {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
+      {desktop && totalPages > 1 && <div className="pagination"><button className="secondary-btn" disabled={ledgerPage <= 1} onClick={() => setLedgerPage((value) => value - 1)}>前へ</button><span>{ledgerPage} / {totalPages}</span><button className="secondary-btn" disabled={ledgerPage >= totalPages} onClick={() => setLedgerPage((value) => value + 1)}>次へ</button></div>}
     </section>
   </>
 }
