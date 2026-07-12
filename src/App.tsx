@@ -39,6 +39,9 @@ import { createPortfolioPlatform, mapPortfolioSnapshotImport } from './features/
 import type { PortfolioSnapshotDetailDto, PortfolioSnapshotSummaryDto } from './features/investments/portfolioPlatform'
 import { createBrokeragePlatform, mapBrokerageEventsImport } from './features/investments/brokeragePlatform'
 import type { BrokerageHistoryDto } from './features/investments/brokeragePlatform'
+import { createInvestmentPerformancePlatform } from './features/investments/investmentPerformancePlatform'
+import type { InvestmentHoldingsDto, InvestmentPerformanceDto } from './features/investments/investmentPerformancePlatform'
+import { createWatchedFolderDiscoveryPlatform } from './features/import/watchedFolderDiscoveryPlatform'
 import { queryFinancialIntelligence } from './features/financial-intelligence/platform'
 import type { FinancialIntelligenceDto } from './features/financial-intelligence/platform'
 import { createAccountGroupExportPlatform } from './features/export/accountGroupExportPlatform'
@@ -70,6 +73,8 @@ import type { NavigationItem, PageId, Transaction } from './types'
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const portfolioPlatform = createPortfolioPlatform()
 const brokeragePlatform = createBrokeragePlatform()
+const investmentPerformancePlatform = createInvestmentPerformancePlatform()
+const watchedFolderDiscoveryPlatform = createWatchedFolderDiscoveryPlatform()
 const accountGroupExportPlatform = createAccountGroupExportPlatform()
 const financialCalendarPlatform = createFinancialCalendarPlatform()
 const forecastActionPlatform = createForecastActionPlatform()
@@ -489,7 +494,7 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, onRoll
   return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span></div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><span>{approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : '承認済みを台帳へ反映'}</button></div></section>
 }
 
-function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void }) {
+function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged, backgroundChanges, clearBackgroundChanges }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; backgroundChanges: number; clearBackgroundChanges: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
@@ -751,6 +756,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       <button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
       <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,text/csv,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
+    {backgroundChanges > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>バックグラウンド監視で {backgroundChanges} 件のファイル変更を検出しました。同期フォルダーを確認してください。</span><button className="text-btn" onClick={clearBackgroundChanges}>確認済みにする</button></div>}
     <section className="status-grid">
       {[
         ['取込済み', String(summary?.posted ?? (platformClient.runtime === 'web' ? 79 : 0)), `${summary?.sourceDocuments ?? 0}原本`],
@@ -811,6 +817,8 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
   const [detail, setDetail] = useState<PortfolioSnapshotDetailDto | null>(null)
   const [notice, setNotice] = useState('')
   const [brokerage, setBrokerage] = useState<BrokerageHistoryDto | null>(null)
+  const [holdings, setHoldings] = useState<InvestmentHoldingsDto | null>(null)
+  const [performance, setPerformance] = useState<InvestmentPerformanceDto | null>(null)
   useEffect(() => {
     if (!householdId || platformClient.runtime !== 'tauri') return
     let active = true
@@ -820,6 +828,8 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
       setDetail(items[0] ? await portfolioPlatform.getSnapshot(householdId, items[0].id) : null)
     }).catch(() => { if (active) { setSnapshots([]); setDetail(null); setNotice('投資データを読み込めませんでした。') } })
     void brokeragePlatform.queryHistory({ householdId }).then((history) => { if (active) setBrokerage(history) }).catch(() => { if (active) setBrokerage(null) })
+    const asOf = periodFromMonth(currentTokyoPeriod().month).toDate
+    void Promise.all([investmentPerformancePlatform.queryHoldings({ householdId, asOf }), investmentPerformancePlatform.queryPerformance({ householdId })]).then(([nextHoldings, nextPerformance]) => { if (active) { setHoldings(nextHoldings); setPerformance(nextPerformance) } }).catch(() => { if (active) { setHoldings(null); setPerformance(null) } })
     return () => { active = false }
   }, [householdId, revision])
   const selectSnapshot = async (snapshotId: string) => {
@@ -834,6 +844,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
       <section className="investment-grid"><article className="panel"><div className="panel-head"><div><h2>資産配分</h2><p>評価額ベース</p></div></div><div className="asset-allocation">{detail.assetClasses.map((item) => <div key={item.id}><span><strong>{item.name}</strong><em>{yen(item.marketValueJpy)}</em></span><div className="progress"><span style={{ width: `${item.marketValueJpy / maxAssetClass * 100}%` }} /></div></div>)}</div></article><article className="panel snapshot-history"><div className="panel-head"><div><h2>スナップショット履歴</h2><p>{snapshots.length}件</p></div></div>{snapshots.map((snapshot) => <button key={snapshot.id} className={snapshot.id === detail.id ? 'active' : ''} onClick={() => void selectSnapshot(snapshot.id)}><span>{snapshot.asOf.slice(0, 10)} ・ {snapshot.accountName}</span><strong>{yen(snapshot.marketValueJpy)}</strong></button>)}</article></section>
       <section className="panel positions-table"><div className="panel-head"><div><h2>保有商品</h2><p>原本の行番号まで追跡可能</p></div></div><div className="position-row position-head"><span>銘柄</span><span>口座</span><span>数量</span><span>現在値</span><span>評価額</span><span>評価損益</span></div>{detail.positions.map((position) => <div className="position-row" key={position.id}><span><strong>{position.instrumentName}</strong><small>{position.instrumentCode || position.productType} ・ 行 {position.sourceRow}</small></span><span>{position.accountType}</span><span>{position.quantity?.toLocaleString('ja-JP') ?? '—'}</span><span>{position.marketPrice == null ? '—' : `${position.currency} ${position.marketPrice.toLocaleString('ja-JP')}`}</span><strong>{position.marketValueJpy == null ? '—' : yen(position.marketValueJpy)}</strong><em className={(position.unrealizedPnlJpy ?? 0) >= 0 ? 'amount-positive' : ''}>{position.unrealizedPnlJpy == null ? '—' : yen(position.unrealizedPnlJpy)}</em></div>)}</section></> : <section className="panel investment-empty"><TrendingUp size={32} /><h2>資産スナップショットはまだありません</h2><p>設定で証券口座を追加し、`assetbalance(all)_*.csv` をインポートしてください。</p><button className="primary-btn" onClick={openImport}>インポート Inboxを開く</button></section>}
     {brokerage && brokerage.events.length > 0 && <section className="panel brokerage-history"><div className="panel-head"><div><h2>証券取引履歴</h2><p>売買・配当・手数料・税金・入出金（家計支出には含めません）</p></div><strong>{brokerage.events.length}件</strong></div><div className="brokerage-totals">{brokerage.totalsByCurrency.map((total) => <article key={total.currency}><span>{total.currency} 純資金移動</span><strong>{total.netCashMovement.toLocaleString('ja-JP')}</strong><small>配当 {total.dividendGross.toLocaleString('ja-JP')} ・ 手数料 {total.fees.toLocaleString('ja-JP')} ・ 税 {total.taxes.toLocaleString('ja-JP')}</small></article>)}</div><div className="brokerage-event-list">{brokerage.events.slice(0, 20).map((event) => <div key={event.id}><span><strong>{event.instrumentName || event.rawTransactionType}</strong><small>{event.tradeDate ?? event.settlementDate} ・ {event.accountName} ・ 行 {event.sourceRow}</small></span><b>{event.eventType}</b><em>{event.currency} {event.settlementAmount.toLocaleString('ja-JP')}</em></div>)}</div></section>}
+    {holdings && (holdings.positions.length > 0 || (performance?.totalsByCurrency.length ?? 0) > 0) && <section className="panel investment-performance"><div className="panel-head"><div><h2>投資パフォーマンス</h2><p>{holdings.costBasisMethod} 原価法・通貨ごとに集計（自動換算なし）</p></div><span>{holdings.asOf} 現在</span></div>{performance && <div className="performance-currency-grid">{performance.totalsByCurrency.map((total) => <article key={total.currency}><span>{total.currency}</span><strong className={total.realizedPnl >= 0 ? 'amount-positive' : ''}>{total.realizedPnl.toLocaleString('ja-JP')} 実現損益</strong><small>配当 {total.dividendGross.toLocaleString('ja-JP')} ・ 手数料 {total.fees.toLocaleString('ja-JP')} ・ 税 {total.taxes.toLocaleString('ja-JP')}</small></article>)}</div>}<div className="performance-position-list">{holdings.positions.map((position) => <div key={`${position.accountId}-${position.instrumentCode}-${position.currency}`}><span><strong>{position.instrumentName}</strong><small>{position.instrumentCode} ・ {position.accountName} ・ {position.openLotCount}ロット</small></span><em>{position.quantity.toLocaleString('ja-JP')} 株</em><b>{position.currency} {position.costBasis.toLocaleString('ja-JP')} 原価</b></div>)}</div>{(holdings.uncoveredSales.length > 0 || holdings.skippedEventIds.length > 0) && <p className="performance-warning">原価未確認の売却 {holdings.uncoveredSales.length}件・計算対象外 {holdings.skippedEventIds.length}件。原本取引を確認してください。</p>}</section>}
   </>
 }
 
@@ -1165,6 +1176,7 @@ function App() {
   const [ledgerRevision, setLedgerRevision] = useState(0)
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
   const [selectedMonth, setSelectedMonth] = useState(() => globalThis.localStorage?.getItem('kakeflow.selectedMonth') ?? currentTokyoPeriod().month)
+  const [backgroundFolderChanges, setBackgroundFolderChanges] = useState(0)
 
   useEffect(() => {
     let active = true
@@ -1227,6 +1239,16 @@ function App() {
     return () => { active = false }
   }, [activeHouseholdId, ledgerRevision, selectedMonth])
 
+  useEffect(() => {
+    if (!activeHouseholdId || platformClient.runtime !== 'tauri') return
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void watchedFolderDiscoveryPlatform.subscribe((event) => {
+      if (!disposed && event.householdId === activeHouseholdId) setBackgroundFolderChanges((current) => current + event.changes.length)
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop }).catch(() => undefined)
+    return () => { disposed = true; unlisten?.() }
+  }, [activeHouseholdId])
+
   const selectMonth = (month: string) => {
     const selected = periodFromMonth(month).month
     globalThis.localStorage?.setItem('kakeflow.selectedMonth', selected)
@@ -1243,7 +1265,7 @@ function App() {
   const pageContent = {
     overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} revision={ledgerRevision} month={selectedMonth} accounts={accounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} backgroundChanges={backgroundFolderChanges} clearBackgroundChanges={() => setBackgroundFolderChanges(0)} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
     reports: <ReportsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} openPage={setPage} />,
