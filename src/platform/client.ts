@@ -93,6 +93,9 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listAccounts: async () => [],
+      createAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_create') },
+      renameAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_rename') },
+      archiveAccount: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'account_archive') },
       queryTransactions: async (request) => ({ items: [], page: request.page, pageSize: request.pageSize, totalItems: 0, totalPages: 0 }),
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       listBudgets: async () => [],
@@ -124,6 +127,9 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
     listAccounts: (householdId) => invokeValidated(invoke, 'accounts_list', parseAccounts, { householdId }),
+    createAccount: (input) => invokeValidated(invoke, 'account_create', parseAccount, { input }),
+    renameAccount: (input) => invokeValidated(invoke, 'account_rename', parseAccount, { input }),
+    archiveAccount: async (input) => { await invokeValidated(invoke, 'account_archive', parseVoid, { input }) },
     queryTransactions: (request) => invokeValidated(invoke, 'transactions_query', parseTransactionPage, { request }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
@@ -184,17 +190,19 @@ function parseHousehold(value: unknown): HouseholdDto {
 
 function parseAccounts(value: unknown): readonly AccountDto[] {
   if (!Array.isArray(value)) throw new TypeError('accounts')
-  return value.map((item) => {
-    const record = asRecord(item)
-    const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
-    const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
-    if (!accountKinds.includes(record.accountKind as typeof accountKinds[number]) || !accountSubtypes.includes(record.accountSubtype as typeof accountSubtypes[number]) || record.currency !== 'JPY') throw new TypeError('account')
-    return {
-      id: asRequiredString(record.id), name: asRequiredString(record.name),
-      accountKind: record.accountKind as AccountDto['accountKind'],
-      accountSubtype: record.accountSubtype as AccountDto['accountSubtype'], currency: 'JPY',
-    }
-  })
+  return value.map(parseAccount)
+}
+
+function parseAccount(value: unknown): AccountDto {
+  const record = asRecord(value)
+  const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
+  const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
+  if (!accountKinds.includes(record.accountKind as typeof accountKinds[number]) || !accountSubtypes.includes(record.accountSubtype as typeof accountSubtypes[number]) || record.currency !== 'JPY') throw new TypeError('account')
+  return {
+    id: asRequiredString(record.id), name: asRequiredString(record.name),
+    accountKind: record.accountKind as AccountDto['accountKind'],
+    accountSubtype: record.accountSubtype as AccountDto['accountSubtype'], currency: 'JPY',
+  }
 }
 
 function parseImportSummaryDto(value: unknown): ImportSummaryDto {

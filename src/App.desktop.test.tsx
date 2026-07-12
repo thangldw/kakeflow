@@ -19,6 +19,9 @@ const desktop = vi.hoisted(() => ({
   startImport: vi.fn(),
   previewImport: vi.fn(),
   commitImport: vi.fn(),
+  createAccount: vi.fn(),
+  renameAccount: vi.fn(),
+  archiveAccount: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -35,6 +38,9 @@ vi.mock('./platform', async () => {
       listHouseholds: desktop.listHouseholds,
       createHousehold: vi.fn(),
       listAccounts: desktop.listAccounts,
+      createAccount: desktop.createAccount,
+      renameAccount: desktop.renameAccount,
+      archiveAccount: desktop.archiveAccount,
       queryDashboard: desktop.queryDashboard,
       listBudgets: desktop.listBudgets,
       upsertBudget: desktop.upsertBudget,
@@ -88,6 +94,9 @@ describe('KakeFlow desktop read models', () => {
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
     desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
+    desktop.createAccount.mockReset().mockResolvedValue({ id: 'new-bank', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })
+    desktop.renameAccount.mockReset()
+    desktop.archiveAccount.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
@@ -241,5 +250,15 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(commit)
 
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE' })]))
+  })
+
+  it('creates a household-owned account from settings', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.change(screen.getByLabelText('新しい口座名'), { target: { value: 'ゆうちょ銀行' } })
+    fireEvent.click(screen.getByRole('button', { name: '口座を追加' }))
+
+    await waitFor(() => expect(desktop.createAccount).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })))
   })
 })
