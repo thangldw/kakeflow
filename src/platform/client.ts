@@ -485,7 +485,7 @@ function parseTransactionPage(value: unknown): TransactionPageDto {
 
 function parseTransactionRow(value: unknown): TransactionPageDto['items'][number] {
   const row = asRecord(value)
-  if (typeof row.id !== 'string' || typeof row.occurredOn !== 'string' || typeof row.transactionType !== 'string' || typeof row.status !== 'string') throw new TypeError('transaction')
+  if (typeof row.id !== 'string' || typeof row.occurredOn !== 'string' || typeof row.transactionType !== 'string' || typeof row.status !== 'string' || typeof row.calculationTarget !== 'boolean') throw new TypeError('transaction')
   const attribution = parseAttribution(row, true)
   const audience = parseAudience(row, true)
   return {
@@ -497,6 +497,7 @@ function parseTransactionRow(value: unknown): TransactionPageDto['items'][number
     description: asNullableString(row.description),
     amountJpy: asSafeSignedInteger(row.amountJpy),
     status: row.status,
+    calculationTarget: row.calculationTarget,
     debitAccountId: asNullableString(row.debitAccountId),
     debitAccountName: asNullableString(row.debitAccountName),
     creditAccountId: asNullableString(row.creditAccountId),
@@ -510,14 +511,14 @@ function parseTransactionRow(value: unknown): TransactionPageDto['items'][number
 function parseTransactionDetail(value: unknown): TransactionDetailDto {
   const record = asRecord(value)
   const allowedTypes = ['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT']
-  if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.occurredOn !== 'string' || typeof record.status !== 'string' || typeof record.createdAt !== 'string' || typeof record.updatedAt !== 'string' || typeof record.editable !== 'boolean' || typeof record.transactionType !== 'string' || !allowedTypes.includes(record.transactionType) || !Array.isArray(record.entries) || !Array.isArray(record.sourceEvidence)) throw new TypeError('transaction detail')
+  if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.occurredOn !== 'string' || typeof record.status !== 'string' || typeof record.createdAt !== 'string' || typeof record.updatedAt !== 'string' || typeof record.editable !== 'boolean' || typeof record.calculationTarget !== 'boolean' || typeof record.transactionType !== 'string' || !allowedTypes.includes(record.transactionType) || !Array.isArray(record.entries) || !Array.isArray(record.sourceEvidence)) throw new TypeError('transaction detail')
   const attribution = parseAttribution(record, true)
   const audience = parseAudience(record, true)
   return {
     id: record.id, householdId: record.householdId, occurredOn: record.occurredOn, postedOn: asNullableString(record.postedOn),
     transactionType: record.transactionType as TransactionDetailDto['transactionType'], payee: asNullableString(record.payee), description: asNullableString(record.description),
     ...attribution, ...audience,
-    status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable,
+    status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable, calculationTarget: record.calculationTarget,
     entries: record.entries.map((item) => { const entry = asRecord(item); if (entry.side !== 'DEBIT' && entry.side !== 'CREDIT') throw new TypeError('journal entry'); return { id: asRequiredString(entry.id), accountId: asRequiredString(entry.accountId), accountName: asRequiredString(entry.accountName), accountKind: asRequiredString(entry.accountKind), side: entry.side, amountJpy: asSafeSignedInteger(entry.amountJpy), lineNumber: asSafeInteger(entry.lineNumber) } }),
     sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole), ...parseAudience(evidence, true) } }),
   }

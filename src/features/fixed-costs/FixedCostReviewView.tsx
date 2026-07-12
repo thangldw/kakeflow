@@ -9,7 +9,7 @@ function changeLabel(change: number, rate: number | null): string { return `${ch
 export function FixedCostReviewView({ data, onOpenTransactions }: { data: FixedCostReviewDto; onOpenTransactions: () => void }) {
   const maxMonthly = Math.max(1, ...data.monthlyPoints.map((point) => point.totalJpy))
   return <section className="fixed-cost-review" aria-label="固定費レビュー">
-    <div className="fixed-cost-disclosure"><strong>比較条件</strong><span>{data.historyFrom}〜{data.historyThrough} の完了済み6か月を使用。現在の未完了月は除外しています。</span><span>市場価格・他社プランのデータがないため、市場相場に基づく節約可能額は算出していません。</span></div>
+    <div className="fixed-cost-disclosure"><strong>比較条件</strong><span>{data.historyFrom}〜{data.historyThrough} の完了済み6か月と計算対象の確定取引を使用。集計対象外と現在の未完了月は除外しています。</span><span>市場価格・他社プランのデータがないため、市場相場に基づく節約可能額は算出していません。</span></div>
     <div className="fixed-cost-kpis">
       <article><span>直近3か月平均</span><strong>{yen(data.totals.recentThreeAverageJpy)}</strong><small>完了月のみ</small></article>
       <article><span>前3か月平均</span><strong>{yen(data.totals.previousThreeAverageJpy)}</strong><small>比較基準</small></article>

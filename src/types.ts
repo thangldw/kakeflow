@@ -22,6 +22,7 @@ export interface Transaction {
   accountingEffect?: 'ACCRUAL_AND_CASH' | 'ACCRUAL_ONLY' | 'CASH_ONLY'
   attributionLabel?: string
   audienceLabel?: string
+  calculationTarget?: boolean
 }
 
 export interface CardSettlement {

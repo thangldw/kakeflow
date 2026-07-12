@@ -80,11 +80,11 @@ describe('platform client', () => {
       transactions_query: { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
       transaction_manual_create: {
         id: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null,
-        amountJpy: 1000, status: 'POSTED', debitAccountId: 'expense', debitAccountName: 'Food', creditAccountId: 'bank', creditAccountName: 'Bank', categoryAccountId: 'expense', categoryName: 'Food',
+        amountJpy: 1000, status: 'POSTED', calculationTarget: true, debitAccountId: 'expense', debitAccountName: 'Food', creditAccountId: 'bank', creditAccountName: 'Bank', categoryAccountId: 'expense', categoryName: 'Food',
         attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
       },
       transaction_detail_get: {
-        id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null, status: 'POSTED', createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z', editable: true,
+        id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null, status: 'POSTED', calculationTarget: true, createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z', editable: true,
         attributionKind: 'MEMBER', attributedMemberId: 'member-1', attributedMemberName: 'Taro', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-1', audienceMemberName: 'Taro',
         entries: [{ id: 'entry-1', accountId: 'expense', accountName: 'Food', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 1000, lineNumber: 1 }, { id: 'entry-2', accountId: 'bank', accountName: 'Bank', accountKind: 'ASSET', side: 'CREDIT', amountJpy: 1000, lineNumber: 2 }],
         sourceEvidence: [{ sourceRecordId: 'record-1', sourceDocumentId: 'document-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
@@ -186,7 +186,7 @@ describe('platform client', () => {
     await expect(client.createManualTransaction(manualInput)).resolves.toEqual(responses.transaction_manual_create)
     await expect(client.getTransactionDetail('family', 'tx-manual')).resolves.toEqual(responses.transaction_detail_get)
     responses.transaction_update = responses.transaction_detail_get
-    const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, attributionKind: 'MEMBER' as const, attributedMemberId: 'member-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1', entries: [] }
+    const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, calculationTarget: true, attributionKind: 'MEMBER' as const, attributedMemberId: 'member-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1', entries: [] }
     await expect(client.updateTransaction(updateInput)).resolves.toEqual(responses.transaction_detail_get)
     await expect(client.getSourceDocument('family', 'document-1')).resolves.toEqual(responses.source_document_get)
     const sourceAudience = { householdId: 'family', sourceDocumentId: 'document-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1' }
