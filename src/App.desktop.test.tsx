@@ -6,7 +6,13 @@ const desktop = vi.hoisted(() => ({
   queryTransactions: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
+  stageBackupRestore: vi.fn(),
+  restartForRestore: vi.fn(),
 }))
+
+const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
+
+vi.mock('@tauri-apps/plugin-dialog', () => dialog)
 
 vi.mock('./platform', async () => {
   const actual = await vi.importActual<typeof import('./platform')>('./platform')
@@ -28,6 +34,8 @@ vi.mock('./platform', async () => {
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
       createBackup: vi.fn(),
+      stageBackupRestore: desktop.stageBackupRestore,
+      restartForRestore: desktop.restartForRestore,
       extractDocument: vi.fn(),
     },
   }
@@ -39,6 +47,10 @@ describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
+    desktop.stageBackupRestore.mockReset().mockResolvedValue({ formatVersion: 2, entryCount: 4, plaintextBytes: 4096 })
+    desktop.restartForRestore.mockReset().mockResolvedValue(undefined)
+    dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
+    dialog.save.mockReset().mockResolvedValue(null)
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
       month: '2026-07', accountingBasis,
       incomeJpy: accountingBasis === 'ACCRUAL' ? 500_000 : 480_000,
@@ -97,5 +109,25 @@ describe('KakeFlow desktop read models', () => {
 
     await waitFor(() => expect(desktop.confirmCardMatch).toHaveBeenCalledWith('family', 'statement-1', 'payment-1'))
     expect(await screen.findByText('請求と口座引落を照合済みにしました。')).toBeInTheDocument()
+  })
+
+  it('stages an authenticated restore only after explicit replacement confirmation', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    fireEvent.change(screen.getByLabelText('復元用パスフレーズ'), { target: { value: 'correct horse battery' } })
+    fireEvent.change(screen.getByLabelText('復元用パスフレーズを確認'), { target: { value: 'correct horse battery' } })
+    fireEvent.click(screen.getByRole('button', { name: 'バックアップを選択して復元' }))
+
+    expect(await screen.findByText('現在のデータが置き換わることを確認してください。')).toBeInTheDocument()
+    expect(dialog.open).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /現在のデータが置き換わり/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'バックアップを選択して復元' }))
+
+    await waitFor(() => expect(desktop.stageBackupRestore).toHaveBeenCalledWith('/tmp/family.kakeflow-backup', 'correct horse battery'))
+    expect(desktop.restartForRestore).toHaveBeenCalledOnce()
+    expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ multiple: false, directory: false }))
   })
 })

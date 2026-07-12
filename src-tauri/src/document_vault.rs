@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::private_fs;
+
 const MAGIC: &[u8; 8] = b"KFLWDOC\0";
 const FORMAT_VERSION: u16 = 1;
 const KEY_ID_LEN: usize = 16;
@@ -77,6 +79,8 @@ impl DocumentVault {
         let root = root.as_ref().to_path_buf();
         secure_directory(&root)?;
         secure_directory(&root.join("objects"))?;
+        #[cfg(target_os = "windows")]
+        private_fs::secure_tree(&root).map_err(|_| DocumentVaultError::Io)?;
 
         let hkdf = Hkdf::<Sha256>::new(Some(HKDF_SALT), master_key);
         let mut document_key = Zeroizing::new([0_u8; 32]);
@@ -264,6 +268,7 @@ impl DocumentVault {
         let mut temp = options
             .open(temp_path)
             .map_err(|_| DocumentVaultError::Io)?;
+        private_fs::secure_file(temp_path).map_err(|_| DocumentVaultError::Io)?;
         temp.write_all(header).map_err(|_| DocumentVaultError::Io)?;
         temp.write_all(ciphertext)
             .map_err(|_| DocumentVaultError::Io)?;
@@ -424,16 +429,8 @@ fn secure_directory(path: &Path) -> Result<()> {
     set_private_directory_mode(path)
 }
 
-#[cfg(unix)]
 fn set_private_directory_mode(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|_| DocumentVaultError::Io)
-}
-
-#[cfg(not(unix))]
-fn set_private_directory_mode(_path: &Path) -> Result<()> {
-    Ok(())
+    private_fs::secure_directory(path).map_err(|_| DocumentVaultError::Io)
 }
 
 #[cfg(unix)]

@@ -3,15 +3,18 @@ pub mod document_extract;
 pub mod document_vault;
 pub mod import_workflow;
 mod key_store;
+pub mod ocr;
 mod persistence;
+mod private_fs;
 mod read_model;
+pub mod restore;
 
 use document_vault::DocumentVault;
 use import_workflow::{
     CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
     StartImport,
 };
-use key_store::OsDatabaseKeyProvider;
+use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
 use read_model::{
     AccountDto, AccountingBasis, CardSettlementDto, CreateHouseholdInput,
@@ -23,6 +26,7 @@ use tauri::Manager;
 use zeroize::Zeroizing;
 
 struct BackupPaths {
+    app_data_root: std::path::PathBuf,
     database: std::path::PathBuf,
     vault: std::path::PathBuf,
 }
@@ -362,6 +366,37 @@ fn backup_create(
 }
 
 #[tauri::command]
+fn backup_restore_stage(
+    paths: tauri::State<'_, BackupPaths>,
+    credentials: tauri::State<'_, OsRestoreCredentialStore>,
+    archive_path: String,
+    passphrase: String,
+) -> Result<BackupSummaryDto, String> {
+    let summary = restore::stage_portable_restore(
+        &paths.app_data_root,
+        std::path::Path::new(&archive_path),
+        &passphrase,
+        credentials.inner(),
+    )
+    .map_err(|error| match error {
+        restore::RestoreError::RestorePending => "A restore is already waiting for restart",
+        restore::RestoreError::Backup => "Backup authentication or format is invalid",
+        restore::RestoreError::InvalidLayout => "Backup contents are invalid",
+        _ => "Backup could not be staged for restore",
+    })?;
+    Ok(BackupSummaryDto {
+        format_version: 2,
+        entry_count: summary.entry_count,
+        plaintext_bytes: summary.plaintext_bytes,
+    })
+}
+
+#[tauri::command]
+fn app_restart_for_restore(app: tauri::AppHandle) {
+    app.restart()
+}
+
+#[tauri::command]
 fn document_extract(
     file_bytes: Vec<u8>,
     media_type: String,
@@ -387,6 +422,11 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("database").join("kakeflow.db");
             let vault_path = app_data_dir.join("documents");
+            let restore_credentials = OsRestoreCredentialStore::new()?;
+            // Finish or roll back any staged restore before SQLite or the vault
+            // obtains a file handle. This is required for reliable Windows
+            // activation and makes every crash checkpoint restart-safe.
+            restore::recover_interrupted_restore(&app_data_dir, &restore_credentials)?;
             let key_provider = OsDatabaseKeyProvider::new()?;
             let master_key = if database_path.exists() {
                 key_provider.existing_key()?
@@ -405,7 +445,9 @@ pub fn run() {
             app.manage(state);
             app.manage(vault);
             app.manage(BackupMasterKey(portable_backup_key));
+            app.manage(restore_credentials);
             app.manage(BackupPaths {
+                app_data_root: app_data_dir,
                 database: database_path,
                 vault: vault_path,
             });
@@ -428,6 +470,8 @@ pub fn run() {
             import_commit,
             import_rollback,
             backup_create,
+            backup_restore_stage,
+            app_restart_for_restore,
             document_extract
         ])
         .run(tauri::generate_context!())

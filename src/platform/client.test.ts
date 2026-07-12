@@ -34,6 +34,8 @@ describe('platform client', () => {
     await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
     await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
     await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
+    await expect(client.stageBackupRestore('/tmp/family.kakeflow-backup', 'long secure passphrase')).rejects.toMatchObject({ command: 'backup_restore_stage' })
+    await expect(client.restartForRestore()).rejects.toMatchObject({ command: 'app_restart_for_restore' })
     await expect(client.extractDocument(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ command: 'document_extract' })
     await expect(client.listCardSettlements('family')).resolves.toEqual([])
     await expect(client.confirmCardMatch('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_match_confirm' })
@@ -71,6 +73,8 @@ describe('platform client', () => {
       import_commit: { runId: 'run-1', postedCount: 1 },
       import_rollback: null,
       backup_create: { formatVersion: 2, entryCount: 4, plaintextBytes: 4096 },
+      backup_restore_stage: { formatVersion: 2, entryCount: 4, plaintextBytes: 4096 },
+      app_restart_for_restore: null,
       document_extract: { method: 'EMBEDDED_TEXT', text: 'STORE TOTAL 1200', confidenceBps: 9000, issues: [] },
       cards_list: [{
         id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: null,
@@ -123,6 +127,8 @@ describe('platform client', () => {
     await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
     await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).resolves.toEqual(responses.backup_create)
+    await expect(client.stageBackupRestore('/tmp/family.kakeflow-backup', 'long secure passphrase')).resolves.toEqual(responses.backup_restore_stage)
+    await expect(client.restartForRestore()).resolves.toBeUndefined()
     await expect(client.extractDocument(new Uint8Array([37, 80, 68, 70]), 'application/pdf')).resolves.toEqual(responses.document_extract)
     await expect(client.listCardSettlements('family')).resolves.toEqual(responses.cards_list)
     await expect(client.confirmCardMatch('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_match_confirm)
@@ -133,10 +139,12 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_create', { archivePath: '/tmp/family.kakeflow-backup', passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledWith('backup_restore_stage', { archivePath: '/tmp/family.kakeflow-backup', passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledWith('app_restart_for_restore', undefined)
     expect(invokeSpy).toHaveBeenCalledWith('document_extract', { fileBytes: [37, 80, 68, 70], mediaType: 'application/pdf' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(17)
+    expect(invokeSpy).toHaveBeenCalledTimes(19)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

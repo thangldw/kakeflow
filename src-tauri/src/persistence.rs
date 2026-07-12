@@ -8,6 +8,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::key_store::OsDatabaseKeyProvider;
+use crate::private_fs;
 
 const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0001_household_accounts.sql")),
@@ -142,25 +143,58 @@ pub fn integrity_check(connection: &Connection) -> Result<bool, PersistenceError
     Ok(result == "ok")
 }
 
-#[cfg(unix)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoredDatabaseInfo {
+    pub schema_version: i64,
+    pub household_count: u64,
+    pub source_hashes: Vec<String>,
+}
+
+pub fn validate_existing_database(
+    database_path: &std::path::Path,
+    key_material: &[u8],
+) -> Result<RestoredDatabaseInfo, PersistenceError> {
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    apply_key(&connection, key_material)?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    if !integrity_check(&connection)? {
+        return Err(PersistenceError::Database(rusqlite::Error::InvalidQuery));
+    }
+    let foreign_key_error: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_foreign_key_check)",
+        [],
+        |row| row.get(0),
+    )?;
+    if foreign_key_error {
+        return Err(PersistenceError::Database(rusqlite::Error::InvalidQuery));
+    }
+    let schema_version = schema_version(&connection)?;
+    if schema_version <= 0 || schema_version > MIGRATIONS.len() as i64 {
+        return Err(PersistenceError::Database(rusqlite::Error::InvalidQuery));
+    }
+    let household_count =
+        connection.query_row("SELECT count(*) FROM households", [], |row| row.get(0))?;
+    let mut statement =
+        connection.prepare("SELECT sha256 FROM source_documents ORDER BY sha256")?;
+    let source_hashes = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(RestoredDatabaseInfo {
+        schema_version,
+        household_count,
+        source_hashes,
+    })
+}
+
 fn restrict_directory_permissions(path: &std::path::Path) -> Result<(), PersistenceError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-        .map_err(|_| PersistenceError::Directory)
+    private_fs::secure_directory(path).map_err(|_| PersistenceError::Directory)
 }
 
-#[cfg(not(unix))]
-fn restrict_directory_permissions(_path: &std::path::Path) -> Result<(), PersistenceError> {
-    // Windows data protection is provided by SQLCipher. A Credential Manager key
-    // provider and explicit directory ACL hardening are required before release.
-    Ok(())
-}
-
-#[cfg(unix)]
 fn restrict_file_permissions(path: &std::path::Path) -> Result<(), PersistenceError> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|_| PersistenceError::Directory)
+    private_fs::secure_file(path).map_err(|_| PersistenceError::Directory)
 }
 
 fn restrict_database_file_permissions(
@@ -177,11 +211,6 @@ fn restrict_database_file_permissions(
             restrict_file_permissions(&sidecar)?;
         }
     }
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn restrict_file_permissions(_path: &std::path::Path) -> Result<(), PersistenceError> {
     Ok(())
 }
 
@@ -309,6 +338,15 @@ mod tests {
 
         let state = AppState::open(database_path.clone(), &TestKeyProvider)
             .expect("encrypted database should open");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households (id, name) VALUES ('family', 'Family')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
 
         #[cfg(unix)]
         {
@@ -339,6 +377,13 @@ mod tests {
                 row.get::<_, String>(0)
             });
         assert!(read_without_key.is_err());
+
+        let restored = validate_existing_database(&database_path, TEST_KEY)
+            .expect("the correct restored key should validate the database");
+        assert_eq!(restored.schema_version, MIGRATIONS.len() as i64);
+        assert_eq!(restored.household_count, 1);
+        assert!(restored.source_hashes.is_empty());
+        assert!(validate_existing_database(&database_path, b"wrong key").is_err());
 
         let _ = fs::remove_dir_all(test_directory);
     }

@@ -178,6 +178,8 @@ export type AppCommand =
   | 'import_commit'
   | 'import_rollback'
   | 'backup_create'
+  | 'backup_restore_stage'
+  | 'app_restart_for_restore'
   | 'document_extract'
   | 'cards_list'
   | 'card_match_confirm'
@@ -200,6 +202,8 @@ export interface PlatformClient {
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
   createBackup(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
+  stageBackupRestore(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
+  restartForRestore(): Promise<void>
   extractDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
   listCardSettlements(householdId: string): Promise<readonly CardSettlementDto[]>
   confirmCardMatch(householdId: string, statementId: string, paymentId: string): Promise<CardMatchConfirmationDto>
