@@ -16,6 +16,9 @@ const desktop = vi.hoisted(() => ({
   createSavingsGoal: vi.fn(),
   updateSavingsGoal: vi.fn(),
   deleteSavingsGoal: vi.fn(),
+  startImport: vi.fn(),
+  previewImport: vi.fn(),
+  commitImport: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -41,9 +44,9 @@ vi.mock('./platform', async () => {
       deleteSavingsGoal: desktop.deleteSavingsGoal,
       queryTransactions: desktop.queryTransactions,
       importSummary: vi.fn(),
-      startImport: vi.fn(),
-      previewImport: vi.fn(),
-      commitImport: vi.fn(),
+      startImport: desktop.startImport,
+      previewImport: desktop.previewImport,
+      commitImport: desktop.commitImport,
       rollbackImport: vi.fn(),
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
@@ -62,7 +65,12 @@ describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     localStorage.clear()
     desktop.listHouseholds.mockReset().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }])
-    desktop.listAccounts.mockReset().mockResolvedValue([{ id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY' }])
+    desktop.listAccounts.mockReset().mockResolvedValue([
+      { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' },
+      { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY' },
+      { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY' },
+      { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY' },
+    ])
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.stageBackupRestore.mockReset().mockResolvedValue({ formatVersion: 2, entryCount: 4, plaintextBytes: 4096 })
@@ -73,6 +81,13 @@ describe('KakeFlow desktop read models', () => {
     desktop.createSavingsGoal.mockReset().mockResolvedValue({ id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 0, targetDate: '2027-07-01', status: 'ACTIVE', createdAt: '2026-07-01', updatedAt: '2026-07-01' })
     desktop.updateSavingsGoal.mockReset()
     desktop.deleteSavingsGoal.mockReset()
+    desktop.startImport.mockReset().mockResolvedValue({ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false })
+    desktop.previewImport.mockReset().mockResolvedValue({
+      summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash' },
+      candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+    })
+    desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
@@ -193,5 +208,23 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByLabelText('目標額'), { target: { value: '100000' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(desktop.createSavingsGoal).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: '旅行', targetJpy: 100000, status: 'ACTIVE' })))
+  })
+
+  it('requires explicit per-candidate approval before posting an import', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['日付,摘要,支払い金額,預かり金額,差引残高\n2026/07/12,STORE,1200,,10000'], 'bank.csv', { type: 'text/csv' })
+    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.click(await screen.findByRole('button', { name: '取込開始' }))
+
+    const commit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'STOREを承認' }))
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE' })]))
   })
 })
