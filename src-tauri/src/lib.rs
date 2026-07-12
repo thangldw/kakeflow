@@ -1,5 +1,6 @@
 pub mod account_groups_export;
 pub mod backup;
+pub mod brokerage;
 pub mod document_extract;
 pub mod document_vault;
 pub mod financial_calendar;
@@ -19,6 +20,10 @@ pub mod watched_folders;
 use account_groups_export::{
     AccountGroupDto, CreateAccountGroupInput, ExportCsvDto, ExportCsvRequest, ExportSavedDto,
     ReorderAccountGroupsInput, UpdateAccountGroupInput,
+};
+use brokerage::{
+    BrokerageHistoryDto, BrokerageHistoryRequest, BrokerageImportSummaryDto,
+    ImportBrokerageEventsInput,
 };
 use document_vault::DocumentVault;
 use import_workflow::{
@@ -381,6 +386,16 @@ fn account_group_export_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn brokerage_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> Result<T, brokerage::BrokerageError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Brokerage database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 #[tauri::command]
 fn households_list(state: tauri::State<'_, AppState>) -> Result<Vec<HouseholdDto>, String> {
     repository_result(&state, read_model::list_households)
@@ -628,6 +643,26 @@ fn portfolio_snapshot_get(
 ) -> Result<PortfolioSnapshotDetailDto, String> {
     portfolio_result(&state, |connection| {
         portfolio::get_snapshot(connection, &household_id, &snapshot_id)
+    })
+}
+
+#[tauri::command]
+fn brokerage_events_import(
+    state: tauri::State<'_, AppState>,
+    input: ImportBrokerageEventsInput,
+) -> Result<BrokerageImportSummaryDto, String> {
+    brokerage_result(&state, |connection| {
+        brokerage::import_events(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn brokerage_history_query(
+    state: tauri::State<'_, AppState>,
+    request: BrokerageHistoryRequest,
+) -> Result<BrokerageHistoryDto, String> {
+    brokerage_result(&state, |connection| {
+        brokerage::query_history(connection, &request)
     })
 }
 
@@ -1361,6 +1396,8 @@ pub fn run() {
             portfolio_snapshot_import,
             portfolio_snapshots_list,
             portfolio_snapshot_get,
+            brokerage_events_import,
+            brokerage_history_query,
             account_groups_list,
             account_group_create,
             account_group_update,
