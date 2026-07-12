@@ -12,24 +12,38 @@ function row(overrides: Partial<TransactionRowDto> = {}): TransactionRowDto {
     description: '食料品',
     amountJpy: 4_280,
     status: 'POSTED',
+    debitAccountId: 'family-groceries',
+    debitAccountName: '食費',
+    creditAccountId: 'family-bank',
+    creditAccountName: '銀行',
+    categoryAccountId: 'family-groceries',
+    categoryName: '食費',
     ...overrides,
   }
 }
 
 describe('toTransactionViewModel', () => {
-  it('maps a posted expense without inventing account or category detail', () => {
+  it('maps a posted expense with ledger account and category detail', () => {
     expect(toTransactionViewModel(row())).toEqual({
       id: 'tx-1',
       date: '7月12日',
       merchant: '成城石井',
       detail: '食料品',
-      category: '支出',
-      account: '口座情報なし',
+      category: '食費',
+      account: '銀行 → 食費',
       amount: -4_280,
       status: 'confirmed',
       icon: 'subscription',
       accountingEffect: 'ACCRUAL_AND_CASH',
     })
+  })
+
+  it('falls back when optional account projections are absent', () => {
+    expect(toTransactionViewModel(row({
+      debitAccountName: null,
+      creditAccountName: null,
+      categoryName: null,
+    }))).toMatchObject({ category: '支出', account: '口座情報なし' })
   })
 
   it.each([
@@ -39,7 +53,7 @@ describe('toTransactionViewModel', () => {
     ['CARD_PAYMENT', 6_000, -6_000, '資金移動', 'subscription', 'CASH_ONLY'],
     ['FEE', -500, -500, '手数料', 'subscription', 'ACCRUAL_AND_CASH'],
   ] as const)('maps %s semantics', (transactionType, amountJpy, amount, category, icon, accountingEffect) => {
-    const mapped = toTransactionViewModel(row({ transactionType, amountJpy }))
+    const mapped = toTransactionViewModel(row({ transactionType, amountJpy, categoryName: null }))
     expect(mapped).toMatchObject({ amount, category, icon, accountingEffect })
   })
 
@@ -56,6 +70,7 @@ describe('toTransactionViewModel', () => {
       description: '  調整メモ  ',
       amountJpy: 125,
       status: 'DRAFT',
+      categoryName: null,
     }))).toMatchObject({
       date: 'not-a-date',
       merchant: '調整メモ',
