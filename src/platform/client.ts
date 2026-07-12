@@ -148,8 +148,14 @@ function parseAccounts(value: unknown): readonly AccountDto[] {
   if (!Array.isArray(value)) throw new TypeError('accounts')
   return value.map((item) => {
     const record = asRecord(item)
-    if (typeof record.id !== 'string' || typeof record.name !== 'string' || typeof record.accountKind !== 'string' || typeof record.accountSubtype !== 'string' || record.currency !== 'JPY') throw new TypeError('account')
-    return record as unknown as AccountDto
+    const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
+    const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
+    if (!accountKinds.includes(record.accountKind as typeof accountKinds[number]) || !accountSubtypes.includes(record.accountSubtype as typeof accountSubtypes[number]) || record.currency !== 'JPY') throw new TypeError('account')
+    return {
+      id: asRequiredString(record.id), name: asRequiredString(record.name),
+      accountKind: record.accountKind as AccountDto['accountKind'],
+      accountSubtype: record.accountSubtype as AccountDto['accountSubtype'], currency: 'JPY',
+    }
   })
 }
 
@@ -166,7 +172,24 @@ function parseImportPreview(value: unknown): ImportPreviewDto {
   return {
     summary: parseImportSummaryDto(record.summary),
     source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256 },
-    candidates: record.candidates as unknown as PreviewCandidateDto[],
+    candidates: record.candidates.map(parsePreviewCandidate),
+  }
+}
+
+function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
+  const record = asRecord(value)
+  if ((record.direction !== 'IN' && record.direction !== 'OUT') || !['PENDING', 'READY', 'DUPLICATE', 'EXCLUDED'].includes(String(record.reviewStatus))) throw new TypeError('candidate')
+  if (!Array.isArray(record.evidenceRoles) || !record.evidenceRoles.every((role) => typeof role === 'string') || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('candidate details')
+  return {
+    id: asRequiredString(record.id), accountId: asNullableString(record.accountId),
+    occurredOn: asRequiredString(record.occurredOn), postedOn: asNullableString(record.postedOn),
+    amountJpy: asSafeInteger(record.amountJpy), direction: record.direction,
+    descriptionRaw: asNullableString(record.descriptionRaw), merchantRaw: asNullableString(record.merchantRaw),
+    externalTransactionId: asNullableString(record.externalTransactionId),
+    extractionConfidenceBps: asNullableSafeInteger(record.extractionConfidenceBps),
+    normalizationConfidenceBps: asNullableSafeInteger(record.normalizationConfidenceBps),
+    reviewStatus: record.reviewStatus as PreviewCandidateDto['reviewStatus'],
+    evidenceCount: asSafeInteger(record.evidenceCount), evidenceRoles: record.evidenceRoles, issues: record.issues,
   }
 }
 
@@ -283,6 +306,16 @@ function asNullableString(value: unknown): string | null {
   if (value === null || typeof value === 'undefined') return null
   if (typeof value !== 'string') throw new TypeError('string')
   return value
+}
+
+function asRequiredString(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) throw new TypeError('string')
+  return value
+}
+
+function asNullableSafeInteger(value: unknown): number | null {
+  if (value === null || typeof value === 'undefined') return null
+  return asSafeInteger(value)
 }
 
 export const platformClient = createPlatformClient()
