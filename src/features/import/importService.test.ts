@@ -20,6 +20,9 @@ describe('import preview service', () => {
 
     expect(result.status).toBe('unsupported')
     expect(result.issues[0].code).toBe('ADAPTER_NOT_FOUND')
+    expect(result.fileBytes).toBeInstanceOf(Uint8Array)
+    expect(result.mediaType).toBe('text/csv')
+    expect(result.sourceModifiedAt).toBeTruthy()
   })
 
   it('serializes Excel rows without losing commas, quotes, or dates', () => {

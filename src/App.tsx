@@ -77,6 +77,11 @@ import {
 import type { WatchedFileCheckpoints } from './features/import/folderAutomation'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { FamilyPage } from './features/family/FamilyPage'
+import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
+import { delimitedParserProfilePlatform } from './features/parser-profiles/delimitedParserProfilePlatform'
+import type { DelimitedParserProfileDto } from './features/parser-profiles/delimitedParserProfilePlatform'
+import { parseCustomDelimitedBytes } from './ingestion'
+import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
 import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
@@ -614,6 +619,11 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [checkpoints, setCheckpoints] = useState<WatchedFileCheckpoints>({})
   const checkpointsRef = useRef<WatchedFileCheckpoints>({})
   const [portfolioImported, setPortfolioImported] = useState<ReadonlySet<string>>(() => new Set())
+  const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
+  const [selectedParserProfiles, setSelectedParserProfiles] = useState<Record<string, string>>({})
+  const [customParserPreviews, setCustomParserPreviews] = useState<Record<string, CustomDelimitedPreview>>({})
+  const [customParserAccounts, setCustomParserAccounts] = useState<Record<string, string>>({})
+  const [originalParserPreviews, setOriginalParserPreviews] = useState<Record<string, ImportPreview>>({})
 
   const processFiles = async (files: FileList | readonly File[], sourceType: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' = 'MANUAL_UPLOAD') => {
     if (files.length === 0) return
@@ -634,6 +644,48 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     setCheckpoints(restored)
     void platformClient.listWatchedFolders(householdId).then(setWatchedFolders).catch(() => setNotice('監視フォルダーを読み込めませんでした。'))
   }, [householdId])
+
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) { setParserProfiles([]); return }
+    let active = true
+    void delimitedParserProfilePlatform.list(householdId).then((items) => { if (active) setParserProfiles(items.filter((profile) => profile.isEnabled)) }).catch(() => { if (active) setParserProfiles([]) })
+    return () => { active = false }
+  }, [householdId])
+
+  const applyCustomParserProfile = (item: ImportPreview) => {
+    const profile = parserProfiles.find((candidate) => candidate.id === selectedParserProfiles[item.id])
+    if (!profile || !item.fileBytes) return
+    setOriginalParserPreviews((current) => current[item.id] ? current : { ...current, [item.id]: item })
+    const result = parseCustomDelimitedBytes(item.fileBytes, profile, { filename: item.filename })
+    const hints = [...new Set(result.parsed.records.flatMap((record) => typeof record === 'object' && record !== null && 'accountHint' in record && typeof record.accountHint === 'string' && record.accountHint.trim() ? [record.accountHint.trim()] : []))]
+    const balanceAccounts = accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY')
+    const hintedAccount = hints.length === 1 ? balanceAccounts.find((account) => account.id === hints[0] || account.name === hints[0]) : undefined
+    const fallbackAccount = accounts.find((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK')
+    setCustomParserAccounts((current) => ({ ...current, [item.id]: hintedAccount?.id ?? fallbackAccount?.id ?? '' }))
+    setCustomParserPreviews((current) => ({ ...current, [item.id]: result.preview }))
+    const hasErrors = result.preview.issues.some((issue) => issue.severity === 'error')
+    setPreviews((current) => current.map((preview) => preview.id === item.id ? {
+      ...preview,
+      adapterId: `${profile.name} / custom-delimited-v1`,
+      encoding: result.preview.encoding,
+      recordCount: result.preview.candidateCount,
+      issues: result.preview.issues,
+      status: result.preview.candidateCount > 0 && !hasErrors ? 'ready' : 'error',
+      parsed: result.parsed,
+      detectedAdapterId: 'custom-delimited-v1',
+    } : preview))
+    setNotice(result.preview.candidateCount > 0 && !hasErrors ? `${profile.name} で ${result.preview.candidateCount}件を候補化しました。台帳への反映前に内容を確認してください。` : 'エラーを含むため取込を開始できません。ヘッダーの一致、除外行と問題を確認してください。')
+  }
+
+  const selectCustomParserProfile = (item: ImportPreview, profileId: string) => {
+    setSelectedParserProfiles((current) => ({ ...current, [item.id]: profileId }))
+    if (!customParserPreviews[item.id]) return
+    const original = originalParserPreviews[item.id]
+    if (original) setPreviews((current) => current.map((preview) => preview.id === item.id ? original : preview))
+    setCustomParserPreviews((current) => { const next = { ...current }; delete next[item.id]; return next })
+    setCustomParserAccounts((current) => { const next = { ...current }; delete next[item.id]; return next })
+    setNotice('プロファイルを変更しました。「適用してプレビュー」をもう一度実行してください。')
+  }
 
   const saveCheckpoints = (next: WatchedFileCheckpoints) => {
     checkpointsRef.current = next
@@ -715,6 +767,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
 
   const stageImport = async (item: ImportPreview) => {
     if (!householdId || !item.fileBytes || !item.parsed || !item.detectedAdapterId) return
+    if (item.detectedAdapterId === 'custom-delimited-v1' && !customParserAccounts[item.id]) { setNotice('カスタム形式の取込先口座を選択してください。'); return }
     setActiveRun(item.id)
     setNotice('')
     try {
@@ -722,6 +775,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       const amazonCard = accounts.find((account) => account.accountSubtype === 'CREDIT_CARD' && /Amazon/i.test(account.name))?.id
       const defaultAccount = item.detectedAdapterId === 'japanese-bank-ledger-v1'
         ? `${householdId}-bank`
+        : item.detectedAdapterId === 'custom-delimited-v1' ? customParserAccounts[item.id] ?? ''
         : item.detectedAdapterId === 'paypay-history-v1' ? `${householdId}-wallet`
           : item.detectedAdapterId === 'rakuten-enavi-v1' ? rakutenCard ?? `${householdId}-card`
             : item.detectedAdapterId === 'amazon-mastercard-statement-v1' ? amazonCard ?? `${householdId}-card` : `${householdId}-card`
@@ -730,7 +784,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
           householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename,
           mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength,
           sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null,
-          accountId: defaultAccount, adapterVersion: '1',
+          accountId: defaultAccount, adapterVersion: item.detectedAdapterId === 'custom-delimited-v1' && customParserPreviews[item.id] ? `${customParserPreviews[item.id].profileId}@${customParserPreviews[item.id].profileVersion}` : '1',
         },
         detectedAdapterId: item.detectedAdapterId,
         parsed: item.parsed,
@@ -886,6 +940,26 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / Excel / PDF / レシート画像をここにドロップ</span><small>PayPay・銀行・カード・PNG / JPEGレシート</small></button>
+      {parserProfiles.length > 0 && previews.some((item) => /\.(?:csv|tsv)$/i.test(item.filename) && item.fileBytes) && <div className="custom-parser-files">
+        <div><strong>保存済みプロファイルを明示的に適用</strong><small>組み込み判定を上書きする場合、ファイルとプロファイルを選んで実データをプレビューします。</small></div>
+        {previews.filter((item) => /\.(?:csv|tsv)$/i.test(item.filename) && item.fileBytes).map((item) => {
+          const preview = customParserPreviews[item.id]
+          const errorCount = preview?.issues.filter((issue) => issue.severity === 'error').length ?? 0
+          return <div className="custom-parser-file" key={item.id}>
+            <span><strong>{item.filename}</strong><small>{item.detectedAdapterId ? `現在: ${item.detectedAdapterId}` : '組み込み形式では未対応'}</small></span>
+            <select aria-label={`${item.filename}の読み取りプロファイル`} value={selectedParserProfiles[item.id] ?? ''} onChange={(event) => selectCustomParserProfile(item, event.target.value)}><option value="">プロファイルを選択</option>{parserProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}（優先度 {profile.priority}）</option>)}</select>
+            <button className="mini-btn" disabled={!selectedParserProfiles[item.id]} onClick={() => applyCustomParserProfile(item)}>適用してプレビュー</button>
+            {preview && <div className="custom-parser-result">
+              <strong>{preview.candidateCount}件の候補 / {preview.rejectedRowCount}行を除外 / {errorCount}件のエラー</strong>
+              <span>{preview.encoding} ・ 区切り「{preview.delimiter === '\t' ? 'TAB' : preview.delimiter}」・ ヘッダー行 {preview.headerRow}</span>
+              <label>取込先口座（口座ヒントは候補としてのみ使用）<select aria-label={`${item.filename}の取込先口座`} value={customParserAccounts[item.id] ?? ''} onChange={(event) => setCustomParserAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">口座を選択</option>{accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+              <div>{preview.mappings.map((mapping) => <span className={mapping.columnIndex == null ? 'missing' : 'matched'} key={mapping.role}>{mapping.role}: {mapping.configuredHeader} → {mapping.matchedHeader ?? '未一致'}</span>)}</div>
+              {preview.issues.length > 0 && <ul>{preview.issues.slice(0, 6).map((issue, index) => <li key={`${issue.code}-${issue.row ?? 0}-${index}`}>{issue.row ? `行 ${issue.row}: ` : ''}{issue.message}</li>)}</ul>}
+              <small>{errorCount > 0 ? 'エラーを解消して再プレビューするまで取込を開始できません。' : 'この候補も次の「取込開始」後にレビューと個別承認が必要です。'}</small>
+            </div>}
+          </div>
+        })}
+      </div>}
       <div className="import-list">
         {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
@@ -1470,7 +1544,7 @@ function App() {
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
-    settings: <SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
   return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">集計対象: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }

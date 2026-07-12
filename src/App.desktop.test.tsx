@@ -177,6 +177,7 @@ describe('KakeFlow desktop read models', () => {
       if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }] }
       if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
       if (command === 'export_csv_save') return { fileName: 'transactions.csv', rowCount: 1, byteSize: 100 }
+      if (command === 'delimited_parser_profiles_list') return [{ id: 'custom-bank', householdId: 'family', name: 'Local bank CSV', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: 'Account', isEnabled: true, priority: 50, version: 2, createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }]
       if (command === 'account_groups_list') return accountGroupState.groups
       if (command === 'account_group_delete') {
         const deletedId = args?.groupId
@@ -467,7 +468,7 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('delegates restore selection and destructive confirmation to the native backend', async () => {
-    render(<App />)
+    const { container } = render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
 
@@ -478,7 +479,7 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.stageBackupRestore).toHaveBeenCalledWith('correct horse battery'))
     expect(desktop.restartForRestore).toHaveBeenCalledOnce()
     expect(dialog.open).not.toHaveBeenCalled()
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(container.querySelector('.restore-panel input[type="checkbox"]')).not.toBeInTheDocument()
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {
@@ -516,6 +517,61 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(commit)
 
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
+  })
+
+  it('explicitly previews an unsupported CSV with a saved profile before staging it for review', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command !== 'delimited_parser_profiles_list') return fallback(command, args)
+      const profiles = await fallback(command, args) as Array<Record<string, unknown>>
+      return [...profiles, { ...profiles[0], id: 'custom-bank-2', name: 'Second profile', version: 1 }]
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['Date,Description,Amount,Account\n2026/07/12,Local shop,-1200,銀行'], 'local-bank.csv', { type: 'text/csv' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    const profile = await screen.findByLabelText('local-bank.csvの読み取りプロファイル')
+    expect(await screen.findByText('組み込み形式では未対応')).toBeInTheDocument()
+    fireEvent.change(profile, { target: { value: 'custom-bank' } })
+    fireEvent.click(screen.getByRole('button', { name: '適用してプレビュー' }))
+
+    expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
+    expect(screen.getByText('DATE: Date → Date')).toBeInTheDocument()
+    expect(screen.getByLabelText('local-bank.csvの取込先口座')).toHaveValue('family-bank')
+
+    fireEvent.change(profile, { target: { value: 'custom-bank-2' } })
+    expect(screen.queryByText('1件の候補 / 0行を除外 / 0件のエラー')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '取込開始' })).not.toBeInTheDocument()
+    expect(screen.getByText(/もう一度実行してください/)).toBeInTheDocument()
+    fireEvent.change(profile, { target: { value: 'custom-bank' } })
+    fireEvent.click(screen.getByRole('button', { name: '適用してプレビュー' }))
+    expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'custom-delimited-v1', adapterVersion: 'custom-bank@2',
+      candidates: [expect.objectContaining({ accountId: 'family-bank', merchantRaw: 'Local shop', amountJpy: 1200, direction: 'OUT' })],
+    }), expect.any(Uint8Array)))
+    expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+  })
+
+  it('blocks custom staging when a preview has rejected error rows', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File(['Date,Description,Amount,Account\n2026/07/12,Valid,-1200,銀行\nnot-a-date,Rejected,-500,銀行'], 'mixed.csv', { type: 'text/csv' })] } })
+    const selector = await screen.findByLabelText('mixed.csvの読み取りプロファイル')
+    fireEvent.change(selector, { target: { value: 'custom-bank' } })
+    fireEvent.click(screen.getByRole('button', { name: '適用してプレビュー' }))
+
+    expect(await screen.findByText('1件の候補 / 1行を除外 / 1件のエラー')).toBeInTheDocument()
+    expect(screen.getByText(/エラーを解消して再プレビュー/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '取込開始' })).not.toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
   })
 
   it('prompts for a protected PDF password and never persists it in the import request', async () => {
