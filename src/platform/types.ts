@@ -37,6 +37,9 @@ export interface AccountDto {
   readonly accountSubtype: 'BANK' | 'CASH' | 'WALLET' | 'SECURITIES' | 'CREDIT_CARD' | 'RECEIVABLE' | 'OTHER'
   readonly currency: 'JPY'
 }
+export interface CreateAccountInputDto { readonly id: string; readonly householdId: string; readonly name: string; readonly accountKind: AccountDto['accountKind']; readonly accountSubtype: AccountDto['accountSubtype']; readonly currency: 'JPY' }
+export interface RenameAccountInputDto { readonly householdId: string; readonly accountId: string; readonly name: string }
+export interface ArchiveAccountInputDto { readonly householdId: string; readonly accountId: string }
 
 export interface ImportSourceRecordDto { readonly id: string; readonly rowNumber: number; readonly recordHash: string; readonly payloadJson: string }
 export interface ImportEvidenceDto { readonly sourceRecordId: string; readonly role: 'PRIMARY' | 'FUNDING_LEG' | 'REWARD_LEG' | 'CONTINUATION' | 'SUPPORTING' }
@@ -177,6 +180,9 @@ export type AppCommand =
   | 'households_list'
   | 'household_create'
   | 'accounts_list'
+  | 'account_create'
+  | 'account_rename'
+  | 'account_archive'
   | 'transactions_query'
   | 'dashboard_query'
   | 'budgets_query'
@@ -208,6 +214,9 @@ export interface PlatformClient {
   listHouseholds(): Promise<readonly HouseholdDto[]>
   createHousehold(input: CreateHouseholdInputDto): Promise<HouseholdDto>
   listAccounts(householdId: string): Promise<readonly AccountDto[]>
+  createAccount(input: CreateAccountInputDto): Promise<AccountDto>
+  renameAccount(input: RenameAccountInputDto): Promise<AccountDto>
+  archiveAccount(input: ArchiveAccountInputDto): Promise<void>
   queryTransactions(request: TransactionPageRequestDto): Promise<TransactionPageDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>

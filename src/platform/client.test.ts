@@ -188,6 +188,20 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('savings_goal_delete', { householdId: 'family', goalId: 'goal' })
   })
 
+  it('validates account mutations and preserves household ownership inputs', async () => {
+    const account = { id: 'bank-2', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' }
+    const responses: Record<string, unknown> = { account_create: account, account_rename: { ...account, name: '生活口座' }, account_archive: null }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => { invokeSpy(command, args); return responses[command] as T } })
+    const create = { id: 'bank-2', householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET' as const, accountSubtype: 'BANK' as const, currency: 'JPY' as const }
+
+    await expect(client.createAccount(create)).resolves.toEqual(account)
+    await expect(client.renameAccount({ householdId: 'family', accountId: 'bank-2', name: '生活口座' })).resolves.toMatchObject({ name: '生活口座' })
+    await expect(client.archiveAccount({ householdId: 'family', accountId: 'bank-2' })).resolves.toBeUndefined()
+    expect(invokeSpy).toHaveBeenCalledWith('account_create', { input: create })
+    expect(invokeSpy).toHaveBeenCalledWith('account_archive', { input: { householdId: 'family', accountId: 'bank-2' } })
+  })
+
   it('does not expose raw invoke errors', async () => {
     const secret = '/Users/example/private/kakeflow.db: SQLCipher key rejected'
     const invoke: Invoke = async () => { throw new Error(secret) }
