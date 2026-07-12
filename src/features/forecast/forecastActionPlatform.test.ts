@@ -11,12 +11,12 @@ const response = {
     averageMonthlyNonRecurringExpenseJpy: 170_000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 120_000,
     recurringMonthlyExpenseJpy: 10_000, recurringItemCount: 2, reasons: ['Three completed months'],
   },
-  months: [{
-    month: '2026-08', openingCashJpy: 500_000, projectedIncomeJpy: 300_000,
+  months: [0, 1, 2].map((offset) => ({
+    month: `2026-${String(8 + offset).padStart(2, '0')}`, openingCashJpy: 500_000, projectedIncomeJpy: 300_000,
     projectedNonRecurringExpenseJpy: 170_000, projectedRecurringExpenseJpy: 10_000,
     projectedSavingsJpy: 120_000, projectedCashChangeBeforeCardPaymentsJpy: 120_000,
     knownCardPaymentsJpy: 50_000, projectedCashChangeJpy: 70_000, closingCashJpy: 570_000,
-  }],
+  })),
   actions: [{
     id: 'card:s1', kind: 'CARD_PAYMENT_DUE', priority: 'HIGH', title: 'Upcoming card payment',
     detail: 'Statement is due', dueOn: '2026-08-27', amountJpy: 50_000, entityId: 's1', reasons: ['Known statement'],
@@ -36,5 +36,7 @@ describe('forecast action platform', () => {
     expect(() => parseForecastAction({ ...response, months: [{ ...response.months[0], closingCashJpy: 1.5 }] })).toThrow('closingCashJpy')
     expect(() => parseForecastAction({ ...response, actions: [{ ...response.actions[0], priority: 'URGENT' }] })).toThrow('priority')
     expect(() => parseForecastAction({ ...response, forecastThrough: '2026-13' })).toThrow('forecastThrough')
+    expect(() => parseForecastAction({ ...response, months: response.months.slice(0, 2) })).toThrow('months')
+    expect(() => parseForecastAction({ ...response, actions: [{ ...response.actions[0], amountJpy: -1 }] })).toThrow('amountJpy')
   })
 })
