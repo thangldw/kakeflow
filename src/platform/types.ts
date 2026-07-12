@@ -163,6 +163,13 @@ export interface ImportRunCountsDto {
   readonly readyCandidates: number
 }
 
+export interface MonthlyCategoryBudgetDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly categoryName: string; readonly budgetJpy: number; readonly actualJpy: number; readonly remainingJpy: number }
+export interface UpsertMonthlyCategoryBudgetInputDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly budgetJpy: number }
+export type SavingsGoalStatusDto = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'CANCELLED'
+export interface SavingsGoalDto { readonly id: string; readonly householdId: string; readonly name: string; readonly targetJpy: number; readonly savedJpy: number; readonly targetDate: string; readonly status: SavingsGoalStatusDto; readonly createdAt: string; readonly updatedAt: string }
+export interface CreateSavingsGoalInputDto { readonly id: string; readonly householdId: string; readonly name: string; readonly targetJpy: number; readonly savedJpy: number; readonly targetDate: string; readonly status: SavingsGoalStatusDto }
+export type UpdateSavingsGoalInputDto = CreateSavingsGoalInputDto
+
 export type AppCommand =
   | 'app_bootstrap'
   | 'app_health'
@@ -172,6 +179,12 @@ export type AppCommand =
   | 'accounts_list'
   | 'transactions_query'
   | 'dashboard_query'
+  | 'budgets_query'
+  | 'budget_upsert'
+  | 'savings_goals_list'
+  | 'savings_goal_create'
+  | 'savings_goal_update'
+  | 'savings_goal_delete'
   | 'import_summary'
   | 'import_start'
   | 'import_preview'
@@ -197,6 +210,12 @@ export interface PlatformClient {
   listAccounts(householdId: string): Promise<readonly AccountDto[]>
   queryTransactions(request: TransactionPageRequestDto): Promise<TransactionPageDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
+  listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
+  upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
+  listSavingsGoals(householdId: string): Promise<readonly SavingsGoalDto[]>
+  createSavingsGoal(input: CreateSavingsGoalInputDto): Promise<SavingsGoalDto>
+  updateSavingsGoal(input: UpdateSavingsGoalInputDto): Promise<SavingsGoalDto>
+  deleteSavingsGoal(householdId: string, goalId: string): Promise<void>
   importSummary(householdId: string): Promise<ImportRunCountsDto>
   startImport(request: StartImportDto, fileBytes: Uint8Array): Promise<ImportSummaryDto>
   previewImport(runId: string): Promise<ImportPreviewDto>

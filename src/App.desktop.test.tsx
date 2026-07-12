@@ -3,12 +3,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const desktop = vi.hoisted(() => ({
   listHouseholds: vi.fn(),
+  listAccounts: vi.fn(),
   queryDashboard: vi.fn(),
   queryTransactions: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
   stageBackupRestore: vi.fn(),
   restartForRestore: vi.fn(),
+  listBudgets: vi.fn(),
+  upsertBudget: vi.fn(),
+  listSavingsGoals: vi.fn(),
+  createSavingsGoal: vi.fn(),
+  updateSavingsGoal: vi.fn(),
+  deleteSavingsGoal: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -24,8 +31,14 @@ vi.mock('./platform', async () => {
       bootstrap: vi.fn().mockResolvedValue({ application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } }),
       listHouseholds: desktop.listHouseholds,
       createHousehold: vi.fn(),
-      listAccounts: vi.fn().mockResolvedValue([]),
+      listAccounts: desktop.listAccounts,
       queryDashboard: desktop.queryDashboard,
+      listBudgets: desktop.listBudgets,
+      upsertBudget: desktop.upsertBudget,
+      listSavingsGoals: desktop.listSavingsGoals,
+      createSavingsGoal: desktop.createSavingsGoal,
+      updateSavingsGoal: desktop.updateSavingsGoal,
+      deleteSavingsGoal: desktop.deleteSavingsGoal,
       queryTransactions: desktop.queryTransactions,
       importSummary: vi.fn(),
       startImport: vi.fn(),
@@ -49,10 +62,17 @@ describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     localStorage.clear()
     desktop.listHouseholds.mockReset().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }])
+    desktop.listAccounts.mockReset().mockResolvedValue([{ id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY' }])
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.stageBackupRestore.mockReset().mockResolvedValue({ formatVersion: 2, entryCount: 4, plaintextBytes: 4096 })
     desktop.restartForRestore.mockReset().mockResolvedValue(undefined)
+    desktop.listBudgets.mockReset().mockResolvedValue([])
+    desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
+    desktop.listSavingsGoals.mockReset().mockResolvedValue([])
+    desktop.createSavingsGoal.mockReset().mockResolvedValue({ id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 0, targetDate: '2027-07-01', status: 'ACTIVE', createdAt: '2026-07-01', updatedAt: '2026-07-01' })
+    desktop.updateSavingsGoal.mockReset()
+    desktop.deleteSavingsGoal.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
     desktop.queryDashboard.mockReset().mockImplementation(async ({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => ({
@@ -155,5 +175,23 @@ describe('KakeFlow desktop read models', () => {
     expect(desktop.restartForRestore).toHaveBeenCalledOnce()
     expect(dialog.open).not.toHaveBeenCalled()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+  })
+
+  it('creates persisted monthly budgets and savings goals', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '予算・目標' }))
+    await screen.findByText('カテゴリー予算')
+
+    fireEvent.change(screen.getByLabelText('予算カテゴリー'), { target: { value: 'family-other-expense' } })
+    fireEvent.change(screen.getByLabelText('月間予算'), { target: { value: '50000' } })
+    fireEvent.click(screen.getByRole('button', { name: '予算を保存' }))
+    await waitFor(() => expect(desktop.upsertBudget).toHaveBeenCalledWith({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', budgetJpy: 50000 }))
+
+    fireEvent.click(screen.getByRole('button', { name: '目標を追加' }))
+    fireEvent.change(screen.getByLabelText('目標名'), { target: { value: '旅行' } })
+    fireEvent.change(screen.getByLabelText('目標額'), { target: { value: '100000' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(desktop.createSavingsGoal).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: '旅行', targetJpy: 100000, status: 'ACTIVE' })))
   })
 })
