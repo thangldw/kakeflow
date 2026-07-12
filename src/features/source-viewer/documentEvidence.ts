@@ -17,6 +17,10 @@ export interface DocumentEvidenceReadModel {
     readonly taxes: readonly ReceiptTaxEvidence[]
     readonly couponAmountJpy: number | null
     readonly pointsUsedJpy: number | null
+    readonly subtotalJpy?: number | null
+    readonly changeJpy?: number | null
+    readonly paymentMethod?: string | null
+    readonly taxMode?: 'INCLUDED' | 'EXCLUDED' | 'MIXED' | null
   } | null
 }
 
@@ -107,6 +111,10 @@ export function buildDocumentEvidence(record: SourceRecordViewDto): DocumentEvid
       taxes: Array.isArray(receipt.taxes) ? receipt.taxes.map(tax).filter((value): value is ReceiptTaxEvidence => value !== null) : [],
       couponAmountJpy: integer(receipt.couponAmountJpy),
       pointsUsedJpy: integer(receipt.pointsUsedJpy),
+      subtotalJpy: integer(receipt.subtotalJpy),
+      changeJpy: integer(receipt.changeJpy),
+      paymentMethod: text(receipt.paymentMethod),
+      taxMode: receipt.taxMode === 'INCLUDED' || receipt.taxMode === 'EXCLUDED' || receipt.taxMode === 'MIXED' ? receipt.taxMode : null,
     } : null,
   }
 }

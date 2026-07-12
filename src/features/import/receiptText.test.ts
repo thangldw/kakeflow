@@ -55,4 +55,25 @@ describe('receipt text normalization', () => {
     ])
     expect(receipt).toMatchObject({ couponAmountJpy: 100, pointsUsedJpy: 41 })
   })
+
+  it('separates quantity, subtotal, payment and change lines from Japanese items', () => {
+    const receipt = parseReceiptText([
+      'スーパー東京店',
+      '2026/07/13',
+      'りんご 2点 @120 240',
+      '洗剤 @380 ×2 760',
+      '小計 1,000',
+      '10%対象(外税) 1,000',
+      '消費税10% 100',
+      '合計 1,100',
+      'クレジット お支払 1,100',
+      'お釣り 0',
+    ].join('\n'))
+
+    expect(receipt.items).toEqual([
+      expect.objectContaining({ description: 'りんご', quantity: 2, amountJpy: 240 }),
+      expect.objectContaining({ description: '洗剤', quantity: 2, amountJpy: 760 }),
+    ])
+    expect(receipt).toMatchObject({ subtotalJpy: 1000, changeJpy: 0, paymentMethod: 'クレジット', taxMode: 'EXCLUDED' })
+  })
 })
