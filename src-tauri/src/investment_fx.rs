@@ -297,8 +297,19 @@ fn latest_rate(
     quote: &str,
     through: &str,
 ) -> Result<Option<InvestmentFxRateDto>, InvestmentFxError> {
-    connection.query_row(
+    let explicit = connection.query_row(
         "SELECT id,rate_date,base_currency,quote_currency,rate,source_kind,provider,source_document_id,source_row,observed_at FROM investment_fx_rates WHERE household_id=?1 AND base_currency=?2 AND quote_currency=?3 AND rate_date<=?4 ORDER BY rate_date DESC,id DESC LIMIT 1",
+        params![household, base, quote, through], map_rate,
+    ).optional().map_err(db_error)?;
+    if explicit.is_some() {
+        return Ok(explicit);
+    }
+    connection.query_row(
+        "SELECT fx.id,substr(ps.as_of,1,10),fx.base_currency,fx.quote_currency,fx.rate,'PORTFOLIO_SNAPSHOT','assetbalance',ps.source_document_id,fx.source_row,ps.as_of
+         FROM portfolio_fx_rates fx
+         JOIN portfolio_snapshots ps ON ps.id=fx.portfolio_snapshot_id
+         WHERE ps.household_id=?1 AND fx.base_currency=?2 AND fx.quote_currency=?3 AND substr(ps.as_of,1,10)<=?4
+         ORDER BY ps.as_of DESC,fx.id DESC LIMIT 1",
         params![household, base, quote, through], map_rate,
     ).optional().map_err(db_error)
 }
@@ -408,6 +419,7 @@ mod tests {
         for migration in [
             include_str!("../migrations/0001_household_accounts.sql"),
             include_str!("../migrations/0002_import_provenance.sql"),
+            include_str!("../migrations/0010_portfolio_snapshots.sql"),
             include_str!("../migrations/0012_brokerage_events.sql"),
             include_str!("../migrations/0013_investment_performance.sql"),
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
@@ -484,5 +496,31 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error, InvestmentFxError::MissingRate);
+    }
+
+    #[test]
+    fn reporting_reuses_a_provenanced_portfolio_snapshot_rate() {
+        let c = connection();
+        c.execute("INSERT INTO portfolio_snapshots(id,household_id,account_id,source_document_id,as_of,market_value_jpy,cash_value_jpy) VALUES('snapshot','home','broker','doc','2026-12-29T10:00:00Z',1000,0)", []).unwrap();
+        c.execute("INSERT INTO portfolio_fx_rates(id,portfolio_snapshot_id,base_currency,quote_currency,rate,source_row) VALUES('snapshot-usd-jpy','snapshot','USD','JPY',149.5,7)", []).unwrap();
+        let result = query_reporting(
+            &c,
+            &InvestmentReportingRequest {
+                household_id: "home".into(),
+                account_id: None,
+                date_from: None,
+                date_to: None,
+                reporting_currency: "JPY".into(),
+                fx_as_of: "2026-12-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.converted_totals.buy_gross, 1495.0);
+        assert_eq!(result.conversions[0].source_kind, "PORTFOLIO_SNAPSHOT");
+        assert_eq!(
+            result.conversions[0].source_document_id.as_deref(),
+            Some("doc")
+        );
+        assert_eq!(result.conversions[0].source_row, Some(7));
     }
 }
