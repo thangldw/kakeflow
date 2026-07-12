@@ -6,6 +6,7 @@ const MAX_PAGE_SIZE: u32 = 100;
 const MAX_HOUSEHOLD_ID_LEN: usize = 48;
 const MAX_LOOKUP_ID_LEN: usize = 64;
 const MAX_NAME_LEN: usize = 80;
+const MAX_RELATIONSHIP_LABEL_LEN: usize = 40;
 const MAX_SEARCH_LEN: usize = 200;
 const MAX_TRANSACTION_TEXT_LEN: usize = 16_384;
 const MAX_MANUAL_ENTRIES: usize = 128;
@@ -210,6 +211,280 @@ pub struct AccountDto {
     pub account_kind: String,
     pub account_subtype: String,
     pub currency: String,
+    pub ownership_kind: String,
+    pub owner_member_id: Option<String>,
+    pub owner_member_name: Option<String>,
+    pub visibility: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HouseholdMemberDto {
+    pub id: String,
+    pub household_id: String,
+    pub display_name: String,
+    pub relationship_label: Option<String>,
+    pub status: String,
+    pub sort_order: u32,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateHouseholdMemberInput {
+    pub id: String,
+    pub household_id: String,
+    pub display_name: String,
+    pub relationship_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateHouseholdMemberInput {
+    pub household_id: String,
+    pub member_id: String,
+    pub display_name: String,
+    pub relationship_label: Option<String>,
+    pub sort_order: u32,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AccountOwnershipKind {
+    Household,
+    Member,
+}
+
+impl AccountOwnershipKind {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Household => "HOUSEHOLD",
+            Self::Member => "MEMBER",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AccountVisibility {
+    Shared,
+    Personal,
+}
+
+impl AccountVisibility {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Shared => "SHARED",
+            Self::Personal => "PERSONAL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAccountOwnershipInput {
+    pub household_id: String,
+    pub account_id: String,
+    pub ownership_kind: AccountOwnershipKind,
+    pub owner_member_id: Option<String>,
+    pub visibility: AccountVisibility,
+}
+
+pub fn list_household_members(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<HouseholdMemberDto>, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT id, household_id, display_name, relationship_label, status,
+                    sort_order, created_at, updated_at
+             FROM household_members WHERE household_id = ?1
+             ORDER BY sort_order, id",
+        )
+        .map_err(map_database_error)?;
+    let members = statement
+        .query_map([household_id], household_member_from_row)
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    Ok(members)
+}
+
+pub fn create_household_member(
+    connection: &Connection,
+    input: &CreateHouseholdMemberInput,
+) -> Result<HouseholdMemberDto, RepositoryError> {
+    validate_id(&input.id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    let display_name = validate_member_name(&input.display_name)?;
+    let relationship_label = validate_relationship_label(input.relationship_label.as_deref())?;
+    ensure_household_exists(connection, &input.household_id)?;
+    let sort_order: u32 = connection
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order) + 1, 0) FROM household_members WHERE household_id = ?1",
+            [&input.household_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    connection
+        .execute(
+            "INSERT INTO household_members
+             (id, household_id, display_name, relationship_label, status, sort_order)
+             VALUES (?1, ?2, ?3, ?4, 'ACTIVE', ?5)",
+            params![
+                input.id,
+                input.household_id,
+                display_name,
+                relationship_label,
+                sort_order
+            ],
+        )
+        .map_err(map_database_error)?;
+    get_household_member(connection, &input.household_id, &input.id)
+}
+
+pub fn update_household_member(
+    connection: &Connection,
+    input: &UpdateHouseholdMemberInput,
+) -> Result<HouseholdMemberDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.member_id, MAX_LOOKUP_ID_LEN)?;
+    let display_name = validate_member_name(&input.display_name)?;
+    let relationship_label = validate_relationship_label(input.relationship_label.as_deref())?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    let mut ordered = list_member_ids(&transaction, &input.household_id)?;
+    let old_index = ordered
+        .iter()
+        .position(|id| id == &input.member_id)
+        .ok_or(RepositoryError::NotFound)?;
+    let target = usize::try_from(input.sort_order)
+        .map_err(|_| RepositoryError::InvalidInput("Invalid member order"))?;
+    if target >= ordered.len() {
+        return Err(RepositoryError::InvalidInput("Invalid member order"));
+    }
+    ordered.remove(old_index);
+    ordered.insert(target, input.member_id.clone());
+    transaction
+        .execute(
+            "UPDATE household_members SET display_name = ?1, relationship_label = ?2,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?3 AND household_id = ?4",
+            params![
+                display_name,
+                relationship_label,
+                input.member_id,
+                input.household_id
+            ],
+        )
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "UPDATE household_members SET sort_order = sort_order + 1000000
+             WHERE household_id = ?1",
+            [&input.household_id],
+        )
+        .map_err(map_database_error)?;
+    for (index, member_id) in ordered.iter().enumerate() {
+        transaction
+            .execute(
+                "UPDATE household_members SET sort_order = ?1 WHERE household_id = ?2 AND id = ?3",
+                params![index as u32, input.household_id, member_id],
+            )
+            .map_err(map_database_error)?;
+    }
+    transaction.commit().map_err(map_database_error)?;
+    get_household_member(connection, &input.household_id, &input.member_id)
+}
+
+pub fn archive_household_member(
+    connection: &Connection,
+    household_id: &str,
+    member_id: &str,
+) -> Result<(), RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(member_id, MAX_LOOKUP_ID_LEN)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    let status: String = transaction
+        .query_row(
+            "SELECT status FROM household_members WHERE household_id = ?1 AND id = ?2",
+            params![household_id, member_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    if status != "ACTIVE" {
+        return Err(RepositoryError::Conflict);
+    }
+    let active_count: u32 = transaction
+        .query_row(
+            "SELECT count(*) FROM household_members WHERE household_id = ?1 AND status = 'ACTIVE'",
+            [household_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if active_count <= 1 {
+        return Err(RepositoryError::InUse);
+    }
+    let owns_account: bool = transaction
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM accounts WHERE household_id = ?1 AND owner_member_id = ?2)",
+            params![household_id, member_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    if owns_account {
+        return Err(RepositoryError::InUse);
+    }
+    transaction
+        .execute(
+            "UPDATE household_members SET status = 'ARCHIVED',
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE household_id = ?1 AND id = ?2 AND status = 'ACTIVE'",
+            params![household_id, member_id],
+        )
+        .map_err(map_database_error)?;
+    transaction.commit().map_err(map_database_error)
+}
+
+pub fn update_account_ownership(
+    connection: &Connection,
+    input: &UpdateAccountOwnershipInput,
+) -> Result<AccountDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.account_id, MAX_LOOKUP_ID_LEN)?;
+    validate_account_ownership(
+        connection,
+        &input.household_id,
+        input.ownership_kind,
+        input.owner_member_id.as_deref(),
+        input.visibility,
+    )?;
+    let changed = connection
+        .execute(
+            "UPDATE accounts SET ownership_kind = ?1, owner_member_id = ?2, visibility = ?3,
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE household_id = ?4 AND id = ?5 AND is_archived = 0",
+            params![
+                input.ownership_kind.as_sql_value(),
+                input.owner_member_id,
+                input.visibility.as_sql_value(),
+                input.household_id,
+                input.account_id
+            ],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(RepositoryError::NotFound);
+    }
+    find_active_account(connection, &input.household_id, &input.account_id)
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -299,6 +574,9 @@ pub struct CreateAccountInput {
     pub account_kind: AccountKind,
     pub account_subtype: AccountSubtype,
     pub currency: AccountCurrency,
+    pub ownership_kind: AccountOwnershipKind,
+    pub owner_member_id: Option<String>,
+    pub visibility: AccountVisibility,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -324,9 +602,12 @@ pub fn list_accounts(
     ensure_household_exists(connection, household_id)?;
     let mut statement = connection
         .prepare(
-            "SELECT id, name, account_kind, account_subtype, currency
-             FROM accounts WHERE household_id = ?1 AND is_archived = 0
-             ORDER BY account_kind, account_subtype, name, id",
+            "SELECT a.id, a.name, a.account_kind, a.account_subtype, a.currency,
+                    a.ownership_kind, a.owner_member_id, m.display_name, a.visibility
+             FROM accounts a
+             LEFT JOIN household_members m ON m.id = a.owner_member_id
+             WHERE a.household_id = ?1 AND a.is_archived = 0
+             ORDER BY a.account_kind, a.account_subtype, a.name, a.id",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -337,6 +618,10 @@ pub fn list_accounts(
                 account_kind: row.get(2)?,
                 account_subtype: row.get(3)?,
                 currency: row.get(4)?,
+                ownership_kind: row.get(5)?,
+                owner_member_id: row.get(6)?,
+                owner_member_name: row.get(7)?,
+                visibility: row.get(8)?,
             })
         })
         .map_err(map_database_error)?;
@@ -357,18 +642,29 @@ pub fn create_account(
         ));
     }
     ensure_household_exists(connection, &input.household_id)?;
+    validate_account_ownership(
+        connection,
+        &input.household_id,
+        input.ownership_kind,
+        input.owner_member_id.as_deref(),
+        input.visibility,
+    )?;
     connection
         .execute(
             "INSERT INTO accounts
-               (id, household_id, name, account_kind, account_subtype, currency)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+               (id, household_id, name, account_kind, account_subtype, currency,
+                ownership_kind, owner_member_id, visibility)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 input.id,
                 input.household_id,
                 name,
                 input.account_kind.as_sql_value(),
                 input.account_subtype.as_sql_value(),
-                input.currency.as_sql_value()
+                input.currency.as_sql_value(),
+                input.ownership_kind.as_sql_value(),
+                input.owner_member_id,
+                input.visibility.as_sql_value()
             ],
         )
         .map_err(map_database_error)?;
@@ -460,9 +756,11 @@ fn find_active_account(
 ) -> Result<AccountDto, RepositoryError> {
     connection
         .query_row(
-            "SELECT id, name, account_kind, account_subtype, currency
-             FROM accounts
-             WHERE id = ?1 AND household_id = ?2 AND is_archived = 0",
+            "SELECT a.id, a.name, a.account_kind, a.account_subtype, a.currency,
+                    a.ownership_kind, a.owner_member_id, m.display_name, a.visibility
+             FROM accounts a
+             LEFT JOIN household_members m ON m.id = a.owner_member_id
+             WHERE a.id = ?1 AND a.household_id = ?2 AND a.is_archived = 0",
             params![account_id, household_id],
             |row| {
                 Ok(AccountDto {
@@ -471,6 +769,10 @@ fn find_active_account(
                     account_kind: row.get(2)?,
                     account_subtype: row.get(3)?,
                     currency: row.get(4)?,
+                    ownership_kind: row.get(5)?,
+                    owner_member_id: row.get(6)?,
+                    owner_member_name: row.get(7)?,
+                    visibility: row.get(8)?,
                 })
             },
         )
@@ -2559,6 +2861,109 @@ fn validate_account_name(value: &str) -> Result<&str, RepositoryError> {
     Ok(trimmed)
 }
 
+fn validate_member_name(value: &str) -> Result<&str, RepositoryError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_NAME_LEN
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(RepositoryError::InvalidInput("Invalid member name"));
+    }
+    Ok(trimmed)
+}
+
+fn validate_relationship_label(value: Option<&str>) -> Result<Option<&str>, RepositoryError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > MAX_RELATIONSHIP_LABEL_LEN
+        || trimmed.chars().any(char::is_control)
+    {
+        return Err(RepositoryError::InvalidInput(
+            "Invalid member relationship label",
+        ));
+    }
+    Ok(Some(trimmed))
+}
+
+fn validate_account_ownership(
+    connection: &Connection,
+    household_id: &str,
+    ownership_kind: AccountOwnershipKind,
+    owner_member_id: Option<&str>,
+    visibility: AccountVisibility,
+) -> Result<(), RepositoryError> {
+    match (ownership_kind, owner_member_id, visibility) {
+        (AccountOwnershipKind::Household, None, AccountVisibility::Shared)
+        | (AccountOwnershipKind::Member, Some(_), _) => {}
+        _ => return Err(RepositoryError::InvalidInput("Invalid account ownership")),
+    }
+    if let Some(member_id) = owner_member_id {
+        validate_id(member_id, MAX_LOOKUP_ID_LEN)?;
+        let active: bool = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM household_members
+                 WHERE id = ?1 AND household_id = ?2 AND status = 'ACTIVE')",
+                params![member_id, household_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if !active {
+            return Err(RepositoryError::InvalidInput("Invalid account owner"));
+        }
+    }
+    Ok(())
+}
+
+fn household_member_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<HouseholdMemberDto> {
+    Ok(HouseholdMemberDto {
+        id: row.get(0)?,
+        household_id: row.get(1)?,
+        display_name: row.get(2)?,
+        relationship_label: row.get(3)?,
+        status: row.get(4)?,
+        sort_order: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+fn get_household_member(
+    connection: &Connection,
+    household_id: &str,
+    member_id: &str,
+) -> Result<HouseholdMemberDto, RepositoryError> {
+    connection
+        .query_row(
+            "SELECT id, household_id, display_name, relationship_label, status,
+                    sort_order, created_at, updated_at
+             FROM household_members WHERE household_id = ?1 AND id = ?2",
+            params![household_id, member_id],
+            household_member_from_row,
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)
+}
+
+fn list_member_ids(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<String>, RepositoryError> {
+    ensure_household_exists(connection, household_id)?;
+    let mut statement = connection
+        .prepare("SELECT id FROM household_members WHERE household_id = ?1 ORDER BY sort_order, id")
+        .map_err(map_database_error)?;
+    let member_ids = statement
+        .query_map([household_id], |row| row.get(0))
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    Ok(member_ids)
+}
+
 fn validate_savings_goal_name(value: &str) -> Result<&str, RepositoryError> {
     let trimmed = value.trim();
     if trimmed.is_empty()
@@ -2649,10 +3054,27 @@ mod tests {
                    id TEXT PRIMARY KEY, name TEXT NOT NULL, base_currency TEXT NOT NULL DEFAULT 'JPY',
                    created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z'
                  );
+                 CREATE TABLE household_members (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   display_name TEXT NOT NULL, relationship_label TEXT,
+                   status TEXT NOT NULL DEFAULT 'ACTIVE', sort_order INTEGER NOT NULL,
+                   created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   UNIQUE(household_id, sort_order)
+                 );
+                 CREATE TRIGGER trg_household_primary_member_insert
+                 AFTER INSERT ON households BEGIN
+                   INSERT INTO household_members
+                     (id, household_id, display_name, status, sort_order)
+                   VALUES (NEW.id || '-member-primary', NEW.id, 'Primary member', 'ACTIVE', 0);
+                 END;
                  CREATE TABLE accounts (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
                    currency TEXT NOT NULL, masked_identifier TEXT,
+                   owner_member_id TEXT REFERENCES household_members(id),
+                   ownership_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD',
+                   visibility TEXT NOT NULL DEFAULT 'SHARED',
                    is_archived INTEGER NOT NULL DEFAULT 0,
                    updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
                    UNIQUE(household_id, name)
@@ -2756,6 +3178,142 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 14);
+        let members = list_household_members(&connection, "family").unwrap();
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].id, "family-member-primary");
+        assert_eq!(members[0].status, "ACTIVE");
+        assert!(list_accounts(&connection, "family")
+            .unwrap()
+            .iter()
+            .all(|account| {
+                account.ownership_kind == "HOUSEHOLD"
+                    && account.owner_member_id.is_none()
+                    && account.visibility == "SHARED"
+            }));
+    }
+
+    #[test]
+    fn member_lifecycle_and_account_ownership_are_household_scoped() {
+        let connection = database();
+        for id in ["family", "other"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        let member = create_household_member(
+            &connection,
+            &CreateHouseholdMemberInput {
+                id: "family-alice".into(),
+                household_id: "family".into(),
+                display_name: " Alice ".into(),
+                relationship_label: Some("本人".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(member.display_name, "Alice");
+        assert_eq!(member.sort_order, 1);
+
+        let member = update_household_member(
+            &connection,
+            &UpdateHouseholdMemberInput {
+                household_id: "family".into(),
+                member_id: member.id.clone(),
+                display_name: "Alice A.".into(),
+                relationship_label: Some("本人".into()),
+                sort_order: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(member.sort_order, 0);
+        assert_eq!(
+            list_household_members(&connection, "family").unwrap()[1].sort_order,
+            1
+        );
+
+        let account = create_account(
+            &connection,
+            &CreateAccountInput {
+                id: "family-alice-bank".into(),
+                household_id: "family".into(),
+                name: "Alice Bank".into(),
+                account_kind: AccountKind::Asset,
+                account_subtype: AccountSubtype::Bank,
+                currency: AccountCurrency::Jpy,
+                ownership_kind: AccountOwnershipKind::Member,
+                owner_member_id: Some(member.id.clone()),
+                visibility: AccountVisibility::Shared,
+            },
+        )
+        .unwrap();
+        assert_eq!(account.owner_member_name.as_deref(), Some("Alice A."));
+        assert_eq!(account.visibility, "SHARED");
+        let personal = update_account_ownership(
+            &connection,
+            &UpdateAccountOwnershipInput {
+                household_id: "family".into(),
+                account_id: account.id.clone(),
+                ownership_kind: AccountOwnershipKind::Member,
+                owner_member_id: Some(member.id.clone()),
+                visibility: AccountVisibility::Personal,
+            },
+        )
+        .unwrap();
+        assert_eq!(personal.visibility, "PERSONAL");
+        assert!(matches!(
+            archive_household_member(&connection, "family", &member.id),
+            Err(RepositoryError::InUse)
+        ));
+        assert!(matches!(
+            update_account_ownership(
+                &connection,
+                &UpdateAccountOwnershipInput {
+                    household_id: "family".into(),
+                    account_id: account.id.clone(),
+                    ownership_kind: AccountOwnershipKind::Member,
+                    owner_member_id: Some("other-member-primary".into()),
+                    visibility: AccountVisibility::Personal,
+                }
+            ),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            update_account_ownership(
+                &connection,
+                &UpdateAccountOwnershipInput {
+                    household_id: "family".into(),
+                    account_id: account.id.clone(),
+                    ownership_kind: AccountOwnershipKind::Household,
+                    owner_member_id: None,
+                    visibility: AccountVisibility::Personal,
+                }
+            ),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        update_account_ownership(
+            &connection,
+            &UpdateAccountOwnershipInput {
+                household_id: "family".into(),
+                account_id: account.id,
+                ownership_kind: AccountOwnershipKind::Household,
+                owner_member_id: None,
+                visibility: AccountVisibility::Shared,
+            },
+        )
+        .unwrap();
+        archive_household_member(&connection, "family", &member.id).unwrap();
+        assert_eq!(
+            list_household_members(&connection, "family").unwrap()[0].status,
+            "ARCHIVED"
+        );
+        assert!(matches!(
+            archive_household_member(&connection, "family", "family-member-primary"),
+            Err(RepositoryError::InUse)
+        ));
     }
 
     fn create_test_account(connection: &Connection, household_id: &str, id: &str) -> AccountDto {
@@ -2768,6 +3326,9 @@ mod tests {
                 account_kind: AccountKind::Asset,
                 account_subtype: AccountSubtype::Bank,
                 currency: AccountCurrency::Jpy,
+                ownership_kind: AccountOwnershipKind::Household,
+                owner_member_id: None,
+                visibility: AccountVisibility::Shared,
             },
         )
         .expect("custom account")
@@ -2823,6 +3384,9 @@ mod tests {
                 account_kind: AccountKind::Asset,
                 account_subtype: AccountSubtype::Bank,
                 currency: AccountCurrency::Jpy,
+                ownership_kind: AccountOwnershipKind::Household,
+                owner_member_id: None,
+                visibility: AccountVisibility::Shared,
             },
         )
         .unwrap();
@@ -2880,6 +3444,9 @@ mod tests {
                     account_kind: AccountKind::Expense,
                     account_subtype: AccountSubtype::Bank,
                     currency: AccountCurrency::Jpy,
+                    ownership_kind: AccountOwnershipKind::Household,
+                    owner_member_id: None,
+                    visibility: AccountVisibility::Shared,
                 }
             ),
             Err(RepositoryError::InvalidInput(_))
