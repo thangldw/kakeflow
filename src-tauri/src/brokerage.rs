@@ -67,6 +67,14 @@ pub struct ImportBrokerageEventInput {
     pub target_instrument_name: Option<String>,
     #[serde(default)]
     pub target_currency: Option<String>,
+    #[serde(default)]
+    pub cost_basis_allocation_ratio: Option<f64>,
+    #[serde(default)]
+    pub subscription_amount: Option<f64>,
+    #[serde(default)]
+    pub cash_in_lieu_amount: Option<f64>,
+    #[serde(default)]
+    pub cash_in_lieu_quantity: Option<f64>,
     pub legs: Vec<ImportBrokerageLegInput>,
 }
 
@@ -136,6 +144,10 @@ pub struct BrokerageEventDto {
     pub target_instrument_code: Option<String>,
     pub target_instrument_name: Option<String>,
     pub target_currency: Option<String>,
+    pub cost_basis_allocation_ratio: Option<f64>,
+    pub subscription_amount: Option<f64>,
+    pub cash_in_lieu_amount: Option<f64>,
+    pub cash_in_lieu_quantity: Option<f64>,
     pub legs: Vec<BrokerageLegDto>,
 }
 
@@ -177,8 +189,8 @@ pub fn import_events(
     let mut leg_count = 0_i64;
     for event in &input.events {
         transaction.execute(
-            "INSERT INTO brokerage_events (id, household_id, account_id, source_document_id, source_row, event_type, trade_date, settlement_date, instrument_code, instrument_name, brokerage_account_type, currency, quantity, unit_price, gross_amount, fee_amount, tax_amount, settlement_amount, reconciliation_status, reconciliation_difference, affects_household_expense, raw_transaction_type, corporate_action_ratio, target_instrument_code, target_instrument_name, target_currency) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 0, ?21, ?22, ?23, ?24, ?25)",
-            params![event.id, input.household_id, input.account_id, input.source_document_id, event.source_row, event.event_type, event.trade_date, event.settlement_date, event.instrument_code, event.instrument_name, event.account_type, event.currency, event.quantity, event.unit_price, event.gross_amount, event.fee_amount, event.tax_amount, event.settlement_amount, event.reconciliation_status, event.reconciliation_difference, event.raw_transaction_type, event.corporate_action_ratio, event.target_instrument_code, event.target_instrument_name, event.target_currency],
+            "INSERT INTO brokerage_events (id, household_id, account_id, source_document_id, source_row, event_type, trade_date, settlement_date, instrument_code, instrument_name, brokerage_account_type, currency, quantity, unit_price, gross_amount, fee_amount, tax_amount, settlement_amount, reconciliation_status, reconciliation_difference, affects_household_expense, raw_transaction_type, corporate_action_ratio, target_instrument_code, target_instrument_name, target_currency, cost_basis_allocation_ratio, subscription_amount, cash_in_lieu_amount, cash_in_lieu_quantity) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 0, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
+            params![event.id, input.household_id, input.account_id, input.source_document_id, event.source_row, event.event_type, event.trade_date, event.settlement_date, event.instrument_code, event.instrument_name, event.account_type, event.currency, event.quantity, event.unit_price, event.gross_amount, event.fee_amount, event.tax_amount, event.settlement_amount, event.reconciliation_status, event.reconciliation_difference, event.raw_transaction_type, event.corporate_action_ratio, event.target_instrument_code, event.target_instrument_name, event.target_currency, event.cost_basis_allocation_ratio, event.subscription_amount, event.cash_in_lieu_amount, event.cash_in_lieu_quantity],
         ).map_err(insert_error)?;
         for (index, leg) in event.legs.iter().enumerate() {
             transaction.execute(
@@ -211,7 +223,7 @@ pub fn query_history(
         }
     }
     let mut statement = connection.prepare(
-        "SELECT e.id, e.account_id, a.name, e.source_document_id, e.source_row, e.event_type, e.trade_date, e.settlement_date, e.instrument_code, e.instrument_name, e.brokerage_account_type, e.currency, e.quantity, e.unit_price, e.gross_amount, e.fee_amount, e.tax_amount, e.settlement_amount, e.reconciliation_status, e.reconciliation_difference, e.affects_household_expense, e.raw_transaction_type, e.corporate_action_ratio, e.target_instrument_code, e.target_instrument_name, e.target_currency
+        "SELECT e.id, e.account_id, a.name, e.source_document_id, e.source_row, e.event_type, e.trade_date, e.settlement_date, e.instrument_code, e.instrument_name, e.brokerage_account_type, e.currency, e.quantity, e.unit_price, e.gross_amount, e.fee_amount, e.tax_amount, e.settlement_amount, e.reconciliation_status, e.reconciliation_difference, e.affects_household_expense, e.raw_transaction_type, e.corporate_action_ratio, e.target_instrument_code, e.target_instrument_name, e.target_currency, e.cost_basis_allocation_ratio, e.subscription_amount, e.cash_in_lieu_amount, e.cash_in_lieu_quantity
          FROM brokerage_events e JOIN accounts a ON a.id = e.account_id
          WHERE e.household_id = ?1
            AND (?2 IS NULL OR e.account_id = ?2)
@@ -255,6 +267,10 @@ pub fn query_history(
                     target_instrument_code: row.get(23)?,
                     target_instrument_name: row.get(24)?,
                     target_currency: row.get(25)?,
+                    cost_basis_allocation_ratio: row.get(26)?,
+                    subscription_amount: row.get(27)?,
+                    cash_in_lieu_amount: row.get(28)?,
+                    cash_in_lieu_quantity: row.get(29)?,
                     legs: Vec::new(),
                 })
             },
@@ -307,8 +323,8 @@ fn calculate_totals(events: &[BrokerageEventDto]) -> Vec<BrokerageCurrencyTotals
                     ..Default::default()
                 });
         match event.event_type.as_str() {
-            "BUY" => total.buy_gross += event.gross_amount,
-            "SELL" => total.sell_gross += event.gross_amount,
+            "BUY" | "RIGHTS_SUBSCRIPTION" => total.buy_gross += event.gross_amount,
+            "SELL" | "CASH_IN_LIEU" => total.sell_gross += event.gross_amount,
             "DIVIDEND" => total.dividend_gross += event.gross_amount,
             "FEE" if event.fee_amount == 0.0 => total.fees += event.gross_amount,
             "TAX" if event.tax_amount == 0.0 => total.taxes += event.gross_amount,
@@ -361,6 +377,9 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         "SPLIT",
         "REVERSE_SPLIT",
         "MERGER",
+        "SPIN_OFF",
+        "RIGHTS_SUBSCRIPTION",
+        "CASH_IN_LIEU",
     ];
     let statuses = ["BALANCED", "ADJUSTED"];
     if event.id.trim().is_empty()
@@ -404,23 +423,31 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
     {
         return false;
     }
-    let corporate = matches!(
+    let ratio_action = matches!(
         event.event_type.as_str(),
-        "SPLIT" | "REVERSE_SPLIT" | "MERGER"
+        "SPLIT" | "REVERSE_SPLIT" | "MERGER" | "SPIN_OFF" | "RIGHTS_SUBSCRIPTION"
     );
-    if corporate
+    let complex_action = matches!(
+        event.event_type.as_str(),
+        "SPIN_OFF" | "RIGHTS_SUBSCRIPTION" | "CASH_IN_LIEU"
+    );
+    if ratio_action
         != event
             .corporate_action_ratio
             .is_some_and(|ratio| ratio.is_finite() && ratio > 0.0)
-        || (!corporate
+        || (!ratio_action
             && (event.target_instrument_code.is_some()
                 || event.target_instrument_name.is_some()
                 || event.target_currency.is_some()))
+        || event
+            .target_currency
+            .as_deref()
+            .is_some_and(|value| !valid_currency(value) || value != event.currency)
         || matches!(event.event_type.as_str(), "SPLIT" | "REVERSE_SPLIT")
             && (event.target_instrument_code.is_some()
                 || event.target_instrument_name.is_some()
                 || event.target_currency.is_some())
-        || event.event_type == "MERGER"
+        || matches!(event.event_type.as_str(), "MERGER" | "SPIN_OFF")
             && (event
                 .target_instrument_code
                 .as_deref()
@@ -437,6 +464,32 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
                     .target_currency
                     .as_deref()
                     .is_some_and(|value| !valid_currency(value) || value != event.currency))
+        || !matches!(event.event_type.as_str(), "SPIN_OFF")
+            && event.cost_basis_allocation_ratio.is_some()
+        || event.event_type == "SPIN_OFF"
+            && !event
+                .cost_basis_allocation_ratio
+                .is_some_and(|ratio| ratio.is_finite() && (0.0..=1.0).contains(&ratio))
+        || !matches!(event.event_type.as_str(), "RIGHTS_SUBSCRIPTION")
+            && event.subscription_amount.is_some()
+        || event.event_type == "RIGHTS_SUBSCRIPTION"
+            && !event
+                .subscription_amount
+                .is_some_and(|amount| amount.is_finite() && amount > 0.0)
+        || !matches!(event.event_type.as_str(), "CASH_IN_LIEU")
+            && (event.cash_in_lieu_amount.is_some() || event.cash_in_lieu_quantity.is_some())
+        || event.event_type == "CASH_IN_LIEU"
+            && (!event
+                .cash_in_lieu_amount
+                .is_some_and(|amount| amount.is_finite() && amount > 0.0)
+                || !event
+                    .cash_in_lieu_quantity
+                    .is_some_and(|quantity| quantity.is_finite() && quantity > 0.0))
+        || !complex_action
+            && (event.cost_basis_allocation_ratio.is_some()
+                || event.subscription_amount.is_some()
+                || event.cash_in_lieu_amount.is_some()
+                || event.cash_in_lieu_quantity.is_some())
     {
         return false;
     }
@@ -478,7 +531,7 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
         "TAX" => has("INVESTMENT_TAX", true) && has("CASH", false),
         "DEPOSIT" => has("CASH", true) && has("TRANSFER", false),
         "WITHDRAWAL" => has("CASH", false) && has("TRANSFER", true),
-        "SPLIT" | "REVERSE_SPLIT" | "MERGER" => {
+        "SPLIT" | "REVERSE_SPLIT" | "MERGER" | "SPIN_OFF" => {
             event.gross_amount == 0.0
                 && event.fee_amount == 0.0
                 && event.tax_amount == 0.0
@@ -495,6 +548,18 @@ fn validate_event(event: &ImportBrokerageEventInput) -> bool {
                 && event.legs.iter().any(|leg| {
                     leg.kind == "SECURITY" && leg.signed_quantity.is_some_and(|value| value > 0.0)
                 })
+        }
+        "RIGHTS_SUBSCRIPTION" => {
+            event.subscription_amount == Some(event.gross_amount)
+                && event.settlement_amount == event.gross_amount
+                && has("SECURITY", true)
+                && has("CASH", false)
+        }
+        "CASH_IN_LIEU" => {
+            event.cash_in_lieu_amount == Some(event.gross_amount)
+                && event.settlement_amount == event.gross_amount
+                && has("SECURITY", false)
+                && has("CASH", true)
         }
         _ => false,
     };
@@ -594,6 +659,7 @@ mod tests {
             include_str!("../migrations/0012_brokerage_events.sql"),
             include_str!("../migrations/0013_investment_performance.sql"),
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
+            include_str!("../migrations/0016_complex_corporate_actions.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
@@ -634,6 +700,10 @@ mod tests {
             target_instrument_code: None,
             target_instrument_name: None,
             target_currency: None,
+            cost_basis_allocation_ratio: None,
+            subscription_amount: None,
+            cash_in_lieu_amount: None,
+            cash_in_lieu_quantity: None,
             legs: vec![
                 ImportBrokerageLegInput {
                     id: format!("{id}-1"),
@@ -776,6 +846,111 @@ mod tests {
         assert_eq!(history.events[0].event_type, "SPLIT");
         assert_eq!(history.events[0].corporate_action_ratio, Some(2.0));
         assert_eq!(history.totals_by_currency[0].net_cash_movement, 0.0);
+    }
+
+    #[test]
+    fn complex_actions_require_explicit_allocation_inputs() {
+        let mut spin = event("spin", 2, "SPIN_OFF");
+        spin.quantity = None;
+        spin.unit_price = None;
+        spin.gross_amount = 0.0;
+        spin.fee_amount = 0.0;
+        spin.settlement_amount = 0.0;
+        spin.corporate_action_ratio = Some(0.25);
+        spin.target_instrument_code = Some("CHILD".into());
+        spin.target_instrument_name = Some("Child".into());
+        spin.target_currency = Some("JPY".into());
+        spin.cost_basis_allocation_ratio = Some(0.2);
+        spin.legs = vec![
+            ImportBrokerageLegInput {
+                id: "spin-old".into(),
+                kind: "SECURITY".into(),
+                signed_amount: 0.0,
+                currency: "JPY".into(),
+                instrument_code: Some("7203".into()),
+                instrument_name: Some("Toyota".into()),
+                signed_quantity: Some(-1.0),
+                description: "Parent units".into(),
+            },
+            ImportBrokerageLegInput {
+                id: "spin-new".into(),
+                kind: "SECURITY".into(),
+                signed_amount: 0.0,
+                currency: "JPY".into(),
+                instrument_code: Some("CHILD".into()),
+                instrument_name: Some("Child".into()),
+                signed_quantity: Some(0.25),
+                description: "Child units".into(),
+            },
+        ];
+        assert!(validate_event(&spin));
+        let mut missing = spin.clone();
+        missing.cost_basis_allocation_ratio = None;
+        assert!(!validate_event(&missing));
+
+        let mut rights = event("rights", 3, "RIGHTS_SUBSCRIPTION");
+        rights.corporate_action_ratio = Some(0.1);
+        rights.subscription_amount = Some(5_000.0);
+        rights.gross_amount = 5_000.0;
+        rights.settlement_amount = 5_000.0;
+        rights.fee_amount = 0.0;
+        rights.legs = vec![
+            ImportBrokerageLegInput {
+                id: "rights-security".into(),
+                kind: "SECURITY".into(),
+                signed_amount: 5_000.0,
+                currency: "JPY".into(),
+                instrument_code: Some("7203".into()),
+                instrument_name: Some("Toyota".into()),
+                signed_quantity: Some(0.1),
+                description: "Subscribed units".into(),
+            },
+            ImportBrokerageLegInput {
+                id: "rights-cash".into(),
+                kind: "CASH".into(),
+                signed_amount: -5_000.0,
+                currency: "JPY".into(),
+                instrument_code: None,
+                instrument_name: None,
+                signed_quantity: None,
+                description: "Subscription cash".into(),
+            },
+        ];
+        assert!(validate_event(&rights));
+
+        let mut cash = event("cash", 4, "CASH_IN_LIEU");
+        cash.quantity = None;
+        cash.unit_price = None;
+        cash.fee_amount = 0.0;
+        cash.gross_amount = 900.0;
+        cash.settlement_amount = 900.0;
+        cash.cash_in_lieu_amount = Some(900.0);
+        cash.cash_in_lieu_quantity = Some(0.5);
+        cash.legs = vec![
+            ImportBrokerageLegInput {
+                id: "cash-security".into(),
+                kind: "SECURITY".into(),
+                signed_amount: -900.0,
+                currency: "JPY".into(),
+                instrument_code: Some("7203".into()),
+                instrument_name: Some("Toyota".into()),
+                signed_quantity: Some(-0.5),
+                description: "Fraction disposed".into(),
+            },
+            ImportBrokerageLegInput {
+                id: "cash-cash".into(),
+                kind: "CASH".into(),
+                signed_amount: 900.0,
+                currency: "JPY".into(),
+                instrument_code: None,
+                instrument_name: None,
+                signed_quantity: None,
+                description: "Cash proceeds".into(),
+            },
+        ];
+        assert!(validate_event(&cash));
+        cash.cash_in_lieu_quantity = None;
+        assert!(!validate_event(&cash));
     }
 
     #[test]

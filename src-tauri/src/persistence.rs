@@ -34,6 +34,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0015_investment_market_prices.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0016_complex_corporate_actions.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;

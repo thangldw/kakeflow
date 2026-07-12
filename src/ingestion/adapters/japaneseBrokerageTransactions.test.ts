@@ -13,7 +13,7 @@ describe('Japanese brokerage transaction adapter', () => {
 
   it('normalizes buy, sell, dividend, fee, tax and cash transfers into balanced legs', () => {
     const result = japaneseBrokerageTransactionsAdapter.parse({ text: sample, accountHint: 'SBI証券' })
-    expect(result.issues).toHaveLength(0)
+    expect(result.issues).toEqual([])
     expect(result.metadata).toMatchObject({ ledgerKind: 'INVESTMENT', headerRow: 1 })
     expect(result.records.map((record) => record.eventType)).toEqual([
       'BUY', 'SELL', 'DIVIDEND', 'DEPOSIT', 'WITHDRAWAL', 'FEE', 'TAX',
@@ -84,6 +84,35 @@ describe('Japanese brokerage transaction adapter', () => {
       expect.objectContaining({ kind: 'SECURITY', signedAmount: 0, signedQuantity: 2 }),
     ]))
     expect(result.issues).toHaveLength(0)
+  })
+
+  it('requires and preserves explicit complex corporate-action allocation inputs', () => {
+    const actions = [
+      '約定日,取引,銘柄コード,銘柄名,割当比率,割当銘柄コード,割当銘柄名,取得価額配分比率,払込金額,端数株数,端数株代金,通貨',
+      '2026/08/01,スピンオフ,1111,Parent,1:0.25,2222,Child,20%,,,,JPY',
+      '2026/09/01,新株予約権行使,1111,Parent,1:0.1,1111,Parent,,5000,,,JPY',
+      '2026/10/01,端数株処分代金,1111,Parent,,,,,,0.5,900,JPY',
+    ].join('\n')
+    const result = japaneseBrokerageTransactionsAdapter.parse({ text: actions })
+    expect(result.issues).toEqual([])
+    expect(result.records).toEqual([
+      expect.objectContaining({ eventType: 'SPIN_OFF', corporateActionRatio: 0.25, costBasisAllocationRatio: 0.2, targetInstrumentCode: '2222' }),
+      expect.objectContaining({ eventType: 'RIGHTS_SUBSCRIPTION', corporateActionRatio: 0.1, subscriptionAmount: 5000, grossAmount: 5000 }),
+      expect.objectContaining({ eventType: 'CASH_IN_LIEU', cashInLieuQuantity: 0.5, cashInLieuAmount: 900, grossAmount: 900 }),
+    ])
+    result.records.forEach((record) => expect(record.legs.reduce((sum, item) => sum + item.signedAmount, 0)).toBeCloseTo(0, 8))
+  })
+
+  it('surfaces complex actions with missing allocation inputs instead of guessing', () => {
+    const missing = [
+      '約定日,取引,銘柄コード,銘柄名,割当比率,割当銘柄コード,割当銘柄名,取得価額配分比率,払込金額,端数株数,端数株代金,通貨',
+      '2026/08/01,スピンオフ,1111,Parent,1:0.25,2222,Child,,,,,JPY',
+      '2026/09/01,新株予約権行使,1111,Parent,1:0.1,1111,Parent,,,,,JPY',
+      '2026/10/01,端数株処分代金,1111,Parent,,,,,,,,JPY',
+    ].join('\n')
+    const result = japaneseBrokerageTransactionsAdapter.parse({ text: missing })
+    expect(result.records).toHaveLength(0)
+    expect(result.issues.filter((issue) => issue.code === 'BROKERAGE_ACTION_INPUT_MISSING')).toHaveLength(3)
   })
 
   it('parses the documented Monex US-stock CSV column variants', () => {

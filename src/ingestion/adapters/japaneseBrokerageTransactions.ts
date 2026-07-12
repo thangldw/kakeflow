@@ -25,6 +25,10 @@ const ALIASES = {
   corporateActionRatio: ['分割比率', '併合比率', '交換比率', '割当比率'],
   targetInstrumentCode: ['割当銘柄コード', '新銘柄コード', '交換先コード'],
   targetInstrumentName: ['割当銘柄名', '新銘柄名', '交換先銘柄名'],
+  costBasisAllocationRatio: ['取得価額配分比率', '原価配分比率', '簿価配分比率', 'コスト配分率', 'COST ALLOCATION RATIO'],
+  subscriptionAmount: ['払込金額', '権利行使金額', '購読金額', 'SUBSCRIPTION AMOUNT'],
+  cashInLieuAmount: ['端数株代金', '端数処分代金', '現金交付額', 'CASH IN LIEU AMOUNT'],
+  cashInLieuQuantity: ['端数株数', '処分数量', 'CASH IN LIEU QUANTITY'],
 } as const
 
 type AliasKey = keyof typeof ALIASES
@@ -66,6 +70,12 @@ function amount(value: string): number | null {
   return parsed == null ? null : Math.abs(parsed)
 }
 
+function proportion(value: string): number | null {
+  const parsed = amount(value.replace(/[％%]/g, ''))
+  if (parsed == null) return null
+  return value.includes('%') || value.includes('％') ? parsed / 100 : parsed
+}
+
 function summedAmounts(values: Readonly<Record<string, string>>, headers: readonly string[], key: 'fee' | 'tax'): number {
   return ALIASES[key]
     .filter((alias) => headers.includes(alias))
@@ -74,6 +84,9 @@ function summedAmounts(values: Readonly<Record<string, string>>, headers: readon
 
 function classify(raw: string): BrokerageEventType | null {
   const value = normalizeJapaneseText(raw).toUpperCase()
+  if (/端数株(?:処分|代金)|現金交付|CASH[ _-]?IN[ _-]?LIEU/.test(value)) return 'CASH_IN_LIEU'
+  if (/スピン[ _-]?オフ|会社分割|SPIN[ _-]?OFF/.test(value)) return 'SPIN_OFF'
+  if (/新株予約権行使|権利行使|RIGHTS?[ _-]?(?:ISSUE|SUBSCRIPTION)|SUBSCRIPTION/.test(value)) return 'RIGHTS_SUBSCRIPTION'
   if (/株式併合|REVERSE[ _-]?SPLIT/.test(value)) return 'REVERSE_SPLIT'
   if (/株式分割|STOCK[ _-]?SPLIT|\bSPLIT\b/.test(value)) return 'SPLIT'
   if (/合併|株式交換|MERGER/.test(value)) return 'MERGER'
@@ -127,22 +140,37 @@ function buildLegs(input: {
   corporateActionRatio?: number
   targetInstrumentCode?: string
   targetInstrumentName?: string
+  costBasisAllocationRatio?: number
+  subscriptionAmount?: number
+  cashInLieuAmount?: number
+  cashInLieuQuantity?: number
 }): { legs: BrokerageEventLegCandidate[]; settlement: number; difference: number } {
   const { eventType, currency, gross, fee, tax, instrumentCode, instrumentName, quantity } = input
   const security = { instrumentCode, instrumentName, signedQuantity: quantity ?? undefined }
-  const corporate = ['SPLIT', 'REVERSE_SPLIT', 'MERGER'].includes(eventType)
-  const expected = corporate ? 0 : eventType === 'BUY' ? gross + fee + tax
+  const zeroValueCorporate = ['SPLIT', 'REVERSE_SPLIT', 'MERGER', 'SPIN_OFF'].includes(eventType)
+  const subscription = eventType === 'RIGHTS_SUBSCRIPTION'
+  const cashInLieu = eventType === 'CASH_IN_LIEU'
+  const expected = zeroValueCorporate ? 0 : eventType === 'BUY' ? gross + fee + tax
     : eventType === 'SELL' || eventType === 'DIVIDEND' ? gross - fee - tax
       : gross
   const settlement = input.settlement ?? expected
   const legs: BrokerageEventLegCandidate[] = []
 
-  if (corporate) {
+  if (zeroValueCorporate) {
     const ratio = input.corporateActionRatio ?? 0
-    const targetCode = eventType === 'MERGER' ? input.targetInstrumentCode ?? '' : instrumentCode
-    const targetName = eventType === 'MERGER' ? input.targetInstrumentName ?? '' : instrumentName
+    const changesInstrument = eventType === 'MERGER' || eventType === 'SPIN_OFF'
+    const targetCode = changesInstrument ? input.targetInstrumentCode ?? '' : instrumentCode
+    const targetName = changesInstrument ? input.targetInstrumentName ?? '' : instrumentName
     legs.push(leg('SECURITY', 0, currency, 'Units surrendered by corporate action', { instrumentCode, instrumentName, signedQuantity: -1 }))
     legs.push(leg('SECURITY', 0, currency, 'Units received by corporate action', { instrumentCode: targetCode, instrumentName: targetName, signedQuantity: ratio }))
+  } else if (subscription) {
+    const subscribed = input.subscriptionAmount ?? gross
+    legs.push(leg('SECURITY', subscribed, currency, 'Shares acquired through rights subscription', { instrumentCode: input.targetInstrumentCode || instrumentCode, instrumentName: input.targetInstrumentName || instrumentName, signedQuantity: input.corporateActionRatio }))
+    legs.push(leg('CASH', -subscribed, currency, 'Rights subscription cash paid'))
+  } else if (cashInLieu) {
+    const proceeds = input.cashInLieuAmount ?? gross
+    legs.push(leg('SECURITY', -proceeds, currency, 'Fractional shares disposed for cash', { instrumentCode, instrumentName, signedQuantity: -(input.cashInLieuQuantity ?? 0) }))
+    legs.push(leg('CASH', proceeds, currency, 'Cash-in-lieu proceeds received'))
   } else if (eventType === 'BUY') {
     legs.push(leg('SECURITY', gross, currency, 'Security acquired at transaction value', security))
     legs.push(leg('CASH', -settlement, currency, 'Brokerage cash settlement'))
@@ -210,16 +238,25 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
       }
       const quantity = amount(valueFor(values, headers, 'quantity'))
       const unitPrice = amount(valueFor(values, headers, 'unitPrice'))
-      const corporate = ['SPLIT', 'REVERSE_SPLIT', 'MERGER'].includes(eventType)
-      const ratio = corporate ? actionRatio(firstPopulatedValue(values, headers, 'corporateActionRatio') || rawTransactionType) : null
+      const zeroValueCorporate = ['SPLIT', 'REVERSE_SPLIT', 'MERGER', 'SPIN_OFF'].includes(eventType)
+      const ratioAction = zeroValueCorporate || eventType === 'RIGHTS_SUBSCRIPTION'
+      const ratio = ratioAction ? actionRatio(firstPopulatedValue(values, headers, 'corporateActionRatio') || rawTransactionType) : null
+      const costBasisAllocationRatio = proportion(valueFor(values, headers, 'costBasisAllocationRatio'))
+      const subscriptionAmount = amount(valueFor(values, headers, 'subscriptionAmount'))
+      const cashInLieuAmount = amount(valueFor(values, headers, 'cashInLieuAmount'))
+      const cashInLieuQuantity = amount(valueFor(values, headers, 'cashInLieuQuantity'))
       const rawGross = amount(firstPopulatedValue(values, headers, 'grossAmount'))
       const fee = summedAmounts(values, headers, 'fee')
       const tax = summedAmounts(values, headers, 'tax')
       const rawSettlement = amount(firstPopulatedValue(values, headers, 'settlementAmount'))
       const derivedTradeAmount = quantity != null && unitPrice != null ? quantity * unitPrice : null
-      const gross = corporate ? 0 : (rawGross ?? derivedTradeAmount ?? rawSettlement ?? fee) || tax
-      if ((!corporate && (!Number.isFinite(gross) || gross <= 0)) || (corporate && ratio == null)) {
-        issues.push({ code: corporate ? 'BROKERAGE_ACTION_RATIO_MISSING' : 'BROKERAGE_AMOUNT_MISSING', message: corporate ? 'Corporate action has no usable new-units-per-old-unit ratio.' : 'Brokerage event has no usable amount.', severity: 'warning', row: row.sourceRow })
+      const gross = zeroValueCorporate ? 0 : eventType === 'RIGHTS_SUBSCRIPTION' ? subscriptionAmount ?? 0 : eventType === 'CASH_IN_LIEU' ? cashInLieuAmount ?? 0 : (rawGross ?? derivedTradeAmount ?? rawSettlement ?? fee) || tax
+      const missingComplexInput = eventType === 'SPIN_OFF' && costBasisAllocationRatio == null
+        || eventType === 'RIGHTS_SUBSCRIPTION' && subscriptionAmount == null
+        || eventType === 'CASH_IN_LIEU' && (cashInLieuAmount == null || cashInLieuQuantity == null)
+      if ((!zeroValueCorporate && (!Number.isFinite(gross) || gross <= 0)) || (ratioAction && ratio == null) || missingComplexInput) {
+        const actionMissing = ratioAction && ratio == null || missingComplexInput
+        issues.push({ code: actionMissing ? 'BROKERAGE_ACTION_INPUT_MISSING' : 'BROKERAGE_AMOUNT_MISSING', message: actionMissing ? 'Corporate action is missing an explicit ratio, cost allocation, subscription amount, or cash-in-lieu quantity/amount.' : 'Brokerage event has no usable amount.', severity: 'warning', row: row.sourceRow })
         continue
       }
       const tradeDateRaw = valueFor(values, headers, 'tradeDate')
@@ -236,12 +273,12 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
       }
       const targetInstrumentCode = normalizeJapaneseText(valueFor(values, headers, 'targetInstrumentCode'))
       const targetInstrumentName = normalizeJapaneseText(valueFor(values, headers, 'targetInstrumentName'))
-      if (eventType === 'MERGER' && !targetInstrumentCode && !targetInstrumentName) {
+      if ((eventType === 'MERGER' || eventType === 'SPIN_OFF') && !targetInstrumentCode && !targetInstrumentName) {
         issues.push({ code: 'BROKERAGE_ACTION_TARGET_MISSING', message: 'Merger target instrument is missing.', severity: 'warning', row: row.sourceRow })
         continue
       }
       const currency = currencyOf(valueFor(values, headers, 'currency'))
-      const built = buildLegs({ eventType, currency, gross, fee, tax, settlement: corporate ? 0 : rawSettlement, instrumentCode, instrumentName, quantity, corporateActionRatio: ratio ?? undefined, targetInstrumentCode, targetInstrumentName })
+      const built = buildLegs({ eventType, currency, gross, fee, tax, settlement: zeroValueCorporate ? 0 : eventType === 'RIGHTS_SUBSCRIPTION' ? subscriptionAmount : eventType === 'CASH_IN_LIEU' ? cashInLieuAmount : rawSettlement, instrumentCode, instrumentName, quantity, corporateActionRatio: ratio ?? undefined, targetInstrumentCode, targetInstrumentName, costBasisAllocationRatio: costBasisAllocationRatio ?? undefined, subscriptionAmount: subscriptionAmount ?? undefined, cashInLieuAmount: cashInLieuAmount ?? undefined, cashInLieuQuantity: cashInLieuQuantity ?? undefined })
       if (Math.abs(built.difference) >= 0.000001) {
         issues.push({ code: 'BROKERAGE_SETTLEMENT_MISMATCH', message: `Settlement differs from gross, fee and tax by ${built.difference} ${currency}.`, severity: 'warning', row: row.sourceRow })
       }
@@ -253,8 +290,11 @@ export const japaneseBrokerageTransactionsAdapter: ImportAdapter<BrokerageEventC
         settlementAmount: built.settlement, legs: built.legs,
         reconciliationStatus: Math.abs(built.difference) < 0.000001 ? 'BALANCED' : 'ADJUSTED',
         reconciliationDifference: built.difference, affectsHouseholdExpense: false, rawTransactionType,
-        ...(corporate ? { corporateActionRatio: ratio ?? undefined } : {}),
-        ...(eventType === 'MERGER' ? { targetInstrumentCode, targetInstrumentName, targetCurrency: currency } : {}),
+        ...(ratioAction ? { corporateActionRatio: ratio ?? undefined } : {}),
+        ...(['MERGER', 'SPIN_OFF', 'RIGHTS_SUBSCRIPTION'].includes(eventType) && (targetInstrumentCode || targetInstrumentName) ? { targetInstrumentCode, targetInstrumentName, targetCurrency: currency } : {}),
+        ...(eventType === 'SPIN_OFF' ? { costBasisAllocationRatio: costBasisAllocationRatio ?? undefined } : {}),
+        ...(eventType === 'RIGHTS_SUBSCRIPTION' ? { subscriptionAmount: subscriptionAmount ?? undefined } : {}),
+        ...(eventType === 'CASH_IN_LIEU' ? { cashInLieuAmount: cashInLieuAmount ?? undefined, cashInLieuQuantity: cashInLieuQuantity ?? undefined } : {}),
       })
     }
     return { adapterId: this.id, records, issues, metadata: { ledgerKind: 'INVESTMENT', headerRow: csv.rows[headerIndex].sourceRow, delimiter: csv.delimiter } }

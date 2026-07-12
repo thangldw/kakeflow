@@ -8,7 +8,7 @@ const report: InvestmentPerformanceDto = {
   dateFrom: '2026-01-01', dateTo: '2026-12-31', costBasisMethod: 'FIFO',
   totalsByCurrency: [{ currency: 'JPY', buyGross: 100_000, sellGross: 140_000, realizedPnl: 35_000, dividendGross: 5_000, fees: 1_000, taxes: 4_000 }],
   realizedAllocations: [{ sellEventId: 'sell', buyEventId: 'buy', accountId: 'broker', instrumentCode: '7203', instrumentName: 'トヨタ自動車', currency: 'JPY', soldOn: '2026-07-01', acquiredOn: '2025-01-01', quantity: 10, allocatedCostBasis: 100_000, allocatedNetProceeds: 135_000, realizedPnl: 35_000, buySourceDocumentId: 'buy-doc', buySourceRow: 2, sellSourceDocumentId: 'sell-doc', sellSourceRow: 8 }],
-  uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [],
+  uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [],
 }
 
 describe('InvestmentPeriodReport', () => {
