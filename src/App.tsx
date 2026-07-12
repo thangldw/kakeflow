@@ -54,7 +54,7 @@ const navigation: NavigationItem[] = [
   { id: 'budgets', label: '予算・目標', icon: Goal },
 ]
 
-function Sidebar({ page, setPage, open, close, bootstrap, householdName }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; householdName: string }) {
+function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void }) {
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="メニューを閉じる" onClick={close} />}
@@ -67,7 +67,7 @@ function Sidebar({ page, setPage, open, close, bootstrap, householdName }: { pag
 
         <div className="household-picker">
           <div className="avatar">TK</div>
-          <div><strong>{householdName}</strong><small>ローカル世帯</small></div>
+          <div><select aria-label="世帯を切り替える" value={activeHouseholdId ?? ''} disabled={households.length < 2} onChange={(event) => selectHousehold(event.target.value)}>{households.length === 0 ? <option value="">家計</option> : households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select><small>{households.length > 1 ? `${households.length}世帯` : 'ローカル世帯'}</small></div>
         </div>
 
         <nav>
@@ -578,6 +578,7 @@ function App() {
   const [importPreviews, setImportPreviews] = useState<ImportPreview[]>([])
   const [bootstrap, setBootstrap] = useState<AppBootstrapDto | null>(null)
   const [households, setHouseholds] = useState<readonly HouseholdDto[]>([])
+  const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(() => globalThis.localStorage?.getItem('kakeflow.activeHouseholdId') ?? null)
   const [accounts, setAccounts] = useState<readonly AccountDto[]>([])
   const [liveDashboard, setLiveDashboard] = useState<DashboardMonthlyTotalsDto | null>(null)
   const [liveTransactions, setLiveTransactions] = useState<readonly TransactionRowDto[]>([])
@@ -592,6 +593,11 @@ function App() {
       if (active) {
         setBootstrap(result)
         setHouseholds(householdList)
+        setActiveHouseholdId((current) => {
+          const available = householdList.some((household) => household.id === current) ? current : householdList[0]?.id ?? null
+          if (available) globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', available)
+          return available
+        })
         setDesktopLoaded(true)
       }
     }).catch(() => {
@@ -604,7 +610,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    const householdId = households[0]?.id
+    const householdId = activeHouseholdId
     if (!householdId || platformClient.runtime !== 'tauri') {
       setAccounts([])
       return
@@ -616,10 +622,10 @@ function App() {
       if (active) setAccounts([])
     })
     return () => { active = false }
-  }, [households])
+  }, [activeHouseholdId])
 
   useEffect(() => {
-    const householdId = households[0]?.id
+    const householdId = activeHouseholdId
     if (!householdId || platformClient.runtime !== 'tauri') {
       setLiveDashboard(null)
       setLiveTransactions([])
@@ -640,17 +646,24 @@ function App() {
       if (active) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]) }
     })
     return () => { active = false }
-  }, [households, ledgerRevision])
+  }, [activeHouseholdId, ledgerRevision])
+
+  const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? null
+  const selectHousehold = (id: string) => {
+    if (!households.some((household) => household.id === id)) return
+    globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', id)
+    setActiveHouseholdId(id)
+  }
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={households[0]?.name ?? '家計'} />,
-    transactions: <TransactionsPage householdId={households[0]?.id ?? null} revision={ledgerRevision} />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    cards: <CardsPage cards={liveCards} householdId={households[0]?.id ?? null} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={liveCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} />,
+    transactions: <TransactionsPage householdId={activeHouseholdId} revision={ledgerRevision} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     budgets: <BudgetsPage />,
     settings: <SettingsPage />,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} householdName={households[0]?.name ?? '田中家'} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} /><main>{pageContent}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => setHouseholds([household])} />}</div>
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} /><main>{pageContent}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App

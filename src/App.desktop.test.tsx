@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const desktop = vi.hoisted(() => ({
+  listHouseholds: vi.fn(),
   queryDashboard: vi.fn(),
   queryTransactions: vi.fn(),
   listCardSettlements: vi.fn(),
@@ -21,7 +22,7 @@ vi.mock('./platform', async () => {
     platformClient: {
       runtime: 'tauri' as const,
       bootstrap: vi.fn().mockResolvedValue({ application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } }),
-      listHouseholds: vi.fn().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }]),
+      listHouseholds: desktop.listHouseholds,
       createHousehold: vi.fn(),
       listAccounts: vi.fn().mockResolvedValue([]),
       queryDashboard: desktop.queryDashboard,
@@ -46,6 +47,8 @@ import App from './App'
 
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
+    localStorage.clear()
+    desktop.listHouseholds.mockReset().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }])
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.stageBackupRestore.mockReset().mockResolvedValue({ formatVersion: 2, entryCount: 4, plaintextBytes: 4096 })
@@ -91,6 +94,21 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('Rakuten Card')).toBeInTheDocument()
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountingBasis: 'CASH', householdId: 'family' })))
     expect(screen.getByText('現金流出 ¥204,987')).toBeInTheDocument()
+  })
+
+  it('switches households and persists the active local selection', async () => {
+    desktop.listHouseholds.mockResolvedValue([
+      { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+      { id: 'parents', name: '両親家', baseCurrency: 'JPY', createdAt: '2026-07-02T00:00:00Z' },
+    ])
+    render(<App />)
+    await screen.findByText('生協')
+
+    fireEvent.change(screen.getByLabelText('世帯を切り替える'), { target: { value: 'parents' } })
+
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'parents' })))
+    expect(localStorage.getItem('kakeflow.activeHouseholdId')).toBe('parents')
+    expect(await screen.findByRole('heading', { name: '両親家の家計' })).toBeInTheDocument()
   })
 
   it('renders and confirms a persisted card-payment match', async () => {
