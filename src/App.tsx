@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -30,6 +30,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
+import { previewImportFiles } from './features/import/importService'
+import type { ImportPreview } from './features/import/importService'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -228,16 +230,33 @@ function TransactionsPage() {
 }
 
 function ImportPage() {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [previews, setPreviews] = useState<ImportPreview[]>([])
+  const [busy, setBusy] = useState(false)
+
+  const processFiles = async (files: FileList | readonly File[]) => {
+    if (files.length === 0) return
+    setBusy(true)
+    const next = await previewImportFiles(files)
+    setPreviews((current) => [...next, ...current.filter((item) => !next.some((candidate) => candidate.id === item.id))])
+    setBusy(false)
+  }
+
   return <>
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
-      <button className="secondary-btn"><Settings size={17} /> 監視フォルダー</button><button className="primary-btn"><Import size={17} /> ファイルを選択</button>
+      <button className="secondary-btn"><Settings size={17} /> 監視フォルダー</button><button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
+      <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,text/csv" multiple onChange={(event) => event.target.files && void processFiles(event.target.files)} />
     </PageHeader>
     <section className="status-grid">
       {[['取込済み','79','今月'],['確認待ち','6','3ファイル'],['重複候補','2','要確認'],['照合候補','4','自動検出']].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルの「家計簿 Inbox」から自動検出</p></div><button className="text-btn">処理履歴</button></div>
-      <div className="import-list">{importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn"><MoreHorizontal size={18} /></button></div>)}</div>
+      <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSVをここにドロップ</span><small>PayPay・銀行・Rakuten・Amazon Mastercard</small></button>
+      <div className="import-list">
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b><button className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button></div>)}
+        {importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn"><MoreHorizontal size={18} /></button></div>)}
+      </div>
     </section>
   </>
 }
