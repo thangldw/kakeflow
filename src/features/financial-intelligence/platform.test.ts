@@ -22,10 +22,10 @@ const response = {
 describe('financial intelligence platform boundary', () => {
   it('invokes the derived analytics command and validates the response', async () => {
     const invoke = vi.fn().mockResolvedValue(response)
-    await expect(queryFinancialIntelligence(invoke, { householdId: 'family', accountGroupId: 'daily', asOf: '2026-07-31' }))
+    await expect(queryFinancialIntelligence(invoke, { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, asOf: '2026-07-31' }))
       .resolves.toEqual(response)
     expect(invoke).toHaveBeenCalledWith('financial_intelligence_query', {
-      request: { householdId: 'family', accountGroupId: 'daily', asOf: '2026-07-31' },
+      request: { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, asOf: '2026-07-31' },
     })
   })
 

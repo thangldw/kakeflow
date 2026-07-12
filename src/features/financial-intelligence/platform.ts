@@ -1,8 +1,11 @@
+import type { AttributionScopeDto } from '../../platform/types'
+
 export type RecurringCadence = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'
 
 export interface FinancialIntelligenceRequestDto {
   readonly householdId: string
   readonly accountGroupId?: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly asOf: string
 }
 

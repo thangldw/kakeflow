@@ -1,8 +1,10 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import type { AttributionScopeDto } from '../../platform/types'
 
 export interface FinancialCalendarRequest {
   readonly householdId: string
   readonly accountGroupId?: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly month: string
   readonly asOf?: string
 }
@@ -12,6 +14,7 @@ export type MonthlyFinancialReportRequest = FinancialCalendarRequest
 export interface YearlyFinancialReportRequest {
   readonly householdId: string
   readonly accountGroupId?: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly year: string
   readonly asOf?: string
 }

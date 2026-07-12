@@ -1,4 +1,5 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import type { AttributionScopeDto } from '../../platform/types'
 
 export type AccountGroupKindDto =
   | 'FAMILY' | 'PERSONAL' | 'DAILY_SPENDING' | 'INVESTMENT'
@@ -44,6 +45,7 @@ export interface ExportCsvRequestDto {
   readonly exportKind: ExportKindDto
   readonly accountingBasis: ExportAccountingBasisDto
   readonly groupId: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly fromDate: string
   readonly toDate: string
 }
