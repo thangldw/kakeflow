@@ -181,7 +181,7 @@ async function mapBank(record: BankTransactionCandidate, context: MappingContext
   return [candidate(context, {
     occurredOn: date, postedOn: null, amountJpy: outgoing ?? incoming!, direction: outgoing == null ? 'IN' : 'OUT',
     descriptionRaw: [record.description, record.descriptionDetail].filter(Boolean).join(' ') || null,
-    merchantRaw: record.description || null, externalTransactionId: null,
+    merchantRaw: record.description || null, externalTransactionId: record.externalTransactionId || null,
     evidence: [{ sourceRecordId: evidence.id, role: 'PRIMARY' }],
   })]
 }
