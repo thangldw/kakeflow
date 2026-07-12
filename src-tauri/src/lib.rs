@@ -1347,6 +1347,45 @@ async fn export_csv_save(
 }
 
 #[tauri::command]
+async fn annual_household_review_csv_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: financial_calendar::YearlyFinancialReportRequest,
+) -> Result<Option<financial_calendar::AnnualReviewCsvSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(financial_calendar::annual_household_review_csv(
+            connection, &request,
+        ))
+    });
+    let export = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => {
+            return Err("Annual household review export is temporarily unavailable".to_owned())
+        }
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(&export.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected annual review destination is unavailable".to_owned())?;
+    std::fs::write(destination, export.utf8_bom_csv.as_bytes())
+        .map_err(|_| "Annual household review CSV could not be saved".to_owned())?;
+    Ok(Some(financial_calendar::AnnualReviewCsvSavedDto {
+        file_name: export.file_name,
+        row_count: export.row_count,
+        byte_size: export.byte_size,
+    }))
+}
+
+#[tauri::command]
 fn classification_rules_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -2054,6 +2093,7 @@ pub fn run() {
             financial_calendar::financial_calendar_query,
             financial_calendar::financial_report_monthly_query,
             financial_calendar::financial_report_yearly_query,
+            financial_calendar::annual_household_review_csv_generate,
             fixed_cost_review::fixed_cost_review_query,
             forecast_action::forecast_action_query,
             dashboard_query,
@@ -2084,6 +2124,7 @@ pub fn run() {
             account_groups_reorder,
             export_csv_generate,
             export_csv_save,
+            annual_household_review_csv_save,
             classification_rules_list,
             classification_rule_create,
             classification_rule_update,

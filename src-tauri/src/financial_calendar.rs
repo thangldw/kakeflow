@@ -10,6 +10,8 @@ use crate::record_scope::{
 
 const MAX_ID_LEN: usize = 64;
 const TOP_DRIVER_LIMIT: i64 = 8;
+const MAX_ANNUAL_REVIEW_CSV_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ANNUAL_REVIEW_CSV_ROWS: usize = 512;
 
 #[derive(Debug)]
 pub enum FinancialCalendarError {
@@ -78,7 +80,7 @@ pub struct YearlyFinancialReportRequest {
     #[serde(default)]
     pub attribution_scope: AttributionScope,
     pub year: String,
-    pub as_of: Option<String>,
+    pub as_of: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -237,10 +239,19 @@ pub struct MonthlyFinancialReportDto {
 #[serde(rename_all = "camelCase")]
 pub struct YearlyFinancialReportDto {
     pub period: String,
+    pub as_of: String,
+    pub through_month: Option<String>,
+    pub completed_month_count: u8,
+    pub is_complete_year: bool,
+    pub current_comparable: PeriodMetricsDto,
+    pub prior_year_comparable: PeriodMetricsDto,
+    pub vs_prior_year_comparable: MetricDeltaSetDto,
+    // Compatibility aliases. These are intentionally identical to the
+    // explicitly named comparable-window fields above.
     pub current: PeriodMetricsDto,
     pub prior_year: PeriodMetricsDto,
     pub vs_prior_year: MetricDeltaSetDto,
-    pub months: Vec<MonthlyReportPointDto>,
+    pub months: Vec<AnnualMonthPointDto>,
     pub top_category_drivers: Vec<CategoryDriverDto>,
     pub top_merchant_drivers: Vec<MerchantDriverDto>,
     pub budget: BudgetStatusDto,
@@ -255,6 +266,51 @@ pub struct MonthlyReportPointDto {
     pub month: String,
     #[serde(flatten)]
     pub metrics: PeriodMetricsDto,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AnnualMonthStatus {
+    Complete,
+    Partial,
+    Future,
+}
+
+impl AnnualMonthStatus {
+    fn csv_value(self) -> &'static str {
+        match self {
+            Self::Complete => "COMPLETE",
+            Self::Partial => "PARTIAL",
+            Self::Future => "FUTURE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnualMonthPointDto {
+    pub month: String,
+    pub status: AnnualMonthStatus,
+    #[serde(flatten)]
+    pub metrics: PeriodMetricsDto,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnualReviewCsvDto {
+    pub file_name: String,
+    pub media_type: &'static str,
+    pub row_count: u32,
+    pub byte_size: u32,
+    pub utf8_bom_csv: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnualReviewCsvSavedDto {
+    pub file_name: String,
+    pub row_count: u32,
+    pub byte_size: u32,
 }
 
 #[derive(Default)]
@@ -411,6 +467,7 @@ pub fn financial_calendar(
         budget: budget_status(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &request.attribution_scope,
             &start,
             &end,
@@ -496,6 +553,7 @@ pub fn monthly_report(
         budget: budget_status(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &request.attribution_scope,
             &start,
             &end,
@@ -532,9 +590,32 @@ pub fn yearly_report(
         &request.attribution_scope,
     )?;
     let start = year_start(connection, &request.year)?;
-    let end = date_shift(connection, &start, "+1 year")?;
+    let as_of = resolve_as_of(connection, Some(&request.as_of))?;
+    let as_of_year = &as_of[..4];
+    if request.year.as_str() > as_of_year {
+        return Err(FinancialCalendarError::InvalidInput(
+            "Report year must not be after the as-of year",
+        ));
+    }
+    let completed_month_count = if request.year.as_str() < as_of_year {
+        12
+    } else {
+        as_of[5..7]
+            .parse::<u8>()
+            .map_err(|_| FinancialCalendarError::InvalidInput("As-of date is invalid"))?
+            - 1
+    };
+    let end = date_shift(
+        connection,
+        &start,
+        &format!("+{completed_month_count} months"),
+    )?;
     let prior_start = date_shift(connection, &start, "-1 year")?;
-    let as_of = resolve_as_of(connection, request.as_of.as_deref())?;
+    let prior_end = date_shift(
+        connection,
+        &prior_start,
+        &format!("+{completed_month_count} months"),
+    )?;
     let current = period_metrics(
         connection,
         &request.household_id,
@@ -549,15 +630,21 @@ pub fn yearly_report(
         request.account_group_id.as_deref(),
         &request.attribution_scope,
         &prior_start,
-        &start,
+        &prior_end,
     )?;
     let months = (0..12)
         .map(|offset| {
             let month_start = date_shift(connection, &start, &format!("+{offset} months"))?;
             let month_end = date_shift(connection, &month_start, "+1 month")?;
-            Ok(MonthlyReportPointDto {
-                month: month_start[..7].to_owned(),
-                metrics: period_metrics(
+            let status = if offset < completed_month_count {
+                AnnualMonthStatus::Complete
+            } else if request.year.as_str() == as_of_year && offset == completed_month_count {
+                AnnualMonthStatus::Partial
+            } else {
+                AnnualMonthStatus::Future
+            };
+            let metrics = match status {
+                AnnualMonthStatus::Complete => period_metrics(
                     connection,
                     &request.household_id,
                     request.account_group_id.as_deref(),
@@ -565,12 +652,42 @@ pub fn yearly_report(
                     &month_start,
                     &month_end,
                 )?,
+                AnnualMonthStatus::Partial => {
+                    let partial_end = date_shift(connection, &as_of, "+1 day")?;
+                    period_metrics(
+                        connection,
+                        &request.household_id,
+                        request.account_group_id.as_deref(),
+                        &request.attribution_scope,
+                        &month_start,
+                        &partial_end,
+                    )?
+                }
+                AnnualMonthStatus::Future => PeriodMetricsDto::default(),
+            };
+            Ok(AnnualMonthPointDto {
+                month: month_start[..7].to_owned(),
+                status,
+                metrics,
             })
         })
         .collect::<Result<Vec<_>, FinancialCalendarError>>()?;
+    let comparable_delta = metric_deltas(&current, &prior_year);
+    let through_month = if completed_month_count == 0 {
+        None
+    } else {
+        Some(format!("{}-{completed_month_count:02}", request.year))
+    };
     Ok(YearlyFinancialReportDto {
         period: request.year.clone(),
-        vs_prior_year: metric_deltas(&current, &prior_year),
+        as_of: as_of.clone(),
+        through_month,
+        completed_month_count,
+        is_complete_year: completed_month_count == 12,
+        current_comparable: current.clone(),
+        prior_year_comparable: prior_year.clone(),
+        vs_prior_year_comparable: comparable_delta.clone(),
+        vs_prior_year: comparable_delta,
         months,
         top_category_drivers: category_drivers(
             connection,
@@ -581,7 +698,7 @@ pub fn yearly_report(
                 current_start: &start,
                 current_end: &end,
                 previous_start: &prior_start,
-                previous_end: &start,
+                previous_end: &prior_end,
             },
         )?,
         top_merchant_drivers: merchant_drivers(
@@ -593,12 +710,13 @@ pub fn yearly_report(
                 current_start: &start,
                 current_end: &end,
                 previous_start: &prior_start,
-                previous_end: &start,
+                previous_end: &prior_end,
             },
         )?,
         budget: budget_status(
             connection,
             &request.household_id,
+            request.account_group_id.as_deref(),
             &request.attribution_scope,
             &start,
             &end,
@@ -616,6 +734,335 @@ pub fn yearly_report(
         current,
         prior_year,
     })
+}
+
+pub fn annual_household_review_csv(
+    connection: &Connection,
+    request: &YearlyFinancialReportRequest,
+) -> Result<AnnualReviewCsvDto, FinancialCalendarError> {
+    let report = yearly_report(connection, request)?;
+    annual_household_review_csv_from_report(request, &report)
+}
+
+pub fn annual_household_review_csv_from_report(
+    request: &YearlyFinancialReportRequest,
+    report: &YearlyFinancialReportDto,
+) -> Result<AnnualReviewCsvDto, FinancialCalendarError> {
+    let header = [
+        "section",
+        "period",
+        "status",
+        "metric",
+        "label",
+        "current_value",
+        "previous_value",
+        "delta_value",
+        "rate_bps",
+        "household_id",
+        "account_group_id",
+        "attribution_scope",
+        "attribution_member_id",
+        "as_of",
+        "through_month",
+    ];
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let scope = request.attribution_scope.sql_kind();
+    let member_id = request.attribution_scope.member_id().unwrap_or_default();
+    let group_id = request.account_group_id.as_deref().unwrap_or_default();
+    let through_month = report.through_month.as_deref().unwrap_or_default();
+    let mut push_row = |section: &str,
+                        period: &str,
+                        status: &str,
+                        metric: &str,
+                        label: &str,
+                        current: String,
+                        previous: String,
+                        delta: String,
+                        rate: String| {
+        rows.push(vec![
+            section.to_owned(),
+            period.to_owned(),
+            status.to_owned(),
+            metric.to_owned(),
+            label.to_owned(),
+            current,
+            previous,
+            delta,
+            rate,
+            request.household_id.clone(),
+            group_id.to_owned(),
+            scope.to_owned(),
+            member_id.to_owned(),
+            report.as_of.clone(),
+            through_month.to_owned(),
+        ]);
+    };
+    let summary_status = if report.is_complete_year {
+        "COMPLETE"
+    } else {
+        "THROUGH_COMPLETE_MONTHS"
+    };
+    let current = &report.current_comparable;
+    let previous = &report.prior_year_comparable;
+    let delta = &report.vs_prior_year_comparable;
+    push_row(
+        "SUMMARY",
+        &report.period,
+        summary_status,
+        "income_jpy",
+        "Income",
+        current.income_jpy.to_string(),
+        previous.income_jpy.to_string(),
+        delta.income.amount_jpy.to_string(),
+        delta
+            .income
+            .rate_bps
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    );
+    push_row(
+        "SUMMARY",
+        &report.period,
+        summary_status,
+        "expense_jpy",
+        "Expense",
+        current.expense_jpy.to_string(),
+        previous.expense_jpy.to_string(),
+        delta.expense.amount_jpy.to_string(),
+        delta
+            .expense
+            .rate_bps
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    );
+    push_row(
+        "SUMMARY",
+        &report.period,
+        summary_status,
+        "savings_jpy",
+        "Savings",
+        current.savings_jpy.to_string(),
+        previous.savings_jpy.to_string(),
+        delta.savings.amount_jpy.to_string(),
+        delta
+            .savings
+            .rate_bps
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+    );
+    push_row(
+        "SUMMARY",
+        &report.period,
+        summary_status,
+        "savings_rate_bps",
+        "Savings rate",
+        current
+            .savings_rate_bps
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        previous
+            .savings_rate_bps
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        String::new(),
+        String::new(),
+    );
+    push_row(
+        "SUMMARY",
+        &report.period,
+        summary_status,
+        "posted_transaction_count",
+        "Posted transactions",
+        current.posted_transaction_count.to_string(),
+        previous.posted_transaction_count.to_string(),
+        String::new(),
+        String::new(),
+    );
+    for month in &report.months {
+        let status = month.status.csv_value();
+        let metrics = &month.metrics;
+        for (metric, label, value) in [
+            ("income_jpy", "Income", metrics.income_jpy.to_string()),
+            ("expense_jpy", "Expense", metrics.expense_jpy.to_string()),
+            ("savings_jpy", "Savings", metrics.savings_jpy.to_string()),
+            (
+                "savings_rate_bps",
+                "Savings rate",
+                metrics
+                    .savings_rate_bps
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "posted_transaction_count",
+                "Posted transactions",
+                metrics.posted_transaction_count.to_string(),
+            ),
+        ] {
+            push_row(
+                "MONTH",
+                &month.month,
+                status,
+                metric,
+                label,
+                value,
+                String::new(),
+                String::new(),
+                String::new(),
+            );
+        }
+    }
+    for driver in &report.top_category_drivers {
+        push_row(
+            "CATEGORY_DRIVER",
+            &report.period,
+            summary_status,
+            "expense_jpy",
+            &driver.name,
+            driver.current_jpy.to_string(),
+            driver.previous_jpy.to_string(),
+            driver.delta_jpy.to_string(),
+            String::new(),
+        );
+    }
+    for driver in &report.top_merchant_drivers {
+        push_row(
+            "MERCHANT_DRIVER",
+            &report.period,
+            summary_status,
+            "expense_jpy",
+            &driver.merchant,
+            driver.current_jpy.to_string(),
+            driver.previous_jpy.to_string(),
+            driver.delta_jpy.to_string(),
+            String::new(),
+        );
+    }
+    for (section, metric, label, value) in [
+        ("BUDGET", "budget_jpy", "Budget", report.budget.budget_jpy),
+        ("BUDGET", "actual_jpy", "Actual", report.budget.actual_jpy),
+        (
+            "BUDGET",
+            "remaining_jpy",
+            "Remaining",
+            report.budget.remaining_jpy,
+        ),
+        ("GOALS", "target_jpy", "Target", report.goals.target_jpy),
+        ("GOALS", "saved_jpy", "Saved", report.goals.saved_jpy),
+        (
+            "GOALS",
+            "remaining_jpy",
+            "Remaining",
+            report.goals.remaining_jpy,
+        ),
+        (
+            "RECONCILIATION",
+            "payment_total_jpy",
+            "Card payments",
+            report.reconciliation.payment_total_jpy,
+        ),
+    ] {
+        push_row(
+            section,
+            &report.period,
+            summary_status,
+            metric,
+            label,
+            value.to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+    }
+    for (metric, label, value) in [
+        (
+            "total_imports",
+            "Total imports",
+            report.data_quality.total_imports,
+        ),
+        (
+            "posted_imports",
+            "Posted imports",
+            report.data_quality.posted_imports,
+        ),
+        (
+            "review_required_imports",
+            "Review required imports",
+            report.data_quality.review_required_imports,
+        ),
+        (
+            "failed_imports",
+            "Failed imports",
+            report.data_quality.failed_imports,
+        ),
+    ] {
+        push_row(
+            "DATA_QUALITY",
+            &report.period,
+            summary_status,
+            metric,
+            label,
+            value.to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+    }
+    if rows.len() > MAX_ANNUAL_REVIEW_CSV_ROWS {
+        return Err(FinancialCalendarError::InvalidInput(
+            "Annual review CSV is too large",
+        ));
+    }
+    let mut output = String::from('\u{feff}');
+    append_annual_csv_row(&mut output, &header)?;
+    for row in &rows {
+        append_annual_csv_row(&mut output, row)?;
+    }
+    let file_name = format!(
+        "kakeflow-annual-household-review-{}-as-of-{}.csv",
+        report.period, report.as_of
+    );
+    Ok(AnnualReviewCsvDto {
+        file_name,
+        media_type: "text/csv;charset=utf-8",
+        row_count: rows.len() as u32,
+        byte_size: output.len() as u32,
+        utf8_bom_csv: output,
+    })
+}
+
+fn append_annual_csv_row(
+    output: &mut String,
+    fields: &[impl AsRef<str>],
+) -> Result<(), FinancialCalendarError> {
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        let field = field.as_ref();
+        if field
+            .chars()
+            .any(|character| matches!(character, ',' | '"' | '\r' | '\n'))
+        {
+            output.push('"');
+            for character in field.chars() {
+                if character == '"' {
+                    output.push('"');
+                }
+                output.push(character);
+            }
+            output.push('"');
+        } else {
+            output.push_str(field);
+        }
+        if output.len() > MAX_ANNUAL_REVIEW_CSV_BYTES {
+            return Err(FinancialCalendarError::InvalidInput(
+                "Annual review CSV is too large",
+            ));
+        }
+    }
+    output.push_str("\r\n");
+    Ok(())
 }
 
 fn calendar_days(
@@ -799,6 +1246,7 @@ fn period_metrics(
 fn budget_status(
     connection: &Connection,
     household_id: &str,
+    account_group_id: Option<&str>,
     attribution_scope: &AttributionScope,
     start: &str,
     end: &str,
@@ -812,6 +1260,11 @@ fn budget_status(
                JOIN accounts a ON a.id = je.account_id AND a.account_kind = 'EXPENSE'
                WHERE t.household_id = ?1 AND t.status = 'POSTED'
                  AND t.occurred_on >= ?2 AND t.occurred_on < ?3
+                 AND (?6 IS NULL OR EXISTS (
+                   SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                     ON scope_gm.account_id = scope_je.account_id
+                    AND scope_gm.household_id = t.household_id
+                   WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?6))
                  AND (?4 = 'ALL'
                    OR (?4 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
                    OR (?4 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
@@ -825,7 +1278,7 @@ fn budget_status(
              ) SELECT COALESCE(SUM(budget_jpy),0), COALESCE(SUM(actual),0), count(*),
                  COALESCE(SUM(CASE WHEN actual > budget_jpy THEN 1 ELSE 0 END),0) FROM scoped",
             params![household_id, start, end,
-                attribution_scope.sql_kind(), attribution_scope.member_id()],
+                attribution_scope.sql_kind(), attribution_scope.member_id(), account_group_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .map_err(db_error)?;
@@ -1288,6 +1741,20 @@ pub fn financial_report_yearly_query(
     }
 }
 
+#[tauri::command]
+pub fn annual_household_review_csv_generate(
+    state: tauri::State<'_, AppState>,
+    request: YearlyFinancialReportRequest,
+) -> Result<AnnualReviewCsvDto, String> {
+    let result =
+        state.with_connection(|connection| Ok(annual_household_review_csv(connection, &request)));
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(error.public_message().to_owned()),
+        Err(_) => Err("Annual household review export is temporarily unavailable".to_owned()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1578,8 +2045,20 @@ mod tests {
     }
 
     #[test]
-    fn yearly_report_returns_twelve_authoritative_months() {
+    fn current_year_report_compares_only_complete_months_before_as_of_month() {
         let connection = database();
+        add_transaction(
+            &connection,
+            "after-as-of",
+            "2026-07-20",
+            "EXPENSE",
+            "Later",
+            "groceries",
+            "DEBIT",
+            "bank",
+            "CREDIT",
+            99_000,
+        );
         let result = yearly_report(
             &connection,
             &YearlyFinancialReportRequest {
@@ -1587,16 +2066,131 @@ mod tests {
                 account_group_id: None,
                 attribution_scope: AttributionScope::All,
                 year: "2026".into(),
-                as_of: Some("2026-12-31".into()),
+                as_of: "2026-07-13".into(),
             },
         )
         .unwrap();
         assert_eq!(result.months.len(), 12);
+        assert_eq!(result.through_month.as_deref(), Some("2026-06"));
+        assert_eq!(result.completed_month_count, 6);
+        assert!(!result.is_complete_year);
         assert_eq!(result.months[5].month, "2026-06");
+        assert_eq!(result.months[5].status, AnnualMonthStatus::Complete);
         assert_eq!(result.months[5].metrics.expense_jpy, 40_000);
+        assert_eq!(result.months[6].status, AnnualMonthStatus::Partial);
         assert_eq!(result.months[6].metrics.expense_jpy, 70_000);
-        assert_eq!(result.current.income_jpy, 550_000);
-        assert_eq!(result.prior_year.income_jpy, 280_000);
+        assert_eq!(result.months[7].status, AnnualMonthStatus::Future);
+        assert_eq!(result.months[7].metrics, PeriodMetricsDto::default());
+        assert_eq!(result.current_comparable.income_jpy, 250_000);
+        assert_eq!(result.current_comparable.expense_jpy, 40_000);
+        assert_eq!(result.prior_year_comparable, PeriodMetricsDto::default());
+        assert_eq!(result.current, result.current_comparable);
+        assert_eq!(result.vs_prior_year, result.vs_prior_year_comparable);
+        assert_eq!(result.reconciliation.total_statements, 0);
+    }
+
+    #[test]
+    fn past_year_report_is_complete_and_january_current_year_has_zero_complete_months() {
+        let connection = database();
+        let past = yearly_report(
+            &connection,
+            &YearlyFinancialReportRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+                year: "2025".into(),
+                as_of: "2026-07-13".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(past.completed_month_count, 12);
+        assert_eq!(past.through_month.as_deref(), Some("2025-12"));
+        assert!(past.is_complete_year);
+        assert!(past
+            .months
+            .iter()
+            .all(|month| month.status == AnnualMonthStatus::Complete));
+        assert_eq!(past.current_comparable.income_jpy, 280_000);
+        assert_eq!(past.current_comparable.expense_jpy, 45_000);
+
+        let january = yearly_report(
+            &connection,
+            &YearlyFinancialReportRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+                year: "2026".into(),
+                as_of: "2026-01-01".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(january.completed_month_count, 0);
+        assert_eq!(january.through_month, None);
+        assert_eq!(january.current_comparable, PeriodMetricsDto::default());
+        assert_eq!(january.prior_year_comparable, PeriodMetricsDto::default());
+        assert_eq!(january.months[0].status, AnnualMonthStatus::Partial);
+        assert!(january.months[1..]
+            .iter()
+            .all(|month| month.status == AnnualMonthStatus::Future));
+    }
+
+    #[test]
+    fn yearly_report_handles_leap_day_boundary_and_rejects_future_year() {
+        let connection = database();
+        add_transaction(
+            &connection,
+            "leap-current",
+            "2024-02-29",
+            "EXPENSE",
+            "Leap",
+            "groceries",
+            "DEBIT",
+            "bank",
+            "CREDIT",
+            29_000,
+        );
+        add_transaction(
+            &connection,
+            "leap-prior",
+            "2023-02-28",
+            "EXPENSE",
+            "Prior",
+            "groceries",
+            "DEBIT",
+            "bank",
+            "CREDIT",
+            28_000,
+        );
+        let leap = yearly_report(
+            &connection,
+            &YearlyFinancialReportRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+                year: "2024".into(),
+                as_of: "2024-03-01".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(leap.completed_month_count, 2);
+        assert_eq!(leap.current_comparable.expense_jpy, 29_000);
+        assert_eq!(leap.prior_year_comparable.expense_jpy, 28_000);
+        assert_eq!(leap.months[1].status, AnnualMonthStatus::Complete);
+        assert_eq!(leap.months[2].status, AnnualMonthStatus::Partial);
+
+        assert!(matches!(
+            yearly_report(
+                &connection,
+                &YearlyFinancialReportRequest {
+                    household_id: "family".into(),
+                    account_group_id: None,
+                    attribution_scope: AttributionScope::All,
+                    year: "2027".into(),
+                    as_of: "2026-12-31".into(),
+                }
+            ),
+            Err(FinancialCalendarError::InvalidInput(_))
+        ));
     }
 
     #[test]
@@ -1651,7 +2245,7 @@ mod tests {
                     account_group_id: Some("foreign".into()),
                     attribution_scope: AttributionScope::All,
                     year: "2026".into(),
-                    as_of: None,
+                    as_of: "2026-07-13".into(),
                 }
             ),
             Err(FinancialCalendarError::NotFound)
@@ -1706,7 +2300,7 @@ mod tests {
                 account_group_id: Some("spending".into()),
                 attribution_scope: scope.clone(),
                 month: "2026-07".into(),
-                as_of: None,
+                as_of: Some("2026-07-13".into()),
             },
         )
         .unwrap();
@@ -1723,13 +2317,90 @@ mod tests {
                 account_group_id: Some("spending".into()),
                 attribution_scope: scope,
                 year: "2026".into(),
-                as_of: None,
+                as_of: "2026-07-13".into(),
             },
         )
         .unwrap();
-        assert_eq!(yearly.current.expense_jpy, 70_000);
+        assert_eq!(yearly.current.expense_jpy, 0);
         assert_eq!(yearly.months[5].metrics.expense_jpy, 0);
         assert_eq!(yearly.months[6].metrics.expense_jpy, 70_000);
+    }
+
+    #[test]
+    fn annual_review_combines_asset_account_group_and_member_scope_without_dropping_budget_plan() {
+        let connection = database();
+        connection
+            .execute_batch(
+                "UPDATE transactions SET attribution_kind = 'MEMBER',
+                   attributed_member_id = 'family-member' WHERE id = 'expense-jun';
+                 INSERT INTO account_groups VALUES ('bank-only','family','Bank only','CUSTOM',0);
+                 INSERT INTO account_group_members VALUES ('family','bank-only','bank',0);",
+            )
+            .unwrap();
+        let result = yearly_report(
+            &connection,
+            &YearlyFinancialReportRequest {
+                household_id: "family".into(),
+                account_group_id: Some("bank-only".into()),
+                attribution_scope: AttributionScope::Member {
+                    member_id: "family-member".into(),
+                },
+                year: "2026".into(),
+                as_of: "2026-07-13".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.current_comparable.expense_jpy, 40_000);
+        assert_eq!(result.current_comparable.income_jpy, 0);
+        assert_eq!(result.top_category_drivers[0].current_jpy, 40_000);
+        assert_eq!(result.budget.budget_jpy, 50_000);
+        assert_eq!(result.budget.actual_jpy, 40_000);
+        assert_eq!(result.reconciliation.total_statements, 0);
+    }
+
+    #[test]
+    fn annual_review_csv_is_deterministic_bom_prefixed_tidy_and_bounded() {
+        let connection = database();
+        connection
+            .execute(
+                "UPDATE accounts SET name = ?1 WHERE id = 'groceries'",
+                ["Groceries, \"home\""],
+            )
+            .unwrap();
+        let request = YearlyFinancialReportRequest {
+            household_id: "family".into(),
+            account_group_id: None,
+            attribution_scope: AttributionScope::All,
+            year: "2026".into(),
+            as_of: "2026-07-13".into(),
+        };
+        let first = annual_household_review_csv(&connection, &request).unwrap();
+        let second = annual_household_review_csv(&connection, &request).unwrap();
+        assert_eq!(first, second);
+        assert!(first.utf8_bom_csv.starts_with('\u{feff}'));
+        assert!(first.utf8_bom_csv.contains("\r\n"));
+        assert!(first
+            .utf8_bom_csv
+            .contains("MONTH,2026-06,COMPLETE,expense_jpy"));
+        assert!(first
+            .utf8_bom_csv
+            .contains("MONTH,2026-07,PARTIAL,expense_jpy"));
+        assert!(first
+            .utf8_bom_csv
+            .contains("MONTH,2026-08,FUTURE,expense_jpy"));
+        assert!(first.utf8_bom_csv.contains("\"Groceries, \"\"home\"\"\""));
+        assert!(first
+            .utf8_bom_csv
+            .contains(",family,,ALL,,2026-07-13,2026-06\r\n"));
+        assert_eq!(first.byte_size as usize, first.utf8_bom_csv.len());
+        assert!(first.row_count > 60);
+
+        let oversized = "x".repeat(MAX_ANNUAL_REVIEW_CSV_BYTES + 1);
+        let mut output = String::new();
+        assert!(matches!(
+            append_annual_csv_row(&mut output, &[oversized]),
+            Err(FinancialCalendarError::InvalidInput(_))
+        ));
     }
 
     #[test]
@@ -1756,7 +2427,7 @@ mod tests {
                 account_group_id: None,
                 attribution_scope: AttributionScope::All,
                 year: "2026".into(),
-                as_of: None,
+                as_of: "2026-07-13".into(),
             },
         );
         assert!(matches!(missing, Err(FinancialCalendarError::NotFound)));
