@@ -34,12 +34,22 @@ import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
 import { sha256Text } from './features/import/importService'
 import { mapParsedImportToStartImport } from './features/import/importMapper'
+import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, HouseholdDto, ImportPreviewDto, PostingDecisionDto, PreviewCandidateDto } from './platform'
+import type { AccountDto, AppBootstrapDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
+
+function currentTokyoPeriod(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(now)
+  const year = Number(parts.find((part) => part.type === 'year')?.value)
+  const monthNumber = Number(parts.find((part) => part.type === 'month')?.value)
+  const month = `${year}-${String(monthNumber).padStart(2, '0')}`
+  const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()
+  return { month, fromDate: `${month}-01`, toDate: `${month}-${String(lastDay).padStart(2, '0')}` }
+}
 
 const navigation: NavigationItem[] = [
   { id: 'overview', label: 'ホーム', icon: Home },
@@ -149,13 +159,13 @@ function TrendChart() {
   )
 }
 
-function SpendingCard() {
+function SpendingCard({ expense = currentMonthMetrics.expense }: { expense?: number }) {
   const gradient = `conic-gradient(${categoryData.map((d, i) => `${d.color} ${categoryData.slice(0, i).reduce((a, b) => a + b.pct, 0)}% ${categoryData.slice(0, i + 1).reduce((a, b) => a + b.pct, 0)}%`).join(',')})`
   return (
     <article className="panel spending-card">
       <div className="panel-head"><div><h2>支出の内訳</h2><p>今月のカテゴリー別</p></div><button className="text-btn">詳細を見る <ArrowRight size={14} /></button></div>
       <div className="spending-body">
-        <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>{yen(currentMonthMetrics.expense)}</strong></div></div>
+        <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>{yen(expense)}</strong></div></div>
         <div className="legend">{categoryData.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>)}</div>
       </div>
     </article>
@@ -191,27 +201,31 @@ function ReconciliationMini() {
   )
 }
 
-function Overview({ setPage }: { setPage: (page: PageId) => void }) {
+function Overview({ setPage, liveDashboard, liveTransactions, desktop }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; desktop: boolean }) {
+  const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
+  const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
+  const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
+  const displayTransactions = desktop ? liveTransactions.map(toTransactionViewModel) : transactions.slice(0, 4)
   return <>
-    <PageHeader eyebrow="2026年7月12日 日曜日" title="こんにちは、田中さん" description={`今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
+    <PageHeader eyebrow="2026年7月12日 日曜日" title="こんにちは、田中さん" description={desktop ? `今月の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています。` : `今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <button className="secondary-btn"><CalendarDays size={17} /> 2026年7月 <ChevronDown size={15} /></button>
       <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>
     </PageHeader>
     <section className="kpi-grid">
-      <KpiCard label="純資産" value={yen(currentMonthMetrics.netWorth)} meta="前月比" trend="2.8%" icon={TrendingUp} accent="#e4edda" />
-      <KpiCard label="今月の収入" value={yen(currentMonthMetrics.income)} meta="予定の 104%" trend="4.2%" icon={ArrowDownLeft} accent="#dce9e6" />
-      <KpiCard label="今月の支出" value={yen(currentMonthMetrics.expense)} meta={`予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />
-      <KpiCard label="貯蓄見込み" value={yen(savings)} meta={`貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend="6.1%" icon={CircleDollarSign} accent="#eee5cf" />
+      <KpiCard label="純資産" value={desktop ? '—' : yen(currentMonthMetrics.netWorth)} meta={desktop ? '残高集計は準備中' : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />
+      <KpiCard label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />
+      <KpiCard label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />
+      <KpiCard label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />
     </section>
     <section className="dashboard-grid">
       <article className="panel trend-panel">
         <div className="panel-head"><div><h2>収支の推移</h2><p>資金移動ベース・直近6か月</p></div><div className="chart-legend"><span className="income">現金流入</span><span className="expense">現金流出</span></div></div>
         <TrendChart />
       </article>
-      <SpendingCard />
+      <SpendingCard expense={expense} />
       <article className="panel recent-panel">
         <div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>
-        <TransactionRows rows={transactions.slice(0, 4)} />
+        {displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}
       </article>
       <ReconciliationMini />
     </section>
@@ -219,20 +233,43 @@ function Overview({ setPage }: { setPage: (page: PageId) => void }) {
   </>
 }
 
-function TransactionsPage() {
+function TransactionsPage({ householdId, revision }: { householdId: string | null; revision: number }) {
   const [query, setQuery] = useState('')
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
+  const [liveRows, setLiveRows] = useState<readonly TransactionRowDto[]>([])
+  const [liveTotals, setLiveTotals] = useState<DashboardMonthlyTotalsDto | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const desktop = platformClient.runtime === 'tauri'
+
+  useEffect(() => {
+    if (!desktop || !householdId) return
+    let active = true
+    const period = currentTokyoPeriod()
+    setLoadError(false)
+    void Promise.all([
+      platformClient.queryTransactions({ householdId, accountingBasis: basis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 100 }),
+      platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: basis }),
+    ]).then(([page, totals]) => {
+      if (active) { setLiveRows(page.items); setLiveTotals(totals) }
+    }).catch(() => {
+      if (active) { setLiveRows([]); setLiveTotals(null); setLoadError(true) }
+    })
+    return () => { active = false }
+  }, [basis, desktop, householdId, revision])
+
   const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
-  const visible = basisTransactions.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
-  const basisExpense = basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
+  const displayRows = desktop ? liveRows.map(toTransactionViewModel) : basisTransactions
+  const visible = displayRows.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
+  const basisExpense = desktop ? liveTotals?.expenseJpy ?? 0 : basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
+  const basisIncome = desktop ? liveTotals?.incomeJpy ?? 0 : currentMonthMetrics.income
   return <>
     <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。">
       <button className="secondary-btn"><SlidersHorizontal size={17} /> フィルター</button><button className="primary-btn"><BookOpen size={17} /> 手動で追加</button>
     </PageHeader>
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
-      <div className="table-summary"><span>2026年7月・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(currentMonthMetrics.income)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
-      <TransactionRows rows={visible} />
+      <div className="table-summary"><span>{currentTokyoPeriod().month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
+      {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
     </section>
   </>
 }
@@ -273,7 +310,7 @@ function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly Acc
   }
 }
 
-function ImportPage({ previews, setPreviews, householdId, accounts }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[] }) {
+function ImportPage({ previews, setPreviews, householdId, accounts, onCommitted }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; onCommitted: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
@@ -335,6 +372,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts }: { previews
       const decisions = stagedImport.candidates.map((candidate) => suggestedPosting(candidate, accounts, householdId!))
       const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      onCommitted()
       setNotice(`${result.postedCount}件の取引を台帳へ反映しました。`)
     } catch {
       setNotice('台帳へ反映できませんでした。候補の口座と仕訳を確認してください。')
@@ -433,6 +471,9 @@ function App() {
   const [bootstrap, setBootstrap] = useState<AppBootstrapDto | null>(null)
   const [households, setHouseholds] = useState<readonly HouseholdDto[]>([])
   const [accounts, setAccounts] = useState<readonly AccountDto[]>([])
+  const [liveDashboard, setLiveDashboard] = useState<DashboardMonthlyTotalsDto | null>(null)
+  const [liveTransactions, setLiveTransactions] = useState<readonly TransactionRowDto[]>([])
+  const [ledgerRevision, setLedgerRevision] = useState(0)
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
 
   useEffect(() => {
@@ -467,10 +508,30 @@ function App() {
     return () => { active = false }
   }, [households])
 
+  useEffect(() => {
+    const householdId = households[0]?.id
+    if (!householdId || platformClient.runtime !== 'tauri') {
+      setLiveDashboard(null)
+      setLiveTransactions([])
+      return
+    }
+    let active = true
+    const period = currentTokyoPeriod()
+    void Promise.all([
+      platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: 'ACCRUAL' }),
+      platformClient.queryTransactions({ householdId, accountingBasis: 'ACCRUAL', fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
+    ]).then(([dashboard, page]) => {
+      if (active) { setLiveDashboard(dashboard); setLiveTransactions(page.items) }
+    }).catch(() => {
+      if (active) { setLiveDashboard(null); setLiveTransactions([]) }
+    })
+    return () => { active = false }
+  }, [households, ledgerRevision])
+
   const pageContent = {
-    overview: <Overview setPage={setPage} />,
-    transactions: <TransactionsPage />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} desktop={platformClient.runtime === 'tauri'} />,
+    transactions: <TransactionsPage householdId={households[0]?.id ?? null} revision={ledgerRevision} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} onCommitted={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage />,
     budgets: <BudgetsPage />,
   }[page]
