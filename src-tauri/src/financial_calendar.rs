@@ -364,6 +364,7 @@ pub fn financial_calendar(
              LEFT JOIN journal_entries je ON je.transaction_id = t.id
              LEFT JOIN accounts a ON a.id = je.account_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.calculation_target = 1
                AND t.occurred_on >= ?2 AND t.occurred_on < ?3
                AND (?4 IS NULL OR EXISTS (
                  SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
@@ -1218,6 +1219,7 @@ fn period_metrics(
              LEFT JOIN journal_entries je ON je.transaction_id = t.id
              LEFT JOIN accounts a ON a.id = je.account_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.calculation_target = 1
                AND t.occurred_on >= ?2 AND t.occurred_on < ?3
                AND t.transaction_type != 'CARD_PAYMENT'
                AND (?4 IS NULL OR EXISTS (
@@ -1259,6 +1261,7 @@ fn budget_status(
                FROM transactions t JOIN journal_entries je ON je.transaction_id = t.id
                JOIN accounts a ON a.id = je.account_id AND a.account_kind = 'EXPENSE'
                WHERE t.household_id = ?1 AND t.status = 'POSTED'
+                 AND t.calculation_target = 1
                  AND t.occurred_on >= ?2 AND t.occurred_on < ?3
                  AND (?6 IS NULL OR EXISTS (
                    SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
@@ -1438,6 +1441,7 @@ fn category_drivers(
                FROM transactions t JOIN journal_entries je ON je.transaction_id = t.id
                JOIN accounts a ON a.id = je.account_id AND a.account_kind = 'EXPENSE'
                WHERE t.household_id = ?1 AND t.status = 'POSTED'
+                 AND t.calculation_target = 1
                  AND ((t.occurred_on >= ?2 AND t.occurred_on < ?3) OR
                       (t.occurred_on >= ?4 AND t.occurred_on < ?5))
                  AND (?6 IS NULL OR EXISTS (
@@ -1496,6 +1500,7 @@ fn merchant_drivers(
                FROM transactions t JOIN journal_entries je ON je.transaction_id = t.id
                JOIN accounts a ON a.id = je.account_id AND a.account_kind = 'EXPENSE'
                WHERE t.household_id = ?1 AND t.status = 'POSTED'
+                 AND t.calculation_target = 1
                  AND ((t.occurred_on >= ?2 AND t.occurred_on < ?3) OR
                       (t.occurred_on >= ?4 AND t.occurred_on < ?5))
                  AND (?6 IS NULL OR EXISTS (
@@ -1777,7 +1782,8 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    occurred_on TEXT NOT NULL, transaction_type TEXT NOT NULL,
                    payee TEXT, description TEXT, status TEXT NOT NULL,
-                   attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT
+                   attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
+                   calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1))
                  );
                  CREATE TABLE journal_entries (
                    id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id),
@@ -2401,6 +2407,57 @@ mod tests {
             append_annual_csv_row(&mut output, &[oversized]),
             Err(FinancialCalendarError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn excluded_posted_transactions_disappear_from_calendar_reports_but_not_card_obligations() {
+        let connection = database();
+        connection
+            .execute(
+                "UPDATE transactions SET calculation_target=0
+                 WHERE id IN ('card-jul','cash-jul','payment-jul')",
+                [],
+            )
+            .unwrap();
+        let calendar = financial_calendar(
+            &connection,
+            &FinancialCalendarRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+                month: "2026-07".into(),
+                as_of: Some("2026-07-31".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(calendar.days[9].accrual_expense_jpy, 0);
+        assert!(calendar.days[9].no_spend_day);
+        assert_eq!(calendar.days[11].accrual_expense_jpy, 0);
+        assert!(calendar.days[26]
+            .events
+            .iter()
+            .any(|event| event.kind == FinancialCalendarEventKind::CardPaymentDue));
+        assert!(calendar.days[26]
+            .events
+            .iter()
+            .any(|event| event.kind == FinancialCalendarEventKind::CardPayment));
+
+        let report = monthly_report(
+            &connection,
+            &MonthlyFinancialReportRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+                month: "2026-07".into(),
+                as_of: Some("2026-07-31".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(report.current.expense_jpy, 0);
+        assert_eq!(report.top_category_drivers[0].current_jpy, 0);
+        assert_eq!(report.budget.actual_jpy, 0);
+        assert_eq!(report.reconciliation.total_statements, 1);
+        assert_eq!(report.reconciliation.payment_total_jpy, 70_000);
     }
 
     #[test]

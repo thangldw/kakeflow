@@ -106,6 +106,7 @@ pub fn query_financial_intelligence(
              JOIN journal_entries e ON e.transaction_id = t.id AND e.entry_side = 'DEBIT' \
              JOIN accounts a ON a.id = e.account_id AND a.account_kind = 'EXPENSE' \
              WHERE t.household_id = ?1 AND t.status = 'POSTED' \
+               AND t.calculation_target = 1 \
                AND t.transaction_type IN ('EXPENSE', 'CARD_PURCHASE') \
                AND t.occurred_on >= ?2 AND t.occurred_on <= ?3 \
                AND (?4 IS NULL OR EXISTS ( \
@@ -636,7 +637,8 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE transactions (id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, \
                     transaction_type TEXT, payee TEXT, description TEXT, status TEXT, \
-                    attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT); \
+                    attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT, \
+                    calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1))); \
                  CREATE TABLE accounts (id TEXT PRIMARY KEY, household_id TEXT, account_kind TEXT); \
                  CREATE TABLE journal_entries (transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER); \
                  CREATE TABLE account_groups (id TEXT PRIMARY KEY, household_id TEXT); \
@@ -681,6 +683,36 @@ mod tests {
         .unwrap();
         assert_eq!(result.recurring_items.len(), 1);
         assert_eq!(result.recurring_items[0].occurrence_count, 3);
+        assert!(result.anomalies.is_empty());
+    }
+
+    #[test]
+    fn calculation_target_excludes_posted_rows_from_recurring_and_anomaly_models() {
+        let connection = test_connection();
+        connection
+            .execute_batch(
+                "INSERT INTO transactions
+                   (id,household_id,occurred_on,transaction_type,payee,description,status,calculation_target)
+                 VALUES
+                   ('e1','family','2026-05-01','EXPENSE','Rent',NULL,'POSTED',0),
+                   ('e2','family','2026-06-01','EXPENSE','Rent',NULL,'POSTED',0),
+                   ('e3','family','2026-07-01','EXPENSE','Rent',NULL,'POSTED',0);
+                 INSERT INTO journal_entries VALUES
+                   ('e1','expense','DEBIT',1000),('e2','expense','DEBIT',1000),
+                   ('e3','expense','DEBIT',50000);",
+            )
+            .unwrap();
+        let result = query_financial_intelligence(
+            &connection,
+            &FinancialIntelligenceRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-31".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+            },
+        )
+        .unwrap();
+        assert!(result.recurring_items.is_empty());
         assert!(result.anomalies.is_empty());
     }
 

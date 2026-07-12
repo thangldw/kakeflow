@@ -1496,6 +1496,7 @@ mod tests {
                    posted_on TEXT, transaction_type TEXT NOT NULL, payee TEXT, description TEXT, status TEXT NOT NULL,
                    attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
                    audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT,
+                   calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1)),
                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
                  CREATE TABLE transaction_sources (
@@ -1773,6 +1774,13 @@ mod tests {
         start_import(&connection, &request("run", "doc", 'a'), "vault://one").unwrap();
         let result = commit_import(&connection, "run", &[decision("run", 1_000)]).unwrap();
         assert_eq!(result.posted_count, 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT calculation_target FROM transactions", [], |row| row
+                    .get::<_, i64>(0),)
+                .unwrap(),
+            1
+        );
         assert_eq!(
             connection
                 .query_row("SELECT count(*) FROM journal_entries", [], |r| r

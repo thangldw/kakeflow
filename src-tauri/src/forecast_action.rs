@@ -293,6 +293,7 @@ fn historical_totals(
              JOIN journal_entries e ON e.transaction_id = t.id
              JOIN accounts a ON a.id = e.account_id AND a.household_id = t.household_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.calculation_target = 1
                AND t.occurred_on BETWEEN ?2 AND ?3
                AND (?4 IS NULL OR EXISTS (
                     SELECT 1 FROM journal_entries scope_je
@@ -638,6 +639,7 @@ fn append_budget_actions(
          FROM monthly_category_budgets b JOIN accounts a ON a.id = b.category_account_id
          LEFT JOIN journal_entries e ON e.account_id = b.category_account_id
          LEFT JOIN transactions t ON t.id = e.transaction_id AND t.household_id = b.household_id AND substr(t.occurred_on,1,7) = b.month
+            AND t.calculation_target = 1
             AND (?4 = 'ALL'
                  OR (?4 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
                  OR (?4 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
@@ -843,7 +845,7 @@ mod tests {
         connection.execute_batch(
             "CREATE TABLE households(id TEXT PRIMARY KEY);
              CREATE TABLE accounts(id TEXT PRIMARY KEY, household_id TEXT, name TEXT, account_kind TEXT, account_subtype TEXT);
-             CREATE TABLE transactions(id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, transaction_type TEXT, payee TEXT, description TEXT, status TEXT, attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT);
+             CREATE TABLE transactions(id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, transaction_type TEXT, payee TEXT, description TEXT, status TEXT, attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT, calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1)));
              CREATE TABLE journal_entries(transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER);
              CREATE TABLE import_runs(id TEXT, household_id TEXT, status TEXT);
              CREATE TABLE card_statements(id TEXT, household_id TEXT, card_account_id TEXT, payment_due_on TEXT, statement_amount_jpy INTEGER, reconciliation_status TEXT);
@@ -904,6 +906,48 @@ mod tests {
             result.months[1].opening_cash_jpy,
             result.months[0].closing_cash_jpy
         );
+    }
+
+    #[test]
+    fn calculation_target_excludes_forecast_history_and_budget_actual_but_keeps_cash_and_card_due()
+    {
+        let connection = connection();
+        for month in 4..=6 {
+            add_month(&connection, month, 300_000, 100_000);
+        }
+        connection
+            .execute_batch(
+                "UPDATE transactions SET calculation_target=0;
+                 INSERT INTO card_statements VALUES
+                   ('statement','family','card','2026-08-27',60000,'UNMATCHED');
+                 INSERT INTO monthly_category_budgets VALUES
+                   ('family','2026-07','expense',1000);
+                 INSERT INTO transactions
+                   (id,household_id,occurred_on,transaction_type,payee,description,status,calculation_target)
+                 VALUES ('excluded-july','family','2026-07-02','EXPENSE','Grocer',NULL,'POSTED',0);
+                 INSERT INTO journal_entries VALUES
+                   ('excluded-july','expense','DEBIT',5000),
+                   ('excluded-july','bank','CREDIT',5000);",
+            )
+            .unwrap();
+        let result = query_forecast_action(
+            &connection,
+            &ForecastActionRequest {
+                household_id: "family".into(),
+                as_of: "2026-07-13".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.assumptions.average_monthly_income_jpy, 0);
+        assert_eq!(result.assumptions.average_monthly_expense_jpy, 0);
+        assert_eq!(result.months[0].opening_cash_jpy, 595_000);
+        assert_eq!(result.months[0].known_card_payments_jpy, 60_000);
+        assert!(!result
+            .actions
+            .iter()
+            .any(|action| action.kind == ActionKind::BudgetOverrun));
     }
 
     #[test]
