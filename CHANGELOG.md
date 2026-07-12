@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.0 — 2026-07-13
+
+- Add explicit source terms for all-stock and mixed cash/stock mergers, including target and cash currencies, stock cost-basis allocation, and source-to-target/source-to-cash FX rates.
+- Represent cross-currency security and cash legs by their actual currency, require each currency bucket to balance independently, and attribute brokerage cash movement to the cash leg's currency.
+- Transform every matching FIFO source lot into target shares while preserving acquisition/source provenance; allocate cash proceeds pro rata by surrendered quantity and calculate realized P&L per lot.
+- Convert stock and cash cost-basis portions only with explicit source-row rates; missing, unnecessary, non-finite, or out-of-range rates reject import or leave the performance action skipped without consuming source lots.
+- Add `MERGER_STOCK` and `MERGER_CASH` audit allocations with source document/row, source basis/currency, conversion rate, output basis/currency, cash proceeds, and realized result.
+- Extend Japanese/English brokerage aliases and investment reports for merger consideration while keeping non-cash stock allocations visually distinct from cash proceeds.
+
 ## 0.14.0 — 2026-07-13
 
 - Add household-scoped, versioned CSV/TSV parser profiles with create, update, enable/disable, priority, and optimistic delete/update behavior.
