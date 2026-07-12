@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const desktop = vi.hoisted(() => ({
   listHouseholds: vi.fn(),
+  listHouseholdMembers: vi.fn(),
+  createHouseholdMember: vi.fn(),
+  updateHouseholdMember: vi.fn(),
+  archiveHouseholdMember: vi.fn(),
   listAccounts: vi.fn(),
   queryDashboard: vi.fn(),
   queryTransactions: vi.fn(),
@@ -31,6 +35,7 @@ const desktop = vi.hoisted(() => ({
   createAccount: vi.fn(),
   renameAccount: vi.fn(),
   archiveAccount: vi.fn(),
+  updateAccountOwnership: vi.fn(),
   listClassificationRules: vi.fn(),
   createClassificationRule: vi.fn(),
   updateClassificationRule: vi.fn(),
@@ -55,10 +60,15 @@ vi.mock('./platform', async () => {
       bootstrap: vi.fn().mockResolvedValue({ application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } }),
       listHouseholds: desktop.listHouseholds,
       createHousehold: vi.fn(),
+      listHouseholdMembers: desktop.listHouseholdMembers,
+      createHouseholdMember: desktop.createHouseholdMember,
+      updateHouseholdMember: desktop.updateHouseholdMember,
+      archiveHouseholdMember: desktop.archiveHouseholdMember,
       listAccounts: desktop.listAccounts,
       createAccount: desktop.createAccount,
       renameAccount: desktop.renameAccount,
       archiveAccount: desktop.archiveAccount,
+      updateAccountOwnership: desktop.updateAccountOwnership,
       queryDashboard: desktop.queryDashboard,
       listBudgets: desktop.listBudgets,
       upsertBudget: desktop.upsertBudget,
@@ -105,11 +115,15 @@ describe('KakeFlow desktop read models', () => {
     localStorage.clear()
     accountGroupState.groups = []
     desktop.listHouseholds.mockReset().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }])
+    desktop.listHouseholdMembers.mockReset().mockResolvedValue([{ id: 'taro', householdId: 'family', displayName: '太郎', relationshipLabel: '父', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-01T00:00:00Z' }])
+    desktop.createHouseholdMember.mockReset().mockImplementation(async (input) => ({ ...input, status: 'ACTIVE', sortOrder: 1, createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
+    desktop.updateHouseholdMember.mockReset().mockImplementation(async (input) => ({ ...input, id: input.memberId, status: 'ACTIVE', createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
+    desktop.archiveHouseholdMember.mockReset().mockResolvedValue(undefined)
     desktop.listAccounts.mockReset().mockResolvedValue([
-      { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' },
-      { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY' },
-      { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY' },
-      { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY' },
+      { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'MEMBER', ownerMemberId: 'taro', ownerMemberName: '太郎', visibility: 'PERSONAL' },
+      { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
     ])
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
@@ -128,9 +142,10 @@ describe('KakeFlow desktop read models', () => {
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
     desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
-    desktop.createAccount.mockReset().mockResolvedValue({ id: 'new-bank', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })
+    desktop.createAccount.mockReset().mockResolvedValue({ id: 'new-bank', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' })
     desktop.renameAccount.mockReset()
     desktop.archiveAccount.mockReset()
+    desktop.updateAccountOwnership.mockReset()
     desktop.createManualTransaction.mockReset().mockResolvedValue({ id: 'manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: '八百屋', description: null, amountJpy: 1500, status: 'POSTED', debitAccountId: 'family-other-expense', debitAccountName: 'その他', creditAccountId: 'family-bank', creditAccountName: '銀行', categoryAccountId: 'family-other-expense', categoryName: 'その他' })
     desktop.getTransactionDetail.mockReset().mockResolvedValue({ id: 'purchase', householdId: 'family', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', status: 'POSTED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z', editable: true, entries: [{ id: 'debit', accountId: 'family-other-expense', accountName: 'その他', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 120000, lineNumber: 1 }, { id: 'credit', accountId: 'family-card', accountName: 'カード', accountKind: 'LIABILITY', side: 'CREDIT', amountJpy: 120000, lineNumber: 2 }], sourceEvidence: [{ sourceRecordId: 'record', sourceDocumentId: 'document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }] })
     desktop.updateTransaction.mockReset().mockImplementation(async (input) => ({ ...(await desktop.getTransactionDetail()), ...input, id: input.transactionId }))
@@ -478,6 +493,47 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '口座を追加' }))
 
     await waitFor(() => expect(desktop.createAccount).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })))
+  })
+
+  it('manages local household members and explains that personal is not access control', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '家族スペース' }))
+
+    expect(screen.getByRole('heading', { name: '家族スペース' })).toBeInTheDocument()
+    expect(screen.getByText(/ログイン、閲覧制限、アクセス制御ではありません/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('新しいメンバーの表示名'), { target: { value: '花子' } })
+    fireEvent.change(screen.getByLabelText('新しいメンバーの続柄・メモ'), { target: { value: '母' } })
+    fireEvent.click(screen.getByRole('button', { name: 'メンバーを追加' }))
+    await waitFor(() => expect(desktop.createHouseholdMember).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', displayName: '花子', relationshipLabel: '母' })))
+    expect(desktop.createHouseholdMember.mock.calls[0]?.[0]).not.toHaveProperty('sortOrder')
+
+    fireEvent.change(screen.getByLabelText('太郎の表示名'), { target: { value: '太郎さん' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(desktop.updateHouseholdMember).toHaveBeenCalledWith({ householdId: 'family', memberId: 'taro', displayName: '太郎さん', relationshipLabel: '父', sortOrder: 0 }))
+    fireEvent.click(screen.getByRole('button', { name: 'アーカイブ' }))
+    await waitFor(() => expect(desktop.archiveHouseholdMember).toHaveBeenCalledWith('family', 'taro'))
+  })
+
+  it('updates account ownership and prevents a household-owned personal combination', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    const owner = screen.getByLabelText('銀行の所有者')
+    const visibility = screen.getByLabelText('銀行の共有区分')
+    expect(visibility).not.toBeDisabled()
+    fireEvent.change(owner, { target: { value: 'HOUSEHOLD' } })
+    expect(visibility).toBeDisabled()
+    expect(visibility).toHaveValue('SHARED')
+    fireEvent.click(screen.getAllByRole('button', { name: '区分を保存' })[0])
+    await waitFor(() => expect(desktop.updateAccountOwnership).toHaveBeenCalledWith({ householdId: 'family', accountId: 'family-bank', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, visibility: 'SHARED' }))
+
+    fireEvent.change(screen.getByLabelText('新しい口座名'), { target: { value: '太郎の財布' } })
+    fireEvent.change(screen.getByLabelText('新しい口座の所有者'), { target: { value: 'taro' } })
+    fireEvent.change(screen.getByLabelText('新しい口座の共有区分'), { target: { value: 'PERSONAL' } })
+    fireEvent.click(screen.getByRole('button', { name: '口座を追加' }))
+    await waitFor(() => expect(desktop.createAccount).toHaveBeenLastCalledWith(expect.objectContaining({ name: '太郎の財布', ownershipKind: 'MEMBER', ownerMemberId: 'taro', visibility: 'PERSONAL' })))
   })
 
   it('creates a persisted merchant classification rule', async () => {

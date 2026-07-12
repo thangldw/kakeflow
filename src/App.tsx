@@ -25,6 +25,7 @@ import {
   TrainFront,
   TrendingUp,
   Utensils,
+  Users,
   WalletCards,
   X,
   Zap,
@@ -75,9 +76,10 @@ import {
 } from './features/import/folderAutomation'
 import type { WatchedFileCheckpoints } from './features/import/folderAutomation'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
+import { FamilyPage } from './features/family/FamilyPage'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -133,9 +135,13 @@ const navigation: NavigationItem[] = [
   { id: 'reports', label: 'カレンダー・レポート', icon: CalendarDays },
   { id: 'budgets', label: '予算・目標', icon: Goal },
   { id: 'rules', label: '分類ルール', icon: Sparkles },
+  { id: 'family', label: '家族スペース', icon: Users },
 ]
 
+function householdInitials(name: string): string { return name.trim().slice(0, 2) || '家計' }
+
 function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void }) {
+  const activeHouseholdName = households.find((household) => household.id === activeHouseholdId)?.name ?? '家計'
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="メニューを閉じる" onClick={close} />}
@@ -147,7 +153,7 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
         </div>
 
         <div className="household-picker">
-          <div className="avatar">TK</div>
+          <div className="avatar" aria-hidden="true">{householdInitials(activeHouseholdName)}</div>
           <div><select aria-label="世帯を切り替える" value={activeHouseholdId ?? ''} disabled={households.length < 2} onChange={(event) => selectHousehold(event.target.value)}>{households.length === 0 ? <option value="">家計</option> : households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select><small>{households.length > 1 ? `${households.length}世帯` : 'ローカル世帯'}</small></div>
         </div>
 
@@ -175,11 +181,11 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
   )
 }
 
-function Topbar({ openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, showAccountScope }: { openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; showAccountScope: boolean }) {
+function Topbar({ openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, showAccountScope, householdName }: { openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; showAccountScope: boolean; householdName: string }) {
   return (
     <header className="topbar">
       <button className="icon-btn menu-btn" aria-label="メニューを開く" onClick={openMenu}><Menu size={21} /></button>
-      <div className="top-actions">{showAccountScope && <label className="scope-picker"><span>口座スコープ</span><select aria-label="口座スコープ" value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">すべての口座</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>}<label className="period-picker"><span>対象月</span><input aria-label="対象月" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="top-avatar">TK</div></div>
+      <div className="top-actions">{showAccountScope && <label className="scope-picker"><span>口座スコープ</span><select aria-label="口座スコープ" value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">すべての口座</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label>}<label className="period-picker"><span>対象月</span><input aria-label="対象月" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="top-avatar" aria-label={`${householdName}のローカル家計`}>{householdInitials(householdName)}</div></div>
     </header>
   )
 }
@@ -1123,15 +1129,25 @@ function RulesPage({ householdId, accounts }: { householdId: string | null; acco
   </>
 }
 
-function AccountEditor({ householdId, account, onChanged, setNotice }: { householdId: string; account: AccountDto; onChanged: () => Promise<void>; setNotice: (notice: string) => void }) {
+function AccountEditor({ householdId, account, members, onChanged, setNotice }: { householdId: string; account: AccountDto; members: readonly HouseholdMemberDto[]; onChanged: () => Promise<void>; setNotice: (notice: string) => void }) {
   const [name, setName] = useState(account.name)
+  const [owner, setOwner] = useState(account.ownerMemberId ?? 'HOUSEHOLD')
+  const [visibility, setVisibility] = useState<AccountVisibilityDto>(account.visibility)
   const [busy, setBusy] = useState(false)
   const rename = async () => { if (!name.trim()) return; setBusy(true); try { await platformClient.renameAccount({ householdId, accountId: account.id, name: name.trim() }); await onChanged(); setNotice('口座名を更新しました。') } catch { setNotice('口座名を更新できませんでした。') } finally { setBusy(false) } }
+  const updateOwnership = async () => {
+    const ownershipKind: AccountOwnershipKindDto = owner === 'HOUSEHOLD' ? 'HOUSEHOLD' : 'MEMBER'
+    setBusy(true)
+    try { await platformClient.updateAccountOwnership({ householdId, accountId: account.id, ownershipKind, ownerMemberId: owner === 'HOUSEHOLD' ? null : owner, visibility }); await onChanged(); setNotice('口座の所有者と共有区分を更新しました。') }
+    catch { setNotice('口座の所有者と共有区分を更新できませんでした。') }
+    finally { setBusy(false) }
+  }
   const archive = async () => { setBusy(true); try { await platformClient.archiveAccount({ householdId, accountId: account.id }); await onChanged(); setNotice('未使用の口座をアーカイブしました。') } catch { setNotice('この口座は台帳・取込・予算で使用中、または必須口座のためアーカイブできません。') } finally { setBusy(false) } }
-  return <div className="account-editor"><span>{account.accountKind} / {account.accountSubtype}</span><input aria-label={`${account.name}の口座名`} value={name} onChange={(event) => setName(event.target.value)} /><button className="secondary-btn" disabled={busy || name.trim() === account.name} onClick={() => void rename()}>名前を保存</button><button className="text-btn" disabled={busy} onClick={() => void archive()}>アーカイブ</button></div>
+  const ownershipChanged = owner !== (account.ownerMemberId ?? 'HOUSEHOLD') || visibility !== account.visibility
+  return <div className="account-editor"><span>{account.accountKind} / {account.accountSubtype}</span><input aria-label={`${account.name}の口座名`} value={name} onChange={(event) => setName(event.target.value)} /><label>所有者<select aria-label={`${account.name}の所有者`} value={owner} onChange={(event) => { const next = event.target.value; setOwner(next); if (next === 'HOUSEHOLD') setVisibility('SHARED') }}><option value="HOUSEHOLD">世帯共有</option>{members.filter((member) => member.status === 'ACTIVE' || member.id === account.ownerMemberId).map((member) => <option key={member.id} value={member.id}>{member.displayName}{member.status === 'ARCHIVED' ? '（アーカイブ済み）' : ''}</option>)}</select></label><label>共有区分<select aria-label={`${account.name}の共有区分`} disabled={owner === 'HOUSEHOLD'} value={visibility} onChange={(event) => setVisibility(event.target.value as AccountVisibilityDto)}><option value="SHARED">共有</option>{owner !== 'HOUSEHOLD' && <option value="PERSONAL">個人</option>}</select></label><div className="account-classification"><span>{account.ownerMemberName ?? '世帯共有'}</span><span>{account.visibility === 'SHARED' ? '共有' : '個人'}</span></div><button className="secondary-btn" disabled={busy || name.trim() === account.name} onClick={() => void rename()}>名前を保存</button><button className="secondary-btn" disabled={busy || !ownershipChanged} onClick={() => void updateOwnership()}>区分を保存</button><button className="text-btn" disabled={busy} onClick={() => void archive()}>アーカイブ</button></div>
 }
 
-function SettingsPage({ householdId, accounts, onAccountsChanged }: { householdId: string | null; accounts: readonly AccountDto[]; onAccountsChanged: () => Promise<void> }) {
+function SettingsPage({ householdId, accounts, members, onAccountsChanged }: { householdId: string | null; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; onAccountsChanged: () => Promise<void> }) {
   const [passphrase, setPassphrase] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [notice, setNotice] = useState('')
@@ -1144,13 +1160,15 @@ function SettingsPage({ householdId, accounts, onAccountsChanged }: { householdI
   const [accountName, setAccountName] = useState('')
   const [accountKind, setAccountKind] = useState<AccountDto['accountKind']>('ASSET')
   const [accountSubtype, setAccountSubtype] = useState<AccountDto['accountSubtype']>('BANK')
+  const [accountOwner, setAccountOwner] = useState('HOUSEHOLD')
+  const [accountVisibility, setAccountVisibility] = useState<AccountVisibilityDto>('SHARED')
   const [accountBusy, setAccountBusy] = useState(false)
   const subtypes: Record<AccountDto['accountKind'], readonly AccountDto['accountSubtype'][]> = { ASSET: ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'RECEIVABLE', 'OTHER'], LIABILITY: ['CREDIT_CARD', 'OTHER'], EQUITY: ['OTHER'], INCOME: ['OTHER'], EXPENSE: ['OTHER'] }
 
   const createAccount = async () => {
     if (!householdId || !accountName.trim()) { setAccountNotice('口座名を入力してください。'); return }
     setAccountBusy(true); setAccountNotice('')
-    try { await platformClient.createAccount({ id: `${householdId}-${crypto.randomUUID()}`, householdId, name: accountName.trim(), accountKind, accountSubtype, currency: 'JPY' }); await onAccountsChanged(); setAccountName(''); setAccountNotice('口座を追加しました。') }
+    try { await platformClient.createAccount({ id: `${householdId}-${crypto.randomUUID()}`, householdId, name: accountName.trim(), accountKind, accountSubtype, currency: 'JPY', ownershipKind: accountOwner === 'HOUSEHOLD' ? 'HOUSEHOLD' : 'MEMBER', ownerMemberId: accountOwner === 'HOUSEHOLD' ? null : accountOwner, visibility: accountVisibility }); await onAccountsChanged(); setAccountName(''); setAccountNotice('口座を追加しました。') }
     catch { setAccountNotice('口座を追加できませんでした。名前と種類を確認してください。') }
     finally { setAccountBusy(false) }
   }
@@ -1191,7 +1209,7 @@ function SettingsPage({ householdId, accounts, onAccountsChanged }: { householdI
     }
   }
 
-  return <><PageHeader eyebrow="ローカルデータ" title="設定" description="口座、暗号化データ、バックアップを管理します。" /><section className="panel account-settings"><div className="panel-head"><div><h2>口座・カテゴリー</h2><p>銀行、ウォレット、カード、収入・支出カテゴリーを管理します。</p></div></div>{platformClient.runtime === 'tauri' && householdId ? <><div className="planning-form"><input aria-label="新しい口座名" value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder="ゆうちょ銀行" /><select aria-label="口座種別" value={accountKind} onChange={(event) => { const kind = event.target.value as AccountDto['accountKind']; setAccountKind(kind); setAccountSubtype(subtypes[kind][0]) }}>{Object.keys(subtypes).map((kind) => <option key={kind}>{kind}</option>)}</select><select aria-label="口座サブタイプ" value={accountSubtype} onChange={(event) => setAccountSubtype(event.target.value as AccountDto['accountSubtype'])}>{subtypes[accountKind].map((subtype) => <option key={subtype}>{subtype}</option>)}</select><button className="primary-btn" disabled={accountBusy} onClick={() => void createAccount()}>口座を追加</button></div><div className="account-list">{accounts.map((account) => <AccountEditor key={account.id} householdId={householdId} account={account} onChanged={onAccountsChanged} setNotice={setAccountNotice} />)}</div>{accountNotice && <p role="status">{accountNotice}</p>}</> : <p className="empty-state">口座管理はデスクトップ版で利用できます。</p>}</section><section className="panel settings-panel"><div><h2>暗号化バックアップ</h2><p>SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。</p></div><div className="backup-form"><label htmlFor="backup-passphrase">パスフレーズ</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="12文字以上" /><label htmlFor="backup-confirmation">パスフレーズを確認</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? 'データを固定中…' : 'バックアップを作成'}</button>{platformClient.runtime === 'web' && <small>デスクトップ版で利用できます。</small>}{notice && <p role="status">{notice}</p>}</div></section><section className="panel settings-panel restore-panel"><div><h2>バックアップから復元</h2><p><strong>注意:</strong> 現在の台帳と原本は、選択したバックアップの内容に置き換わります。復元前に現在のバックアップを作成してください。置き換えの最終確認はOSのダイアログで行います。</p></div><div className="backup-form"><label htmlFor="restore-passphrase">復元用パスフレーズ</label><input id="restore-passphrase" type="password" autoComplete="off" value={restorePassphrase} onChange={(event) => setRestorePassphrase(event.target.value)} placeholder="バックアップ作成時のパスフレーズ" /><label htmlFor="restore-confirmation">復元用パスフレーズを確認</label><input id="restore-confirmation" type="password" autoComplete="off" value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} /><button className="danger-btn" disabled={restoreBusy || platformClient.runtime !== 'tauri'} onClick={() => void restoreBackup()}>{restoreBusy ? 'バックアップを検証中…' : 'バックアップを選択して復元'}</button>{platformClient.runtime === 'web' && <small>復元はデスクトップ版で利用できます。</small>}{restoreNotice && <p role="status">{restoreNotice}</p>}</div></section></>
+  return <><PageHeader eyebrow="ローカルデータ" title="設定" description="口座、暗号化データ、バックアップを管理します。" /><section className="panel account-settings"><div className="panel-head"><div><h2>口座・カテゴリー</h2><p>銀行、ウォレット、カード、収入・支出カテゴリーを管理します。</p></div></div><p className="account-visibility-note">「個人」はこの端末内の整理区分であり、閲覧制限やアクセス制御ではありません。</p>{platformClient.runtime === 'tauri' && householdId ? <><div className="planning-form account-create-form"><input aria-label="新しい口座名" value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder="ゆうちょ銀行" /><select aria-label="口座種別" value={accountKind} onChange={(event) => { const kind = event.target.value as AccountDto['accountKind']; setAccountKind(kind); setAccountSubtype(subtypes[kind][0]) }}>{Object.keys(subtypes).map((kind) => <option key={kind}>{kind}</option>)}</select><select aria-label="口座サブタイプ" value={accountSubtype} onChange={(event) => setAccountSubtype(event.target.value as AccountDto['accountSubtype'])}>{subtypes[accountKind].map((subtype) => <option key={subtype}>{subtype}</option>)}</select><select aria-label="新しい口座の所有者" value={accountOwner} onChange={(event) => { const next = event.target.value; setAccountOwner(next); if (next === 'HOUSEHOLD') setAccountVisibility('SHARED') }}><option value="HOUSEHOLD">世帯共有</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select><select aria-label="新しい口座の共有区分" disabled={accountOwner === 'HOUSEHOLD'} value={accountVisibility} onChange={(event) => setAccountVisibility(event.target.value as AccountVisibilityDto)}><option value="SHARED">共有</option>{accountOwner !== 'HOUSEHOLD' && <option value="PERSONAL">個人</option>}</select><button className="primary-btn" disabled={accountBusy} onClick={() => void createAccount()}>口座を追加</button></div><div className="account-list">{accounts.map((account) => <AccountEditor key={account.id} householdId={householdId} account={account} members={members} onChanged={onAccountsChanged} setNotice={setAccountNotice} />)}</div>{accountNotice && <p role="status">{accountNotice}</p>}</> : <p className="empty-state">口座管理はデスクトップ版で利用できます。</p>}</section><section className="panel settings-panel"><div><h2>暗号化バックアップ</h2><p>SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。</p></div><div className="backup-form"><label htmlFor="backup-passphrase">パスフレーズ</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="12文字以上" /><label htmlFor="backup-confirmation">パスフレーズを確認</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? 'データを固定中…' : 'バックアップを作成'}</button>{platformClient.runtime === 'web' && <small>デスクトップ版で利用できます。</small>}{notice && <p role="status">{notice}</p>}</div></section><section className="panel settings-panel restore-panel"><div><h2>バックアップから復元</h2><p><strong>注意:</strong> 現在の台帳と原本は、選択したバックアップの内容に置き換わります。復元前に現在のバックアップを作成してください。置き換えの最終確認はOSのダイアログで行います。</p></div><div className="backup-form"><label htmlFor="restore-passphrase">復元用パスフレーズ</label><input id="restore-passphrase" type="password" autoComplete="off" value={restorePassphrase} onChange={(event) => setRestorePassphrase(event.target.value)} placeholder="バックアップ作成時のパスフレーズ" /><label htmlFor="restore-confirmation">復元用パスフレーズを確認</label><input id="restore-confirmation" type="password" autoComplete="off" value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} /><button className="danger-btn" disabled={restoreBusy || platformClient.runtime !== 'tauri'} onClick={() => void restoreBackup()}>{restoreBusy ? 'バックアップを検証中…' : 'バックアップを選択して復元'}</button>{platformClient.runtime === 'web' && <small>復元はデスクトップ版で利用できます。</small>}{restoreNotice && <p role="status">{restoreNotice}</p>}</div></section></>
 }
 
 function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => void }) {
@@ -1228,6 +1246,7 @@ function App() {
   const [households, setHouseholds] = useState<readonly HouseholdDto[]>([])
   const [activeHouseholdId, setActiveHouseholdId] = useState<string | null>(() => globalThis.localStorage?.getItem('kakeflow.activeHouseholdId') ?? null)
   const [accounts, setAccounts] = useState<readonly AccountDto[]>([])
+  const [householdMembers, setHouseholdMembers] = useState<readonly HouseholdMemberDto[]>([])
   const [accountGroups, setAccountGroups] = useState<readonly AccountGroupDto[]>([])
   const [activeAccountGroupId, setActiveAccountGroupId] = useState<string | null>(null)
   const [liveDashboard, setLiveDashboard] = useState<DashboardMonthlyTotalsDto | null>(null)
@@ -1265,13 +1284,14 @@ function App() {
     const householdId = activeHouseholdId
     if (!householdId || platformClient.runtime !== 'tauri') {
       setAccounts([])
+      setHouseholdMembers([])
       return
     }
     let active = true
-    void platformClient.listAccounts(householdId).then((result) => {
-      if (active) setAccounts(result)
+    void Promise.all([platformClient.listAccounts(householdId), platformClient.listHouseholdMembers(householdId)]).then(([accountList, memberList]) => {
+      if (active) { setAccounts(accountList); setHouseholdMembers(memberList) }
     }).catch(() => {
-      if (active) setAccounts([])
+      if (active) { setAccounts([]); setHouseholdMembers([]) }
     })
     return () => { active = false }
   }, [activeHouseholdId])
@@ -1372,9 +1392,10 @@ function App() {
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} openPage={setPage} />,
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
-    settings: <SettingsPage householdId={activeHouseholdId} accounts={accounts} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />,
+    family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) setHouseholdMembers(await platformClient.listHouseholdMembers(activeHouseholdId)) }} />,
+    settings: <SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} showAccountScope={scopeAppliesToPage} /><main>{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App
