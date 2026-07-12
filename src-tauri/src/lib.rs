@@ -17,6 +17,18 @@ use serde::{Deserialize, Serialize};
 use tauri::Manager;
 use zeroize::Zeroizing;
 
+struct BackupPaths {
+    database: std::path::PathBuf,
+    vault: std::path::PathBuf,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupSummaryDto {
+    entry_count: u64,
+    plaintext_bytes: u64,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BootstrapResponse {
@@ -281,6 +293,41 @@ fn import_rollback(
     Ok(())
 }
 
+#[tauri::command]
+fn backup_create(
+    state: tauri::State<'_, AppState>,
+    paths: tauri::State<'_, BackupPaths>,
+    archive_path: String,
+    passphrase: String,
+) -> Result<BackupSummaryDto, String> {
+    let mut backup_result = None;
+    state
+        .with_connection(|connection| {
+            // Keep the application-wide database lock from checkpoint through
+            // the final archive fsync so no writer can race the snapshot.
+            connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+            backup_result = Some(backup::create_backup(
+                &paths.database,
+                &paths.vault,
+                std::path::Path::new(&archive_path),
+                &passphrase,
+            ));
+            Ok(())
+        })
+        .map_err(|_| "Backup database checkpoint failed".to_owned())?;
+    let summary = backup_result
+        .ok_or_else(|| "Backup could not be created".to_owned())?
+        .map_err(|error| match error {
+            backup::BackupError::AlreadyExists => "Backup destination already exists",
+            backup::BackupError::InvalidInput => "Backup input is invalid",
+            _ => "Backup could not be created",
+        })?;
+    Ok(BackupSummaryDto {
+        entry_count: summary.entry_count,
+        plaintext_bytes: summary.plaintext_bytes,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -290,6 +337,7 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("database").join("kakeflow.db");
+            let vault_path = app_data_dir.join("documents");
             let key_provider = OsDatabaseKeyProvider::new()?;
             let master_key = key_provider.key()?;
             if master_key.len() != 32 {
@@ -297,10 +345,14 @@ pub fn run() {
             }
             let mut vault_master_key = Zeroizing::new([0_u8; 32]);
             vault_master_key.copy_from_slice(&master_key);
-            let vault = DocumentVault::new(app_data_dir.join("documents"), &vault_master_key)?;
-            let state = AppState::open(database_path, &key_provider)?;
+            let vault = DocumentVault::new(&vault_path, &vault_master_key)?;
+            let state = AppState::open(database_path.clone(), &key_provider)?;
             app.manage(state);
             app.manage(vault);
+            app.manage(BackupPaths {
+                database: database_path,
+                vault: vault_path,
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -316,7 +368,8 @@ pub fn run() {
             import_start,
             import_preview,
             import_commit,
-            import_rollback
+            import_rollback,
+            backup_create
         ])
         .run(tauri::generate_context!())
         .expect("KakeFlow failed to start");

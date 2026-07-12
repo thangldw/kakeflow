@@ -67,6 +67,7 @@ export interface PostingDecisionDto {
   readonly payee: string | null; readonly description: string | null; readonly entries: readonly JournalEntryDecisionDto[]
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
+export interface BackupSummaryDto { readonly entryCount: number; readonly plaintextBytes: number }
 
 export type AccountingBasisDto = 'ACCRUAL' | 'CASH'
 
@@ -159,6 +160,7 @@ export type AppCommand =
   | 'import_preview'
   | 'import_commit'
   | 'import_rollback'
+  | 'backup_create'
 
 export type Invoke = <T>(command: AppCommand, args?: Record<string, unknown>) => Promise<T>
 
@@ -177,4 +179,5 @@ export interface PlatformClient {
   previewImport(runId: string): Promise<ImportPreviewDto>
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
+  createBackup(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
 }

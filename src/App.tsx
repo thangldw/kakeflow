@@ -30,6 +30,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
+import { save } from '@tauri-apps/plugin-dialog'
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
 import { sha256Text } from './features/import/importService'
@@ -96,7 +97,7 @@ function Sidebar({ page, setPage, open, close, bootstrap, householdName }: { pag
 
         <div className="sidebar-foot">
           <div className={`sync-status ${bootstrap?.database.healthy ? '' : 'sync-status--offline'}`}><span /><div><strong>{bootstrap?.database.healthy ? '暗号化DB 接続済み' : platformClient.runtime === 'web' ? 'ブラウザプレビュー' : 'データベース確認中'}</strong><small>{bootstrap?.database.healthy ? `スキーマ v${bootstrap.database.schemaVersion}` : 'デスクトップ版で安全に保存'}</small></div></div>
-          <button className="nav-item"><Settings size={19} /><span>設定</span></button>
+          <button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => { setPage('settings'); close() }}><Settings size={19} /><span>設定</span></button>
         </div>
       </aside>
     </>
@@ -453,6 +454,30 @@ function BudgetsPage() {
   </>
 }
 
+function SettingsPage() {
+  const [passphrase, setPassphrase] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const createBackup = async () => {
+    if (passphrase.length < 12) { setNotice('12文字以上のパスフレーズを入力してください。'); return }
+    if (passphrase !== confirmation) { setNotice('パスフレーズが一致しません。'); return }
+    setBusy(true); setNotice('')
+    try {
+      const archivePath = await save({ defaultPath: `kakeflow-${currentTokyoPeriod().month}.kakeflow-backup`, filters: [{ name: 'KakeFlow Backup', extensions: ['kakeflow-backup'] }] })
+      if (!archivePath) return
+      const result = await platformClient.createBackup(archivePath, passphrase)
+      setPassphrase(''); setConfirmation('')
+      setNotice(`${result.entryCount}件・${(result.plaintextBytes / 1024 / 1024).toFixed(1)} MB の暗号化バックアップを作成しました。`)
+    } catch {
+      setNotice('バックアップを作成できませんでした。保存先とパスフレーズを確認してください。')
+    } finally { setBusy(false) }
+  }
+
+  return <><PageHeader eyebrow="ローカルデータ" title="設定" description="暗号化データの保護とバックアップを管理します。" /><section className="panel settings-panel"><div><h2>暗号化バックアップ</h2><p>SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。</p></div><div className="backup-form"><label htmlFor="backup-passphrase">パスフレーズ</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder="12文字以上" /><label htmlFor="backup-confirmation">パスフレーズを確認</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? 'データを固定中…' : 'バックアップを作成'}</button>{platformClient.runtime === 'web' && <small>デスクトップ版で利用できます。</small>}{notice && <p role="status">{notice}</p>}</div></section></>
+}
+
 function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => void }) {
   const [name, setName] = useState('')
   const [error, setError] = useState('')
@@ -552,6 +577,7 @@ function App() {
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage />,
     budgets: <BudgetsPage />,
+    settings: <SettingsPage />,
   }[page]
   return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} householdName={households[0]?.name ?? '田中家'} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} /><main>{pageContent}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => setHouseholds([household])} />}</div>
 }

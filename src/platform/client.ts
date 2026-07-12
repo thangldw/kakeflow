@@ -6,6 +6,7 @@ import type {
   AppHealthDto,
   AppStatusDto,
   AccountDto,
+  BackupSummaryDto,
   CommitSummaryDto,
   DashboardMonthlyTotalsDto,
   DatabaseStatusDto,
@@ -93,6 +94,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
       commitImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_commit') },
       rollbackImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_rollback') },
+      createBackup: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'backup_create') },
     }
   }
 
@@ -111,6 +113,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
     commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
+    createBackup: (archivePath, passphrase) => invokeValidated(invoke, 'backup_create', parseBackupSummary, { archivePath, passphrase }),
   }
 }
 
@@ -202,6 +205,11 @@ function parseCommitSummary(value: unknown): CommitSummaryDto {
   const record = asRecord(value)
   if (typeof record.runId !== 'string') throw new TypeError('commit summary')
   return { runId: record.runId, postedCount: asSafeInteger(record.postedCount) }
+}
+
+function parseBackupSummary(value: unknown): BackupSummaryDto {
+  const record = asRecord(value)
+  return { entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
 }
 
 function parseVoid(value: unknown): void {

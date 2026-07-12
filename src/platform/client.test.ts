@@ -33,6 +33,7 @@ describe('platform client', () => {
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
     await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
     await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
+    await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
     expect(client.runtime).toBe('web')
     expect(invokeSpy).not.toHaveBeenCalled()
   })
@@ -66,6 +67,7 @@ describe('platform client', () => {
       },
       import_commit: { runId: 'run-1', postedCount: 1 },
       import_rollback: null,
+      backup_create: { entryCount: 4, plaintextBytes: 4096 },
     }
     const invokeSpy = vi.fn()
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -107,13 +109,15 @@ describe('platform client', () => {
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
     await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
+    await expect(client.createBackup('/tmp/family.kakeflow-backup', 'long secure passphrase')).resolves.toEqual(responses.backup_create)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
     expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
     expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(13)
+    expect(invokeSpy).toHaveBeenCalledWith('backup_create', { archivePath: '/tmp/family.kakeflow-backup', passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledTimes(14)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

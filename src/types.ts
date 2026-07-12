@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 
-export type PageId = 'overview' | 'transactions' | 'import' | 'cards' | 'budgets'
+export type PageId = 'overview' | 'transactions' | 'import' | 'cards' | 'budgets' | 'settings'
 
 export interface NavigationItem {
   id: PageId

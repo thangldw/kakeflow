@@ -10,6 +10,7 @@ export type {
   AppCommand,
   AppHealthDto,
   AppStatusDto,
+  BackupSummaryDto,
   AccountDto,
   AccountingBasisDto,
   CreateHouseholdInputDto,

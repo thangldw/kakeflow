@@ -69,4 +69,13 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText(/カード利用は支出、銀行引落は負債の返済/)).toBeInTheDocument()
     expect(screen.getByText(/Rakuten Card ¥204,987 と MUFG/)).toBeInTheDocument()
   })
+
+  it('keeps encrypted backup controls desktop-only in browser preview', async () => {
+    await renderApp()
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(screen.getByRole('heading', { name: '設定' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'バックアップを作成' })).toBeDisabled()
+    expect(screen.getByText('デスクトップ版で利用できます。')).toBeInTheDocument()
+  })
 })
