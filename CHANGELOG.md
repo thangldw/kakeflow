@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.12.0 — 2026-07-13
+
+- Add explicit, independent household/member attribution and shared/personal audience tuples to transactions, import candidates, and source documents without deriving them from account ownership or account groups.
+- Backfill existing records to household-attributed/shared and preserve archived-member references as historical facts while rejecting cross-household tuples.
+- Carry attribution and audience through manual entry, import preview/posting, posted-transaction edits, transaction rows, details, and evidence projections.
+- Add separate transaction controls and text badges for family attribution and local display classification; the assigned member and personal audience member may intentionally differ.
+- Add a source-document audience editor that changes only the original document label and never cascades into linked transaction metadata.
+- Validate scope tuples during restore and at the native IPC boundary, while keeping all existing analytics totals unchanged until a complete attribution-reporting contract is implemented.
+
 ## 0.11.0 — 2026-07-13
 
 - Add stable household-member records with ordered active/archive lifecycle and an automatically created primary local member for existing and new households.
