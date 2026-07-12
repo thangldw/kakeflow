@@ -17,9 +17,10 @@ use import_workflow::{
 use key_store::{OsDatabaseKeyProvider, OsRestoreCredentialStore};
 use persistence::AppState;
 use read_model::{
-    AccountDto, AccountingBasis, CardSettlementDto, CreateHouseholdInput, CreateSavingsGoalInput,
-    DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, MonthlyCategoryBudgetDto,
-    SavingsGoalDto, TransactionPageDto, TransactionPageRequest, UpdateSavingsGoalInput,
+    AccountDto, AccountingBasis, ArchiveAccountInput, CardSettlementDto, CreateAccountInput,
+    CreateHouseholdInput, CreateSavingsGoalInput, DashboardMonthlyTotalsDto, HouseholdDto,
+    ImportRunCountsDto, MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto,
+    TransactionPageDto, TransactionPageRequest, UpdateSavingsGoalInput,
     UpsertMonthlyCategoryBudgetInput,
 };
 use serde::{Deserialize, Serialize};
@@ -359,6 +360,36 @@ fn accounts_list(
 ) -> Result<Vec<AccountDto>, String> {
     repository_result(&state, |connection| {
         read_model::list_accounts(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn account_create(
+    state: tauri::State<'_, AppState>,
+    input: CreateAccountInput,
+) -> Result<AccountDto, String> {
+    repository_result(&state, |connection| {
+        read_model::create_account(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn account_rename(
+    state: tauri::State<'_, AppState>,
+    input: RenameAccountInput,
+) -> Result<AccountDto, String> {
+    repository_result(&state, |connection| {
+        read_model::rename_account(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn account_archive(
+    state: tauri::State<'_, AppState>,
+    input: ArchiveAccountInput,
+) -> Result<(), String> {
+    repository_result(&state, |connection| {
+        read_model::archive_account(connection, &input)
     })
 }
 
@@ -894,6 +925,9 @@ pub fn run() {
             households_list,
             household_create,
             accounts_list,
+            account_create,
+            account_rename,
+            account_archive,
             transactions_query,
             dashboard_query,
             budgets_query,
