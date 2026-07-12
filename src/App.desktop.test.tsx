@@ -37,6 +37,9 @@ describe('KakeFlow desktop read models', () => {
       expenseJpy: accountingBasis === 'ACCRUAL' ? 120_000 : 204_987,
       savingsJpy: accountingBasis === 'ACCRUAL' ? 380_000 : 275_013,
       postedTransactionCount: 1,
+      netWorthAsOf: '2026-07-31', assetsJpy: 620_000, liabilitiesJpy: 120_000, netWorthJpy: 500_000,
+      accrualTrend: [{ month: '2026-07', incomeJpy: 500_000, expenseJpy: 120_000 }],
+      expenseCategories: [{ accountId: 'family-other-expense', name: 'その他', amountJpy: 120_000 }],
     }))
     desktop.queryTransactions.mockReset().mockImplementation(async ({ accountingBasis, pageSize }: { accountingBasis: 'ACCRUAL' | 'CASH'; pageSize: number }) => ({
       items: accountingBasis === 'ACCRUAL'
@@ -50,7 +53,7 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
 
     expect(await screen.findByText('生協')).toBeInTheDocument()
-    expect(screen.getByText('¥500,000')).toBeInTheDocument()
+    expect(screen.getAllByText('¥500,000').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('−¥120,000')).toBeInTheDocument()
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))

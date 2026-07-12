@@ -37,7 +37,7 @@ import { mapParsedImportToStartImport } from './features/import/importMapper'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AppBootstrapDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
+import type { AccountDto, AppBootstrapDto, DashboardMonthlyTotalsDto, HouseholdDto, ImportPreviewDto, ImportRunCountsDto, PostingDecisionDto, PreviewCandidateDto, TransactionRowDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -135,38 +135,43 @@ function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: str
   )
 }
 
-function TrendChart() {
-  const max = 720
+function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month, income: point.income * 1000, expense: point.expense * 1000 })) }: { data?: readonly { month: string; income: number; expense: number }[] }) {
+  if (data.length === 0) return <p className="empty-state">トレンドを表示する取引はまだありません。</p>
+  const max = Math.max(1, ...data.flatMap((point) => [point.income, point.expense])) * 1.08
   const width = 620
   const height = 215
   const pad = 18
-  const x = (i: number) => pad + i * ((width - pad * 2) / (spendingTrend.length - 1))
+  const x = (i: number) => data.length === 1 ? width / 2 : pad + i * ((width - pad * 2) / (data.length - 1))
   const y = (v: number) => height - 10 - (v / max) * 170
-  const path = (key: 'income' | 'expense') => spendingTrend.map((d, i) => `${i ? 'L' : 'M'} ${x(i)} ${y(d[key])}`).join(' ')
+  const path = (key: 'income' | 'expense') => data.map((d, i) => `${i ? 'L' : 'M'} ${x(i)} ${y(d[key])}`).join(' ')
   return (
     <div className="chart-wrap">
-      <div className="chart-y"><span>¥700k</span><span>¥500k</span><span>¥300k</span><span>¥100k</span></div>
+      <div className="chart-y"><span>{yen(Math.round(max))}</span><span>{yen(Math.round(max * .67))}</span><span>{yen(Math.round(max * .34))}</span><span>¥0</span></div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="直近6か月の収入と支出">
         {[44, 87, 130, 173].map((line) => <line key={line} x1="18" y1={line} x2="602" y2={line} className="gridline" />)}
         <path d={`${path('income')} L ${x(5)} ${height - 10} L ${x(0)} ${height - 10} Z`} className="area-income" />
         <path d={path('income')} className="line-income" />
         <path d={path('expense')} className="line-expense" />
-        {spendingTrend.map((d, i) => <circle key={`i${d.month}`} cx={x(i)} cy={y(d.income)} r="3.5" className="dot-income" />)}
-        {spendingTrend.map((d, i) => <circle key={`e${d.month}`} cx={x(i)} cy={y(d.expense)} r="3.5" className="dot-expense" />)}
+        {data.map((d, i) => <circle key={`i${d.month}`} cx={x(i)} cy={y(d.income)} r="3.5" className="dot-income" />)}
+        {data.map((d, i) => <circle key={`e${d.month}`} cx={x(i)} cy={y(d.expense)} r="3.5" className="dot-expense" />)}
       </svg>
-      <div className="chart-x">{spendingTrend.map((d) => <span key={d.month}>{d.month}</span>)}</div>
+      <div className="chart-x">{data.map((d) => <span key={d.month}>{d.month.includes('-') ? `${Number(d.month.slice(5))}月` : d.month}</span>)}</div>
     </div>
   )
 }
 
-function SpendingCard({ expense = currentMonthMetrics.expense }: { expense?: number }) {
-  const gradient = `conic-gradient(${categoryData.map((d, i) => `${d.color} ${categoryData.slice(0, i).reduce((a, b) => a + b.pct, 0)}% ${categoryData.slice(0, i + 1).reduce((a, b) => a + b.pct, 0)}%`).join(',')})`
+function SpendingCard({ expense = currentMonthMetrics.expense, categories }: { expense?: number; categories?: readonly { name: string; amount: number }[] }) {
+  const palette = ['#ed714d', '#6f7d57', '#e4aa45', '#7f9ba5', '#c7b8a0', '#8d7ca8']
+  const source = categories ? categories.filter((item) => item.amount > 0).slice(0, 6).map((item, index) => ({ ...item, color: palette[index % palette.length] })) : categoryData
+  const categoryTotal = source.reduce((total, item) => total + item.amount, 0)
+  const legend = source.map((item) => ({ ...item, pct: categoryTotal > 0 ? Math.round(item.amount / categoryTotal * 100) : 0 }))
+  const gradient = legend.length > 0 ? `conic-gradient(${legend.map((d, i) => `${d.color} ${legend.slice(0, i).reduce((a, b) => a + b.pct, 0)}% ${legend.slice(0, i + 1).reduce((a, b) => a + b.pct, 0)}%`).join(',')})` : '#e8ebe4'
   return (
     <article className="panel spending-card">
       <div className="panel-head"><div><h2>支出の内訳</h2><p>今月のカテゴリー別</p></div><button className="text-btn">詳細を見る <ArrowRight size={14} /></button></div>
       <div className="spending-body">
         <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>{yen(expense)}</strong></div></div>
-        <div className="legend">{categoryData.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>)}</div>
+        <div className="legend">{legend.length > 0 ? legend.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>) : <p className="empty-state">支出はまだありません。</p>}</div>
       </div>
     </article>
   )
@@ -206,23 +211,25 @@ function Overview({ setPage, liveDashboard, liveTransactions, desktop }: { setPa
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
   const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
   const displayTransactions = desktop ? liveTransactions.map(toTransactionViewModel) : transactions.slice(0, 4)
+  const trend = desktop ? (liveDashboard?.accrualTrend ?? []).map((point) => ({ month: point.month, income: point.incomeJpy, expense: point.expenseJpy })) : undefined
+  const categories = desktop ? (liveDashboard?.expenseCategories ?? []).map((item) => ({ name: item.name, amount: item.amountJpy })) : undefined
   return <>
     <PageHeader eyebrow="2026年7月12日 日曜日" title="こんにちは、田中さん" description={desktop ? `今月の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています。` : `今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <button className="secondary-btn"><CalendarDays size={17} /> 2026年7月 <ChevronDown size={15} /></button>
       <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>
     </PageHeader>
     <section className="kpi-grid">
-      <KpiCard label="純資産" value={desktop ? '—' : yen(currentMonthMetrics.netWorth)} meta={desktop ? '残高集計は準備中' : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />
+      <KpiCard label="純資産" value={yen(desktop ? liveDashboard?.netWorthJpy ?? 0 : currentMonthMetrics.netWorth)} meta={desktop ? `${liveDashboard?.netWorthAsOf ?? '月末'} 現在` : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />
       <KpiCard label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />
       <KpiCard label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />
       <KpiCard label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />
     </section>
     <section className="dashboard-grid">
       <article className="panel trend-panel">
-        <div className="panel-head"><div><h2>収支の推移</h2><p>資金移動ベース・直近6か月</p></div><div className="chart-legend"><span className="income">現金流入</span><span className="expense">現金流出</span></div></div>
-        <TrendChart />
+        <div className="panel-head"><div><h2>収支の推移</h2><p>発生ベース・直近6か月</p></div><div className="chart-legend"><span className="income">収入</span><span className="expense">支出</span></div></div>
+        <TrendChart data={trend} />
       </article>
-      <SpendingCard expense={expense} />
+      <SpendingCard expense={expense} categories={categories} />
       <article className="panel recent-panel">
         <div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>
         {displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}
@@ -310,7 +317,7 @@ function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly Acc
   }
 }
 
-function ImportPage({ previews, setPreviews, householdId, accounts, onCommitted }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; onCommitted: () => void }) {
+function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
@@ -357,6 +364,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, onCommitted 
       const summary = await platformClient.startImport(mapping.request, item.fileBytes)
       const backendPreview = await platformClient.previewImport(summary.runId)
       setStaged((current) => ({ ...current, [item.id]: backendPreview }))
+      onChanged()
       setNotice(summary.reusedExisting ? '同じファイルの既存インポートを開きました。' : '原本を暗号化し、取引候補をステージングしました。')
     } catch {
       setNotice('インポートを開始できませんでした。データベースの状態を確認してください。')
@@ -372,7 +380,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, onCommitted 
       const decisions = stagedImport.candidates.map((candidate) => suggestedPosting(candidate, accounts, householdId!))
       const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
-      onCommitted()
+      onChanged()
       setNotice(`${result.postedCount}件の取引を台帳へ反映しました。`)
     } catch {
       setNotice('台帳へ反映できませんでした。候補の口座と仕訳を確認してください。')
@@ -386,6 +394,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, onCommitted 
     try {
       await platformClient.rollbackImport(runId)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      onChanged()
       setNotice('未確定のインポートを取り消しました。')
     } catch {
       setNotice('インポートを取り消せませんでした。')
@@ -400,14 +409,20 @@ function ImportPage({ previews, setPreviews, householdId, accounts, onCommitted 
       <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,text/csv" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
     <section className="status-grid">
-      {[['取込済み','79','今月'],['確認待ち','6','3ファイル'],['重複候補','2','要確認'],['照合候補','4','自動検出']].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
+      {[
+        ['取込済み', String(summary?.posted ?? (platformClient.runtime === 'web' ? 79 : 0)), `${summary?.sourceDocuments ?? 0}原本`],
+        ['確認待ち', String(summary?.reviewRequired ?? (platformClient.runtime === 'web' ? 6 : 0)), `${summary?.readyCandidates ?? 0}候補`],
+        ['処理失敗', String(summary?.failed ?? (platformClient.runtime === 'web' ? 2 : 0)), '再実行可能'],
+        ['ソース行', String(summary?.sourceRecords ?? (platformClient.runtime === 'web' ? 4 : 0)), '監査証跡'],
+      ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルの「家計簿 Inbox」から自動検出</p></div><button className="text-btn">処理履歴</button></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSVをここにドロップ</span><small>PayPay・銀行・Rakuten・Amazon Mastercard</small></button>
       <div className="import-list">
         {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b>{item.status === 'ready' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : <button className="icon-btn" aria-label={`${item.filename}の解析結果`} title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button>}</div>)}
-        {importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn" aria-label={`${item.file}のメニュー`}><MoreHorizontal size={18} /></button></div>)}
+        {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn" aria-label={`${item.file}のメニュー`}><MoreHorizontal size={18} /></button></div>)}
+        {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}
@@ -473,6 +488,7 @@ function App() {
   const [accounts, setAccounts] = useState<readonly AccountDto[]>([])
   const [liveDashboard, setLiveDashboard] = useState<DashboardMonthlyTotalsDto | null>(null)
   const [liveTransactions, setLiveTransactions] = useState<readonly TransactionRowDto[]>([])
+  const [importCounts, setImportCounts] = useState<ImportRunCountsDto | null>(null)
   const [ledgerRevision, setLedgerRevision] = useState(0)
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
 
@@ -513,6 +529,7 @@ function App() {
     if (!householdId || platformClient.runtime !== 'tauri') {
       setLiveDashboard(null)
       setLiveTransactions([])
+      setImportCounts(null)
       return
     }
     let active = true
@@ -520,10 +537,11 @@ function App() {
     void Promise.all([
       platformClient.queryDashboard({ householdId, month: period.month, accountingBasis: 'ACCRUAL' }),
       platformClient.queryTransactions({ householdId, accountingBasis: 'ACCRUAL', fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
-    ]).then(([dashboard, page]) => {
-      if (active) { setLiveDashboard(dashboard); setLiveTransactions(page.items) }
+      platformClient.importSummary(householdId),
+    ]).then(([dashboard, page, summary]) => {
+      if (active) { setLiveDashboard(dashboard); setLiveTransactions(page.items); setImportCounts(summary) }
     }).catch(() => {
-      if (active) { setLiveDashboard(null); setLiveTransactions([]) }
+      if (active) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null) }
     })
     return () => { active = false }
   }, [households, ledgerRevision])
@@ -531,7 +549,7 @@ function App() {
   const pageContent = {
     overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} desktop={platformClient.runtime === 'tauri'} />,
     transactions: <TransactionsPage householdId={households[0]?.id ?? null} revision={ledgerRevision} />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} onCommitted={() => setLedgerRevision((value) => value + 1)} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={households[0]?.id ?? null} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage />,
     budgets: <BudgetsPage />,
   }[page]
