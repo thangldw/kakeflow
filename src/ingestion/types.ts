@@ -6,6 +6,7 @@ export type AdapterId =
   | 'securities-asset-snapshot-v1'
   | 'japanese-brokerage-transactions-v1'
   | 'money-forward-me-asset-trend-v1'
+  | 'money-forward-me-household-ledger-v1'
   | 'custom-delimited-v1'
 
 export type ParseIssueSeverity = 'warning' | 'error'
@@ -65,6 +66,23 @@ export interface BankTransactionCandidate {
   fundsAvailabilityCode: string
   debitCreditCode: string
   suggestedType: 'CARD_PAYMENT' | 'TRANSFER' | 'UNKNOWN'
+}
+
+/** A row from Money Forward ME's documented ten-column household-ledger export. */
+export interface MoneyForwardHouseholdTransactionCandidate {
+  kind: 'money-forward-household-transaction'
+  lineage: SourceLineage
+  sourceFields: Readonly<Record<string, string>>
+  calculationTarget: boolean
+  transactionDate: string | null
+  content: string
+  signedAmountJpy: number | null
+  institution: string
+  majorCategory: string
+  minorCategory: string
+  memo: string
+  isTransfer: boolean
+  externalTransactionId: string
 }
 
 export interface WalletFundingLegCandidate {
