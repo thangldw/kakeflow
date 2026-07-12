@@ -7,6 +7,7 @@ export { amazonMastercardAdapter } from './adapters/amazonMastercard'
 export { rakutenEnaviAdapter } from './adapters/rakuten'
 export { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 export { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
+export { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
 export * from './adapters/customDelimited'
 
 import { amazonMastercardAdapter } from './adapters/amazonMastercard'
@@ -15,6 +16,7 @@ import { payPayAdapter } from './adapters/paypay'
 import { rakutenEnaviAdapter } from './adapters/rakuten'
 import { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 import { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
+import { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
 import type { ImportAdapter, ImportInput } from './types'
 
 export const importAdapters = [
@@ -24,6 +26,7 @@ export const importAdapters = [
   rakutenEnaviAdapter,
   securitiesAssetSnapshotAdapter,
   japaneseBrokerageTransactionsAdapter,
+  moneyForwardAssetTrendAdapter,
 ] as const
 
 export function detectImportAdapter(input: ImportInput): { adapter: ImportAdapter<unknown>; score: number } | null {

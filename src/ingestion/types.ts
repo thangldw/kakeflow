@@ -5,6 +5,7 @@ export type AdapterId =
   | 'rakuten-enavi-v1'
   | 'securities-asset-snapshot-v1'
   | 'japanese-brokerage-transactions-v1'
+  | 'money-forward-me-asset-trend-v1'
   | 'custom-delimited-v1'
 
 export type ParseIssueSeverity = 'warning' | 'error'
@@ -163,6 +164,37 @@ export interface PortfolioSnapshotCandidate {
   assetClasses: readonly PortfolioAssetClassCandidate[]
   positions: readonly PositionSnapshotCandidate[]
   fxRates: readonly FxRateSnapshotCandidate[]
+}
+
+export type AggregateAssetClass =
+  | 'DEPOSITS_CASH_CRYPTO'
+  | 'LISTED_STOCKS'
+  | 'INVESTMENT_TRUSTS'
+  | 'BONDS'
+  | 'FX'
+  | 'INSURANCE'
+  | 'REAL_ESTATE'
+  | 'PENSIONS'
+  | 'POINTS'
+  | 'OTHER_ASSETS'
+
+export interface AggregateAssetClassSnapshotCandidate {
+  assetClass: AggregateAssetClass
+  officialHeader: string
+  valueJpy: number
+}
+
+/**
+ * Aggregate asset history exported by a household finance service. This is
+ * neither an account balance nor a portfolio position and must not be added to
+ * account-level balances without an explicit reconciliation policy.
+ */
+export interface AggregateAssetSnapshotCandidate {
+  kind: 'aggregate-asset-snapshot'
+  lineage: SourceLineage
+  asOf: string
+  totalAssetsJpy: number
+  assetClasses: readonly AggregateAssetClassSnapshotCandidate[]
 }
 
 export type BrokerageEventType =
