@@ -4,6 +4,7 @@ pub mod brokerage;
 pub mod document_extract;
 pub mod document_vault;
 pub mod financial_calendar;
+mod folder_discovery;
 pub mod forecast_action;
 pub mod import_workflow;
 pub mod investment_performance;
@@ -1527,6 +1528,11 @@ pub fn run() {
                 bundled_executable: bundled_ocr_available.then_some(bundled_ocr),
                 bundled_tessdata: bundled_ocr_available.then_some(bundled_tessdata),
             });
+            if setup_smoke_config.is_none() {
+                app.manage(folder_discovery::BackgroundFolderDiscovery::start(
+                    app.handle().clone(),
+                ));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
