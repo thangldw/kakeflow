@@ -424,6 +424,7 @@ mod tests {
             include_str!("../migrations/0013_investment_performance.sql"),
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
             include_str!("../migrations/0016_complex_corporate_actions.sql"),
+            include_str!("../migrations/0020_mixed_currency_mergers.sql"),
         ] {
             c.execute_batch(migration).unwrap();
         }

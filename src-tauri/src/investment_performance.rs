@@ -153,8 +153,13 @@ pub struct CorporateActionAllocationDto {
     pub action_source_document_id: String,
     pub action_source_row: i64,
     pub source_buy_event_id: Option<String>,
+    pub source_buy_source_document_id: Option<String>,
+    pub source_buy_source_row: Option<i64>,
     pub from_instrument_code: String,
     pub target_instrument_code: String,
+    pub source_currency: Option<String>,
+    pub source_cost_basis: Option<f64>,
+    pub conversion_rate: Option<f64>,
     pub currency: String,
     pub quantity: f64,
     pub allocated_cost_basis: f64,
@@ -193,10 +198,16 @@ struct TradeEvent {
     corporate_action_ratio: Option<f64>,
     target_instrument_code: Option<String>,
     target_instrument_name: Option<String>,
+    target_currency: Option<String>,
     cost_basis_allocation_ratio: Option<f64>,
     subscription_amount: Option<f64>,
     cash_in_lieu_amount: Option<f64>,
     cash_in_lieu_quantity: Option<f64>,
+    merger_cash_amount: Option<f64>,
+    merger_cash_currency: Option<String>,
+    merger_stock_cost_basis_ratio: Option<f64>,
+    source_to_target_fx_rate: Option<f64>,
+    source_to_cash_fx_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -329,6 +340,23 @@ pub fn query_performance(
             });
         total.realized_pnl += allocation.realized_pnl;
     }
+    let corporate_action_allocations = analysis
+        .corporate_action_allocations
+        .into_iter()
+        .filter(|item| in_period(&item.action_on))
+        .collect::<Vec<_>>();
+    for allocation in corporate_action_allocations
+        .iter()
+        .filter(|item| item.action_type == "MERGER_CASH")
+    {
+        totals
+            .entry(allocation.currency.clone())
+            .or_insert_with(|| InvestmentPeriodCurrencyDto {
+                currency: allocation.currency.clone(),
+                ..Default::default()
+            })
+            .sell_gross += allocation.cash_amount;
+    }
     Ok(InvestmentPerformanceDto {
         date_from: request.date_from.clone(),
         date_to: request.date_to.clone(),
@@ -342,11 +370,7 @@ pub fn query_performance(
             .collect(),
         skipped_event_ids: analysis.skipped_event_ids,
         corporate_action_event_ids: analysis.corporate_action_event_ids,
-        corporate_action_allocations: analysis
-            .corporate_action_allocations
-            .into_iter()
-            .filter(|item| in_period(&item.action_on))
-            .collect(),
+        corporate_action_allocations,
     })
 }
 
@@ -354,8 +378,12 @@ fn analyze(events: &[TradeEvent]) -> Analysis {
     let mut result = Analysis::default();
     for event in events {
         match event.event_type.as_str() {
-            "SPLIT" | "REVERSE_SPLIT" | "MERGER" => {
+            "SPLIT" | "REVERSE_SPLIT" => {
                 apply_corporate_action(&mut result, event);
+                continue;
+            }
+            "MERGER" => {
+                apply_merger(&mut result, event);
                 continue;
             }
             "SPIN_OFF" => {
@@ -441,8 +469,13 @@ fn analyze(events: &[TradeEvent]) -> Analysis {
                         action_source_document_id: event.source_document_id.clone(),
                         action_source_row: event.source_row,
                         source_buy_event_id: Some(lot.event_id.clone()),
+                        source_buy_source_document_id: Some(lot.source_document_id.clone()),
+                        source_buy_source_row: Some(lot.source_row),
                         from_instrument_code: event.instrument_code.clone(),
                         target_instrument_code: event.instrument_code.clone(),
+                        source_currency: Some(event.currency.clone()),
+                        source_cost_basis: Some(allocated_cost_basis),
+                        conversion_rate: None,
                         currency: event.currency.clone(),
                         quantity: allocated_quantity,
                         allocated_cost_basis,
@@ -525,8 +558,13 @@ fn apply_spin_off(result: &mut Analysis, event: &TradeEvent) {
                 action_source_document_id: event.source_document_id.clone(),
                 action_source_row: event.source_row,
                 source_buy_event_id: Some(parent.event_id.clone()),
+                source_buy_source_document_id: Some(parent.source_document_id.clone()),
+                source_buy_source_row: Some(parent.source_row),
                 from_instrument_code: event.instrument_code.clone(),
                 target_instrument_code: target_code.to_owned(),
+                source_currency: Some(event.currency.clone()),
+                source_cost_basis: Some(allocated_cost),
+                conversion_rate: None,
                 currency: event.currency.clone(),
                 quantity: child_quantity,
                 allocated_cost_basis: allocated_cost,
@@ -608,8 +646,13 @@ fn apply_rights_subscription(result: &mut Analysis, event: &TradeEvent) {
             action_source_document_id: event.source_document_id.clone(),
             action_source_row: event.source_row,
             source_buy_event_id: None,
+            source_buy_source_document_id: None,
+            source_buy_source_row: None,
             from_instrument_code: event.instrument_code.clone(),
             target_instrument_code: target_code.to_owned(),
+            source_currency: None,
+            source_cost_basis: None,
+            conversion_rate: None,
             currency: event.currency.clone(),
             quantity: subscribed_quantity,
             allocated_cost_basis: subscription_amount,
@@ -638,6 +681,182 @@ fn append_lots(target: &mut VecDeque<LotState>, source: &mut VecDeque<LotState>)
         ))
     });
     target.extend(ordered);
+}
+
+fn apply_merger(result: &mut Analysis, event: &TradeEvent) {
+    let (Some(quantity_ratio), Some(stock_basis_ratio)) = (
+        event
+            .corporate_action_ratio
+            .filter(|value| value.is_finite() && *value > EPSILON),
+        event
+            .merger_stock_cost_basis_ratio
+            .filter(|value| value.is_finite() && (0.0..=1.0).contains(value)),
+    ) else {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    };
+    let target_code = event.target_instrument_code.as_deref().unwrap_or("");
+    let target_name = event.target_instrument_name.as_deref().unwrap_or("");
+    if target_code.trim().is_empty() && target_name.trim().is_empty() {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    }
+    let target_currency = event.target_currency.as_deref().unwrap_or(&event.currency);
+    let stock_fx = if target_currency == event.currency {
+        event.source_to_target_fx_rate.unwrap_or(1.0)
+    } else if let Some(rate) = event
+        .source_to_target_fx_rate
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        rate
+    } else {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    };
+    if !stock_fx.is_finite() || stock_fx <= 0.0 {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    }
+
+    let cash_amount = event.merger_cash_amount.unwrap_or(0.0);
+    let has_cash = cash_amount > EPSILON;
+    let cash_currency = if has_cash {
+        let Some(currency) = event.merger_cash_currency.as_deref() else {
+            result.skipped_event_ids.push(event.id.clone());
+            return;
+        };
+        currency
+    } else {
+        &event.currency
+    };
+    let cash_fx = if !has_cash || cash_currency == event.currency {
+        event.source_to_cash_fx_rate.unwrap_or(1.0)
+    } else if let Some(rate) = event
+        .source_to_cash_fx_rate
+        .filter(|value| value.is_finite() && *value > 0.0)
+    {
+        rate
+    } else {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    };
+    if !cash_fx.is_finite()
+        || cash_fx <= 0.0
+        || (!has_cash && (1.0 - stock_basis_ratio).abs() > EPSILON)
+    {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    }
+
+    let source_key = instrument_key(event);
+    let Some(source_lots) = result.open_lots.get(&source_key) else {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    };
+    let total_surrendered = source_lots
+        .iter()
+        .map(|lot| lot.remaining_quantity)
+        .sum::<f64>();
+    if total_surrendered <= EPSILON {
+        result.skipped_event_ids.push(event.id.clone());
+        return;
+    }
+    let mut source_lots = result.open_lots.remove(&source_key).unwrap_or_default();
+    let target_key = InstrumentKey {
+        account_id: event.account_id.clone(),
+        currency: target_currency.to_owned(),
+        identity: instrument_identity(target_code, target_name),
+    };
+    let mut target_lots = VecDeque::new();
+    for source_lot in source_lots.drain(..) {
+        let surrendered_quantity = source_lot.remaining_quantity;
+        let source_basis = surrendered_quantity * source_lot.unit_cost;
+        let source_stock_basis = source_basis * stock_basis_ratio;
+        let stock_basis = source_stock_basis * stock_fx;
+        let target_quantity = surrendered_quantity * quantity_ratio;
+        let mut target_lot = source_lot.clone();
+        target_lot.instrument_code = target_code.to_owned();
+        target_lot.instrument_name = target_name.to_owned();
+        target_lot.currency = target_currency.to_owned();
+        target_lot.original_quantity *= quantity_ratio;
+        target_lot.remaining_quantity = target_quantity;
+        target_lot.unit_cost = stock_basis / target_quantity;
+        target_lots.push_back(target_lot);
+        result
+            .corporate_action_allocations
+            .push(CorporateActionAllocationDto {
+                action_event_id: event.id.clone(),
+                action_type: "MERGER_STOCK".to_owned(),
+                action_on: event.event_date.clone(),
+                action_source_document_id: event.source_document_id.clone(),
+                action_source_row: event.source_row,
+                source_buy_event_id: Some(source_lot.event_id.clone()),
+                source_buy_source_document_id: Some(source_lot.source_document_id.clone()),
+                source_buy_source_row: Some(source_lot.source_row),
+                from_instrument_code: event.instrument_code.clone(),
+                target_instrument_code: target_code.to_owned(),
+                source_currency: Some(event.currency.clone()),
+                source_cost_basis: Some(source_stock_basis),
+                conversion_rate: event.source_to_target_fx_rate,
+                currency: target_currency.to_owned(),
+                quantity: target_quantity,
+                allocated_cost_basis: stock_basis,
+                cash_amount: 0.0,
+                realized_pnl: None,
+            });
+
+        if has_cash {
+            let source_cash_basis = source_basis * (1.0 - stock_basis_ratio);
+            let cash_basis = source_cash_basis * cash_fx;
+            let allocated_cash = cash_amount * surrendered_quantity / total_surrendered;
+            let realized_pnl = allocated_cash - cash_basis;
+            result.allocations.push(RealizedAllocationDto {
+                sell_event_id: event.id.clone(),
+                buy_event_id: source_lot.event_id.clone(),
+                account_id: event.account_id.clone(),
+                instrument_code: event.instrument_code.clone(),
+                instrument_name: event.instrument_name.clone(),
+                currency: cash_currency.to_owned(),
+                sold_on: event.event_date.clone(),
+                acquired_on: source_lot.acquired_on.clone(),
+                quantity: surrendered_quantity,
+                allocated_cost_basis: cash_basis,
+                allocated_net_proceeds: allocated_cash,
+                realized_pnl,
+                buy_source_document_id: source_lot.source_document_id.clone(),
+                buy_source_row: source_lot.source_row,
+                sell_source_document_id: event.source_document_id.clone(),
+                sell_source_row: event.source_row,
+            });
+            result
+                .corporate_action_allocations
+                .push(CorporateActionAllocationDto {
+                    action_event_id: event.id.clone(),
+                    action_type: "MERGER_CASH".to_owned(),
+                    action_on: event.event_date.clone(),
+                    action_source_document_id: event.source_document_id.clone(),
+                    action_source_row: event.source_row,
+                    source_buy_event_id: Some(source_lot.event_id.clone()),
+                    source_buy_source_document_id: Some(source_lot.source_document_id.clone()),
+                    source_buy_source_row: Some(source_lot.source_row),
+                    from_instrument_code: event.instrument_code.clone(),
+                    target_instrument_code: target_code.to_owned(),
+                    source_currency: Some(event.currency.clone()),
+                    source_cost_basis: Some(source_cash_basis),
+                    conversion_rate: event.source_to_cash_fx_rate,
+                    currency: cash_currency.to_owned(),
+                    quantity: surrendered_quantity,
+                    allocated_cost_basis: cash_basis,
+                    cash_amount: allocated_cash,
+                    realized_pnl: Some(realized_pnl),
+                });
+        }
+    }
+    append_lots(
+        result.open_lots.entry(target_key).or_default(),
+        &mut target_lots,
+    );
+    result.corporate_action_event_ids.push(event.id.clone());
 }
 
 fn apply_corporate_action(result: &mut Analysis, event: &TradeEvent) {
@@ -771,7 +990,7 @@ fn read_events(
     through: Option<&str>,
 ) -> Result<Vec<TradeEvent>, InvestmentPerformanceError> {
     let mut statement = connection.prepare(
-        "SELECT event_id, account_id, account_name, source_document_id, source_row, event_type, event_date, instrument_code, instrument_name, currency, quantity, gross_amount, fee_amount, tax_amount, corporate_action_ratio, target_instrument_code, target_instrument_name, cost_basis_allocation_ratio, subscription_amount, cash_in_lieu_amount, cash_in_lieu_quantity
+        "SELECT event_id, account_id, account_name, source_document_id, source_row, event_type, event_date, instrument_code, instrument_name, currency, quantity, gross_amount, fee_amount, tax_amount, corporate_action_ratio, target_instrument_code, target_instrument_name, target_currency, cost_basis_allocation_ratio, subscription_amount, cash_in_lieu_amount, cash_in_lieu_quantity, merger_cash_amount, merger_cash_currency, merger_stock_cost_basis_ratio, source_to_target_fx_rate, source_to_cash_fx_rate
          FROM investment_trade_events_v1
          WHERE household_id = ?1 AND (?2 IS NULL OR account_id = ?2) AND (?3 IS NULL OR event_date <= ?3)
          ORDER BY event_date, source_row, event_id"
@@ -796,10 +1015,16 @@ fn read_events(
                 corporate_action_ratio: row.get(14)?,
                 target_instrument_code: row.get(15)?,
                 target_instrument_name: row.get(16)?,
-                cost_basis_allocation_ratio: row.get(17)?,
-                subscription_amount: row.get(18)?,
-                cash_in_lieu_amount: row.get(19)?,
-                cash_in_lieu_quantity: row.get(20)?,
+                target_currency: row.get(17)?,
+                cost_basis_allocation_ratio: row.get(18)?,
+                subscription_amount: row.get(19)?,
+                cash_in_lieu_amount: row.get(20)?,
+                cash_in_lieu_quantity: row.get(21)?,
+                merger_cash_amount: row.get(22)?,
+                merger_cash_currency: row.get(23)?,
+                merger_stock_cost_basis_ratio: row.get(24)?,
+                source_to_target_fx_rate: row.get(25)?,
+                source_to_cash_fx_rate: row.get(26)?,
             })
         })
         .map_err(db_error)?;
@@ -899,6 +1124,7 @@ mod tests {
             include_str!("../migrations/0013_investment_performance.sql"),
             include_str!("../migrations/0014_investment_corporate_actions_fx.sql"),
             include_str!("../migrations/0016_complex_corporate_actions.sql"),
+            include_str!("../migrations/0020_mixed_currency_mergers.sql"),
         ] {
             connection.execute_batch(migration).unwrap();
         }
@@ -935,6 +1161,28 @@ mod tests {
         connection.execute(
             "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type) VALUES(?1,'home','broker',?2,?3,?4,?5,'ABC','Acme','TAXABLE',?6,?7,NULL,?8,?9,?10,?8,'BALANCED',0,?4)",
             params![id, doc, row, event_type, date, currency, quantity, gross, fee, tax],
+        ).unwrap();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_merger(
+        connection: &Connection,
+        id: &str,
+        doc: &str,
+        row: i64,
+        source_currency: &str,
+        target_currency: &str,
+        quantity_ratio: f64,
+        stock_basis_ratio: f64,
+        cash_amount: Option<f64>,
+        cash_currency: Option<&str>,
+        target_fx: Option<f64>,
+        cash_fx: Option<f64>,
+    ) {
+        connection.execute(
+            "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type,corporate_action_ratio,target_instrument_code,target_instrument_name,target_currency,merger_cash_amount,merger_cash_currency,merger_stock_cost_basis_ratio,source_to_target_fx_rate,source_to_cash_fx_rate)
+             VALUES(?1,'home','broker',?2,?3,'MERGER','2026-03-01','ABC','Acme','TAXABLE',?4,0,0,0,0,'BALANCED',0,'合併',?5,'XYZ','Combined',?6,?7,?8,?9,?10,?11)",
+            params![id, doc, row, source_currency, quantity_ratio, target_currency, cash_amount, cash_currency, stock_basis_ratio, target_fx, cash_fx],
         ).unwrap();
     }
 
@@ -1019,7 +1267,7 @@ mod tests {
             "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type,corporate_action_ratio) VALUES('split','home','broker','doc2',2,'SPLIT','2026-02-01','ABC','Acme','TAXABLE','JPY',NULL,NULL,0,0,0,0,'BALANCED',0,'株式分割',2)", [],
         ).unwrap();
         connection.execute(
-            "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type,corporate_action_ratio,target_instrument_code,target_instrument_name,target_currency) VALUES('merger','home','broker','doc3',3,'MERGER','2026-03-01','ABC','Acme','TAXABLE','JPY',NULL,NULL,0,0,0,0,'BALANCED',0,'合併','0.5','XYZ','Combined','JPY')", [],
+            "INSERT INTO brokerage_events(id,household_id,account_id,source_document_id,source_row,event_type,trade_date,instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,reconciliation_difference,raw_transaction_type,corporate_action_ratio,target_instrument_code,target_instrument_name,target_currency,merger_stock_cost_basis_ratio) VALUES('merger','home','broker','doc3',3,'MERGER','2026-03-01','ABC','Acme','TAXABLE','JPY',NULL,NULL,0,0,0,0,'BALANCED',0,'合併','0.5','XYZ','Combined','JPY',1)", [],
         ).unwrap();
         let result = query_holdings(
             &connection,
@@ -1037,6 +1285,278 @@ mod tests {
         assert!((result.positions[0].average_cost - 100.0).abs() < EPSILON);
         assert!(result.realized_allocations.is_empty());
         assert_eq!(result.corporate_action_event_ids, ["split", "merger"]);
+        assert_eq!(result.corporate_action_allocations.len(), 1);
+        assert_eq!(
+            result.corporate_action_allocations[0].action_type,
+            "MERGER_STOCK"
+        );
+    }
+
+    #[test]
+    fn mixed_merger_allocates_stock_and_cash_across_fifo_lots_in_one_currency() {
+        let connection = connection();
+        insert_event(
+            &connection,
+            "buy-1",
+            "doc1",
+            1,
+            "BUY",
+            "2026-01-01",
+            "JPY",
+            Some(10.0),
+            1000.0,
+            0.0,
+            0.0,
+        );
+        insert_event(
+            &connection,
+            "buy-2",
+            "doc2",
+            2,
+            "BUY",
+            "2026-02-01",
+            "JPY",
+            Some(30.0),
+            6000.0,
+            0.0,
+            0.0,
+        );
+        insert_merger(
+            &connection,
+            "mixed",
+            "doc3",
+            3,
+            "JPY",
+            "JPY",
+            0.5,
+            0.6,
+            Some(4000.0),
+            Some("JPY"),
+            None,
+            None,
+        );
+
+        let result = query_holdings(
+            &connection,
+            &InvestmentHoldingsRequest {
+                household_id: "home".into(),
+                account_id: None,
+                as_of: "2026-12-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.positions[0].instrument_code, "XYZ");
+        assert!((result.positions[0].quantity - 20.0).abs() < EPSILON);
+        assert!((result.positions[0].cost_basis - 4200.0).abs() < EPSILON);
+        assert_eq!(result.positions[0].source_buy_event_ids, ["buy-1", "buy-2"]);
+        assert_eq!(result.realized_allocations.len(), 2);
+        assert!((result.realized_allocations[0].allocated_net_proceeds - 1000.0).abs() < EPSILON);
+        assert!((result.realized_allocations[0].allocated_cost_basis - 400.0).abs() < EPSILON);
+        assert!((result.realized_allocations[1].allocated_net_proceeds - 3000.0).abs() < EPSILON);
+        assert!(
+            (result
+                .realized_allocations
+                .iter()
+                .map(|item| item.realized_pnl)
+                .sum::<f64>()
+                - 1200.0)
+                .abs()
+                < EPSILON
+        );
+        assert_eq!(result.corporate_action_allocations.len(), 4);
+        assert_eq!(
+            result.corporate_action_allocations[0].action_type,
+            "MERGER_STOCK"
+        );
+        assert_eq!(
+            result.corporate_action_allocations[1].action_type,
+            "MERGER_CASH"
+        );
+        assert_eq!(
+            result.corporate_action_allocations[0].source_buy_source_row,
+            Some(1)
+        );
+        assert_eq!(
+            result.corporate_action_allocations[2].source_buy_source_row,
+            Some(2)
+        );
+        assert_eq!(result.corporate_action_allocations[1].action_source_row, 3);
+
+        let performance = query_performance(
+            &connection,
+            &InvestmentPerformanceRequest {
+                household_id: "home".into(),
+                account_id: None,
+                date_from: Some("2026-03-01".into()),
+                date_to: Some("2026-03-31".into()),
+            },
+        )
+        .unwrap();
+        let jpy = performance
+            .totals_by_currency
+            .iter()
+            .find(|item| item.currency == "JPY")
+            .unwrap();
+        assert!((jpy.sell_gross - 4000.0).abs() < EPSILON);
+        assert!((jpy.realized_pnl - 1200.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn mixed_cross_currency_merger_converts_each_basis_with_explicit_rates() {
+        let connection = connection();
+        insert_event(
+            &connection,
+            "usd-buy",
+            "doc1",
+            1,
+            "BUY",
+            "2026-01-01",
+            "USD",
+            Some(10.0),
+            1000.0,
+            0.0,
+            0.0,
+        );
+        insert_merger(
+            &connection,
+            "fx-merger",
+            "doc2",
+            2,
+            "USD",
+            "JPY",
+            2.0,
+            0.7,
+            Some(60000.0),
+            Some("JPY"),
+            Some(150.0),
+            Some(150.0),
+        );
+
+        let result = query_holdings(
+            &connection,
+            &InvestmentHoldingsRequest {
+                household_id: "home".into(),
+                account_id: None,
+                as_of: "2026-12-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.positions[0].currency, "JPY");
+        assert!((result.positions[0].quantity - 20.0).abs() < EPSILON);
+        assert!((result.positions[0].cost_basis - 105000.0).abs() < EPSILON);
+        assert!((result.realized_allocations[0].allocated_cost_basis - 45000.0).abs() < EPSILON);
+        assert!((result.realized_allocations[0].realized_pnl - 15000.0).abs() < EPSILON);
+        let stock = &result.corporate_action_allocations[0];
+        assert_eq!(stock.action_type, "MERGER_STOCK");
+        assert_eq!(stock.source_currency.as_deref(), Some("USD"));
+        assert_eq!(stock.currency, "JPY");
+        assert_eq!(stock.source_cost_basis, Some(700.0));
+        assert_eq!(stock.conversion_rate, Some(150.0));
+        let cash = &result.corporate_action_allocations[1];
+        assert_eq!(cash.action_type, "MERGER_CASH");
+        assert!((cash.source_cost_basis.unwrap() - 300.0).abs() < EPSILON);
+        assert!((cash.allocated_cost_basis - 45000.0).abs() < EPSILON);
+        assert!((cash.cash_amount - 60000.0).abs() < EPSILON);
+    }
+
+    #[test]
+    fn merger_missing_required_fx_is_skipped_without_consuming_source_lots() {
+        let connection = connection();
+        insert_event(
+            &connection,
+            "usd-buy",
+            "doc1",
+            1,
+            "BUY",
+            "2026-01-01",
+            "USD",
+            Some(10.0),
+            1000.0,
+            0.0,
+            0.0,
+        );
+        insert_merger(
+            &connection,
+            "missing-fx",
+            "doc2",
+            2,
+            "USD",
+            "JPY",
+            2.0,
+            1.0,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let result = query_holdings(
+            &connection,
+            &InvestmentHoldingsRequest {
+                household_id: "home".into(),
+                account_id: None,
+                as_of: "2026-12-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.skipped_event_ids, ["missing-fx"]);
+        assert_eq!(result.positions.len(), 1);
+        assert_eq!(result.positions[0].instrument_code, "ABC");
+        assert_eq!(result.positions[0].currency, "USD");
+        assert_eq!(result.positions[0].source_buy_event_ids, ["usd-buy"]);
+        assert!(result.corporate_action_allocations.is_empty());
+    }
+
+    #[test]
+    fn all_stock_cross_currency_merger_preserves_converted_basis() {
+        let connection = connection();
+        insert_event(
+            &connection,
+            "usd-buy",
+            "doc1",
+            1,
+            "BUY",
+            "2026-01-01",
+            "USD",
+            Some(4.0),
+            800.0,
+            0.0,
+            0.0,
+        );
+        insert_merger(
+            &connection,
+            "stock-only",
+            "doc2",
+            2,
+            "USD",
+            "JPY",
+            1.5,
+            1.0,
+            None,
+            None,
+            Some(155.0),
+            None,
+        );
+
+        let result = query_holdings(
+            &connection,
+            &InvestmentHoldingsRequest {
+                household_id: "home".into(),
+                account_id: None,
+                as_of: "2026-12-31".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(result.positions[0].currency, "JPY");
+        assert!((result.positions[0].quantity - 6.0).abs() < EPSILON);
+        assert!((result.positions[0].cost_basis - 124000.0).abs() < EPSILON);
+        assert!(result.realized_allocations.is_empty());
+        assert_eq!(result.corporate_action_allocations.len(), 1);
+        assert_eq!(
+            result.corporate_action_allocations[0].conversion_rate,
+            Some(155.0)
+        );
     }
 
     #[test]
