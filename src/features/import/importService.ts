@@ -113,7 +113,9 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
       return {
         id, filename: file.name, adapterId: null, encoding, recordCount: 0,
         issues: [{ code: 'ADAPTER_NOT_FOUND', message: '対応するCSV / Excel形式を検出できませんでした。', severity: 'error' }],
-        status: 'unsupported', parsedAt: new Date().toISOString(),
+        status: 'unsupported', parsedAt: new Date().toISOString(), fileBytes: bytes,
+        mediaType: file.type || (isXlsx ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv'),
+        sourceModifiedAt: new Date(file.lastModified).toISOString(),
       }
     }
 
