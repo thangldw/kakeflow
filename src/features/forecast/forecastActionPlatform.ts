@@ -2,6 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 
 export interface ForecastActionRequestDto {
   readonly householdId: string
+  readonly accountGroupId?: string | null
   readonly asOf: string
 }
 

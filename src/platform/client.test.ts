@@ -157,8 +157,8 @@ describe('platform client', () => {
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
     await expect(client.createHousehold({ id: 'family', name: 'Family' })).resolves.toEqual(responses.household_create)
     await expect(client.listAccounts('family')).resolves.toEqual(responses.accounts_list)
-    await expect(client.queryDashboard({ householdId: 'family', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
-    await expect(client.queryTransactions({ householdId: 'family', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
+    await expect(client.queryDashboard({ householdId: 'family', accountGroupId: 'daily', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
+    await expect(client.queryTransactions({ householdId: 'family', accountGroupId: 'daily', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
     const manualInput = { id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
     await expect(client.createManualTransaction(manualInput)).resolves.toEqual(responses.transaction_manual_create)
     await expect(client.getTransactionDetail('family', 'tx-manual')).resolves.toEqual(responses.transaction_detail_get)

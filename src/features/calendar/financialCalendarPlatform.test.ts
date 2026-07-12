@@ -24,8 +24,8 @@ describe('financial calendar platform boundary', () => {
     }
     const invoke = vi.fn(async () => response) as unknown as FinancialCalendarInvoke
     const platform = createFinancialCalendarPlatform(invoke)
-    await expect(platform.getCalendar({ householdId: 'family', month: '2026-07', asOf: '2026-07-31' })).resolves.toEqual(response)
-    expect(invoke).toHaveBeenCalledWith('financial_calendar_query', { request: { householdId: 'family', month: '2026-07', asOf: '2026-07-31' } })
+    await expect(platform.getCalendar({ householdId: 'family', accountGroupId: 'daily', month: '2026-07', asOf: '2026-07-31' })).resolves.toEqual(response)
+    expect(invoke).toHaveBeenCalledWith('financial_calendar_query', { request: { householdId: 'family', accountGroupId: 'daily', month: '2026-07', asOf: '2026-07-31' } })
   })
 
   it('invokes and parses monthly and yearly financial reports', async () => {

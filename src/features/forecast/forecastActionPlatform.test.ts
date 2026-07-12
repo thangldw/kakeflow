@@ -26,8 +26,8 @@ const response = {
 describe('forecast action platform', () => {
   it('invokes the household-scoped command and validates the response', async () => {
     const invoke = vi.fn(async () => response) as unknown as ForecastActionInvoke
-    const result = await createForecastActionPlatform(invoke).query({ householdId: 'family', asOf: '2026-07-13' })
-    expect(invoke).toHaveBeenCalledWith('forecast_action_query', { request: { householdId: 'family', asOf: '2026-07-13' } })
+    const result = await createForecastActionPlatform(invoke).query({ householdId: 'family', accountGroupId: 'daily', asOf: '2026-07-13' })
+    expect(invoke).toHaveBeenCalledWith('forecast_action_query', { request: { householdId: 'family', accountGroupId: 'daily', asOf: '2026-07-13' } })
     expect(result.months[0].projectedSavingsJpy).toBe(120_000)
     expect(result.actions[0].kind).toBe('CARD_PAYMENT_DUE')
   })

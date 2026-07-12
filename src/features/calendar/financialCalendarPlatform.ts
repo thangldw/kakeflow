@@ -2,6 +2,7 @@ import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 
 export interface FinancialCalendarRequest {
   readonly householdId: string
+  readonly accountGroupId?: string | null
   readonly month: string
   readonly asOf?: string
 }
@@ -10,6 +11,7 @@ export type MonthlyFinancialReportRequest = FinancialCalendarRequest
 
 export interface YearlyFinancialReportRequest {
   readonly householdId: string
+  readonly accountGroupId?: string | null
   readonly year: string
   readonly asOf?: string
 }

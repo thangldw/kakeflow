@@ -108,6 +108,7 @@ export type AccountingBasisDto = 'ACCRUAL' | 'CASH'
 
 export interface DashboardRequestDto {
   readonly householdId: string
+  readonly accountGroupId?: string | null
   readonly month: string
   readonly accountingBasis: AccountingBasisDto
 }
@@ -141,6 +142,7 @@ export interface DashboardExpenseCategoryDto {
 
 export interface TransactionPageRequestDto {
   readonly householdId: string
+  readonly accountGroupId?: string | null
   readonly accountingBasis: AccountingBasisDto
   readonly fromDate?: string | null
   readonly toDate?: string | null
