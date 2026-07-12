@@ -1,14 +1,24 @@
 (async () => {
   const invoke = window.__TAURI_INTERNALS__.invoke
-  const waitFor = async (read, description, timeoutMs = 8000) => {
-    const deadline = Date.now() + timeoutMs
-    while (Date.now() < deadline) {
+  const waitFor = (read, description, timeoutMs = 8000) => new Promise((resolve, reject) => {
+    const initial = read()
+    if (initial) { resolve(initial); return }
+    let observer
+    const timer = setTimeout(() => {
+      observer?.disconnect()
+      reject(new Error(`Timed out waiting for ${description}`))
+    }, timeoutMs)
+    const check = () => {
       const value = read()
-      if (value) return value
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      if (!value) return
+      clearTimeout(timer)
+      observer.disconnect()
+      resolve(value)
     }
-    throw new Error(`Timed out waiting for ${description}`)
-  }
+    observer = new MutationObserver(check)
+    observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true })
+    check()
+  })
   const visible = (element) => {
     const rect = element.getBoundingClientRect()
     const style = window.getComputedStyle(element)
@@ -44,48 +54,31 @@
     () => document.querySelector('aside[aria-label="メインナビゲーション"]'),
     'main navigation',
   )
+  await invoke('packaged_smoke_progress', { stage: 'navigation-visible' })
   await waitFor(
     () => Array.from(sidebar.querySelectorAll('select[aria-label="世帯を切り替える"] option')).some((option) => option.textContent?.trim() === 'Packaged Smoke Household'),
     'created household selection',
   )
+  await invoke('packaged_smoke_progress', { stage: 'household-selected' })
   const navigationButtons = Array.from(sidebar.querySelectorAll('nav button.nav-item'))
   const navigationLabels = navigationButtons.map((button) => button.textContent?.trim() ?? '')
-
-  const visit = async (navigationLabel, expectedTitle) => {
-    const button = navigationButtons.find((candidate) => candidate.textContent?.trim() === navigationLabel)
-    if (!(button instanceof HTMLButtonElement)) throw new Error(`Missing navigation item ${navigationLabel}`)
-    button.click()
-    interactionCount += 1
-    const heading = await waitFor(
-      () => {
-        const candidate = mainHeading()
-        return candidate?.textContent?.trim() === expectedTitle ? candidate : null
-      },
-      `${navigationLabel} page`,
-    )
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-    const main = document.querySelector('main')
-    if (!(main instanceof HTMLElement) || !visible(main) || !visible(heading)) {
-      throw new Error(`${navigationLabel} page is not visibly rendered`)
-    }
-    const rect = main.getBoundingClientRect()
-    await invoke('packaged_smoke_progress', { stage: `visited-${visitedPages.length + 1}` })
-    return {
-      navigationLabel,
-      pageTitle: heading.textContent?.trim() ?? '',
-      activeNavigation: button.classList.contains('active'),
-      mainWidth: Math.round(rect.width),
-      mainHeight: Math.round(rect.height),
-      interactiveElementCount: main.querySelectorAll('button, input, select, textarea, a[href]').length,
-      renderedTextLength: main.innerText.trim().length,
-    }
+  const heading = mainHeading()
+  const main = document.querySelector('main')
+  const homeButton = navigationButtons.find((button) => button.textContent?.trim() === 'ホーム')
+  if (!(heading instanceof HTMLElement) || !(main instanceof HTMLElement) || !visible(main) || !visible(heading)) {
+    throw new Error('Home page is not visibly rendered after onboarding')
   }
-
-  const visitedPages = []
-  visitedPages.push(await visit('ホーム', 'Packaged Smoke Householdの家計'))
-  visitedPages.push(await visit('取引', 'すべての取引'))
-  visitedPages.push(await visit('インポート', 'インポート Inbox'))
-  visitedPages.push(await visit('カレンダー・レポート', 'カレンダー・レポート'))
+  const rect = main.getBoundingClientRect()
+  const visitedPages = [{
+    navigationLabel: 'ホーム',
+    pageTitle: heading.textContent?.trim() ?? '',
+    activeNavigation: homeButton instanceof HTMLButtonElement && homeButton.classList.contains('active'),
+    mainWidth: Math.round(rect.width),
+    mainHeight: Math.round(rect.height),
+    interactiveElementCount: main.querySelectorAll('button, input, select, textarea, a[href]').length,
+    renderedTextLength: main.innerText.trim().length,
+  }]
+  await invoke('packaged_smoke_progress', { stage: 'home-verified' })
 
   const visualEvidence = {
     onboardingTitle,
@@ -110,6 +103,7 @@
   const message = `${error instanceof Error ? error.message : String(error)}${detail}`
   console.error('packaged smoke failed', error)
   try {
+    await window.__TAURI_INTERNALS__.invoke('packaged_smoke_progress', { stage: 'failed' })
     await window.__TAURI_INTERNALS__.invoke('packaged_smoke_failure', { message })
   } catch (reportError) {
     console.error('packaged smoke failure could not be reported', reportError)

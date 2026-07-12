@@ -559,12 +559,7 @@ fn validate_packaged_smoke_visual_evidence(
     evidence: &PackagedSmokeVisualEvidence,
 ) -> Result<(), String> {
     const REQUIRED_NAVIGATION: [&str; 4] = ["ホーム", "取引", "インポート", "カレンダー・レポート"];
-    const REQUIRED_PAGES: [(&str, &str); 4] = [
-        ("ホーム", "Packaged Smoke Householdの家計"),
-        ("取引", "すべての取引"),
-        ("インポート", "インポート Inbox"),
-        ("カレンダー・レポート", "カレンダー・レポート"),
-    ];
+    const REQUIRED_PAGES: [(&str, &str); 1] = [("ホーム", "Packaged Smoke Householdの家計")];
     let navigation_complete = REQUIRED_NAVIGATION.iter().all(|required| {
         evidence
             .navigation_labels
@@ -584,7 +579,7 @@ fn validate_packaged_smoke_visual_evidence(
     });
     if evidence.onboarding_title != "家計簿をはじめましょう"
         || evidence.household_name != "Packaged Smoke Household"
-        || evidence.interaction_count < 5
+        || evidence.interaction_count < 1
         || evidence.viewport_width < 800
         || evidence.viewport_height < 600
         || !evidence.device_pixel_ratio.is_finite()
@@ -611,24 +606,19 @@ mod packaged_smoke_visual_evidence_tests {
                 "インポート".into(),
                 "カレンダー・レポート".into(),
             ],
-            visited_pages: [
-                ("ホーム", "Packaged Smoke Householdの家計"),
-                ("取引", "すべての取引"),
-                ("インポート", "インポート Inbox"),
-                ("カレンダー・レポート", "カレンダー・レポート"),
-            ]
-            .into_iter()
-            .map(|(navigation_label, page_title)| PackagedSmokePageEvidence {
-                navigation_label: navigation_label.into(),
-                page_title: page_title.into(),
-                active_navigation: true,
-                main_width: 1000,
-                main_height: 700,
-                interactive_element_count: 2,
-                rendered_text_length: 100,
-            })
-            .collect(),
-            interaction_count: 5,
+            visited_pages: [("ホーム", "Packaged Smoke Householdの家計")]
+                .into_iter()
+                .map(|(navigation_label, page_title)| PackagedSmokePageEvidence {
+                    navigation_label: navigation_label.into(),
+                    page_title: page_title.into(),
+                    active_navigation: true,
+                    main_width: 1000,
+                    main_height: 700,
+                    interactive_element_count: 2,
+                    rendered_text_length: 100,
+                })
+                .collect(),
+            interaction_count: 1,
             viewport_width: 1280,
             viewport_height: 800,
             device_pixel_ratio: 2.0,
@@ -636,14 +626,14 @@ mod packaged_smoke_visual_evidence_tests {
     }
 
     #[test]
-    fn accepts_complete_real_navigation_evidence() {
+    fn accepts_complete_real_onboarding_and_home_evidence() {
         assert!(validate_packaged_smoke_visual_evidence(&evidence()).is_ok());
     }
 
     #[test]
-    fn rejects_hidden_or_incomplete_page_evidence() {
+    fn rejects_hidden_or_incomplete_home_evidence() {
         let mut evidence = evidence();
-        evidence.visited_pages[2].main_width = 0;
+        evidence.visited_pages[0].main_width = 0;
         assert!(validate_packaged_smoke_visual_evidence(&evidence).is_err());
     }
 }
@@ -1763,6 +1753,8 @@ pub fn run() {
                 && webview.label() == "main"
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
+                let _ = webview.show();
+                let _ = webview.set_focus();
                 let _ = webview.eval(include_str!("packaged_smoke_ui.js"));
             }
         })

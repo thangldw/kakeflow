@@ -7,7 +7,7 @@
 - Add market value, unrealized P&L, missing-price disclosure, annual realized P&L, dividend, fee, tax, and source-row reports by currency.
 - Render authenticated PDF source pages locally and place `PDF_POINTS` extraction regions over the actual page image.
 - Normalize full-width Japanese receipt text, `令和`/`平成` dates, and additional electronic-money payment methods.
-- Exercise onboarding and four navigation routes inside the real packaged WebView, verify the UI-created household in SQLCipher, and upload machine-readable interaction evidence from macOS and Windows CI.
+- Exercise onboarding and the resulting Home screen inside the real packaged WebView, verify the UI-created household in SQLCipher, and upload machine-readable interaction evidence from macOS and Windows CI.
 
 ## 0.7.0 — 2026-07-13
 

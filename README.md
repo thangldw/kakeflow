@@ -114,7 +114,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Dated market-price history, `assetbalance` price reuse, market value, unrealized P&L, and explicit missing-price disclosure by currency.
 - Annual realized P&L, dividend, fee, tax, and FIFO purchase-to-sale source-row reporting.
 - Locally rendered authenticated PDF pages underneath extraction bounding boxes.
-- Packaged-WebView onboarding and navigation interaction evidence with database persistence verification.
+- Packaged-WebView onboarding and Home-render evidence with database persistence verification.
 - Recursive native filesystem notifications with debouncing, duplicate suppression, and bounded polling fallback.
 - Split, reverse-split, and same-currency share-for-share merger events that preserve FIFO lot provenance and total cost.
 - JPY investment reporting from dated direct/inverse FX observations, including the exact selected rate and source provenance.
