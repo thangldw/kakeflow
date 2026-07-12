@@ -9,6 +9,7 @@ const MAX_NAME_LEN: usize = 80;
 const MAX_SEARCH_LEN: usize = 200;
 const MAX_TRANSACTION_TEXT_LEN: usize = 16_384;
 const MAX_MANUAL_ENTRIES: usize = 128;
+const MAX_TRANSACTION_EVIDENCE: usize = 1_024;
 const MAX_PLANNING_JPY: i64 = 9_000_000_000_000_000;
 const CANONICAL_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
     ("bank", "Bank", "ASSET", "BANK"),
@@ -742,6 +743,184 @@ pub struct CreateManualTransactionInput {
     pub entries: Vec<ManualJournalEntryInput>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdatePostedTransactionInput {
+    pub household_id: String,
+    pub transaction_id: String,
+    pub occurred_on: String,
+    pub posted_on: Option<String>,
+    pub transaction_type: ManualTransactionType,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub entries: Vec<ManualJournalEntryInput>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionJournalEntryDto {
+    pub id: String,
+    pub account_id: String,
+    pub account_name: String,
+    pub account_kind: String,
+    pub side: String,
+    pub amount_jpy: i64,
+    pub line_number: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionSourceEvidenceDto {
+    pub source_record_id: String,
+    pub source_document_id: String,
+    pub source_type: String,
+    pub original_filename: String,
+    pub media_type: String,
+    pub row_number: u64,
+    pub imported_at: String,
+    pub evidence_role: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransactionDetailDto {
+    pub id: String,
+    pub household_id: String,
+    pub occurred_on: String,
+    pub posted_on: Option<String>,
+    pub transaction_type: String,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub editable: bool,
+    pub entries: Vec<TransactionJournalEntryDto>,
+    pub source_evidence: Vec<TransactionSourceEvidenceDto>,
+}
+
+pub fn get_transaction_detail(
+    connection: &Connection,
+    household_id: &str,
+    transaction_id: &str,
+) -> Result<TransactionDetailDto, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(transaction_id, MAX_LOOKUP_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+
+    let mut detail = connection
+        .query_row(
+            "SELECT t.id, t.household_id, t.occurred_on, t.posted_on,
+                    t.transaction_type, t.payee, t.description, t.status,
+                    t.created_at, t.updated_at, 1
+             FROM transactions t
+             WHERE t.id = ?1 AND t.household_id = ?2 AND t.status = 'POSTED'",
+            params![transaction_id, household_id],
+            |row| {
+                Ok(TransactionDetailDto {
+                    id: row.get(0)?,
+                    household_id: row.get(1)?,
+                    occurred_on: row.get(2)?,
+                    posted_on: row.get(3)?,
+                    transaction_type: row.get(4)?,
+                    payee: row.get(5)?,
+                    description: row.get(6)?,
+                    status: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                    editable: row.get(10)?,
+                    entries: Vec::new(),
+                    source_evidence: Vec::new(),
+                })
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+
+    let mut entries = connection
+        .prepare(
+            "SELECT je.id, a.id, a.name, a.account_kind, je.entry_side,
+                    je.amount_jpy, je.line_number
+             FROM journal_entries je
+             JOIN accounts a ON a.id = je.account_id
+             WHERE je.transaction_id = ?1 AND a.household_id = ?2
+             ORDER BY je.line_number, je.id
+             LIMIT ?3",
+        )
+        .map_err(map_database_error)?;
+    detail.entries = entries
+        .query_map(
+            params![
+                transaction_id,
+                household_id,
+                i64::try_from(MAX_MANUAL_ENTRIES + 1).expect("entry limit fits SQLite integer")
+            ],
+            |row| {
+                Ok(TransactionJournalEntryDto {
+                    id: row.get(0)?,
+                    account_id: row.get(1)?,
+                    account_name: row.get(2)?,
+                    account_kind: row.get(3)?,
+                    side: row.get(4)?,
+                    amount_jpy: row.get(5)?,
+                    line_number: row.get(6)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    if detail.entries.len() > MAX_MANUAL_ENTRIES {
+        return Err(RepositoryError::Unavailable);
+    }
+
+    let mut evidence = connection
+        .prepare(
+            "SELECT sr.id, sd.id, sd.source_type, sd.original_filename,
+                    sd.media_type, sr.row_number, sd.imported_at,
+                    COALESCE(cs.evidence_role, 'PRIMARY')
+             FROM transaction_sources ts
+             JOIN source_records sr ON sr.id = ts.source_record_id
+             JOIN source_documents sd ON sd.id = sr.source_document_id
+             LEFT JOIN candidate_sources cs
+               ON cs.candidate_id = ts.candidate_id
+              AND cs.source_record_id = ts.source_record_id
+             WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
+             ORDER BY sd.imported_at, sd.id, sr.row_number, sr.id
+             LIMIT ?3",
+        )
+        .map_err(map_database_error)?;
+    detail.source_evidence = evidence
+        .query_map(
+            params![
+                transaction_id,
+                household_id,
+                i64::try_from(MAX_TRANSACTION_EVIDENCE + 1)
+                    .expect("evidence limit fits SQLite integer")
+            ],
+            |row| {
+                Ok(TransactionSourceEvidenceDto {
+                    source_record_id: row.get(0)?,
+                    source_document_id: row.get(1)?,
+                    source_type: row.get(2)?,
+                    original_filename: row.get(3)?,
+                    media_type: row.get(4)?,
+                    row_number: row.get(5)?,
+                    imported_at: row.get(6)?,
+                    evidence_role: row.get(7)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    if detail.source_evidence.len() > MAX_TRANSACTION_EVIDENCE {
+        return Err(RepositoryError::Unavailable);
+    }
+    Ok(detail)
+}
+
 pub fn create_manual_transaction(
     connection: &Connection,
     input: &CreateManualTransactionInput,
@@ -854,6 +1033,130 @@ pub fn create_manual_transaction(
         .into_iter()
         .next()
         .ok_or(RepositoryError::NotFound)
+}
+
+pub fn update_posted_transaction(
+    connection: &Connection,
+    input: &UpdatePostedTransactionInput,
+) -> Result<TransactionDetailDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.transaction_id, MAX_LOOKUP_ID_LEN)?;
+    validate_optional_date(connection, Some(&input.occurred_on))?;
+    validate_optional_date(connection, input.posted_on.as_deref())?;
+    validate_optional_transaction_text(input.payee.as_deref())?;
+    validate_optional_transaction_text(input.description.as_deref())?;
+    validate_manual_entries(&input.entries)?;
+    ensure_household_exists(connection, &input.household_id)?;
+
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    let exists = transaction
+        .query_row(
+            "SELECT 1
+             FROM transactions t
+             WHERE t.id = ?1 AND t.household_id = ?2 AND t.status = 'POSTED'",
+            params![input.transaction_id, input.household_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    if exists.is_none() {
+        return Err(RepositoryError::NotFound);
+    }
+
+    for entry in &input.entries {
+        let account_exists: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM accounts
+                 WHERE id = ?1 AND household_id = ?2 AND is_archived = 0 AND currency = 'JPY')",
+                params![entry.account_id, input.household_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if !account_exists {
+            return Err(RepositoryError::NotFound);
+        }
+    }
+
+    transaction
+        .execute(
+            "UPDATE transactions
+             SET occurred_on = ?1, posted_on = ?2, transaction_type = ?3,
+                 payee = ?4, description = ?5,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?6 AND household_id = ?7 AND status = 'POSTED'",
+            params![
+                input.occurred_on,
+                input.posted_on,
+                input.transaction_type.as_sql_value(),
+                input.payee,
+                input.description,
+                input.transaction_id,
+                input.household_id
+            ],
+        )
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "DELETE FROM journal_entries WHERE transaction_id = ?1",
+            [&input.transaction_id],
+        )
+        .map_err(map_database_error)?;
+    for (index, entry) in input.entries.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    entry.id,
+                    input.transaction_id,
+                    entry.account_id,
+                    entry.side.as_sql_value(),
+                    entry.amount_jpy,
+                    i64::try_from(index + 1)
+                        .map_err(|_| RepositoryError::InvalidInput("Too many journal entries"))?
+                ],
+            )
+            .map_err(map_database_error)?;
+    }
+    transaction.commit().map_err(map_database_error)?;
+    get_transaction_detail(connection, &input.household_id, &input.transaction_id)
+}
+
+fn validate_manual_entries(entries: &[ManualJournalEntryInput]) -> Result<(), RepositoryError> {
+    if entries.len() < 2 || entries.len() > MAX_MANUAL_ENTRIES {
+        return Err(RepositoryError::InvalidInput(
+            "A transaction requires 2 to 128 entries",
+        ));
+    }
+    let mut entry_ids = HashSet::new();
+    let mut debit = 0_i64;
+    let mut credit = 0_i64;
+    for entry in entries {
+        validate_id(&entry.id, MAX_LOOKUP_ID_LEN)?;
+        validate_id(&entry.account_id, MAX_LOOKUP_ID_LEN)?;
+        if !entry_ids.insert(entry.id.as_str())
+            || entry.amount_jpy <= 0
+            || entry.amount_jpy > MAX_PLANNING_JPY
+        {
+            return Err(RepositoryError::InvalidInput("Invalid journal entry"));
+        }
+        let total = match entry.side {
+            ManualEntrySide::Debit => &mut debit,
+            ManualEntrySide::Credit => &mut credit,
+        };
+        *total = total
+            .checked_add(entry.amount_jpy)
+            .ok_or(RepositoryError::InvalidInput("Journal amount is too large"))?;
+    }
+    if debit != credit {
+        return Err(RepositoryError::InvalidInput(
+            "Journal debits and credits must balance",
+        ));
+    }
+    Ok(())
 }
 
 fn search_pattern(search: Option<&str>) -> Result<Option<String>, RepositoryError> {
@@ -1698,7 +2001,8 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    occurred_on TEXT NOT NULL, posted_on TEXT, transaction_type TEXT NOT NULL,
                    payee TEXT, description TEXT, status TEXT NOT NULL,
-                   created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z'
+                   created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
+                   updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z'
                  );
                  CREATE TABLE journal_entries (
                    id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id),
@@ -1706,11 +2010,26 @@ mod tests {
                    amount_jpy INTEGER NOT NULL, line_number INTEGER NOT NULL
                  );
                  CREATE TABLE import_runs (id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
-                 CREATE TABLE source_documents (id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT);
-                 CREATE TABLE source_records (id TEXT PRIMARY KEY, source_document_id TEXT);
+                 CREATE TABLE source_documents (
+                   id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT,
+                   source_type TEXT, original_filename TEXT, media_type TEXT,
+                   byte_size INTEGER, sha256 TEXT, storage_path TEXT,
+                   source_modified_at TEXT,
+                   imported_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z');
+                 CREATE TABLE source_records (
+                   id TEXT PRIMARY KEY, source_document_id TEXT, row_number INTEGER,
+                   record_hash TEXT, raw_payload_json TEXT,
+                   created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z');
                  CREATE TABLE transaction_candidates (
                    id TEXT PRIMARY KEY, household_id TEXT, account_id TEXT REFERENCES accounts(id),
                    review_status TEXT);
+                 CREATE TABLE candidate_sources (
+                   candidate_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
+                   evidence_role TEXT NOT NULL DEFAULT 'PRIMARY',
+                   PRIMARY KEY(candidate_id, source_record_id));
+                 CREATE TABLE transaction_sources (
+                   transaction_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
+                   candidate_id TEXT, PRIMARY KEY(transaction_id, source_record_id));
                  CREATE TABLE card_statements (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
                    period_start TEXT NOT NULL, period_end TEXT NOT NULL, payment_due_on TEXT,
@@ -2338,6 +2657,223 @@ mod tests {
             .query_row("SELECT count(*) FROM transactions", [], |row| row.get(0))
             .unwrap();
         assert_eq!(transaction_count, 0);
+    }
+
+    fn update_from_manual(input: &CreateManualTransactionInput) -> UpdatePostedTransactionInput {
+        UpdatePostedTransactionInput {
+            household_id: input.household_id.clone(),
+            transaction_id: input.id.clone(),
+            occurred_on: input.occurred_on.clone(),
+            posted_on: input.posted_on.clone(),
+            transaction_type: input.transaction_type,
+            payee: input.payee.clone(),
+            description: input.description.clone(),
+            entries: input.entries.clone(),
+        }
+    }
+
+    #[test]
+    fn transaction_detail_returns_ordered_journal_without_private_source_data() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        create_manual_transaction(&connection, &manual_expense("manual", "family", 1_234)).unwrap();
+
+        let detail = get_transaction_detail(&connection, "family", "manual").unwrap();
+        assert!(detail.editable);
+        assert_eq!(detail.entries.len(), 2);
+        assert_eq!(detail.entries[0].side, "DEBIT");
+        assert_eq!(detail.entries[0].account_name, "Groceries");
+        assert_eq!(detail.entries[1].line_number, 2);
+        assert!(detail.source_evidence.is_empty());
+        assert!(matches!(
+            get_transaction_detail(&connection, "other", "manual"),
+            Err(RepositoryError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn posted_transaction_update_supports_split_entries_atomically() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let original = manual_expense("manual", "family", 1_000);
+        create_manual_transaction(&connection, &original).unwrap();
+
+        let mut update = update_from_manual(&original);
+        update.occurred_on = "2026-07-13".into();
+        update.payee = Some("Split shop".into());
+        update.entries = vec![
+            ManualJournalEntryInput {
+                id: "split-grocery".into(),
+                account_id: "family-groceries".into(),
+                side: ManualEntrySide::Debit,
+                amount_jpy: 700,
+            },
+            ManualJournalEntryInput {
+                id: "split-transport".into(),
+                account_id: "family-transport".into(),
+                side: ManualEntrySide::Debit,
+                amount_jpy: 300,
+            },
+            ManualJournalEntryInput {
+                id: "split-bank".into(),
+                account_id: "family-bank".into(),
+                side: ManualEntrySide::Credit,
+                amount_jpy: 1_000,
+            },
+        ];
+        let detail = update_posted_transaction(&connection, &update).unwrap();
+        assert_eq!(detail.occurred_on, "2026-07-13");
+        assert_eq!(detail.payee.as_deref(), Some("Split shop"));
+        assert_eq!(detail.entries.len(), 3);
+        assert_eq!(
+            detail
+                .entries
+                .iter()
+                .map(|entry| entry.amount_jpy)
+                .sum::<i64>(),
+            2_000
+        );
+
+        let mut invalid = update;
+        invalid.payee = Some("Must not persist".into());
+        invalid.entries[2].amount_jpy = 999;
+        assert!(matches!(
+            update_posted_transaction(&connection, &invalid),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        let unchanged = get_transaction_detail(&connection, "family", "manual").unwrap();
+        assert_eq!(unchanged.payee.as_deref(), Some("Split shop"));
+        assert_eq!(unchanged.entries.len(), 3);
+    }
+
+    #[test]
+    fn imported_transaction_edits_preserve_safe_source_provenance() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let original = manual_expense("imported", "family", 500);
+        create_manual_transaction(&connection, &original).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO import_runs (id, household_id, status)
+                   VALUES ('run', 'family', 'POSTED');
+                 INSERT INTO source_documents
+                   (id, household_id, import_run_id, source_type, original_filename,
+                    media_type, byte_size, sha256, storage_path)
+                   VALUES ('doc', 'family', 'run', 'MANUAL_UPLOAD', 'statement.csv',
+                           'text/csv', 123, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                           '/private/vault/secret.bin');
+                 INSERT INTO source_records
+                   (id, source_document_id, row_number, record_hash, raw_payload_json)
+                   VALUES ('record', 'doc', 7,
+                           'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                           '{\"secret\":\"must-not-leak\"}');
+                 INSERT INTO transaction_candidates (id, household_id, review_status)
+                   VALUES ('candidate', 'family', 'POSTED');
+                 INSERT INTO candidate_sources (candidate_id, source_record_id, evidence_role)
+                   VALUES ('candidate', 'record', 'SUPPORTING');
+                 INSERT INTO transaction_sources (transaction_id, source_record_id, candidate_id)
+                   VALUES ('imported', 'record', 'candidate');",
+            )
+            .unwrap();
+
+        let detail = get_transaction_detail(&connection, "family", "imported").unwrap();
+        assert!(detail.editable);
+        assert_eq!(detail.source_evidence.len(), 1);
+        let evidence = &detail.source_evidence[0];
+        assert_eq!(evidence.original_filename, "statement.csv");
+        assert_eq!(evidence.row_number, 7);
+        assert_eq!(evidence.evidence_role, "SUPPORTING");
+
+        let mut update = update_from_manual(&original);
+        update.payee = Some("Corrected merchant".into());
+        update.entries[0].account_id = "family-housing".into();
+        let updated = update_posted_transaction(&connection, &update).unwrap();
+        assert_eq!(updated.payee.as_deref(), Some("Corrected merchant"));
+        assert_eq!(updated.entries[0].account_id, "family-housing");
+        assert_eq!(updated.source_evidence.len(), 1);
+        assert_eq!(updated.source_evidence[0].source_record_id, "record");
+        let source_links: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM transaction_sources
+                 WHERE transaction_id = 'imported' AND source_record_id = 'record'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_links, 1);
+    }
+
+    #[test]
+    fn posted_transaction_update_is_household_scoped() {
+        let connection = database();
+        for id in ["one", "two"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        let original = manual_expense("manual", "one", 100);
+        create_manual_transaction(&connection, &original).unwrap();
+        let mut update = update_from_manual(&original);
+        update.household_id = "two".into();
+        assert!(matches!(
+            update_posted_transaction(&connection, &update),
+            Err(RepositoryError::NotFound)
+        ));
+    }
+
+    #[test]
+    fn posted_transaction_update_rolls_back_after_entry_identifier_conflict() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let original = manual_expense("first", "family", 100);
+        create_manual_transaction(&connection, &original).unwrap();
+        create_manual_transaction(&connection, &manual_expense("second", "family", 200)).unwrap();
+
+        let mut update = update_from_manual(&original);
+        update.payee = Some("Must roll back".into());
+        update.entries[0].id = "second-debit".into();
+        assert!(matches!(
+            update_posted_transaction(&connection, &update),
+            Err(RepositoryError::Conflict)
+        ));
+
+        let unchanged = get_transaction_detail(&connection, "family", "first").unwrap();
+        assert_eq!(unchanged.payee.as_deref(), Some("Coffee first"));
+        assert_eq!(unchanged.entries[0].id, "first-debit");
+        assert_eq!(unchanged.entries.len(), 2);
     }
 
     #[test]

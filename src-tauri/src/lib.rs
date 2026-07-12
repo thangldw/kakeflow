@@ -8,6 +8,7 @@ mod persistence;
 mod private_fs;
 mod read_model;
 pub mod restore;
+pub mod watched_folders;
 
 use document_vault::DocumentVault;
 use import_workflow::{
@@ -20,8 +21,9 @@ use read_model::{
     AccountDto, AccountingBasis, ArchiveAccountInput, CardSettlementDto, CreateAccountInput,
     CreateHouseholdInput, CreateManualTransactionInput, CreateSavingsGoalInput,
     DashboardMonthlyTotalsDto, HouseholdDto, ImportRunCountsDto, MonthlyCategoryBudgetDto,
-    RenameAccountInput, SavingsGoalDto, TransactionPageDto, TransactionPageRequest,
-    TransactionRowDto, UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
+    RenameAccountInput, SavingsGoalDto, TransactionDetailDto, TransactionPageDto,
+    TransactionPageRequest, TransactionRowDto, UpdatePostedTransactionInput,
+    UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
 };
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
@@ -414,6 +416,27 @@ fn transaction_manual_create(
 }
 
 #[tauri::command]
+fn transaction_detail_get(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    transaction_id: String,
+) -> Result<TransactionDetailDto, String> {
+    repository_result(&state, |connection| {
+        read_model::get_transaction_detail(connection, &household_id, &transaction_id)
+    })
+}
+
+#[tauri::command]
+fn transaction_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdatePostedTransactionInput,
+) -> Result<TransactionDetailDto, String> {
+    repository_result(&state, |connection| {
+        read_model::update_posted_transaction(connection, &input)
+    })
+}
+
+#[tauri::command]
 fn dashboard_query(
     state: tauri::State<'_, AppState>,
     request: DashboardRequest,
@@ -487,6 +510,84 @@ fn savings_goal_delete(
 ) -> Result<(), String> {
     repository_result(&state, |connection| {
         read_model::delete_savings_goal(connection, &household_id, &goal_id)
+    })
+}
+
+fn watched_folder_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> Result<T, watched_folders::WatchedFolderError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Watched folder database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
+fn watched_folders_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<watched_folders::WatchedFolderDto>, String> {
+    watched_folder_result(&state, |connection| {
+        watched_folders::list(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+async fn watched_folder_select(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    label: String,
+) -> Result<Option<watched_folders::WatchedFolderDto>, String> {
+    let Some(selected) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|_| "Selected folder is unavailable".to_owned())?;
+    watched_folder_result(&state, |connection| {
+        watched_folders::register(connection, &household_id, &label, &path)
+    })
+    .map(Some)
+}
+
+#[tauri::command]
+fn watched_folder_remove(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    watched_folder_id: String,
+) -> Result<(), String> {
+    watched_folder_result(&state, |connection| {
+        watched_folders::remove(connection, &household_id, &watched_folder_id)
+    })
+}
+
+#[tauri::command]
+fn watched_folder_scan(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    watched_folder_id: String,
+) -> Result<watched_folders::WatchedFolderScanDto, String> {
+    watched_folder_result(&state, |connection| {
+        watched_folders::scan_registered(connection, &household_id, &watched_folder_id)
+    })
+}
+
+#[tauri::command]
+fn watched_folder_file_read(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    watched_folder_id: String,
+    relative_path: String,
+) -> Result<watched_folders::WatchedFileDto, String> {
+    watched_folder_result(&state, |connection| {
+        watched_folders::read_registered_file(
+            connection,
+            &household_id,
+            &watched_folder_id,
+            &relative_path,
+        )
     })
 }
 
@@ -953,6 +1054,8 @@ pub fn run() {
             account_archive,
             transactions_query,
             transaction_manual_create,
+            transaction_detail_get,
+            transaction_update,
             dashboard_query,
             budgets_query,
             budget_upsert,
@@ -960,6 +1063,11 @@ pub fn run() {
             savings_goal_create,
             savings_goal_update,
             savings_goal_delete,
+            watched_folders_list,
+            watched_folder_select,
+            watched_folder_remove,
+            watched_folder_scan,
+            watched_folder_file_read,
             import_summary,
             cards_list,
             card_match_confirm,

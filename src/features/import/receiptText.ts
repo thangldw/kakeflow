@@ -33,7 +33,7 @@ export function parseReceiptText(text: string): ReceiptTextFields {
 
 export async function buildReceiptImport(
   extracted: ExtractedDocumentDto,
-  file: { householdId: string; filename: string; mediaType: string; byteSize: number; sha256: string; sourceModifiedAt: string | null; accountId: string },
+  file: { householdId: string; filename: string; mediaType: string; byteSize: number; sha256: string; sourceModifiedAt: string | null; accountId: string; sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' },
   id: () => string,
   hash: (value: string) => Promise<string>,
 ): Promise<{ request: StartImportDto | null; fields: ReceiptTextFields }> {
@@ -44,7 +44,7 @@ export async function buildReceiptImport(
   return {
     fields,
     request: {
-      runId: id(), documentId: id(), householdId: file.householdId, sourceType: 'MANUAL_UPLOAD',
+      runId: id(), documentId: id(), householdId: file.householdId, sourceType: file.sourceType ?? 'MANUAL_UPLOAD',
       originalFilename: file.filename, mediaType: file.mediaType, byteSize: file.byteSize, sha256: file.sha256,
       sourceModifiedAt: file.sourceModifiedAt, adapterId: 'receipt-text-v1', adapterVersion: '1',
       records: [{ id: recordId, rowNumber: 1, recordHash: await hash(payloadJson), payloadJson }],

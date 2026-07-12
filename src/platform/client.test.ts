@@ -30,6 +30,13 @@ describe('platform client', () => {
     await expect(client.listHouseholds()).resolves.toEqual([])
     await expect(client.listAccounts('family')).resolves.toEqual([])
     await expect(client.createManualTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_manual_create' })
+    await expect(client.getTransactionDetail('family', 'tx')).rejects.toMatchObject({ command: 'transaction_detail_get' })
+    await expect(client.updateTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_update' })
+    await expect(client.listWatchedFolders('family')).resolves.toEqual([])
+    await expect(client.selectWatchedFolder('family', 'Inbox')).rejects.toMatchObject({ command: 'watched_folder_select' })
+    await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
+    await expect(client.scanWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_scan' })
+    await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).rejects.toMatchObject({ command: 'watched_folder_file_read' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
     await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
@@ -64,6 +71,17 @@ describe('platform client', () => {
         id: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null,
         amountJpy: 1000, status: 'POSTED', debitAccountId: 'expense', debitAccountName: 'Food', creditAccountId: 'bank', creditAccountName: 'Bank', categoryAccountId: 'expense', categoryName: 'Food',
       },
+      transaction_detail_get: {
+        id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null, status: 'POSTED', createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z', editable: true,
+        entries: [{ id: 'entry-1', accountId: 'expense', accountName: 'Food', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 1000, lineNumber: 1 }, { id: 'entry-2', accountId: 'bank', accountName: 'Bank', accountKind: 'ASSET', side: 'CREDIT', amountJpy: 1000, lineNumber: 2 }],
+        sourceEvidence: [{ sourceRecordId: 'record-1', sourceDocumentId: 'document-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }],
+      },
+      transaction_update: null,
+      watched_folders_list: [{ id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }],
+      watched_folder_select: { id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' },
+      watched_folder_remove: null,
+      watched_folder_scan: { watchedFolderId: 'folder', files: [{ relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000 }] },
+      watched_folder_file_read: { relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fileBytes: [1, 2, 3] },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       import_preview: {
@@ -130,6 +148,15 @@ describe('platform client', () => {
     await expect(client.queryTransactions({ householdId: 'family', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
     const manualInput = { id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
     await expect(client.createManualTransaction(manualInput)).resolves.toEqual(responses.transaction_manual_create)
+    await expect(client.getTransactionDetail('family', 'tx-manual')).resolves.toEqual(responses.transaction_detail_get)
+    responses.transaction_update = responses.transaction_detail_get
+    const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, entries: [] }
+    await expect(client.updateTransaction(updateInput)).resolves.toEqual(responses.transaction_detail_get)
+    await expect(client.listWatchedFolders('family')).resolves.toEqual(responses.watched_folders_list)
+    await expect(client.selectWatchedFolder('family', 'Inbox')).resolves.toEqual(responses.watched_folder_select)
+    await expect(client.removeWatchedFolder('family', 'folder')).resolves.toBeUndefined()
+    await expect(client.scanWatchedFolder('family', 'folder')).resolves.toEqual(responses.watched_folder_scan)
+    await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).resolves.toEqual(responses.watched_folder_file_read)
     await expect(client.importSummary('family')).resolves.toEqual(responses.import_summary)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
@@ -146,6 +173,13 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_manual_create', { input: manualInput })
+    expect(invokeSpy).toHaveBeenCalledWith('transaction_detail_get', { householdId: 'family', transactionId: 'tx-manual' })
+    expect(invokeSpy).toHaveBeenCalledWith('transaction_update', { input: updateInput })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_folders_list', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_folder_select', { householdId: 'family', label: 'Inbox' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_folder_remove', { householdId: 'family', watchedFolderId: 'folder' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_folder_scan', { householdId: 'family', watchedFolderId: 'folder' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_folder_file_read', { householdId: 'family', watchedFolderId: 'folder', relativePath: 'bank.csv' })
     expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
@@ -156,7 +190,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
-    expect(invokeSpy).toHaveBeenCalledTimes(21)
+    expect(invokeSpy).toHaveBeenCalledTimes(28)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

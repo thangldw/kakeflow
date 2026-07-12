@@ -50,4 +50,12 @@ export type {
   ManualTransactionTypeDto,
   ManualJournalEntryInputDto,
   CreateManualTransactionInputDto,
+  TransactionJournalEntryDto,
+  TransactionSourceEvidenceDto,
+  TransactionDetailDto,
+  UpdatePostedTransactionInputDto,
+  WatchedFolderDto,
+  WatchedFileMetadataDto,
+  WatchedFolderScanDto,
+  WatchedFileDto,
 } from './types'

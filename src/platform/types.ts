@@ -158,6 +158,19 @@ export interface CreateManualTransactionInputDto {
   readonly transactionType: ManualTransactionTypeDto; readonly payee: string | null; readonly description: string | null
   readonly entries: readonly ManualJournalEntryInputDto[]
 }
+export interface TransactionJournalEntryDto { readonly id: string; readonly accountId: string; readonly accountName: string; readonly accountKind: string; readonly side: 'DEBIT' | 'CREDIT'; readonly amountJpy: number; readonly lineNumber: number }
+export interface TransactionSourceEvidenceDto { readonly sourceRecordId: string; readonly sourceDocumentId: string; readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly rowNumber: number; readonly importedAt: string; readonly evidenceRole: string }
+export interface TransactionDetailDto {
+  readonly id: string; readonly householdId: string; readonly occurredOn: string; readonly postedOn: string | null
+  readonly transactionType: ManualTransactionTypeDto; readonly payee: string | null; readonly description: string | null
+  readonly status: string; readonly createdAt: string; readonly updatedAt: string; readonly editable: boolean
+  readonly entries: readonly TransactionJournalEntryDto[]; readonly sourceEvidence: readonly TransactionSourceEvidenceDto[]
+}
+export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string }
+export interface WatchedFolderDto { readonly id: string; readonly householdId: string; readonly label: string; readonly displayName: string; readonly isEnabled: boolean; readonly createdAt: string }
+export interface WatchedFileMetadataDto { readonly relativePath: string; readonly fileName: string; readonly mediaType: string; readonly byteSize: number; readonly modifiedUnixMs: number | null }
+export interface WatchedFolderScanDto { readonly watchedFolderId: string; readonly files: readonly WatchedFileMetadataDto[] }
+export interface WatchedFileDto extends WatchedFileMetadataDto { readonly fileBytes: readonly number[] }
 
 export interface TransactionPageDto {
   readonly items: readonly TransactionRowDto[]
@@ -200,6 +213,13 @@ export type AppCommand =
   | 'account_archive'
   | 'transactions_query'
   | 'transaction_manual_create'
+  | 'transaction_detail_get'
+  | 'transaction_update'
+  | 'watched_folders_list'
+  | 'watched_folder_select'
+  | 'watched_folder_remove'
+  | 'watched_folder_scan'
+  | 'watched_folder_file_read'
   | 'dashboard_query'
   | 'budgets_query'
   | 'budget_upsert'
@@ -235,6 +255,13 @@ export interface PlatformClient {
   archiveAccount(input: ArchiveAccountInputDto): Promise<void>
   queryTransactions(request: TransactionPageRequestDto): Promise<TransactionPageDto>
   createManualTransaction(input: CreateManualTransactionInputDto): Promise<TransactionRowDto>
+  getTransactionDetail(householdId: string, transactionId: string): Promise<TransactionDetailDto>
+  updateTransaction(input: UpdatePostedTransactionInputDto): Promise<TransactionDetailDto>
+  listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
+  selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
+  removeWatchedFolder(householdId: string, watchedFolderId: string): Promise<void>
+  scanWatchedFolder(householdId: string, watchedFolderId: string): Promise<WatchedFolderScanDto>
+  readWatchedFile(householdId: string, watchedFolderId: string, relativePath: string): Promise<WatchedFileDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
