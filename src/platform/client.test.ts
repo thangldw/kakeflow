@@ -39,6 +39,9 @@ describe('platform client', () => {
       app_status: { schemaVersion: 5, integrity: 'ok' },
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
       household_create: { id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' },
+      dashboard_query: { month: '2026-07', accountingBasis: 'ACCRUAL', incomeJpy: 650000, expenseJpy: 250000, savingsJpy: 400000, postedTransactionCount: 10 },
+      transactions_query: { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
+      import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
     }
     const invokeSpy = vi.fn()
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -52,8 +55,11 @@ describe('platform client', () => {
     await expect(client.status()).resolves.toEqual(responses.app_status)
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
     await expect(client.createHousehold({ id: 'family', name: 'Family' })).resolves.toEqual(responses.household_create)
+    await expect(client.queryDashboard({ householdId: 'family', month: '2026-07', accountingBasis: 'ACCRUAL' })).resolves.toEqual(responses.dashboard_query)
+    await expect(client.queryTransactions({ householdId: 'family', accountingBasis: 'ACCRUAL', page: 1, pageSize: 20 })).resolves.toEqual(responses.transactions_query)
+    await expect(client.importSummary('family')).resolves.toEqual(responses.import_summary)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
-    expect(invokeSpy).toHaveBeenCalledTimes(5)
+    expect(invokeSpy).toHaveBeenCalledTimes(8)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {
