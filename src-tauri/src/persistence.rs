@@ -7,6 +7,8 @@ use std::sync::Mutex;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+use crate::key_store::OsDatabaseKeyProvider;
+
 const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0001_household_accounts.sql")),
     M::up(include_str!("../migrations/0002_import_provenance.sql")),
@@ -19,9 +21,6 @@ const MIGRATIONS: &[M<'static>] = &[
 pub enum PersistenceError {
     #[error("database key is unavailable")]
     KeyUnavailable,
-    #[cfg(debug_assertions)]
-    #[error("development database key does not meet the minimum strength requirement")]
-    WeakKey,
     #[error("database directory could not be prepared")]
     Directory,
     #[error("database operation failed")]
@@ -38,34 +37,9 @@ pub trait DatabaseKeyProvider {
     fn key(&self) -> Result<Zeroizing<Vec<u8>>, PersistenceError>;
 }
 
-/// Transitional provider for unattended development and packaging.
-///
-/// Debug builds accept a 32+ character environment secret. Release builds always
-/// fail closed. Before distribution this provider must be replaced by a provider
-/// backed by macOS Keychain and Windows Credential Manager. The secret is never
-/// written to the application database or logs.
-pub struct EnvironmentKeyProvider;
-
-impl DatabaseKeyProvider for EnvironmentKeyProvider {
+impl DatabaseKeyProvider for OsDatabaseKeyProvider {
     fn key(&self) -> Result<Zeroizing<Vec<u8>>, PersistenceError> {
-        // Release builds must switch to an OS credential-backed implementation.
-        // Refusing the environment fallback prevents silently shipping a key in a
-        // process environment, installer, or application bundle.
-        #[cfg(not(debug_assertions))]
-        return Err(PersistenceError::KeyUnavailable);
-
-        #[cfg(debug_assertions)]
-        let value = Zeroizing::new(
-            std::env::var("KAKEFLOW_DATABASE_KEY")
-                .map_err(|_| PersistenceError::KeyUnavailable)?
-                .into_bytes(),
-        );
-        #[cfg(debug_assertions)]
-        if value.len() < 32 {
-            return Err(PersistenceError::WeakKey);
-        }
-        #[cfg(debug_assertions)]
-        Ok(value)
+        OsDatabaseKeyProvider::key(self).map_err(|_| PersistenceError::KeyUnavailable)
     }
 }
 
