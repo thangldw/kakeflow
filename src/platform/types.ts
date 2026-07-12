@@ -181,6 +181,7 @@ export type AppCommand =
   | 'backup_restore_stage'
   | 'app_restart_for_restore'
   | 'document_extract'
+  | 'document_ocr'
   | 'cards_list'
   | 'card_match_confirm'
 
@@ -205,6 +206,7 @@ export interface PlatformClient {
   stageBackupRestore(archivePath: string, passphrase: string): Promise<BackupSummaryDto>
   restartForRestore(): Promise<void>
   extractDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
+  ocrDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
   listCardSettlements(householdId: string): Promise<readonly CardSettlementDto[]>
   confirmCardMatch(householdId: string, statementId: string, paymentId: string): Promise<CardMatchConfirmationDto>
 }

@@ -19,6 +19,7 @@ export interface ImportPreview {
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const MAX_BATCH_FILES = 20
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -59,10 +60,12 @@ export function excelRowsToCsv(rows: readonly (readonly unknown[])[]): string {
 export async function previewImportFile(file: File): Promise<ImportPreview> {
   let id = `pending:${file.name}:${file.size}`
   try {
-    if (file.size > MAX_FILE_BYTES) {
+    const isImage = /image\/(?:png|jpeg)/i.test(file.type) || /\.(?:png|jpe?g)$/i.test(file.name)
+    const sizeLimit = isImage ? MAX_IMAGE_BYTES : MAX_FILE_BYTES
+    if (file.size > sizeLimit) {
       return {
         id, filename: file.name, adapterId: null, encoding: 'not-read', recordCount: 0,
-        issues: [{ code: 'FILE_TOO_LARGE', message: 'ファイルサイズは25MB以下にしてください。', severity: 'error' }],
+        issues: [{ code: 'FILE_TOO_LARGE', message: isImage ? 'レシート画像は20MB以下にしてください。' : 'ファイルサイズは25MB以下にしてください。', severity: 'error' }],
         status: 'error', parsedAt: new Date().toISOString(),
       }
     }
@@ -75,6 +78,15 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
         issues: [{ code: 'DOCUMENT_EXTRACTION_REQUIRED', message: 'PDFの埋め込みテキストをローカルで抽出します。', severity: 'warning' }],
         status: 'extractable', parsedAt: new Date().toISOString(), fileBytes: bytes,
         mediaType: 'application/pdf', sourceModifiedAt: new Date(file.lastModified).toISOString(),
+      }
+    }
+    if (isImage) {
+      const mediaType = file.type.toLowerCase() === 'image/png' || /\.png$/i.test(file.name) ? 'image/png' : 'image/jpeg'
+      return {
+        id, filename: file.name, adapterId: 'receipt-image-ocr-v1', encoding: 'binary', recordCount: 0,
+        issues: [{ code: 'DOCUMENT_EXTRACTION_REQUIRED', message: 'レシート画像を端末内OCRで読み取ります。', severity: 'warning' }],
+        status: 'extractable', parsedAt: new Date().toISOString(), fileBytes: bytes,
+        mediaType, sourceModifiedAt: new Date(file.lastModified).toISOString(),
       }
     }
     const isXlsx = /\.xlsx$/i.test(file.name) || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

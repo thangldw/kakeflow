@@ -17,4 +17,18 @@ describe('receipt text normalization', () => {
     expect(result.request).toBeNull()
     expect(result.fields.issues).toContain('STATEMENT_LIKELY')
   })
+
+  it('keeps a complete but low-confidence OCR result pending for human review', async () => {
+    const extracted = { method: 'OCR' as const, confidenceBps: 6200, issues: ['LOW_CONFIDENCE'], text: 'セブンイレブン\n2026/07/12\n合計 1,480' }
+    const result = await buildReceiptImport(extracted, {
+      householdId: 'family', filename: 'receipt.jpg', mediaType: 'image/jpeg', byteSize: 100,
+      sha256: 'a'.repeat(64), sourceModifiedAt: null, accountId: 'family-cash',
+    }, () => globalThis.crypto.randomUUID(), async () => 'b'.repeat(64))
+
+    expect(result.request?.candidates[0]).toMatchObject({
+      extractionConfidenceBps: 6200,
+      normalizationConfidenceBps: 10000,
+      reviewStatus: 'PENDING',
+    })
+  })
 })

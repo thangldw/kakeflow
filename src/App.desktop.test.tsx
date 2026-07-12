@@ -37,6 +37,7 @@ vi.mock('./platform', async () => {
       stageBackupRestore: desktop.stageBackupRestore,
       restartForRestore: desktop.restartForRestore,
       extractDocument: vi.fn(),
+      ocrDocument: vi.fn(),
     },
   }
 })

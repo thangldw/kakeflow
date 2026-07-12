@@ -33,6 +33,12 @@ struct BackupPaths {
 
 struct BackupMasterKey(Zeroizing<[u8; 32]>);
 
+struct OcrPaths {
+    temporary_directory: std::path::PathBuf,
+    bundled_executable: Option<std::path::PathBuf>,
+    bundled_tessdata: Option<std::path::PathBuf>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct BackupSummaryDto {
@@ -412,6 +418,102 @@ fn document_extract(
     })
 }
 
+#[tauri::command]
+fn document_ocr(
+    paths: tauri::State<'_, OcrPaths>,
+    file_bytes: Vec<u8>,
+    media_type: String,
+) -> Result<document_extract::ExtractedDocument, String> {
+    const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+    let extension = match media_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        _ => return Err("OCR image format is unsupported".to_owned()),
+    };
+    if file_bytes.is_empty() || file_bytes.len() > MAX_IMAGE_BYTES {
+        return Err("OCR image input is invalid".to_owned());
+    }
+
+    std::fs::create_dir_all(&paths.temporary_directory)
+        .map_err(|_| "OCR temporary storage is unavailable".to_owned())?;
+    private_fs::secure_directory(&paths.temporary_directory)
+        .map_err(|_| "OCR temporary storage is unavailable".to_owned())?;
+    let temporary_path =
+        create_ocr_temporary_file(&paths.temporary_directory, extension, &file_bytes)?;
+
+    let config = ocr::OcrConfig {
+        executable: paths.bundled_executable.clone(),
+        tessdata_dir: paths.bundled_tessdata.clone(),
+        ..ocr::OcrConfig::default()
+    };
+    let result = ocr::OfflineOcrProvider::discover(config)
+        .and_then(|provider| provider.recognize(&temporary_path));
+    let _ = std::fs::remove_file(&temporary_path);
+    let result = result.map_err(|error| match error {
+        ocr::OcrError::EngineUnavailable => "Offline OCR engine is unavailable",
+        ocr::OcrError::LanguageModelsUnavailable => "Japanese OCR models are unavailable",
+        ocr::OcrError::TimedOut => "Offline OCR timed out",
+        ocr::OcrError::InputTooLarge | ocr::OcrError::ImageDimensionsTooLarge => {
+            "OCR image exceeds the safety limit"
+        }
+        _ => "Offline OCR failed",
+    })?;
+    if result.text.len() > 1024 * 1024 {
+        return Err("Offline OCR produced too much text".to_owned());
+    }
+    let confidence_bps = result
+        .mean_confidence
+        .map(|value| (value * 10_000.0).round() as u16)
+        .unwrap_or(0);
+    let mut issues = Vec::new();
+    if confidence_bps < 7_500 {
+        issues.push("LOW_OCR_CONFIDENCE");
+    }
+    Ok(document_extract::ExtractedDocument {
+        method: "OCR",
+        text: result.text,
+        confidence_bps,
+        issues,
+    })
+}
+
+fn create_ocr_temporary_file(
+    directory: &std::path::Path,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    use std::io::Write as _;
+
+    for _ in 0..16 {
+        let mut random = [0_u8; 16];
+        getrandom::getrandom(&mut random)
+            .map_err(|_| "OCR temporary storage is unavailable".to_owned())?;
+        let name = random
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let path = directory.join(format!(".{name}.{extension}"));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        match options.open(&path) {
+            Ok(mut file) => {
+                if private_fs::secure_file(&path).is_err() {
+                    let _ = std::fs::remove_file(&path);
+                    return Err("OCR temporary storage is unavailable".to_owned());
+                }
+                if file.write_all(bytes).is_err() || file.sync_all().is_err() {
+                    let _ = std::fs::remove_file(&path);
+                    return Err("OCR temporary storage is unavailable".to_owned());
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("OCR temporary storage is unavailable".to_owned()),
+        }
+    }
+    Err("OCR temporary storage is unavailable".to_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -422,6 +524,24 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("database").join("kakeflow.db");
             let vault_path = app_data_dir.join("documents");
+            let resource_dir = app.path().resource_dir()?;
+            let bundled_ocr = resource_dir
+                .join("ocr")
+                .join(if cfg!(target_os = "windows") {
+                    "tesseract.exe"
+                } else {
+                    "tesseract"
+                });
+            let bundled_tessdata = resource_dir.join("ocr").join("tessdata");
+            let bundled_ocr_available = bundled_ocr.is_file() && bundled_tessdata.is_dir();
+            let ocr_temporary_directory = app_data_dir.join("temporary").join("ocr");
+            if let Ok(metadata) = std::fs::symlink_metadata(&ocr_temporary_directory) {
+                if metadata.file_type().is_symlink() || metadata.is_file() {
+                    std::fs::remove_file(&ocr_temporary_directory)?;
+                } else {
+                    std::fs::remove_dir_all(&ocr_temporary_directory)?;
+                }
+            }
             let restore_credentials = OsRestoreCredentialStore::new()?;
             // Finish or roll back any staged restore before SQLite or the vault
             // obtains a file handle. This is required for reliable Windows
@@ -447,9 +567,14 @@ pub fn run() {
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
             app.manage(BackupPaths {
-                app_data_root: app_data_dir,
+                app_data_root: app_data_dir.clone(),
                 database: database_path,
                 vault: vault_path,
+            });
+            app.manage(OcrPaths {
+                temporary_directory: ocr_temporary_directory,
+                bundled_executable: bundled_ocr_available.then_some(bundled_ocr),
+                bundled_tessdata: bundled_ocr_available.then_some(bundled_tessdata),
             });
             Ok(())
         })
@@ -472,7 +597,8 @@ pub fn run() {
             backup_create,
             backup_restore_stage,
             app_restart_for_restore,
-            document_extract
+            document_extract,
+            document_ocr
         ])
         .run(tauri::generate_context!())
         .expect("KakeFlow failed to start");
