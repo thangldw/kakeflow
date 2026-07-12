@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 — 2026-07-13
+
+- Add immutable dated investment market-price observations with provider, document, row, and observation provenance.
+- Reuse prices from `assetbalance(all)_*.csv` snapshots and value FIFO holdings at the latest confirmed price on or before the selected date without using future or wrong-currency quotes.
+- Add market value, unrealized P&L, missing-price disclosure, annual realized P&L, dividend, fee, tax, and source-row reports by currency.
+- Render authenticated PDF source pages locally and place `PDF_POINTS` extraction regions over the actual page image.
+- Normalize full-width Japanese receipt text, `令和`/`平成` dates, and additional electronic-money payment methods.
+- Exercise onboarding and four navigation routes inside the real packaged WebView, verify the UI-created household in SQLCipher, and upload machine-readable interaction evidence from macOS and Windows CI.
+
 ## 0.7.0 — 2026-07-13
 
 - Replace folder-only polling with recursive native filesystem notifications, burst debouncing, duplicate suppression, and a bounded polling fallback.
