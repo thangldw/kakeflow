@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0 — 2026-07-13
+
+- Add household-scoped, versioned CSV/TSV parser profiles with create, update, enable/disable, priority, and optimistic delete/update behavior.
+- Map saved header rows to transaction date, description/payee, signed amount or separate debit/credit columns, external transaction ID, and an optional account hint.
+- Support explicit UTF-8/UTF-8 BOM/CP932 decoding, comma/tab/semicolon detection, multiple date layouts, and configurable positive-value direction for one-column card or bank amounts.
+- Preview real matched headers, candidates, excluded rows, encoding, delimiter, and row-level issues before starting an import; any error blocks staging rather than silently omitting rows.
+- Preserve source-row/raw-field provenance and external transaction IDs, select an Asset/Liability target account explicitly, and keep every custom candidate in the existing review/approval workflow.
+- Retain bounded bytes for unsupported CSV/TSV files so a saved profile can be applied locally without uploading or rereading the original file.
+
 ## 0.13.0 — 2026-07-13
 
 - Add one persisted tagged attribution scope—whole household, household-common activity, or one member—to the desktop workspace.
