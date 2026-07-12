@@ -9,7 +9,7 @@ const group = {
 
 const request: ExportCsvRequestDto = {
   householdId: 'home', exportKind: 'TRANSACTIONS', accountingBasis: 'ACCRUAL',
-  groupId: 'daily', fromDate: '2026-07-01', toDate: '2026-07-31',
+  groupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, fromDate: '2026-07-01', toDate: '2026-07-31',
 }
 
 describe('account group and export platform', () => {

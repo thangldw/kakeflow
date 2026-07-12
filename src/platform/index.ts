@@ -16,6 +16,7 @@ export type {
   AccountVisibilityDto,
   AudienceVisibilityDto,
   AttributionKindDto,
+  AttributionScopeDto,
   CreateAccountInputDto,
   UpdateAccountOwnershipInputDto,
   RenameAccountInputDto,

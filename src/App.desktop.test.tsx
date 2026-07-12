@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const desktop = vi.hoisted(() => ({
@@ -176,6 +176,7 @@ describe('KakeFlow desktop read models', () => {
       if (command === 'financial_report_monthly_query') return { period: '2026-07', current: metrics, priorMonth: { ...metrics, expenseJpy: 125000 }, priorYear: { ...metrics, incomeJpy: 490000 }, vsPriorMonth: deltas, vsPriorYear: deltas, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 70000, previousJpy: 60000, deltaJpy: 10000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 50000, previousJpy: 40000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 1, fullyReconciled: 1, possibleMatches: 0, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
       if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }] }
       if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
+      if (command === 'export_csv_save') return { fileName: 'transactions.csv', rowCount: 1, byteSize: 100 }
       if (command === 'account_groups_list') return accountGroupState.groups
       if (command === 'account_group_delete') {
         const deletedId = args?.groupId
@@ -212,6 +213,38 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getAllByText('表示: 共有').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
+  })
+
+  it('persists and forwards the global attribution scope while disclosing household-wide metrics', async () => {
+    const view = render(<App />)
+    await screen.findByText('生協')
+    const selector = await screen.findByLabelText('集計対象') as HTMLSelectElement
+    fireEvent.change(selector, { target: { value: 'MEMBER:taro' } })
+
+    const memberScope = { kind: 'MEMBER', memberId: 'taro' }
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ attributionScope: memberScope })))
+    expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ attributionScope: memberScope }))
+    expect(screen.getByText(/純資産・資産残高・貯蓄目標・インポート状況は世帯全体です/)).toHaveTextContent('集計対象: 太郎')
+    expect(JSON.parse(localStorage.getItem('kakeflow.attributionScopes') ?? '{}')).toEqual({ family: memberScope })
+
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    await screen.findByText('Financial Calendar')
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', { request: expect.objectContaining({ attributionScope: memberScope }) }))
+    expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
+    expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
+
+    fireEvent.click(screen.getByRole('tab', { name: /定期・異常/ }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_intelligence_query', { request: expect.objectContaining({ attributionScope: memberScope }) }))
+    fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '保存先を選んでCSV出力' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('export_csv_save', { request: expect.objectContaining({ attributionScope: memberScope }) }))
+
+    view.unmount()
+    render(<App />)
+    await screen.findByText('生協')
+    await waitFor(() => expect(screen.getByLabelText('集計対象')).toHaveValue('MEMBER:taro'))
+    fireEvent.change(screen.getByLabelText('集計対象'), { target: { value: 'HOUSEHOLD_COMMON' } })
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ attributionScope: { kind: 'HOUSEHOLD_COMMON' } })))
   })
 
   it('persists one global account scope across month and page changes, defaults export to it, and resets after deletion', async () => {
@@ -374,7 +407,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(merchant.closest('button')!)
 
     expect(await screen.findByText('card.csv')).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '次郎（アーカイブ済み）' })).toBeInTheDocument()
+    expect(within(screen.getByLabelText('取引の家族内の帰属')).getByRole('option', { name: '次郎（アーカイブ済み）' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '個人・次郎（アーカイブ済み）' })).toBeInTheDocument()
     expect(screen.getByText(/行 2/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /card.csv.*原本行を表示/ }))

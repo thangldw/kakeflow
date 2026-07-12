@@ -1,8 +1,10 @@
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
+import type { AttributionScopeDto } from '../../platform/types'
 
 export interface ForecastActionRequestDto {
   readonly householdId: string
   readonly accountGroupId?: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly asOf: string
 }
 

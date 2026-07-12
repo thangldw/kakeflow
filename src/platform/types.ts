@@ -59,6 +59,10 @@ export type AccountOwnershipKindDto = 'HOUSEHOLD' | 'MEMBER'
 export type AccountVisibilityDto = 'SHARED' | 'PERSONAL'
 export type AudienceVisibilityDto = AccountVisibilityDto
 export type AttributionKindDto = 'HOUSEHOLD' | 'MEMBER'
+export type AttributionScopeDto =
+  | { readonly kind: 'ALL' }
+  | { readonly kind: 'HOUSEHOLD_COMMON' }
+  | { readonly kind: 'MEMBER'; readonly memberId: string }
 export interface AccountDto {
   readonly id: string
   readonly name: string
@@ -148,6 +152,7 @@ export type AccountingBasisDto = 'ACCRUAL' | 'CASH'
 export interface DashboardRequestDto {
   readonly householdId: string
   readonly accountGroupId?: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly month: string
   readonly accountingBasis: AccountingBasisDto
 }
@@ -182,6 +187,7 @@ export interface DashboardExpenseCategoryDto {
 export interface TransactionPageRequestDto {
   readonly householdId: string
   readonly accountGroupId?: string | null
+  readonly attributionScope: AttributionScopeDto
   readonly accountingBasis: AccountingBasisDto
   readonly fromDate?: string | null
   readonly toDate?: string | null

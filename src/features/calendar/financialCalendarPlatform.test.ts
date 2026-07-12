@@ -24,8 +24,8 @@ describe('financial calendar platform boundary', () => {
     }
     const invoke = vi.fn(async () => response) as unknown as FinancialCalendarInvoke
     const platform = createFinancialCalendarPlatform(invoke)
-    await expect(platform.getCalendar({ householdId: 'family', accountGroupId: 'daily', month: '2026-07', asOf: '2026-07-31' })).resolves.toEqual(response)
-    expect(invoke).toHaveBeenCalledWith('financial_calendar_query', { request: { householdId: 'family', accountGroupId: 'daily', month: '2026-07', asOf: '2026-07-31' } })
+    await expect(platform.getCalendar({ householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, month: '2026-07', asOf: '2026-07-31' })).resolves.toEqual(response)
+    expect(invoke).toHaveBeenCalledWith('financial_calendar_query', { request: { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, month: '2026-07', asOf: '2026-07-31' } })
   })
 
   it('invokes and parses monthly and yearly financial reports', async () => {
@@ -33,14 +33,14 @@ describe('financial calendar platform boundary', () => {
     const yearly = { period: '2026', ...sharedReport, months: [{ month: '2026-07', ...metrics }] }
     const invoke = vi.fn(async (command: string) => command === 'financial_report_monthly_query' ? monthly : yearly) as unknown as FinancialCalendarInvoke
     const platform = createFinancialCalendarPlatform(invoke)
-    await expect(platform.getMonthlyReport({ householdId: 'family', month: '2026-07' })).resolves.toEqual(monthly)
-    await expect(platform.getYearlyReport({ householdId: 'family', year: '2026' })).resolves.toEqual(yearly)
-    expect(invoke).toHaveBeenNthCalledWith(1, 'financial_report_monthly_query', { request: { householdId: 'family', month: '2026-07' } })
-    expect(invoke).toHaveBeenNthCalledWith(2, 'financial_report_yearly_query', { request: { householdId: 'family', year: '2026' } })
+    await expect(platform.getMonthlyReport({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' })).resolves.toEqual(monthly)
+    await expect(platform.getYearlyReport({ householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026' })).resolves.toEqual(yearly)
+    expect(invoke).toHaveBeenNthCalledWith(1, 'financial_report_monthly_query', { request: { householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' } })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'financial_report_yearly_query', { request: { householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026' } })
   })
 
   it('rejects malformed financial responses at the desktop boundary', async () => {
     const invoke = vi.fn(async () => ({ month: '2026-07', asOf: '2026-07-31', days: [{ events: [{ kind: 'UNKNOWN' }] }], budget, goals, dataQuality })) as unknown as FinancialCalendarInvoke
-    await expect(createFinancialCalendarPlatform(invoke).getCalendar({ householdId: 'family', month: '2026-07' })).rejects.toThrow(TypeError)
+    await expect(createFinancialCalendarPlatform(invoke).getCalendar({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' })).rejects.toThrow(TypeError)
   })
 })
