@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -19,6 +19,25 @@ export function executableForPlatform(platform = process.platform, repositoryRoo
 }
 
 export function validateSmokeResult(result) {
+  const requiredPages = new Map([
+    ['ホーム', 'Packaged Smoke Householdの家計'],
+    ['取引', 'すべての取引'],
+    ['インポート', 'インポート Inbox'],
+    ['カレンダー・レポート', 'カレンダー・レポート'],
+  ])
+  const evidence = result?.visualEvidence
+  const pages = Array.isArray(evidence?.visitedPages) ? evidence.visitedPages : []
+  const pagesValid = [...requiredPages].every(([navigationLabel, pageTitle]) =>
+    pages.some((page) =>
+      page?.navigationLabel === navigationLabel &&
+      page.pageTitle === pageTitle &&
+      page.activeNavigation === true &&
+      Number.isInteger(page.mainWidth) && page.mainWidth >= 600 &&
+      Number.isInteger(page.mainHeight) && page.mainHeight > 0 &&
+      Number.isInteger(page.interactiveElementCount) && page.interactiveElementCount > 0 &&
+      Number.isInteger(page.renderedTextLength) && page.renderedTextLength >= 20,
+    ),
+  )
   if (
     result?.status !== 'ok' ||
     result.application !== 'KakeFlow' ||
@@ -26,7 +45,16 @@ export function validateSmokeResult(result) {
     result.ipc !== true ||
     result.databaseHealthy !== true ||
     !Number.isInteger(result.schemaVersion) ||
-    result.schemaVersion <= 0
+    result.schemaVersion <= 0 ||
+    evidence?.onboardingTitle !== '家計簿をはじめましょう' ||
+    evidence.householdName !== 'Packaged Smoke Household' ||
+    !Array.isArray(evidence.navigationLabels) ||
+    ![...requiredPages.keys()].every((label) => evidence.navigationLabels.includes(label)) ||
+    !Number.isInteger(evidence.interactionCount) || evidence.interactionCount < 5 ||
+    !Number.isInteger(evidence.viewportWidth) || evidence.viewportWidth < 800 ||
+    !Number.isInteger(evidence.viewportHeight) || evidence.viewportHeight < 600 ||
+    typeof evidence.devicePixelRatio !== 'number' || !Number.isFinite(evidence.devicePixelRatio) || evidence.devicePixelRatio <= 0 ||
+    !pagesValid
   ) {
     throw new Error(`Invalid packaged smoke result: ${JSON.stringify(result)}`)
   }
@@ -82,6 +110,7 @@ export async function runPackagedSmoke({
   executable = process.env.KAKEFLOW_SMOKE_EXECUTABLE || executableForPlatform(),
   timeoutMs = defaultTimeoutMs,
   keepData = process.env.KAKEFLOW_KEEP_SMOKE_DATA === '1',
+  artifactDirectory = process.env.KAKEFLOW_SMOKE_ARTIFACT_DIR,
 } = {}) {
   if (!existsSync(executable)) {
     throw new Error(`Packaged app executable does not exist: ${executable}`)
@@ -100,10 +129,18 @@ export async function runPackagedSmoke({
     if (!databaseStat.isFile() || databaseStat.size === 0) {
       throw new Error('Packaged smoke database was not created')
     }
+    const artifactPaths = []
+    if (artifactDirectory) {
+      const destination = path.resolve(artifactDirectory)
+      await mkdir(destination, { recursive: true })
+      const resultArtifact = path.join(destination, `packaged-smoke-${process.platform}.json`)
+      await copyFile(resultPath, resultArtifact)
+      artifactPaths.push(resultArtifact)
+    }
     console.log(
-      `Packaged app smoke passed (${result.window} window, IPC, schema v${result.schemaVersion})`,
+      `Packaged app smoke passed (${result.visualEvidence.visitedPages.length} visible pages, ${result.visualEvidence.interactionCount} interactions, IPC, schema v${result.schemaVersion})`,
     )
-    return { ...result, dataRoot }
+    return { ...result, dataRoot, artifactPaths }
   } finally {
     if (keepData) {
       console.log(`Packaged smoke data retained at ${dataRoot}`)

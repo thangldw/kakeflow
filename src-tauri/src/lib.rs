@@ -151,6 +151,44 @@ struct DatabaseStatus {
 struct PackagedSmokeBootstrap {
     application: String,
     database: DatabaseStatus,
+    visual_evidence: PackagedSmokeVisualEvidence,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PackagedSmokeVisualEvidence {
+    onboarding_title: String,
+    household_name: String,
+    navigation_labels: Vec<String>,
+    visited_pages: Vec<PackagedSmokePageEvidence>,
+    interaction_count: u32,
+    viewport_width: u32,
+    viewport_height: u32,
+    device_pixel_ratio: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PackagedSmokePageEvidence {
+    navigation_label: String,
+    page_title: String,
+    active_navigation: bool,
+    main_width: u32,
+    main_height: u32,
+    interactive_element_count: u32,
+    rendered_text_length: u32,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackagedSmokeResult<'a> {
+    status: &'static str,
+    application: &'static str,
+    window: &'static str,
+    ipc: bool,
+    database_healthy: bool,
+    schema_version: i64,
+    visual_evidence: &'a PackagedSmokeVisualEvidence,
 }
 
 #[derive(Debug, Serialize)]
@@ -433,6 +471,7 @@ fn packaged_smoke_complete(
     if webview.label() != "main" || bootstrap.application != "KakeFlow" {
         return Err("Packaged smoke request is invalid".to_owned());
     }
+    validate_packaged_smoke_visual_evidence(&bootstrap.visual_evidence)?;
 
     let current = database_status(&state)?;
     if !bootstrap.database.healthy
@@ -447,24 +486,166 @@ fn packaged_smoke_complete(
     if !database.is_file() {
         return Err("Packaged smoke database was not created".to_owned());
     }
-    let result = format!(
-        concat!(
-            "{{\n",
-            "  \"status\": \"ok\",\n",
-            "  \"application\": \"KakeFlow\",\n",
-            "  \"window\": \"main\",\n",
-            "  \"ipc\": true,\n",
-            "  \"databaseHealthy\": true,\n",
-            "  \"schemaVersion\": {}\n",
-            "}}\n"
-        ),
-        current.schema_version
-    );
+    let household_persisted = state
+        .with_connection(|connection| {
+            Ok(connection.query_row(
+                "SELECT count(*) FROM households WHERE name = ?1",
+                [&bootstrap.visual_evidence.household_name],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .map_err(|_| "Packaged smoke household validation failed".to_owned())?;
+    if household_persisted != 1 {
+        return Err("Packaged smoke UI write was not persisted".to_owned());
+    }
+
+    let result = PackagedSmokeResult {
+        status: "ok",
+        application: "KakeFlow",
+        window: "main",
+        ipc: true,
+        database_healthy: true,
+        schema_version: current.schema_version,
+        visual_evidence: &bootstrap.visual_evidence,
+    };
+    let result = serde_json::to_vec_pretty(&result)
+        .map_err(|_| "Packaged smoke result could not be encoded".to_owned())?;
     std::fs::write(&config.result, result)
         .map_err(|_| "Packaged smoke result could not be written".to_owned())?;
 
     app.exit(0);
     Ok(())
+}
+
+#[tauri::command]
+fn packaged_smoke_failure(app: tauri::AppHandle, message: String) -> Result<(), String> {
+    let config = PackagedSmokeConfig::from_environment()
+        .map_err(|_| "Packaged smoke configuration is invalid".to_owned())?
+        .ok_or_else(|| "Packaged smoke mode is disabled".to_owned())?;
+    let message = message.chars().take(500).collect::<String>();
+    let failure = serde_json::json!({ "status": "failed", "message": message });
+    let encoded = serde_json::to_vec_pretty(&failure)
+        .map_err(|_| "Packaged smoke failure could not be encoded".to_owned())?;
+    std::fs::write(&config.result, encoded)
+        .map_err(|_| "Packaged smoke failure could not be written".to_owned())?;
+    eprintln!("Packaged smoke UI failed: {message}");
+    app.exit(2);
+    Ok(())
+}
+
+#[tauri::command]
+fn packaged_smoke_progress(stage: String) -> Result<(), String> {
+    let config = PackagedSmokeConfig::from_environment()
+        .map_err(|_| "Packaged smoke configuration is invalid".to_owned())?
+        .ok_or_else(|| "Packaged smoke mode is disabled".to_owned())?;
+    if stage.is_empty()
+        || stage.len() > 80
+        || !stage
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("Packaged smoke progress is invalid".to_owned());
+    }
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(config.root.join("packaged-smoke-progress.log"))
+        .map_err(|_| "Packaged smoke progress could not be written".to_owned())?;
+    writeln!(file, "{stage}").map_err(|_| "Packaged smoke progress could not be written".to_owned())
+}
+
+fn validate_packaged_smoke_visual_evidence(
+    evidence: &PackagedSmokeVisualEvidence,
+) -> Result<(), String> {
+    const REQUIRED_NAVIGATION: [&str; 4] = ["ホーム", "取引", "インポート", "カレンダー・レポート"];
+    const REQUIRED_PAGES: [(&str, &str); 4] = [
+        ("ホーム", "Packaged Smoke Householdの家計"),
+        ("取引", "すべての取引"),
+        ("インポート", "インポート Inbox"),
+        ("カレンダー・レポート", "カレンダー・レポート"),
+    ];
+    let navigation_complete = REQUIRED_NAVIGATION.iter().all(|required| {
+        evidence
+            .navigation_labels
+            .iter()
+            .any(|actual| actual == required)
+    });
+    let pages_complete = REQUIRED_PAGES.iter().all(|(navigation, title)| {
+        evidence.visited_pages.iter().any(|page| {
+            page.navigation_label == *navigation
+                && page.page_title == *title
+                && page.active_navigation
+                && page.main_width >= 600
+                && page.main_height > 0
+                && page.interactive_element_count > 0
+                && page.rendered_text_length >= 20
+        })
+    });
+    if evidence.onboarding_title != "家計簿をはじめましょう"
+        || evidence.household_name != "Packaged Smoke Household"
+        || evidence.interaction_count < 5
+        || evidence.viewport_width < 800
+        || evidence.viewport_height < 600
+        || !evidence.device_pixel_ratio.is_finite()
+        || evidence.device_pixel_ratio <= 0.0
+        || !navigation_complete
+        || !pages_complete
+    {
+        return Err("Packaged smoke visual interaction evidence is invalid".to_owned());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod packaged_smoke_visual_evidence_tests {
+    use super::*;
+
+    fn evidence() -> PackagedSmokeVisualEvidence {
+        PackagedSmokeVisualEvidence {
+            onboarding_title: "家計簿をはじめましょう".into(),
+            household_name: "Packaged Smoke Household".into(),
+            navigation_labels: vec![
+                "ホーム".into(),
+                "取引".into(),
+                "インポート".into(),
+                "カレンダー・レポート".into(),
+            ],
+            visited_pages: [
+                ("ホーム", "Packaged Smoke Householdの家計"),
+                ("取引", "すべての取引"),
+                ("インポート", "インポート Inbox"),
+                ("カレンダー・レポート", "カレンダー・レポート"),
+            ]
+            .into_iter()
+            .map(|(navigation_label, page_title)| PackagedSmokePageEvidence {
+                navigation_label: navigation_label.into(),
+                page_title: page_title.into(),
+                active_navigation: true,
+                main_width: 1000,
+                main_height: 700,
+                interactive_element_count: 2,
+                rendered_text_length: 100,
+            })
+            .collect(),
+            interaction_count: 5,
+            viewport_width: 1280,
+            viewport_height: 800,
+            device_pixel_ratio: 2.0,
+        }
+    }
+
+    #[test]
+    fn accepts_complete_real_navigation_evidence() {
+        assert!(validate_packaged_smoke_visual_evidence(&evidence()).is_ok());
+    }
+
+    #[test]
+    fn rejects_hidden_or_incomplete_page_evidence() {
+        let mut evidence = evidence();
+        evidence.visited_pages[2].main_width = 0;
+        assert!(validate_packaged_smoke_visual_evidence(&evidence).is_err());
+    }
 }
 
 fn repository_result<T>(
@@ -1582,15 +1763,7 @@ pub fn run() {
                 && webview.label() == "main"
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
-                let _ = webview.eval(
-                    r#"
-                    (async () => {
-                      const invoke = window.__TAURI_INTERNALS__.invoke;
-                      const bootstrap = await invoke('app_bootstrap');
-                      await invoke('packaged_smoke_complete', { bootstrap });
-                    })().catch((error) => console.error('packaged smoke failed', error));
-                    "#,
-                );
+                let _ = webview.eval(include_str!("packaged_smoke_ui.js"));
             }
         })
         .setup(move |app| {
@@ -1674,6 +1847,8 @@ pub fn run() {
             app_health,
             app_status,
             packaged_smoke_complete,
+            packaged_smoke_failure,
+            packaged_smoke_progress,
             households_list,
             household_create,
             accounts_list,
