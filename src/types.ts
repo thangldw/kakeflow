@@ -19,6 +19,7 @@ export interface Transaction {
   amount: number
   status: 'confirmed' | 'review'
   icon: 'food' | 'home' | 'transport' | 'income' | 'subscription'
+  accountingEffect?: 'ACCRUAL_AND_CASH' | 'ACCRUAL_ONLY' | 'CASH_ONLY'
 }
 
 export interface CardSettlement {

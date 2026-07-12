@@ -32,12 +32,25 @@ describe('KakeFlow application shell', () => {
 
     expect(screen.getByText('Netflix.com')).toBeInTheDocument()
     expect(screen.queryByText('成城石井')).not.toBeInTheDocument()
-    expect(screen.getByText('支出 ¥268,890')).toBeInTheDocument()
+    expect(screen.getByText('支出 ¥267,990')).toBeInTheDocument()
+  })
+
+  it('switches between accrual expense and cash movement without double counting card payments', () => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+
+    expect(screen.getByText('JR EAST')).toBeInTheDocument()
+    expect(screen.queryByText('楽天カード支払い')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '資金移動' }))
+
+    expect(screen.getByText('楽天カード支払い')).toBeInTheDocument()
+    expect(screen.queryByText('JR EAST')).not.toBeInTheDocument()
+    expect(screen.getByText('現金流出 ¥386,000')).toBeInTheDocument()
   })
 
   it('explains reconciled card payments separately from expenses', () => {
     render(<App />)
-    fireEvent.click(screen.getByRole('button', { name: /カード照合/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'カード照合 1' }))
 
     expect(screen.getByRole('heading', { name: '請求・口座引落の照合' })).toBeInTheDocument()
     expect(screen.getByText(/カード利用は支出、銀行引落は負債の返済/)).toBeInTheDocument()

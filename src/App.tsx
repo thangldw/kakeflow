@@ -32,6 +32,7 @@ import {
 import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
+import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -48,11 +49,11 @@ function Sidebar({ page, setPage, open, close }: { page: PageId; setPage: (page:
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="メニューを閉じる" onClick={close} />}
-      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`}>
+      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-label="メインナビゲーション">
         <div className="brand">
           <div className="brand-mark"><Leaf size={21} strokeWidth={2.4} /></div>
           <span>kake<span>flow</span></span>
-          <button className="icon-btn mobile-close" onClick={close}><X size={19} /></button>
+          <button className="icon-btn mobile-close" aria-label="メニューを閉じる" onClick={close}><X size={19} /></button>
         </div>
 
         <div className="household-picker">
@@ -91,10 +92,10 @@ function Sidebar({ page, setPage, open, close }: { page: PageId; setPage: (page:
 function Topbar({ openMenu }: { openMenu: () => void }) {
   return (
     <header className="topbar">
-      <button className="icon-btn menu-btn" onClick={openMenu}><Menu size={21} /></button>
+      <button className="icon-btn menu-btn" aria-label="メニューを開く" onClick={openMenu}><Menu size={21} /></button>
       <div className="search"><Search size={18} /><input aria-label="検索" placeholder="取引、店舗、金額を検索" /><kbd>⌘ K</kbd></div>
       <div className="top-actions">
-        <button className="icon-btn notification"><Bell size={19} /><span /></button>
+        <button className="icon-btn notification" aria-label="通知"><Bell size={19} /><span /></button>
         <div className="top-avatar">TK</div>
       </div>
     </header>
@@ -150,7 +151,7 @@ function SpendingCard() {
     <article className="panel spending-card">
       <div className="panel-head"><div><h2>支出の内訳</h2><p>今月のカテゴリー別</p></div><button className="text-btn">詳細を見る <ArrowRight size={14} /></button></div>
       <div className="spending-body">
-        <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>¥268,890</strong></div></div>
+        <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>{yen(currentMonthMetrics.expense)}</strong></div></div>
         <div className="legend">{categoryData.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>)}</div>
       </div>
     </article>
@@ -176,7 +177,7 @@ function TransactionRows({ rows = transactions }: { rows?: Transaction[] }) {
 function ReconciliationMini() {
   return (
     <article className="panel reconciliation">
-      <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="icon-btn"><MoreHorizontal size={18} /></button></div>
+      <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="icon-btn" aria-label="カード照合メニュー"><MoreHorizontal size={18} /></button></div>
       <div className="card-stack">{cardSettlements.map((card) => <div className="settlement" key={card.name}>
         <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{card.status === 'reconciled' ? '照合済み' : '引落待ち'}</b></div>
         <div className="settlement-values"><span>請求額 <strong>{yen(card.statement)}</strong></span><span>口座引落 <strong>{card.bankDebit ? yen(card.bankDebit) : '—'}</strong></span></div>
@@ -188,19 +189,19 @@ function ReconciliationMini() {
 
 function Overview({ setPage }: { setPage: (page: PageId) => void }) {
   return <>
-    <PageHeader eyebrow="2026年7月12日 日曜日" title="こんにちは、田中さん" description="今月の家計は順調です。予算の 62% を使いました。">
+    <PageHeader eyebrow="2026年7月12日 日曜日" title="こんにちは、田中さん" description={`今月の家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <button className="secondary-btn"><CalendarDays size={17} /> 2026年7月 <ChevronDown size={15} /></button>
       <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>
     </PageHeader>
     <section className="kpi-grid">
-      <KpiCard label="純資産" value="¥8,246,320" meta="前月比" trend="2.8%" icon={TrendingUp} accent="#e4edda" />
-      <KpiCard label="今月の収入" value="¥652,800" meta="予定の 104%" trend="4.2%" icon={ArrowDownLeft} accent="#dce9e6" />
-      <KpiCard label="今月の支出" value="¥268,890" meta="予算 ¥430,000" icon={ArrowUpRight} accent="#f7e3d9" />
-      <KpiCard label="貯蓄見込み" value="¥383,910" meta="貯蓄率 58.8%" trend="6.1%" icon={CircleDollarSign} accent="#eee5cf" />
+      <KpiCard label="純資産" value={yen(currentMonthMetrics.netWorth)} meta="前月比" trend="2.8%" icon={TrendingUp} accent="#e4edda" />
+      <KpiCard label="今月の収入" value={yen(currentMonthMetrics.income)} meta="予定の 104%" trend="4.2%" icon={ArrowDownLeft} accent="#dce9e6" />
+      <KpiCard label="今月の支出" value={yen(currentMonthMetrics.expense)} meta={`予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />
+      <KpiCard label="貯蓄見込み" value={yen(savings)} meta={`貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend="6.1%" icon={CircleDollarSign} accent="#eee5cf" />
     </section>
     <section className="dashboard-grid">
       <article className="panel trend-panel">
-        <div className="panel-head"><div><h2>収支の推移</h2><p>直近6か月のキャッシュフロー</p></div><div className="chart-legend"><span className="income">収入</span><span className="expense">支出</span></div></div>
+        <div className="panel-head"><div><h2>収支の推移</h2><p>資金移動ベース・直近6か月</p></div><div className="chart-legend"><span className="income">現金流入</span><span className="expense">現金流出</span></div></div>
         <TrendChart />
       </article>
       <SpendingCard />
@@ -216,36 +217,42 @@ function Overview({ setPage }: { setPage: (page: PageId) => void }) {
 
 function TransactionsPage() {
   const [query, setQuery] = useState('')
-  const visible = transactions.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
+  const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
+  const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
+  const visible = basisTransactions.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
+  const basisExpense = basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
   return <>
     <PageHeader eyebrow="取引台帳" title="すべての取引" description="確定した取引と元データを一か所で管理します。">
       <button className="secondary-btn"><SlidersHorizontal size={17} /> フィルター</button><button className="primary-btn"><BookOpen size={17} /> 手動で追加</button>
     </PageHeader>
     <section className="panel table-panel">
-      <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle"><button className="active">発生ベース</button><button>資金移動</button></div></div>
-      <div className="table-summary"><span>2026年7月</span><strong>収入 {yen(652800)}</strong><strong>支出 {yen(268890)}</strong><em>{visible.length}件を表示</em></div>
+      <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
+      <div className="table-summary"><span>2026年7月・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}</span><strong>収入 {yen(currentMonthMetrics.income)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{visible.length}件を表示</em></div>
       <TransactionRows rows={visible} />
     </section>
   </>
 }
 
-function ImportPage() {
+function ImportPage({ previews, setPreviews }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>> }) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [previews, setPreviews] = useState<ImportPreview[]>([])
   const [busy, setBusy] = useState(false)
 
   const processFiles = async (files: FileList | readonly File[]) => {
     if (files.length === 0) return
     setBusy(true)
     const next = await previewImportFiles(files)
-    setPreviews((current) => [...next, ...current.filter((item) => !next.some((candidate) => candidate.id === item.id))])
+    setPreviews((current) => {
+      const merged = new Map(current.map((item) => [item.id, item]))
+      next.forEach((item) => merged.set(item.id, item))
+      return Array.from(merged.values()).reverse()
+    })
     setBusy(false)
   }
 
   return <>
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
       <button className="secondary-btn"><Settings size={17} /> 監視フォルダー</button><button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
-      <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,text/csv" multiple onChange={(event) => event.target.files && void processFiles(event.target.files)} />
+      <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,text/csv" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
     <section className="status-grid">
       {[['取込済み','79','今月'],['確認待ち','6','3ファイル'],['重複候補','2','要確認'],['照合候補','4','自動検出']].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
@@ -254,8 +261,8 @@ function ImportPage() {
       <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルの「家計簿 Inbox」から自動検出</p></div><button className="text-btn">処理履歴</button></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSVをここにドロップ</span><small>PayPay・銀行・Rakuten・Amazon Mastercard</small></button>
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b><button className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button></div>)}
-        {importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn"><MoreHorizontal size={18} /></button></div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b><button className="icon-btn" aria-label={`${item.filename}の解析結果`} title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button></div>)}
+        {importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn" aria-label={`${item.file}のメニュー`}><MoreHorizontal size={18} /></button></div>)}
       </div>
     </section>
   </>
@@ -277,20 +284,21 @@ function CardsPage() {
 }
 
 function BudgetsPage() {
-  const budgets = categoryData.slice(0, 4).map((d, i) => ({ ...d, budget: [110000, 95000, 65000, 50000][i] }))
+  const budgets = budgetByCategory
   return <>
     <PageHeader eyebrow="プランニング" title="予算・貯蓄目標" description="今月使える金額と、家族の将来のための貯蓄を見通します。"><button className="primary-btn"><Goal size={17} /> 目標を追加</button></PageHeader>
-    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>7月のカテゴリー予算</h2><p>全体の 62% を使用</p></div><strong>¥267,600 / ¥430,000</strong></div>{budgets.map((b) => <div className="budget-row" key={b.name}><div><i style={{background:b.color}} /><strong>{b.name}</strong></div><span>{yen(b.amount)} <small>/ {yen(b.budget)}</small></span><div className="progress"><span style={{width:`${Math.min(100,b.amount/b.budget*100)}%`,background:b.color}} /></div></div>)}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>貯蓄目標</h2><p>家族旅行 2027</p></div><Sparkles size={20} /></div><div className="goal-ring"><div><strong>68%</strong><span>達成</span></div></div><strong>{yen(680000)} <small>/ {yen(1000000)}</small></strong><span>毎月 ¥40,000 であと8か月</span></article></section>
+    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>7月のカテゴリー予算</h2><p>全体の {(budgetUsage * 100).toFixed(1)}% を使用</p></div><strong>{yen(currentMonthMetrics.expense)} / {yen(currentMonthMetrics.budget)}</strong></div>{budgets.map((b) => <div className="budget-row" key={b.name}><div><i style={{background:b.color}} /><strong>{b.name}</strong></div><span>{yen(b.amount)} <small>/ {yen(b.budget)}</small></span><div className="progress"><span style={{width:`${Math.min(100,b.amount/b.budget*100)}%`,background:b.color}} /></div></div>)}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>貯蓄目標</h2><p>家族旅行 2027</p></div><Sparkles size={20} /></div><div className="goal-ring"><div><strong>68%</strong><span>達成</span></div></div><strong>{yen(680000)} <small>/ {yen(1000000)}</small></strong><span>毎月 ¥40,000 であと8か月</span></article></section>
   </>
 }
 
 function App() {
   const [page, setPage] = useState<PageId>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [importPreviews, setImportPreviews] = useState<ImportPreview[]>([])
   const pageContent = {
     overview: <Overview setPage={setPage} />,
     transactions: <TransactionsPage />,
-    import: <ImportPage />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} />,
     cards: <CardsPage />,
     budgets: <BudgetsPage />,
   }[page]
