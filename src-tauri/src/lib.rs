@@ -3,6 +3,7 @@ pub mod backup;
 pub mod document_extract;
 pub mod document_vault;
 pub mod financial_calendar;
+pub mod forecast_action;
 pub mod import_workflow;
 mod key_store;
 pub mod ocr;
@@ -1348,6 +1349,7 @@ pub fn run() {
             financial_calendar::financial_calendar_query,
             financial_calendar::financial_report_monthly_query,
             financial_calendar::financial_report_yearly_query,
+            forecast_action::forecast_action_query,
             dashboard_query,
             financial_intelligence_query,
             budgets_query,
