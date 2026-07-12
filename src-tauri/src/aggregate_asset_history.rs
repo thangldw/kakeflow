@@ -7,6 +7,7 @@ const MAX_ID_LEN: usize = 64;
 const MAX_JPY: i64 = 9_000_000_000_000_000;
 const DEFAULT_LIST_LIMIT: u32 = 240;
 const MAX_LIST_LIMIT: u32 = 1_200;
+const MAX_IMPORT_ROWS: usize = 1_200;
 
 #[derive(Debug)]
 pub enum AggregateAssetHistoryError {
@@ -66,6 +67,13 @@ pub struct ImportAggregateAssetComponentInput {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ImportAggregateAssetHistoryInput {
+    pub household_id: String,
+    pub snapshots: Vec<ImportAggregateAssetSnapshotInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListAggregateAssetHistoryInput {
     pub household_id: String,
     pub date_from: Option<String>,
@@ -100,32 +108,115 @@ pub struct ImportAggregateAssetSnapshotResultDto {
     pub snapshot: AggregateAssetSnapshotDto,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportAggregateAssetHistoryResultDto {
+    pub created_count: u32,
+    pub reused_count: u32,
+    pub snapshots: Vec<AggregateAssetSnapshotDto>,
+}
+
 pub fn import_snapshot(
     connection: &Connection,
     input: &ImportAggregateAssetSnapshotInput,
 ) -> Result<ImportAggregateAssetSnapshotResultDto, AggregateAssetHistoryError> {
-    validate_import(input)?;
+    let result = import_history(
+        connection,
+        &ImportAggregateAssetHistoryInput {
+            household_id: input.household_id.clone(),
+            snapshots: vec![input.clone()],
+        },
+    )?;
+    Ok(ImportAggregateAssetSnapshotResultDto {
+        reused_existing: result.reused_count == 1,
+        snapshot: result
+            .snapshots
+            .into_iter()
+            .next()
+            .ok_or(AggregateAssetHistoryError::Unavailable)?,
+    })
+}
+
+pub fn import_history(
+    connection: &Connection,
+    input: &ImportAggregateAssetHistoryInput,
+) -> Result<ImportAggregateAssetHistoryResultDto, AggregateAssetHistoryError> {
+    validate_id(&input.household_id)?;
+    if input.snapshots.is_empty() || input.snapshots.len() > MAX_IMPORT_ROWS {
+        return Err(AggregateAssetHistoryError::InvalidInput(
+            "Aggregate asset import row count is invalid",
+        ));
+    }
+    let mut dates = BTreeSet::new();
+    let mut source_rows = BTreeSet::new();
+    for snapshot in &input.snapshots {
+        validate_import(snapshot)?;
+        if snapshot.household_id != input.household_id {
+            return Err(AggregateAssetHistoryError::InvalidInput(
+                "Aggregate asset batch household is invalid",
+            ));
+        }
+        if !dates.insert(snapshot.as_of.as_str()) {
+            return Err(AggregateAssetHistoryError::InvalidInput(
+                "Aggregate asset batch contains a duplicate date",
+            ));
+        }
+        if !source_rows.insert((snapshot.source_document_id.as_str(), snapshot.source_row)) {
+            return Err(AggregateAssetHistoryError::InvalidInput(
+                "Aggregate asset batch contains duplicate provenance",
+            ));
+        }
+    }
+
     let transaction = connection.unchecked_transaction().map_err(db_error)?;
-    let source_exists = transaction
-        .query_row(
-            "SELECT EXISTS(
+    // Resolve every source before writing the first snapshot. This makes a
+    // missing or cross-household row a batch-level failure, not a partial import.
+    for snapshot in &input.snapshots {
+        let source_exists = transaction
+            .query_row(
+                "SELECT EXISTS(
                 SELECT 1 FROM source_documents document
                 JOIN source_records record ON record.source_document_id = document.id
                 WHERE document.id = ?1 AND document.household_id = ?2 AND record.row_number = ?3
             )",
-            params![
-                input.source_document_id,
-                input.household_id,
-                input.source_row
-            ],
-            |row| row.get::<_, bool>(0),
-        )
-        .map_err(db_error)?;
-    if !source_exists {
-        return Err(AggregateAssetHistoryError::NotFound);
+                params![
+                    snapshot.source_document_id,
+                    input.household_id,
+                    snapshot.source_row
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(db_error)?;
+        if !source_exists {
+            return Err(AggregateAssetHistoryError::NotFound);
+        }
     }
 
-    let existing_id = transaction
+    let mut created_count = 0_u32;
+    let mut reused_count = 0_u32;
+    let mut snapshots = Vec::with_capacity(input.snapshots.len());
+    for snapshot in &input.snapshots {
+        let (reused, stored) = import_one(&transaction, snapshot)?;
+        if reused {
+            reused_count += 1;
+        } else {
+            created_count += 1;
+        }
+        snapshots.push(stored);
+    }
+    transaction.commit().map_err(db_error)?;
+    Ok(ImportAggregateAssetHistoryResultDto {
+        created_count,
+        reused_count,
+        snapshots,
+    })
+}
+
+fn import_one(
+    connection: &Connection,
+    input: &ImportAggregateAssetSnapshotInput,
+) -> Result<(bool, AggregateAssetSnapshotDto), AggregateAssetHistoryError> {
+    let existing_id = connection
         .query_row(
             "SELECT id FROM aggregate_asset_snapshots
              WHERE household_id = ?1
@@ -143,18 +234,14 @@ pub fn import_snapshot(
         .optional()
         .map_err(db_error)?;
     if let Some(id) = existing_id {
-        let existing = get_snapshot(&transaction, &input.household_id, &id)?;
+        let existing = get_snapshot(connection, &input.household_id, &id)?;
         if matches_import(&existing, input) {
-            transaction.commit().map_err(db_error)?;
-            return Ok(ImportAggregateAssetSnapshotResultDto {
-                reused_existing: true,
-                snapshot: existing,
-            });
+            return Ok((true, existing));
         }
         return Err(AggregateAssetHistoryError::Conflict);
     }
 
-    transaction
+    connection
         .execute(
             "INSERT INTO aggregate_asset_snapshots
              (id, household_id, source_document_id, source_row, as_of, total_assets_jpy)
@@ -170,7 +257,7 @@ pub fn import_snapshot(
         )
         .map_err(db_error)?;
     for component in &input.components {
-        transaction
+        connection
             .execute(
                 "INSERT INTO aggregate_asset_components
                  (aggregate_asset_snapshot_id, asset_class, official_header, value_jpy)
@@ -184,12 +271,10 @@ pub fn import_snapshot(
             )
             .map_err(db_error)?;
     }
-    let snapshot = get_snapshot(&transaction, &input.household_id, &input.id)?;
-    transaction.commit().map_err(db_error)?;
-    Ok(ImportAggregateAssetSnapshotResultDto {
-        reused_existing: false,
-        snapshot,
-    })
+    Ok((
+        false,
+        get_snapshot(connection, &input.household_id, &input.id)?,
+    ))
 }
 
 pub fn list_snapshots(
@@ -451,7 +536,7 @@ mod tests {
             .unwrap();
         connection
             .execute(
-                "INSERT INTO source_records VALUES ('record','document',2),('repeat-record','repeat-document',9),('other-record','other-document',2)",
+                "INSERT INTO source_records VALUES ('record','document',2),('record-3','document',3),('repeat-record','repeat-document',9),('repeat-record-10','repeat-document',10),('other-record','other-document',2)",
                 [],
             )
             .unwrap();
@@ -551,6 +636,75 @@ mod tests {
             import_snapshot(&connection, &repeated),
             Err(AggregateAssetHistoryError::Conflict)
         ));
+    }
+
+    #[test]
+    fn batch_conflict_on_second_row_rolls_back_the_first_new_snapshot() {
+        let connection = database();
+        import_snapshot(&connection, &input()).unwrap();
+
+        let mut first_new = input();
+        first_new.id = "june".into();
+        first_new.source_row = 3;
+        first_new.as_of = "2026-06-30".into();
+        first_new.total_assets_jpy = 8_600_000;
+        let mut conflicting = input();
+        conflicting.id = "conflict".into();
+        conflicting.source_document_id = "repeat-document".into();
+        conflicting.source_row = 9;
+        conflicting.total_assets_jpy += 1;
+
+        let result = import_history(
+            &connection,
+            &ImportAggregateAssetHistoryInput {
+                household_id: "home".into(),
+                snapshots: vec![first_new, conflicting],
+            },
+        );
+        assert!(matches!(result, Err(AggregateAssetHistoryError::Conflict)));
+        let dates = list_snapshots(
+            &connection,
+            &ListAggregateAssetHistoryInput {
+                household_id: "home".into(),
+                date_from: None,
+                date_to: None,
+                limit: None,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|snapshot| snapshot.as_of)
+        .collect::<Vec<_>>();
+        assert_eq!(dates, vec!["2026-07-31"]);
+    }
+
+    #[test]
+    fn batch_reuses_an_overlap_and_creates_a_new_date_atomically() {
+        let connection = database();
+        let existing = import_snapshot(&connection, &input()).unwrap().snapshot;
+        let mut overlap = input();
+        overlap.id = "overlap".into();
+        overlap.source_document_id = "repeat-document".into();
+        overlap.source_row = 9;
+        let mut new_date = input();
+        new_date.id = "august".into();
+        new_date.source_document_id = "repeat-document".into();
+        new_date.source_row = 10;
+        new_date.as_of = "2026-08-31".into();
+        new_date.total_assets_jpy = 8_800_000;
+
+        let result = import_history(
+            &connection,
+            &ImportAggregateAssetHistoryInput {
+                household_id: "home".into(),
+                snapshots: vec![overlap, new_date],
+            },
+        )
+        .unwrap();
+        assert_eq!(result.created_count, 1);
+        assert_eq!(result.reused_count, 1);
+        assert_eq!(result.snapshots[0], existing);
+        assert_eq!(result.snapshots[1].as_of, "2026-08-31");
     }
 
     #[test]

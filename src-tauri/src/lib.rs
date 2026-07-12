@@ -32,7 +32,8 @@ use account_groups_export::{
     ReorderAccountGroupsInput, UpdateAccountGroupInput,
 };
 use aggregate_asset_history::{
-    AggregateAssetSnapshotDto, ImportAggregateAssetSnapshotInput,
+    AggregateAssetSnapshotDto, ImportAggregateAssetHistoryInput,
+    ImportAggregateAssetHistoryResultDto, ImportAggregateAssetSnapshotInput,
     ImportAggregateAssetSnapshotResultDto, ListAggregateAssetHistoryInput,
 };
 use brokerage::{
@@ -1183,6 +1184,16 @@ fn aggregate_asset_snapshot_import(
 }
 
 #[tauri::command]
+fn aggregate_asset_history_import(
+    state: tauri::State<'_, AppState>,
+    input: ImportAggregateAssetHistoryInput,
+) -> Result<ImportAggregateAssetHistoryResultDto, String> {
+    aggregate_asset_history_result(&state, |connection| {
+        aggregate_asset_history::import_history(connection, &input)
+    })
+}
+
+#[tauri::command]
 fn aggregate_asset_history_list(
     state: tauri::State<'_, AppState>,
     request: ListAggregateAssetHistoryInput,
@@ -2145,6 +2156,7 @@ pub fn run() {
             portfolio_snapshots_list,
             portfolio_snapshot_get,
             aggregate_asset_snapshot_import,
+            aggregate_asset_history_import,
             aggregate_asset_history_list,
             brokerage_events_import,
             brokerage_history_query,
