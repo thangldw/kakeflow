@@ -31,4 +31,28 @@ describe('receipt text normalization', () => {
       reviewStatus: 'PENDING',
     })
   })
+
+  it('extracts item, Japanese tax, coupon and points evidence with line provenance', () => {
+    const receipt = parseReceiptText([
+      'スーパー新宿店',
+      '2026年7月12日',
+      '牛乳 238',
+      '洗剤 x2 760',
+      '8%対象 238',
+      '消費税10% 69',
+      'クーポン -100',
+      'ポイント利用 41',
+      '合計 926',
+    ].join('\n'))
+
+    expect(receipt.items).toEqual([
+      expect.objectContaining({ description: '牛乳', amountJpy: 238, quantity: null, provenance: expect.objectContaining({ lineNumber: 3 }) }),
+      expect.objectContaining({ description: '洗剤', amountJpy: 760, quantity: 2, provenance: expect.objectContaining({ lineNumber: 4 }) }),
+    ])
+    expect(receipt.taxes).toEqual([
+      expect.objectContaining({ ratePercent: 8, taxableAmountJpy: 238, provenance: expect.objectContaining({ lineNumber: 5 }) }),
+      expect.objectContaining({ ratePercent: 10, taxAmountJpy: 69, provenance: expect.objectContaining({ lineNumber: 6 }) }),
+    ])
+    expect(receipt).toMatchObject({ couponAmountJpy: 100, pointsUsedJpy: 41 })
+  })
 })

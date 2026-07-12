@@ -78,7 +78,22 @@ export interface PostingDecisionDto {
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
-export interface ExtractedDocumentDto { readonly method: 'EMBEDDED_TEXT' | 'OCR'; readonly text: string; readonly confidenceBps: number; readonly issues: readonly string[] }
+export interface ExtractedRegionDto {
+  readonly pageNumber: number
+  readonly coordinateSpace: 'PIXELS' | 'PDF_POINTS' | 'UNLOCATED'
+  readonly boundingBox: { readonly left: number; readonly top: number; readonly width: number; readonly height: number } | null
+  readonly text: string
+  readonly confidenceBps: number
+  readonly provenance: 'PDF_EMBEDDED_TEXT' | 'TESSERACT_WORD' | string
+}
+export interface ExtractedDocumentDto {
+  readonly method: 'EMBEDDED_TEXT' | 'OCR'
+  readonly text: string
+  readonly confidenceBps: number
+  readonly issues: readonly string[]
+  /** Optional while reading source payloads produced before the v0.5 evidence contract. */
+  readonly regions?: readonly ExtractedRegionDto[]
+}
 export type CardReconciliationStatusDto = 'UNMATCHED' | 'POSSIBLE_MATCH' | 'FULLY_RECONCILED' | 'PARTIALLY_RECONCILED' | 'OVERPAID' | 'UNDERPAID' | 'MANUAL_OVERRIDE'
 export interface CardSettlementDto {
   readonly id: string; readonly cardAccountId: string; readonly cardName: string; readonly maskedIdentifier: string | null

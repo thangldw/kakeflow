@@ -27,6 +27,7 @@ export type {
   DashboardRequestDto,
   DatabaseStatusDto,
   ExtractedDocumentDto,
+  ExtractedRegionDto,
   HouseholdDto,
   ImportRunCountsDto,
   ImportPreviewDto,

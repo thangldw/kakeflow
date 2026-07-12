@@ -1203,6 +1203,23 @@ fn document_ocr(
         text: result.text,
         confidence_bps,
         issues,
+        regions: result
+            .words
+            .into_iter()
+            .map(|word| document_extract::ExtractedRegion {
+                page_number: word.page.max(1),
+                coordinate_space: "PIXELS".to_owned(),
+                bounding_box: Some(document_extract::EvidenceBoundingBox {
+                    left: word.left,
+                    top: word.top,
+                    width: word.width,
+                    height: word.height,
+                }),
+                text: word.text,
+                confidence_bps: (word.confidence * 10_000.0).round() as u16,
+                provenance: "TESSERACT_WORD".to_owned(),
+            })
+            .collect(),
     })
 }
 
