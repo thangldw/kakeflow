@@ -34,6 +34,19 @@ Build an unsigned local macOS/Windows artifact:
 npm run desktop:build
 ```
 
+Run the same non-destructive release-readiness smoke sequence as CI (version check,
+frontend tests/lint/build, Rust format/Clippy/tests, and an unsigned
+`tauri build --no-bundle`):
+
+```bash
+npm run desktop:smoke
+```
+
+The smoke command compiles and verifies the native executable but never launches
+the app, opens a user database, creates an installer, or accesses signing keys.
+GitHub Actions runs it independently on macOS and Windows. Signing, Apple
+notarization, and production update credentials remain external release steps.
+
 ## Product principles
 
 - Source files are immutable evidence, not transactions by themselves.

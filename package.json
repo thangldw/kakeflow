@@ -19,6 +19,7 @@
     "desktop:build:mac": "tauri build --bundles app",
     "desktop:build:windows": "tauri build --bundles nsis",
     "desktop:release": "tauri build",
+    "desktop:smoke": "node scripts/desktop-smoke.mjs",
     "check:versions": "node scripts/check-versions.mjs"
   },
   "dependencies": {
