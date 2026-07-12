@@ -59,9 +59,11 @@ jobs:
           - name: macOS
             runner: macos-14
             perl: perl
+            package-script: desktop:build:mac
           - name: Windows
             runner: windows-2022
             perl: C:\Strawberry\perl\bin\perl.exe
+            package-script: desktop:build:windows
 
     defaults:
       run:
@@ -107,3 +109,11 @@ jobs:
 
       - name: Run non-destructive desktop validation
         run: npm run desktop:smoke
+
+      - name: Build unsigned packaged application
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        run: npm run ${{ matrix.package-script }}
+
+      - name: Launch and validate packaged application
+        run: npm run test:packaged
