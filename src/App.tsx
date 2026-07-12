@@ -323,6 +323,15 @@ function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly Acc
   }
 }
 
+function ImportReviewSection({ stagedImport, accounts, householdId, busy, onRollback, onCommit }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void }) {
+  const [drafts, setDrafts] = useState(() => Object.fromEntries(stagedImport.candidates.map((candidate) => [candidate.id, { approved: false, decision: suggestedPosting(candidate, accounts, householdId) }])))
+  const updateDecision = (candidateId: string, change: (decision: PostingDecisionDto) => PostingDecisionDto) => setDrafts((current) => ({ ...current, [candidateId]: { ...current[candidateId], decision: change(current[candidateId].decision) } }))
+  const approved = stagedImport.candidates.every((candidate) => drafts[candidate.id]?.approved)
+  const decisions = stagedImport.candidates.map((candidate) => drafts[candidate.id]?.decision).filter((decision): decision is PostingDecisionDto => Boolean(decision))
+
+  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span></div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><span>{approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : '承認済みを台帳へ反映'}</button></div></section>
+}
+
 function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
@@ -409,11 +418,10 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     } finally { setActiveRun(null) }
   }
 
-  const commitRun = async (previewId: string, stagedImport: ImportPreviewDto) => {
+  const commitRun = async (previewId: string, stagedImport: ImportPreviewDto, decisions: readonly PostingDecisionDto[]) => {
     setActiveRun(stagedImport.summary.runId)
     setNotice('')
     try {
-      const decisions = stagedImport.candidates.map((candidate) => suggestedPosting(candidate, accounts, householdId!))
       const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       onChanged()
@@ -462,7 +470,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       </div>
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}
-    {Object.entries(staged).map(([previewId, stagedImport]) => <section className="panel review-panel" key={stagedImport.summary.runId}><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const suggestion = suggestedPosting(candidate, accounts, householdId!); return <div className="candidate-review-row" key={candidate.id}><div><strong>{candidate.merchantRaw ?? candidate.descriptionRaw ?? '名称未設定'}</strong><span>{candidate.occurredOn} ・ {candidate.direction}</span></div><span>{suggestion.transactionType}</span><strong>{yen(candidate.amountJpy)}</strong>{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><button className="secondary-btn" disabled={activeRun === stagedImport.summary.runId} onClick={() => void rollbackRun(previewId, stagedImport.summary.runId)}>取り消す</button><button className="primary-btn" disabled={activeRun === stagedImport.summary.runId || stagedImport.candidates.length === 0} onClick={() => void commitRun(previewId, stagedImport)}>{activeRun === stagedImport.summary.runId ? '処理中…' : '確認して台帳へ反映'}</button></div></section>)}
+    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} />)}
   </>
 }
 
