@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.0 — 2026-07-13
+
+- Add a persisted per-transaction calculation target with a legacy-safe included default and strict boolean storage.
+- Keep excluded posted transactions visible in the ledger, journal, source evidence, actual account/net-worth balances, card statements, payments, and reconciliation while removing them from household analytical totals.
+- Apply the calculation target consistently to dashboard income/expense/trends/categories, budget actuals, financial calendar and reports, recurring/anomaly/fixed-cost analysis, forecast history, and transaction-derived Action Center actuals.
+- Add `ALL`, `INCLUDED`, and `EXCLUDED` ledger filters that compose with accounting basis, account-group scope, family attribution, search, date range, and pagination.
+- Add visible `計算対象` / `集計対象外` badges and an editable `家計の集計に含める` control with an explicit no-balance-change disclosure.
+- Allow a flag-only update on card-linked transactions while preserving every journal, statement, payment, and source relation; unrelated edits remain reconciliation-protected.
+- Export both included and excluded transactions with an explicit `calculation_target` column instead of silently dropping source facts.
+
 ## 0.17.0 — 2026-07-13
 
 - Add an Annual Household Review with equal-window year-over-year income, expense, savings, savings-rate, category, merchant, budget, reconciliation, and data-quality views.
