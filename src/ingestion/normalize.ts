@@ -8,7 +8,7 @@ export function parseJapaneseAmount(value: string | undefined): number | null {
   if (value == null) return null
   const normalized = value.normalize('NFKC').trim()
   if (!normalized || normalized === '-' || normalized === '—') return null
-  const negative = /^\(.*\)$/.test(normalized) || normalized.startsWith('-') || normalized.endsWith('△')
+  const negative = /^\(.*\)$/.test(normalized) || normalized.startsWith('-') || normalized.startsWith('△') || normalized.endsWith('△')
   const numeric = normalized.replace(/[¥￥円,\s()+△]/g, '').replace(/^\+/, '')
   if (!/^-?\d+(?:\.\d+)?$/.test(numeric)) return null
   const parsed = Number(numeric)

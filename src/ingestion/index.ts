@@ -5,14 +5,22 @@ export { japaneseBankAdapter } from './adapters/japaneseBank'
 export { payPayAdapter } from './adapters/paypay'
 export { amazonMastercardAdapter } from './adapters/amazonMastercard'
 export { rakutenEnaviAdapter } from './adapters/rakuten'
+export { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 
 import { amazonMastercardAdapter } from './adapters/amazonMastercard'
 import { japaneseBankAdapter } from './adapters/japaneseBank'
 import { payPayAdapter } from './adapters/paypay'
 import { rakutenEnaviAdapter } from './adapters/rakuten'
+import { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 import type { ImportAdapter, ImportInput } from './types'
 
-export const importAdapters = [japaneseBankAdapter, payPayAdapter, amazonMastercardAdapter, rakutenEnaviAdapter] as const
+export const importAdapters = [
+  japaneseBankAdapter,
+  payPayAdapter,
+  amazonMastercardAdapter,
+  rakutenEnaviAdapter,
+  securitiesAssetSnapshotAdapter,
+] as const
 
 export function detectImportAdapter(input: ImportInput): { adapter: ImportAdapter<unknown>; score: number } | null {
   const ranked = importAdapters
