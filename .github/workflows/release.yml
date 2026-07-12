@@ -16,6 +16,8 @@ jobs:
   release:
     name: Release (${{ matrix.name }})
     runs-on: ${{ matrix.runner }}
+    env:
+      PERL: ${{ matrix.perl }}
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -24,9 +26,11 @@ jobs:
           - name: macOS Apple Silicon
             runner: macos-14
             bundles: app,dmg
+            perl: perl
           - name: Windows x64
             runner: windows-2022
             bundles: nsis
+            perl: C:\Strawberry\perl\bin\perl.exe
 
     steps:
       - name: Check out repository
