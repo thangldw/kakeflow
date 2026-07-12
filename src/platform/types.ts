@@ -74,7 +74,7 @@ export interface PostingDecisionDto {
   readonly payee: string | null; readonly description: string | null; readonly entries: readonly JournalEntryDecisionDto[]
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
-export interface BackupSummaryDto { readonly entryCount: number; readonly plaintextBytes: number }
+export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
 export interface ExtractedDocumentDto { readonly method: 'EMBEDDED_TEXT' | 'OCR'; readonly text: string; readonly confidenceBps: number; readonly issues: readonly string[] }
 export type CardReconciliationStatusDto = 'UNMATCHED' | 'POSSIBLE_MATCH' | 'FULLY_RECONCILED' | 'PARTIALLY_RECONCILED' | 'OVERPAID' | 'UNDERPAID' | 'MANUAL_OVERRIDE'
 export interface CardSettlementDto {

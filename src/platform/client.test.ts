@@ -70,7 +70,7 @@ describe('platform client', () => {
       },
       import_commit: { runId: 'run-1', postedCount: 1 },
       import_rollback: null,
-      backup_create: { entryCount: 4, plaintextBytes: 4096 },
+      backup_create: { formatVersion: 2, entryCount: 4, plaintextBytes: 4096 },
       document_extract: { method: 'EMBEDDED_TEXT', text: 'STORE TOTAL 1200', confidenceBps: 9000, issues: [] },
       cards_list: [{
         id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: null,

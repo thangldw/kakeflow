@@ -2,8 +2,10 @@
 //!
 //! The archive contains the already-encrypted SQLCipher database and the
 //! already-encrypted document-vault objects. A separate passphrase-derived key
-//! protects the archive in transit; the application's master key is never read
-//! or serialized by this module.
+//! protects the archive in transit. Version 1 archives intentionally omit the
+//! application master key and therefore remain same-device backups. Version 2
+//! archives carry the master key only inside an authenticated, encrypted key
+//! capsule so they can be restored on another device.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -17,7 +19,8 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 8] = b"KFLWBKP\0";
-const FORMAT_VERSION: u16 = 1;
+const FORMAT_VERSION_V1: u16 = 1;
+const FORMAT_VERSION_V2: u16 = 2;
 const SALT_LEN: usize = 16;
 const NONCE_PREFIX_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
@@ -33,6 +36,9 @@ const ARGON_PARALLELISM: u32 = 1;
 const RECORD_ENTRY: u8 = 1;
 const RECORD_DATA: u8 = 2;
 const RECORD_END: u8 = 3;
+const RECORD_KEY_CAPSULE: u8 = 4;
+const KEY_CAPSULE_MAGIC: &[u8; 8] = b"KFLWKEY\0";
+const KEY_CAPSULE_LEN: usize = KEY_CAPSULE_MAGIC.len() + 32;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum BackupError {
@@ -86,19 +92,63 @@ pub fn create_backup(
         return Err(BackupError::AlreadyExists);
     }
 
-    let entries = collect_entries(database_path, vault_root)?;
+    let entries = collect_entries(database_path, vault_root, FORMAT_VERSION_V1)?;
     let parent = archive_path.parent().ok_or(BackupError::InvalidInput)?;
     fs::create_dir_all(parent).map_err(|_| BackupError::Io)?;
     let temporary_path = unique_sibling(parent, ".kakeflow-backup", "tmp")?;
 
-    let result = write_archive(&temporary_path, &entries, passphrase).and_then(|summary| {
-        fs::hard_link(&temporary_path, archive_path).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                BackupError::AlreadyExists
-            } else {
-                BackupError::Io
-            }
-        })?;
+    let result = write_archive(
+        &temporary_path,
+        &entries,
+        passphrase,
+        FORMAT_VERSION_V1,
+        None,
+    )
+    .and_then(|summary| {
+        publish_archive(&temporary_path, archive_path)?;
+        sync_directory(parent)?;
+        Ok(summary)
+    });
+    let _ = fs::remove_file(&temporary_path);
+    result
+}
+
+/// Creates a portable version 2 archive containing an encrypted master-key
+/// capsule.
+///
+/// The capsule is authenticated and encrypted with the passphrase-derived
+/// archive key. The raw master key is never written to the archive or to a
+/// temporary file. As with [`create_backup`], the caller must first close or
+/// checkpoint the SQLCipher database.
+pub fn create_portable_backup(
+    database_path: impl AsRef<Path>,
+    vault_root: impl AsRef<Path>,
+    archive_path: impl AsRef<Path>,
+    passphrase: &str,
+    master_key: &[u8; 32],
+) -> Result<BackupSummary> {
+    validate_passphrase(passphrase)?;
+    let database_path = database_path.as_ref();
+    let vault_root = vault_root.as_ref();
+    let archive_path = archive_path.as_ref();
+    if archive_path.exists() {
+        return Err(BackupError::AlreadyExists);
+    }
+
+    let entries = collect_entries(database_path, vault_root, FORMAT_VERSION_V2)?;
+    let parent = archive_path.parent().ok_or(BackupError::InvalidInput)?;
+    fs::create_dir_all(parent).map_err(|_| BackupError::Io)?;
+    let temporary_path = unique_sibling(parent, ".kakeflow-backup", "tmp")?;
+
+    let result = write_archive(
+        &temporary_path,
+        &entries,
+        passphrase,
+        FORMAT_VERSION_V2,
+        Some(master_key),
+    )
+    .and_then(|summary| {
+        publish_archive(&temporary_path, archive_path)?;
         sync_directory(parent)?;
         Ok(summary)
     });
@@ -128,36 +178,90 @@ pub fn restore_backup(
     let staging = unique_sibling(parent, ".kakeflow-restore", "staging")?;
     fs::create_dir(&staging).map_err(|_| BackupError::Io)?;
 
-    let result = read_archive(archive_path, &staging, passphrase).and_then(|summary| {
-        if destination_root.exists() {
-            return Err(BackupError::AlreadyExists);
-        }
-        sync_tree(&staging)?;
-        fs::rename(&staging, destination_root).map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                BackupError::AlreadyExists
-            } else {
-                BackupError::Io
+    let result = read_archive(archive_path, &staging, passphrase, RestoreMode::Legacy).and_then(
+        |restored| {
+            if destination_root.exists() {
+                return Err(BackupError::AlreadyExists);
             }
-        })?;
-        sync_directory(parent)?;
-        Ok(summary)
-    });
+            sync_tree(&staging)?;
+            fs::rename(&staging, destination_root).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    BackupError::AlreadyExists
+                } else {
+                    BackupError::Io
+                }
+            })?;
+            sync_directory(parent)?;
+            Ok(restored.summary)
+        },
+    );
     if result.is_err() {
         let _ = fs::remove_dir_all(&staging);
     }
     result
 }
 
-fn collect_entries(database_path: &Path, vault_root: &Path) -> Result<Vec<SourceEntry>> {
+/// Restores a portable version 2 archive and returns its master key in
+/// zeroizing memory.
+///
+/// The key capsule is decrypted in memory and is never materialized under the
+/// staging or destination directory. Version 1 archives are deliberately
+/// rejected because they contain no key and remain same-device-only backups.
+pub fn restore_portable_backup(
+    archive_path: impl AsRef<Path>,
+    destination_root: impl AsRef<Path>,
+    passphrase: &str,
+) -> Result<(BackupSummary, Zeroizing<[u8; 32]>)> {
+    validate_passphrase(passphrase)?;
+    let archive_path = archive_path.as_ref();
+    let destination_root = destination_root.as_ref();
+    if destination_root.exists() {
+        return Err(BackupError::AlreadyExists);
+    }
+    let parent = destination_root.parent().ok_or(BackupError::InvalidInput)?;
+    fs::create_dir_all(parent).map_err(|_| BackupError::Io)?;
+    let staging = unique_sibling(parent, ".kakeflow-restore", "staging")?;
+    fs::create_dir(&staging).map_err(|_| BackupError::Io)?;
+
+    let result = read_archive(archive_path, &staging, passphrase, RestoreMode::Portable).and_then(
+        |restored| {
+            let master_key = restored.master_key.ok_or(BackupError::Corrupt)?;
+            if destination_root.exists() {
+                return Err(BackupError::AlreadyExists);
+            }
+            sync_tree(&staging)?;
+            fs::rename(&staging, destination_root).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    BackupError::AlreadyExists
+                } else {
+                    BackupError::Io
+                }
+            })?;
+            sync_directory(parent)?;
+            Ok((restored.summary, master_key))
+        },
+    );
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+fn collect_entries(
+    database_path: &Path,
+    vault_root: &Path,
+    format_version: u16,
+) -> Result<Vec<SourceEntry>> {
     let metadata = fs::symlink_metadata(database_path).map_err(|_| BackupError::Io)?;
     if !metadata.file_type().is_file() {
         return Err(BackupError::InvalidInput);
     }
-    let mut entries = vec![source_entry(
-        database_path,
-        "database/ledger.db".to_owned(),
-    )?];
+    let database_name = match format_version {
+        FORMAT_VERSION_V1 => "database/ledger.db",
+        FORMAT_VERSION_V2 => "database/kakeflow.db",
+        _ => return Err(BackupError::InvalidInput),
+    };
+    let mut entries = vec![source_entry(database_path, database_name.to_owned())?];
 
     let objects = vault_root.join("objects");
     if objects.exists() {
@@ -216,12 +320,22 @@ fn source_entry(source: &Path, archive_path: String) -> Result<SourceEntry> {
     })
 }
 
-fn write_archive(path: &Path, entries: &[SourceEntry], passphrase: &str) -> Result<BackupSummary> {
+fn write_archive(
+    path: &Path,
+    entries: &[SourceEntry],
+    passphrase: &str,
+    format_version: u16,
+    master_key: Option<&[u8; 32]>,
+) -> Result<BackupSummary> {
+    match (format_version, master_key) {
+        (FORMAT_VERSION_V1, None) | (FORMAT_VERSION_V2, Some(_)) => {}
+        _ => return Err(BackupError::InvalidInput),
+    }
     let mut salt = [0_u8; SALT_LEN];
     let mut nonce_prefix = [0_u8; NONCE_PREFIX_LEN];
     getrandom::getrandom(&mut salt).map_err(|_| BackupError::Io)?;
     getrandom::getrandom(&mut nonce_prefix).map_err(|_| BackupError::Io)?;
-    let header = encode_header(&salt, &nonce_prefix);
+    let header = encode_header(format_version, &salt, &nonce_prefix)?;
     let key = derive_key(
         passphrase,
         &salt,
@@ -239,6 +353,21 @@ fn write_archive(path: &Path, entries: &[SourceEntry], passphrase: &str) -> Resu
     output.write_all(&header).map_err(|_| BackupError::Io)?;
 
     let mut index = 0_u64;
+    if let Some(master_key) = master_key {
+        let mut capsule = Zeroizing::new(Vec::with_capacity(KEY_CAPSULE_LEN));
+        capsule.extend_from_slice(KEY_CAPSULE_MAGIC);
+        capsule.extend_from_slice(master_key);
+        write_record(
+            &mut output,
+            &cipher,
+            &header,
+            &nonce_prefix,
+            index,
+            RECORD_KEY_CAPSULE,
+            &capsule,
+        )?;
+        index = index.checked_add(1).ok_or(BackupError::InvalidInput)?;
+    }
     let mut total_bytes = 0_u64;
     for entry in entries {
         let metadata = encode_entry(entry)?;
@@ -332,13 +461,36 @@ fn write_record(
     Ok(())
 }
 
-fn read_archive(path: &Path, staging: &Path, passphrase: &str) -> Result<BackupSummary> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RestoreMode {
+    Legacy,
+    Portable,
+}
+
+struct RestoredArchive {
+    summary: BackupSummary,
+    master_key: Option<Zeroizing<[u8; 32]>>,
+}
+
+fn read_archive(
+    path: &Path,
+    staging: &Path,
+    passphrase: &str,
+    mode: RestoreMode,
+) -> Result<RestoredArchive> {
     let mut input = File::open(path).map_err(|_| BackupError::Io)?;
     let mut header = [0_u8; HEADER_LEN];
     input
         .read_exact(&mut header)
         .map_err(map_archive_read_error)?;
     let decoded = decode_header(&header)?;
+    let expected_version = match mode {
+        RestoreMode::Legacy => FORMAT_VERSION_V1,
+        RestoreMode::Portable => FORMAT_VERSION_V2,
+    };
+    if decoded.version != expected_version {
+        return Err(BackupError::Corrupt);
+    }
     let key = derive_key(
         passphrase,
         &decoded.salt,
@@ -353,14 +505,43 @@ fn read_archive(path: &Path, staging: &Path, passphrase: &str) -> Result<BackupS
     let mut active: Option<RestoreEntry> = None;
     let mut entry_count = 0_u64;
     let mut total_bytes = 0_u64;
+    let mut master_key = None;
+    let mut database_seen = false;
     loop {
         let (record_type, plaintext) =
             read_record(&mut input, &cipher, &header, &decoded.nonce_prefix, index)?;
         index = index.checked_add(1).ok_or(BackupError::Corrupt)?;
         match record_type {
+            RECORD_KEY_CAPSULE => {
+                if mode != RestoreMode::Portable
+                    || index != 1
+                    || active.is_some()
+                    || master_key.is_some()
+                    || plaintext.len() != KEY_CAPSULE_LEN
+                    || &plaintext[..KEY_CAPSULE_MAGIC.len()] != KEY_CAPSULE_MAGIC
+                {
+                    return Err(BackupError::Corrupt);
+                }
+                let mut key = Zeroizing::new([0_u8; 32]);
+                key.copy_from_slice(&plaintext[KEY_CAPSULE_MAGIC.len()..]);
+                master_key = Some(key);
+            }
             RECORD_ENTRY => {
+                if mode == RestoreMode::Portable && master_key.is_none() {
+                    return Err(BackupError::Corrupt);
+                }
                 finish_entry(active.take())?;
                 let entry = decode_entry(&plaintext)?;
+                let expected_database_path = match mode {
+                    RestoreMode::Legacy => "database/ledger.db",
+                    RestoreMode::Portable => "database/kakeflow.db",
+                };
+                if entry.path.starts_with("database/") {
+                    if database_seen || entry.path != expected_database_path {
+                        return Err(BackupError::Corrupt);
+                    }
+                    database_seen = true;
+                }
                 let target = safe_destination(staging, &entry.path)?;
                 if target.exists() {
                     return Err(BackupError::Corrupt);
@@ -410,16 +591,25 @@ fn read_archive(path: &Path, staging: &Path, passphrase: &str) -> Result<BackupS
                         .try_into()
                         .map_err(|_| BackupError::Corrupt)?,
                 );
-                if expected_entries != entry_count || expected_bytes != total_bytes {
+                if expected_entries != entry_count
+                    || expected_bytes != total_bytes
+                    || !database_seen
+                {
                     return Err(BackupError::Corrupt);
                 }
                 let mut trailing = [0_u8; 1];
                 if input.read(&mut trailing).map_err(|_| BackupError::Io)? != 0 {
                     return Err(BackupError::Corrupt);
                 }
-                return Ok(BackupSummary {
-                    entry_count,
-                    plaintext_bytes: total_bytes,
+                if mode == RestoreMode::Portable && master_key.is_none() {
+                    return Err(BackupError::Corrupt);
+                }
+                return Ok(RestoredArchive {
+                    summary: BackupSummary {
+                        entry_count,
+                        plaintext_bytes: total_bytes,
+                    },
+                    master_key,
                 });
             }
             _ => return Err(BackupError::Corrupt),
@@ -463,7 +653,7 @@ fn read_record(
     archive_header: &[u8],
     nonce_prefix: &[u8; NONCE_PREFIX_LEN],
     expected_index: u64,
-) -> Result<(u8, Vec<u8>)> {
+) -> Result<(u8, Zeroizing<Vec<u8>>)> {
     let mut encoded_header = [0_u8; RECORD_HEADER_LEN];
     input
         .read_exact(&mut encoded_header)
@@ -500,10 +690,11 @@ fn read_record(
             },
         )
         .map_err(|_| BackupError::Authentication)?;
-    Ok((record_type, plaintext))
+    Ok((record_type, Zeroizing::new(plaintext)))
 }
 
 struct DecodedHeader {
+    version: u16,
     salt: [u8; SALT_LEN],
     nonce_prefix: [u8; NONCE_PREFIX_LEN],
     memory_kib: u32,
@@ -511,16 +702,23 @@ struct DecodedHeader {
     parallelism: u32,
 }
 
-fn encode_header(salt: &[u8; SALT_LEN], nonce_prefix: &[u8; NONCE_PREFIX_LEN]) -> Vec<u8> {
+fn encode_header(
+    version: u16,
+    salt: &[u8; SALT_LEN],
+    nonce_prefix: &[u8; NONCE_PREFIX_LEN],
+) -> Result<Vec<u8>> {
+    if !matches!(version, FORMAT_VERSION_V1 | FORMAT_VERSION_V2) {
+        return Err(BackupError::InvalidInput);
+    }
     let mut header = Vec::with_capacity(HEADER_LEN);
     header.extend_from_slice(MAGIC);
-    header.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    header.extend_from_slice(&version.to_le_bytes());
     header.extend_from_slice(salt);
     header.extend_from_slice(nonce_prefix);
     header.extend_from_slice(&ARGON_MEMORY_KIB.to_le_bytes());
     header.extend_from_slice(&ARGON_ITERATIONS.to_le_bytes());
     header.extend_from_slice(&ARGON_PARALLELISM.to_le_bytes());
-    header
+    Ok(header)
 }
 
 fn decode_header(header: &[u8; HEADER_LEN]) -> Result<DecodedHeader> {
@@ -528,7 +726,7 @@ fn decode_header(header: &[u8; HEADER_LEN]) -> Result<DecodedHeader> {
         return Err(BackupError::Corrupt);
     }
     let version = u16::from_le_bytes(header[8..10].try_into().map_err(|_| BackupError::Corrupt)?);
-    if version != FORMAT_VERSION {
+    if !matches!(version, FORMAT_VERSION_V1 | FORMAT_VERSION_V2) {
         return Err(BackupError::Corrupt);
     }
     let salt = header[10..26]
@@ -562,6 +760,7 @@ fn decode_header(header: &[u8; HEADER_LEN]) -> Result<DecodedHeader> {
         return Err(BackupError::Corrupt);
     }
     Ok(DecodedHeader {
+        version,
         salt,
         nonce_prefix,
         memory_kib,
@@ -656,7 +855,7 @@ fn validate_archive_path(path: &str) -> Result<()> {
     {
         return Err(BackupError::Corrupt);
     }
-    let valid_database = path == "database/ledger.db";
+    let valid_database = matches!(path, "database/ledger.db" | "database/kakeflow.db");
     let valid_vault = path.starts_with("vault/objects/") && path.len() > "vault/objects/".len();
     if !valid_database && !valid_vault {
         return Err(BackupError::Corrupt);
@@ -706,6 +905,42 @@ fn unique_sibling(parent: &Path, prefix: &str, extension: &str) -> Result<PathBu
         }
     }
     Err(BackupError::Io)
+}
+
+fn publish_archive(temporary_path: &Path, archive_path: &Path) -> Result<()> {
+    match fs::hard_link(temporary_path, archive_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(BackupError::AlreadyExists)
+        }
+        Err(_) => {
+            // FAT/exFAT, some network shares, and virtual folders do not support
+            // hard links. Copy the already-complete archive through an exclusive
+            // destination handle and remove any partial copy on failure.
+            let mut created_destination = false;
+            let result = (|| {
+                let mut source = File::open(temporary_path).map_err(|_| BackupError::Io)?;
+                let mut destination = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(archive_path)
+                    .map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::AlreadyExists {
+                            BackupError::AlreadyExists
+                        } else {
+                            BackupError::Io
+                        }
+                    })?;
+                created_destination = true;
+                std::io::copy(&mut source, &mut destination).map_err(|_| BackupError::Io)?;
+                destination.sync_all().map_err(|_| BackupError::Io)
+            })();
+            if result.is_err() && created_destination {
+                let _ = fs::remove_file(archive_path);
+            }
+            result
+        }
+    }
 }
 
 fn map_archive_read_error(error: std::io::Error) -> BackupError {
@@ -785,6 +1020,19 @@ mod tests {
         (root, database, vault)
     }
 
+    fn restore_staging_count(root: &Path) -> usize {
+        fs::read_dir(root)
+            .expect("test root")
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".kakeflow-restore")
+            })
+            .count()
+    }
+
     #[test]
     fn round_trip_restores_database_and_vault() {
         let (root, database, vault) = fixture();
@@ -821,17 +1069,7 @@ mod tests {
             Err(BackupError::Authentication)
         );
         assert!(!destination.exists());
-        let staging_count = fs::read_dir(&root.0)
-            .expect("test root")
-            .filter_map(std::result::Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".kakeflow-restore")
-            })
-            .count();
-        assert_eq!(staging_count, 0);
+        assert_eq!(restore_staging_count(&root.0), 0);
     }
 
     #[test]
@@ -893,7 +1131,151 @@ mod tests {
             );
         }
         assert!(validate_archive_path("database/ledger.db").is_ok());
+        assert!(validate_archive_path("database/kakeflow.db").is_ok());
         assert!(validate_archive_path("vault/objects/ab/cdef.kfd").is_ok());
+    }
+
+    #[test]
+    fn portable_round_trip_recovers_cross_device_master_key_in_memory() {
+        let (root, database, vault) = fixture();
+        let archive = root.0.join("portable-v2.kfb");
+        let destination = root.0.join("restored-v2");
+        let source_device_key = [0x4d_u8; 32];
+        let unrelated_destination_device_key = [0xa7_u8; 32];
+        assert_ne!(source_device_key, unrelated_destination_device_key);
+
+        let created = create_portable_backup(
+            &database,
+            &vault,
+            &archive,
+            "portable correct horse battery staple",
+            &source_device_key,
+        )
+        .expect("create v2 backup");
+        let (restored, recovered_key) = restore_portable_backup(
+            &archive,
+            &destination,
+            "portable correct horse battery staple",
+        )
+        .expect("restore v2 backup");
+
+        assert_eq!(created, restored);
+        assert_eq!(recovered_key.as_ref(), &source_device_key);
+        assert_ne!(recovered_key.as_ref(), &unrelated_destination_device_key);
+        assert_eq!(
+            fs::read(destination.join("database/kakeflow.db")).expect("restored v2 database"),
+            b"encrypted sqlcipher bytes"
+        );
+        assert!(!destination.join("database/ledger.db").exists());
+        assert_eq!(
+            fs::read(destination.join("vault/objects/ab/cdef.kfd")).expect("restored vault"),
+            b"encrypted document"
+        );
+    }
+
+    #[test]
+    fn portable_archive_never_contains_plaintext_master_key() {
+        let (root, database, vault) = fixture();
+        let archive = root.0.join("portable-v2.kfb");
+        let master_key: [u8; 32] = std::array::from_fn(|index| (index as u8).wrapping_mul(7) + 3);
+        create_portable_backup(
+            &database,
+            &vault,
+            &archive,
+            "portable correct horse battery staple",
+            &master_key,
+        )
+        .expect("create v2 backup");
+
+        let archive_bytes = fs::read(archive).expect("read v2 archive");
+        assert!(
+            !archive_bytes
+                .windows(master_key.len())
+                .any(|window| window == master_key),
+            "raw master-key bytes must not be serialized"
+        );
+    }
+
+    #[test]
+    fn portable_wrong_passphrase_and_tamper_leave_no_restore_artifacts() {
+        let (root, database, vault) = fixture();
+        let archive = root.0.join("portable-v2.kfb");
+        let master_key = [0x71_u8; 32];
+        create_portable_backup(
+            &database,
+            &vault,
+            &archive,
+            "portable correct horse battery staple",
+            &master_key,
+        )
+        .expect("create v2 backup");
+
+        let wrong_destination = root.0.join("wrong-passphrase");
+        assert!(matches!(
+            restore_portable_backup(
+                &archive,
+                &wrong_destination,
+                "portable incorrect passphrase"
+            ),
+            Err(BackupError::Authentication)
+        ));
+        assert!(!wrong_destination.exists());
+        assert_eq!(restore_staging_count(&root.0), 0);
+
+        let mut bytes = fs::read(&archive).expect("archive");
+        // The first v2 record is the encrypted key capsule.
+        bytes[HEADER_LEN + RECORD_HEADER_LEN + 5] ^= 0x40;
+        fs::write(&archive, bytes).expect("tamper key capsule");
+        let tampered_destination = root.0.join("tampered");
+        assert!(matches!(
+            restore_portable_backup(
+                &archive,
+                &tampered_destination,
+                "portable correct horse battery staple"
+            ),
+            Err(BackupError::Authentication)
+        ));
+        assert!(!tampered_destination.exists());
+        assert_eq!(restore_staging_count(&root.0), 0);
+    }
+
+    #[test]
+    fn version_one_remains_same_device_only_and_legacy_compatible() {
+        let (root, database, vault) = fixture();
+        let archive = root.0.join("legacy-v1.kfb");
+        create_backup(
+            &database,
+            &vault,
+            &archive,
+            "legacy correct horse battery staple",
+        )
+        .expect("create v1 backup");
+
+        let portable_destination = root.0.join("portable-restore");
+        assert!(matches!(
+            restore_portable_backup(
+                &archive,
+                &portable_destination,
+                "legacy correct horse battery staple"
+            ),
+            Err(BackupError::Corrupt)
+        ));
+        assert!(!portable_destination.exists());
+        assert_eq!(restore_staging_count(&root.0), 0);
+
+        let legacy_destination = root.0.join("legacy-restore");
+        restore_backup(
+            &archive,
+            &legacy_destination,
+            "legacy correct horse battery staple",
+        )
+        .expect("legacy restore remains supported");
+        assert_eq!(
+            fs::read(legacy_destination.join("database/ledger.db"))
+                .expect("legacy restored database"),
+            b"encrypted sqlcipher bytes"
+        );
+        assert!(!legacy_destination.join("database/kakeflow.db").exists());
     }
 
     #[cfg(unix)]
