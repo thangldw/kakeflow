@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { previewImportFile } from './importService'
+import { excelRowsToCsv, previewImportFile } from './importService'
 
 describe('import preview service', () => {
   it('detects and parses a Japanese bank CSV file', async () => {
@@ -20,5 +20,14 @@ describe('import preview service', () => {
 
     expect(result.status).toBe('unsupported')
     expect(result.issues[0].code).toBe('ADAPTER_NOT_FOUND')
+  })
+
+  it('serializes Excel rows without losing commas, quotes, or dates', () => {
+    const rows = [
+      ['日付', '摘要', '支払い金額'],
+      [new Date(2026, 6, 27), 'SHOP, "TOKYO"', 204987],
+    ]
+
+    expect(excelRowsToCsv(rows)).toBe('日付,摘要,支払い金額\n2026/07/27,"SHOP, ""TOKYO""",204987')
   })
 })

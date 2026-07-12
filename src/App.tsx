@@ -407,7 +407,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   return <>
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
       <button className="secondary-btn"><Settings size={17} /> 監視フォルダー</button><button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
-      <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,text/csv" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
+      <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
     <section className="status-grid">
       {[
@@ -419,7 +419,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     </section>
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルの「家計簿 Inbox」から自動検出</p></div><button className="text-btn">処理履歴</button></div>
-      <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSVをここにドロップ</span><small>PayPay・銀行・Rakuten・Amazon Mastercard</small></button>
+      <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / Excelをここにドロップ</span><small>PayPay・銀行・Rakuten・Amazon Mastercard</small></button>
       <div className="import-list">
         {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span></div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : '確認が必要'}</b>{item.status === 'ready' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : <button className="icon-btn" aria-label={`${item.filename}の解析結果`} title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></button>}</div>)}
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b><button className="icon-btn" aria-label={`${item.file}のメニュー`}><MoreHorizontal size={18} /></button></div>)}

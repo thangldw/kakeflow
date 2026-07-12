@@ -1,5 +1,6 @@
 import { decodeCsvBytes, detectImportAdapter } from '../../ingestion'
 import type { AdapterId, ParsedImport, ParseIssue } from '../../ingestion'
+import readXlsxFile from 'read-excel-file/browser'
 
 export interface ImportPreview {
   id: string
@@ -43,6 +44,18 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
   })
 }
 
+function csvCell(value: unknown): string {
+  if (value === null || typeof value === 'undefined') return ''
+  const text = value instanceof Date
+    ? `${value.getFullYear()}/${String(value.getMonth() + 1).padStart(2, '0')}/${String(value.getDate()).padStart(2, '0')}`
+    : String(value)
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+}
+
+export function excelRowsToCsv(rows: readonly (readonly unknown[])[]): string {
+  return rows.map((row) => row.map(csvCell).join(',')).join('\n')
+}
+
 export async function previewImportFile(file: File): Promise<ImportPreview> {
   let id = `pending:${file.name}:${file.size}`
   try {
@@ -55,12 +68,29 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
     }
     const bytes = await readFileBytes(file)
     id = await sha256Hex(bytes)
-    const { text, encoding } = decodeCsvBytes(bytes)
-    const detected = detectImportAdapter({ text, filename: file.name })
+    const isXlsx = /\.xlsx$/i.test(file.name) || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    let text: string
+    let encoding: string
+    let detected = null
+    if (isXlsx) {
+      const sheets = await readXlsxFile(file)
+      const rankedSheets = sheets.map((sheet) => {
+        const sheetText = excelRowsToCsv(sheet.data)
+        return { text: sheetText, detected: detectImportAdapter({ text: sheetText, filename: file.name }) }
+      }).sort((left, right) => (right.detected?.score ?? 0) - (left.detected?.score ?? 0))
+      text = rankedSheets[0]?.text ?? ''
+      detected = rankedSheets[0]?.detected ?? null
+      encoding = 'xlsx'
+    } else {
+      const decoded = decodeCsvBytes(bytes)
+      text = decoded.text
+      encoding = decoded.encoding
+      detected = detectImportAdapter({ text, filename: file.name })
+    }
     if (!detected) {
       return {
         id, filename: file.name, adapterId: null, encoding, recordCount: 0,
-        issues: [{ code: 'ADAPTER_NOT_FOUND', message: '対応するCSV形式を検出できませんでした。', severity: 'error' }],
+        issues: [{ code: 'ADAPTER_NOT_FOUND', message: '対応するCSV / Excel形式を検出できませんでした。', severity: 'error' }],
         status: 'unsupported', parsedAt: new Date().toISOString(),
       }
     }
