@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const MAX_DOCUMENT_BYTES: usize = 25 * 1024 * 1024;
@@ -19,6 +19,28 @@ pub enum ExtractError {
     OcrRequired,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EvidenceBoundingBox {
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractedRegion {
+    /// One-based page number, matching PDF viewers and Tesseract output.
+    pub page_number: u32,
+    /// `PIXELS` for OCR and `UNLOCATED` when an extractor cannot expose geometry.
+    pub coordinate_space: String,
+    pub bounding_box: Option<EvidenceBoundingBox>,
+    pub text: String,
+    pub confidence_bps: u16,
+    pub provenance: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtractedDocument {
@@ -26,6 +48,9 @@ pub struct ExtractedDocument {
     pub text: String,
     pub confidence_bps: u16,
     pub issues: Vec<&'static str>,
+    /// Page-aware evidence. Embedded-text extraction currently preserves page
+    /// identity but leaves geometry unset; OCR supplies pixel bounding boxes.
+    pub regions: Vec<ExtractedRegion>,
 }
 
 pub fn extract_document(bytes: &[u8], media_type: &str) -> Result<ExtractedDocument, ExtractError> {
@@ -52,13 +77,30 @@ pub fn extract_document(bytes: &[u8], media_type: &str) -> Result<ExtractedDocum
             text,
             confidence_bps: 0,
             issues: vec!["OCR_REQUIRED"],
+            regions: Vec::new(),
         });
     }
+    let regions = text
+        .split('\u{000c}')
+        .enumerate()
+        .filter_map(|(index, page_text)| {
+            let page_text = page_text.trim();
+            (!page_text.is_empty()).then(|| ExtractedRegion {
+                page_number: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                coordinate_space: "UNLOCATED".to_owned(),
+                bounding_box: None,
+                text: page_text.to_owned(),
+                confidence_bps: 9000,
+                provenance: "PDF_EMBEDDED_TEXT".to_owned(),
+            })
+        })
+        .collect();
     Ok(ExtractedDocument {
         method: "EMBEDDED_TEXT",
         text,
         confidence_bps: 9000,
         issues: Vec::new(),
+        regions,
     })
 }
 
@@ -208,6 +250,8 @@ mod tests {
         assert!(result.text.contains("STORE TOTAL 1200"));
         assert_eq!(result.confidence_bps, 9000);
         assert!(result.issues.is_empty());
+        assert_eq!(result.regions[0].page_number, 1);
+        assert_eq!(result.regions[0].coordinate_space, "UNLOCATED");
     }
 
     #[test]
