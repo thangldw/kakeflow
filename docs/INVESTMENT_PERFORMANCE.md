@@ -1,6 +1,6 @@
 # Investment performance accounting
 
-KakeFlow v0.9 derives investment holdings, realized performance, dated market valuation, and explicit corporate-action allocations from immutable brokerage events and provenance-bearing observations.
+KakeFlow v0.15 derives investment holdings, realized performance, dated market valuation, and explicit corporate-action allocations from immutable brokerage events and provenance-bearing observations.
 
 ## Market valuation (v0.8)
 
@@ -28,7 +28,7 @@ KakeFlow supports three non-cash corporate actions with an explicit
 
 - `SPLIT`
 - `REVERSE_SPLIT`
-- `MERGER` (same-currency, share-for-share mergers only)
+- `MERGER` (share-for-share; same or cross-currency with explicit terms)
 
 Splits multiply every open lot quantity by the ratio and divide its unit cost
 by the same ratio. Mergers do the same transformation and move the lot to the
@@ -36,9 +36,8 @@ explicit target instrument. The original acquisition date, source document,
 source row, and total remaining cost are retained. Corporate actions never
 create a realized allocation or gain by themselves.
 
-Unsupported cases are rejected or reported as skipped rather than guessed:
-mixed cash-and-stock mergers, cross-currency mergers, and actions without the
-explicit quantities, ratios, allocation, or target required by their type.
+Actions without the explicit quantities, ratios, allocation, target, or required
+currency conversion are rejected or reported as skipped rather than guessed.
 
 ## Complex corporate actions (v0.9)
 
@@ -51,8 +50,37 @@ explicit quantities, ratios, allocation, or target required by their type.
 
 Every allocation identifies both the corporate-action source row and the
 originating purchase event. Missing terms are surfaced as issues and do not
-produce an estimated lot or gain. Mixed cash/stock and cross-currency mergers
-remain unsupported until their source supplies an unambiguous allocation model.
+produce an estimated lot or gain.
+
+## Mixed and cross-currency mergers (v0.15)
+
+A merger source row must provide the target instrument/currency, new-shares per
+old-share ratio, and the fraction of source cost basis assigned to the stock
+consideration. A merger with cash must also provide the total cash amount and
+currency; the remainder of source basis is assigned to that cash consideration.
+
+When an output currency differs from the source lot currency, the source row
+must provide a direct rate expressed as output-currency units per one source-
+currency unit. A same-currency output must omit the rate. KakeFlow does not use a
+market quote, triangulate, or silently substitute a reporting FX observation for
+the legal/tax allocation terms of the action.
+
+For each open FIFO lot:
+
+```text
+stock source basis = lot basis × stock allocation ratio
+stock output basis = stock source basis × source-to-target rate
+cash source basis  = lot basis × (1 − stock allocation ratio)
+cash output basis  = cash source basis × source-to-cash rate
+cash proceeds      = total cash × lot surrendered quantity / total surrendered quantity
+cash realized P&L = cash proceeds − cash output basis
+```
+
+The resulting `MERGER_STOCK` and `MERGER_CASH` allocations retain the source buy
+document/row and action document/row. Reports show source basis/currency, exact
+conversion rate, output basis/currency, proceeds, and realized P&L. Security,
+cash, and offset legs are balanced independently in each currency; cash movement
+is reported in the cash leg currency.
 
 ## FX reporting (v0.7)
 

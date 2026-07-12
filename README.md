@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.14 adds saved, household-scoped CSV/TSV parser profiles for financial institutions that do not yet have a built-in adapter. Users can configure encoding, delimiter, header/date/amount columns, signed-value direction, and account hints, then inspect a real local preview before the existing review-and-approval workflow.
+Version 0.15 adds auditable all-stock and mixed cash/stock merger accounting across currencies. FIFO lots keep their source lineage, explicit source-provided allocation and FX terms convert each cost-basis portion, and cash consideration produces a separately traceable realized result without combining currencies.
 
 ## Product tour
 
@@ -109,8 +109,11 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.14 capabilities
+## Current v0.15 capabilities
 
+- Mixed cash/stock and cross-currency merger ingestion with explicit stock-basis allocation, consideration currencies, and source-to-output FX rates.
+- FIFO merger allocations that expose source acquisition evidence, source/output basis and currency, exact conversion rate, cash proceeds, and realized P&L.
+- Per-currency balanced merger legs and cash-flow totals; incomplete or unnecessary terms are rejected instead of inferred.
 - Persisted [custom CSV/TSV mappings](docs/CUSTOM_PARSER_PROFILES.md) with optimistic concurrency, UTF-8/CP932 decoding, explicit signed/debit-credit semantics, and JPY-only validation.
 - Per-file profile application with matched-header, candidate, excluded-row, and issue preview; error rows block staging and every valid candidate remains pending review.
 - Immutable custom source-row/raw-field provenance, external transaction ID propagation, and an explicit Asset/Liability target account.
@@ -155,5 +158,5 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Remaining product milestones
 
 1. Add optional end-to-end encrypted multi-device household synchronization, principal-to-member mapping, backend-derived audience enforcement, and mobile receipt capture.
-2. Add more institution-specific brokerage and statement adapters plus mixed cash/stock and cross-currency merger allocation.
+2. Add more institution-specific brokerage and statement adapters.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
