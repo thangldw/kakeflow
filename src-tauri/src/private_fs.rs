@@ -16,6 +16,21 @@ pub(crate) fn secure_file(path: &Path) -> io::Result<()> {
     secure_path(path, PathKind::File)
 }
 
+fn secure_path(path: &Path, kind: PathKind) -> io::Result<()> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let matches_kind = match kind {
+        PathKind::Directory => metadata.file_type().is_dir(),
+        PathKind::File => metadata.file_type().is_file(),
+    };
+    if metadata.file_type().is_symlink() || !matches_kind {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "private path has an unexpected filesystem type",
+        ));
+    }
+    apply_secure_path(path, kind)
+}
+
 /// Re-applies private ACLs to a tree created by an older KakeFlow release.
 /// Symlinks and special files are rejected instead of followed, preventing an
 /// ACL migration from escaping the application-controlled directory.
@@ -52,7 +67,7 @@ enum PathKind {
 }
 
 #[cfg(unix)]
-fn secure_path(path: &Path, kind: PathKind) -> io::Result<()> {
+fn apply_secure_path(path: &Path, kind: PathKind) -> io::Result<()> {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
@@ -64,7 +79,7 @@ fn secure_path(path: &Path, kind: PathKind) -> io::Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn secure_path(path: &Path, kind: PathKind) -> io::Result<()> {
+fn apply_secure_path(path: &Path, kind: PathKind) -> io::Result<()> {
     use std::ffi::c_void;
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
@@ -146,8 +161,69 @@ fn sddl(kind: PathKind) -> Vec<u16> {
 }
 
 #[cfg(not(any(unix, target_os = "windows")))]
-fn secure_path(_path: &Path, _kind: PathKind) -> io::Result<()> {
+fn apply_secure_path(_path: &Path, _kind: PathKind) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    #[test]
+    fn private_permissions_never_follow_symlinks() {
+        let root = std::env::temp_dir().join(format!(
+            "kakeflow-private-fs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let target_directory = root.join("target-directory");
+        let target_file = root.join("target-file");
+        std::fs::create_dir_all(&target_directory).expect("target directory");
+        std::fs::write(&target_file, b"target").expect("target file");
+        std::fs::set_permissions(&target_directory, std::fs::Permissions::from_mode(0o755))
+            .expect("directory permissions");
+        std::fs::set_permissions(&target_file, std::fs::Permissions::from_mode(0o644))
+            .expect("file permissions");
+        let directory_link = root.join("directory-link");
+        let file_link = root.join("file-link");
+        symlink(&target_directory, &directory_link).expect("directory symlink");
+        symlink(&target_file, &file_link).expect("file symlink");
+
+        assert_eq!(
+            secure_directory(&directory_link)
+                .expect_err("directory symlink rejected")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            secure_file(&file_link)
+                .expect_err("file symlink rejected")
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            std::fs::metadata(&target_directory)
+                .expect("directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
+        );
+        assert_eq!(
+            std::fs::metadata(&target_file)
+                .expect("file metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o644
+        );
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
 }
 
 #[cfg(all(test, target_os = "windows"))]
