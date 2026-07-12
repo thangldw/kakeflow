@@ -275,6 +275,7 @@ fn read_observations(
              JOIN accounts a ON a.id = e.account_id AND a.household_id = t.household_id
                             AND a.account_kind = 'EXPENSE'
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.calculation_target = 1
                AND t.transaction_type IN ('EXPENSE','CARD_PURCHASE')
                AND t.occurred_on BETWEEN ?2 AND ?3
                AND (?4 IS NULL OR EXISTS (
@@ -691,7 +692,7 @@ mod tests {
             "CREATE TABLE households(id TEXT PRIMARY KEY);
              CREATE TABLE household_members(id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
              CREATE TABLE accounts(id TEXT PRIMARY KEY, household_id TEXT, name TEXT, account_kind TEXT);
-             CREATE TABLE transactions(id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, transaction_type TEXT, payee TEXT, description TEXT, status TEXT, attribution_kind TEXT, attributed_member_id TEXT);
+             CREATE TABLE transactions(id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, transaction_type TEXT, payee TEXT, description TEXT, status TEXT, attribution_kind TEXT, attributed_member_id TEXT, calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1)));
              CREATE TABLE journal_entries(transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER);
              CREATE TABLE account_groups(id TEXT PRIMARY KEY, household_id TEXT);
              CREATE TABLE account_group_members(household_id TEXT, account_group_id TEXT, account_id TEXT);
@@ -728,7 +729,7 @@ mod tests {
     ) {
         connection
             .execute(
-                "INSERT INTO transactions VALUES(?1,'family',?2,'EXPENSE',?3,NULL,?4,?5,?6)",
+                "INSERT INTO transactions VALUES(?1,'family',?2,'EXPENSE',?3,NULL,?4,?5,?6,1)",
                 params![id, date, payee, status, attribution, member_id],
             )
             .unwrap();
@@ -834,6 +835,29 @@ mod tests {
             .limitations
             .iter()
             .any(|item| item.contains("does not estimate")));
+    }
+
+    #[test]
+    fn calculation_target_excludes_posted_history_from_fixed_cost_detection() {
+        let connection = connection();
+        for month in 1..=6 {
+            add_expense(
+                &connection,
+                &format!("excluded-rent-{month}"),
+                &format!("2026-{month:02}-05"),
+                Some("Landlord"),
+                "POSTED",
+                "HOUSEHOLD",
+                None,
+                &[("housing", 100_000)],
+            );
+        }
+        connection
+            .execute("UPDATE transactions SET calculation_target=0", [])
+            .unwrap();
+        let result = query_fixed_cost_review(&connection, &request()).unwrap();
+        assert_eq!(result.totals.recurring_payee_count, 0);
+        assert_eq!(result.totals.recent_three_average_jpy, 0);
     }
 
     #[test]

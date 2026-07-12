@@ -590,6 +590,7 @@ pub fn generate_csv(
                 "description",
                 "amount_jpy",
                 "status",
+                "calculation_target",
                 "debit_account_id",
                 "debit_account_name",
                 "credit_account_id",
@@ -747,7 +748,7 @@ fn export_transaction_rows(
                     COALESCE(t.payee, ''), COALESCE(t.description, ''),
                     COALESCE((SELECT SUM(amount_jpy) FROM journal_entries
                               WHERE transaction_id = t.id AND entry_side = 'DEBIT'), 0),
-                    t.status,
+                    t.status, CASE t.calculation_target WHEN 1 THEN 'true' ELSE 'false' END,
                     COALESCE((SELECT a.id FROM journal_entries je JOIN accounts a ON a.id = je.account_id
                               WHERE je.transaction_id = t.id AND je.entry_side = 'DEBIT'
                               ORDER BY je.line_number LIMIT 1), ''),
@@ -799,12 +800,12 @@ fn export_transaction_rows(
             ],
             |row| {
                 let amount: i64 = row.get(6)?;
-                let mut values = Vec::with_capacity(18);
+                let mut values = Vec::with_capacity(19);
                 for index in 0..6 {
                     values.push(row.get(index)?);
                 }
                 values.push(amount.to_string());
-                for index in 7..14 {
+                for index in 7..15 {
                     values.push(row.get(index)?);
                 }
                 values.push(basis.to_owned());
@@ -948,7 +949,8 @@ mod tests {
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                occurred_on TEXT NOT NULL, posted_on TEXT, transaction_type TEXT NOT NULL,
                payee TEXT, description TEXT, status TEXT NOT NULL, created_at TEXT NOT NULL,
-               attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT
+               attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
+               calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1))
              ) STRICT;
              CREATE TABLE journal_entries(
                id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id),
@@ -1069,11 +1071,13 @@ mod tests {
         connection.execute_batch(
             "INSERT INTO transactions VALUES
                ('purchase', 'home', '2026-07-01', NULL, 'CARD_PURCHASE', 'Shop, \"Tokyo\"', 'line 1
-line 2', 'POSTED', '2026-07-01T00:00:00Z', 'MEMBER', 'home-member'),
-               ('payment', 'home', '2026-07-10', NULL, 'CARD_PAYMENT', 'Card', NULL, 'POSTED', '2026-07-10T00:00:00Z', 'HOUSEHOLD', NULL),
-               ('outside', 'other', '2026-07-01', NULL, 'EXPENSE', 'Other', NULL, 'POSTED', '2026-07-01T00:00:00Z', 'HOUSEHOLD', NULL);
+line 2', 'POSTED', '2026-07-01T00:00:00Z', 'MEMBER', 'home-member', 0),
+               ('included', 'home', '2026-07-02', NULL, 'EXPENSE', 'Cafe', NULL, 'POSTED', '2026-07-02T00:00:00Z', 'MEMBER', 'home-member', 1),
+               ('payment', 'home', '2026-07-10', NULL, 'CARD_PAYMENT', 'Card', NULL, 'POSTED', '2026-07-10T00:00:00Z', 'HOUSEHOLD', NULL, 1),
+               ('outside', 'other', '2026-07-01', NULL, 'EXPENSE', 'Other', NULL, 'POSTED', '2026-07-01T00:00:00Z', 'HOUSEHOLD', NULL, 1);
              INSERT INTO journal_entries VALUES
                ('p1', 'purchase', 'food', 'DEBIT', 1200, 1), ('p2', 'purchase', 'card', 'CREDIT', 1200, 2),
+               ('i1', 'included', 'food', 'DEBIT', 500, 1), ('i2', 'included', 'bank', 'CREDIT', 500, 2),
                ('c1', 'payment', 'card', 'DEBIT', 1200, 1), ('c2', 'payment', 'bank', 'CREDIT', 1200, 2),
                ('o1', 'outside', 'foreign', 'DEBIT', 1, 1);",
         ).unwrap();
@@ -1091,7 +1095,10 @@ line 2', 'POSTED', '2026-07-01T00:00:00Z', 'MEMBER', 'home-member'),
         )
         .unwrap();
         assert!(export.utf8_bom_csv.starts_with('\u{feff}'));
-        assert_eq!(export.row_count, 1);
+        assert_eq!(export.row_count, 2);
+        assert!(export.utf8_bom_csv.contains("calculation_target"));
+        assert!(export.utf8_bom_csv.contains(",POSTED,false,"));
+        assert!(export.utf8_bom_csv.contains(",POSTED,true,"));
         assert!(export.utf8_bom_csv.contains("\"Shop, \"\"Tokyo\"\"\""));
         assert!(export.utf8_bom_csv.contains("\"line 1\nline 2\""));
         assert!(!export.utf8_bom_csv.contains("payment,2026"));
@@ -1111,7 +1118,7 @@ line 2', 'POSTED', '2026-07-01T00:00:00Z', 'MEMBER', 'home-member'),
             },
         )
         .unwrap();
-        assert_eq!(member_export.row_count, 1);
+        assert_eq!(member_export.row_count, 2);
         assert!(member_export
             .utf8_bom_csv
             .contains(",MEMBER,home-member\r\n"));

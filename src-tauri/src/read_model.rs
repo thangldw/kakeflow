@@ -822,6 +822,24 @@ impl AccountingBasis {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CalculationTargetFilter {
+    All,
+    Included,
+    Excluded,
+}
+
+impl CalculationTargetFilter {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::All => "ALL",
+            Self::Included => "INCLUDED",
+            Self::Excluded => "EXCLUDED",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionPageRequest {
@@ -833,6 +851,7 @@ pub struct TransactionPageRequest {
     pub from_date: Option<String>,
     pub to_date: Option<String>,
     pub search: Option<String>,
+    pub calculation_target_filter: Option<CalculationTargetFilter>,
     pub page: u32,
     pub page_size: u32,
 }
@@ -848,6 +867,7 @@ pub struct TransactionRowDto {
     pub description: Option<String>,
     pub amount_jpy: i64,
     pub status: String,
+    pub calculation_target: bool,
     pub debit_account_id: Option<String>,
     pub debit_account_name: Option<String>,
     pub credit_account_id: Option<String>,
@@ -906,6 +926,10 @@ pub fn list_transactions(
 
     let basis = request.accounting_basis.as_sql_value();
     let search = search_pattern(request.search.as_deref())?;
+    let calculation_target_filter = request
+        .calculation_target_filter
+        .unwrap_or(CalculationTargetFilter::All)
+        .as_sql_value();
     let total_items: u64 = connection
         .query_row(
             "SELECT count(*)
@@ -937,7 +961,10 @@ pub fn list_transactions(
                AND (?7 = 'ALL'
                     OR (?7 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
                     OR (?7 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
-                        AND t.attributed_member_id = ?8))",
+                        AND t.attributed_member_id = ?8))
+               AND (?9 = 'ALL'
+                    OR (?9 = 'INCLUDED' AND t.calculation_target = 1)
+                    OR (?9 = 'EXCLUDED' AND t.calculation_target = 0))",
             params![
                 request.household_id,
                 request.from_date,
@@ -946,7 +973,8 @@ pub fn list_transactions(
                 search,
                 request.account_group_id,
                 request.attribution_scope.sql_kind(),
-                request.attribution_scope.member_id()
+                request.attribution_scope.member_id(),
+                calculation_target_filter
             ],
             |row| row.get(0),
         )
@@ -978,6 +1006,7 @@ pub fn list_transactions(
                     (SELECT a.name FROM journal_entries je JOIN accounts a ON a.id = je.account_id
                      WHERE je.transaction_id = t.id AND a.account_kind IN ('EXPENSE', 'INCOME')
                      ORDER BY je.line_number LIMIT 1),
+                    t.calculation_target,
                     t.attribution_kind, t.attributed_member_id, attributed.display_name,
                     t.audience_visibility, t.audience_member_id, audience.display_name
              FROM transactions t
@@ -1011,8 +1040,11 @@ pub fn list_transactions(
                     OR (?7 = 'HOUSEHOLD_COMMON' AND t.attribution_kind = 'HOUSEHOLD')
                     OR (?7 = 'MEMBER' AND t.attribution_kind = 'MEMBER'
                         AND t.attributed_member_id = ?8))
+               AND (?9 = 'ALL'
+                    OR (?9 = 'INCLUDED' AND t.calculation_target = 1)
+                    OR (?9 = 'EXCLUDED' AND t.calculation_target = 0))
              ORDER BY t.occurred_on DESC, t.created_at DESC, t.id DESC
-             LIMIT ?9 OFFSET ?10",
+             LIMIT ?10 OFFSET ?11",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -1026,6 +1058,7 @@ pub fn list_transactions(
                 request.account_group_id,
                 request.attribution_scope.sql_kind(),
                 request.attribution_scope.member_id(),
+                calculation_target_filter,
                 i64::from(request.page_size),
                 offset as i64
             ],
@@ -1045,12 +1078,13 @@ pub fn list_transactions(
                     credit_account_name: row.get(11)?,
                     category_account_id: row.get(12)?,
                     category_name: row.get(13)?,
-                    attribution_kind: row.get(14)?,
-                    attributed_member_id: row.get(15)?,
-                    attributed_member_name: row.get(16)?,
-                    audience_visibility: row.get(17)?,
-                    audience_member_id: row.get(18)?,
-                    audience_member_name: row.get(19)?,
+                    calculation_target: row.get(14)?,
+                    attribution_kind: row.get(15)?,
+                    attributed_member_id: row.get(16)?,
+                    attributed_member_name: row.get(17)?,
+                    audience_visibility: row.get(18)?,
+                    audience_member_id: row.get(19)?,
+                    audience_member_name: row.get(20)?,
                 })
             },
         )
@@ -1158,6 +1192,7 @@ pub struct UpdatePostedTransactionInput {
     pub transaction_type: ManualTransactionType,
     pub payee: Option<String>,
     pub description: Option<String>,
+    pub calculation_target: bool,
     #[serde(default)]
     pub attribution_kind: AttributionKind,
     #[serde(default)]
@@ -1208,6 +1243,7 @@ pub struct TransactionDetailDto {
     pub payee: Option<String>,
     pub description: Option<String>,
     pub status: String,
+    pub calculation_target: bool,
     pub created_at: String,
     pub updated_at: String,
     pub editable: bool,
@@ -1234,7 +1270,7 @@ pub fn get_transaction_detail(
         .query_row(
             "SELECT t.id, t.household_id, t.occurred_on, t.posted_on,
                     t.transaction_type, t.payee, t.description, t.status,
-                    t.created_at, t.updated_at, 1,
+                    t.created_at, t.updated_at, 1, t.calculation_target,
                     t.attribution_kind, t.attributed_member_id, attributed.display_name,
                     t.audience_visibility, t.audience_member_id, audience.display_name
              FROM transactions t
@@ -1255,12 +1291,13 @@ pub fn get_transaction_detail(
                     created_at: row.get(8)?,
                     updated_at: row.get(9)?,
                     editable: row.get(10)?,
-                    attribution_kind: row.get(11)?,
-                    attributed_member_id: row.get(12)?,
-                    attributed_member_name: row.get(13)?,
-                    audience_visibility: row.get(14)?,
-                    audience_member_id: row.get(15)?,
-                    audience_member_name: row.get(16)?,
+                    calculation_target: row.get(11)?,
+                    attribution_kind: row.get(12)?,
+                    attributed_member_id: row.get(13)?,
+                    attributed_member_name: row.get(14)?,
+                    audience_visibility: row.get(15)?,
+                    audience_member_id: row.get(16)?,
+                    audience_member_name: row.get(17)?,
                     entries: Vec::new(),
                     source_evidence: Vec::new(),
                 })
@@ -1475,6 +1512,7 @@ pub fn create_manual_transaction(
             from_date: Some(input.occurred_on.clone()),
             to_date: Some(input.occurred_on.clone()),
             search: Some(input.id.clone()),
+            calculation_target_filter: None,
             page: 1,
             page_size: 1,
         },
@@ -1506,6 +1544,8 @@ pub fn update_posted_transaction(
         input.audience_member_id.as_deref(),
     )?;
 
+    let current = get_transaction_detail(connection, &input.household_id, &input.transaction_id)?;
+
     let transaction = connection
         .unchecked_transaction()
         .map_err(map_database_error)?;
@@ -1534,9 +1574,45 @@ pub fn update_posted_transaction(
         )
         .map_err(map_database_error)?;
     if reconciliation_linked {
-        return Err(RepositoryError::InvalidInput(
-            "Card-linked transactions must be changed through reconciliation",
-        ));
+        let fields_unchanged = current.occurred_on == input.occurred_on
+            && current.posted_on == input.posted_on
+            && current.transaction_type == input.transaction_type.as_sql_value()
+            && current.payee == input.payee
+            && current.description == input.description
+            && current.attribution_kind == input.attribution_kind.as_sql()
+            && current.attributed_member_id == input.attributed_member_id
+            && current.audience_visibility == input.audience_visibility.as_sql()
+            && current.audience_member_id == input.audience_member_id
+            && current.entries.len() == input.entries.len()
+            && current
+                .entries
+                .iter()
+                .zip(&input.entries)
+                .all(|(stored, submitted)| {
+                    stored.id == submitted.id
+                        && stored.account_id == submitted.account_id
+                        && stored.side == submitted.side.as_sql_value()
+                        && stored.amount_jpy == submitted.amount_jpy
+                });
+        if !fields_unchanged {
+            return Err(RepositoryError::InvalidInput(
+                "Card-linked transactions must be changed through reconciliation",
+            ));
+        }
+        transaction
+            .execute(
+                "UPDATE transactions SET calculation_target=?1,
+                   updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                 WHERE id=?2 AND household_id=?3 AND status='POSTED'",
+                params![
+                    input.calculation_target,
+                    input.transaction_id,
+                    input.household_id
+                ],
+            )
+            .map_err(map_database_error)?;
+        transaction.commit().map_err(map_database_error)?;
+        return get_transaction_detail(connection, &input.household_id, &input.transaction_id);
     }
     validate_transaction_account_shape(
         &transaction,
@@ -1551,9 +1627,9 @@ pub fn update_posted_transaction(
              SET occurred_on = ?1, posted_on = ?2, transaction_type = ?3,
                  payee = ?4, description = ?5, attribution_kind = ?6,
                  attributed_member_id = ?7, audience_visibility = ?8,
-                 audience_member_id = ?9,
+                 audience_member_id = ?9, calculation_target = ?10,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ?10 AND household_id = ?11 AND status = 'POSTED'",
+             WHERE id = ?11 AND household_id = ?12 AND status = 'POSTED'",
             params![
                 input.occurred_on,
                 input.posted_on,
@@ -1564,6 +1640,7 @@ pub fn update_posted_transaction(
                 input.attributed_member_id,
                 input.audience_visibility.as_sql(),
                 input.audience_member_id,
+                input.calculation_target,
                 input.transaction_id,
                 input.household_id
             ],
@@ -1771,6 +1848,7 @@ pub fn dashboard_monthly_totals(
                  LEFT JOIN journal_entries je ON je.transaction_id = t.id
                  LEFT JOIN accounts a ON a.id = je.account_id
                  WHERE t.household_id = ?1 AND t.status = 'POSTED'
+                   AND t.calculation_target = 1
                    AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
                    AND t.transaction_type != 'CARD_PAYMENT'
                    AND (?3 IS NULL OR EXISTS (
@@ -1796,6 +1874,7 @@ pub fn dashboard_monthly_totals(
                    LEFT JOIN journal_entries je ON je.transaction_id = t.id
                    LEFT JOIN accounts a ON a.id = je.account_id
                    WHERE t.household_id = ?1 AND t.status = 'POSTED'
+                     AND t.calculation_target = 1
                      AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
                      AND t.transaction_type NOT IN ('CARD_PURCHASE', 'TRANSFER')
                      AND (?3 IS NULL OR EXISTS (
@@ -1861,6 +1940,7 @@ pub fn dashboard_monthly_totals(
              FROM months
              LEFT JOIN transactions t
                ON t.household_id = ?1 AND t.status = 'POSTED'
+              AND t.calculation_target = 1
               AND t.occurred_on >= months.month_start
               AND t.occurred_on < date(months.month_start, '+1 month')
               AND t.transaction_type != 'CARD_PAYMENT'
@@ -1907,6 +1987,7 @@ pub fn dashboard_monthly_totals(
              JOIN journal_entries je ON je.transaction_id = t.id
              JOIN accounts a ON a.id = je.account_id AND a.account_kind = 'EXPENSE'
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.calculation_target = 1
                AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
                AND t.transaction_type != 'CARD_PAYMENT'
                AND (?3 IS NULL OR EXISTS (
@@ -2001,6 +2082,7 @@ pub fn list_monthly_category_budgets(
                  ON expense.id = je.account_id AND expense.account_kind = 'EXPENSE'
                WHERE t.household_id = ?1 AND expense.household_id = ?1
                  AND t.status = 'POSTED'
+                 AND t.calculation_target = 1
                  AND t.occurred_on >= ?3 AND t.occurred_on < date(?3, '+1 month')
                  AND t.transaction_type != 'CARD_PAYMENT'
                GROUP BY je.account_id
@@ -3283,6 +3365,7 @@ mod tests {
                    attributed_member_id TEXT,
                    audience_visibility TEXT NOT NULL DEFAULT 'SHARED',
                    audience_member_id TEXT,
+                   calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1)),
                    created_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z',
                    updated_at TEXT NOT NULL DEFAULT '2026-07-12T00:00:00Z'
                  );
@@ -3867,6 +3950,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: None,
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 20,
             },
@@ -3884,6 +3968,7 @@ mod tests {
                     from_date: None,
                     to_date: None,
                     search: None,
+                    calculation_target_filter: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -3969,6 +4054,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: None,
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4025,6 +4111,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: None,
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 2,
             },
@@ -4042,6 +4129,7 @@ mod tests {
                     from_date: None,
                     to_date: None,
                     search: None,
+                    calculation_target_filter: None,
                     page: 1,
                     page_size: 2,
                 }
@@ -4063,6 +4151,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: Some("Groceries".into()),
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4081,6 +4170,7 @@ mod tests {
             &connection,
             &TransactionPageRequest {
                 search: Some("%".into()),
+                calculation_target_filter: None,
                 ..TransactionPageRequest {
                     household_id: "family".into(),
                     account_group_id: None,
@@ -4089,6 +4179,7 @@ mod tests {
                     from_date: None,
                     to_date: None,
                     search: None,
+                    calculation_target_filter: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -4151,6 +4242,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: None,
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4169,6 +4261,7 @@ mod tests {
                     from_date: None,
                     to_date: None,
                     search: None,
+                    calculation_target_filter: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -4186,6 +4279,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: None,
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4224,6 +4318,7 @@ mod tests {
                         from_date: None,
                         to_date: None,
                         search: None,
+                        calculation_target_filter: None,
                         page: 1,
                         page_size: 20,
                     }
@@ -4430,6 +4525,7 @@ mod tests {
             transaction_type: input.transaction_type,
             payee: input.payee.clone(),
             description: input.description.clone(),
+            calculation_target: true,
             attribution_kind: input.attribution_kind,
             attributed_member_id: input.attributed_member_id.clone(),
             audience_visibility: input.audience_visibility,
@@ -4676,6 +4772,23 @@ mod tests {
         ));
         let unchanged = get_transaction_detail(&connection, "family", "linked").unwrap();
         assert_eq!(unchanged.payee.as_deref(), Some("Coffee linked"));
+
+        let mut target_only = update_from_manual(&original);
+        target_only.calculation_target = false;
+        let toggled = update_posted_transaction(&connection, &target_only).unwrap();
+        assert!(!toggled.calculation_target);
+        assert_eq!(toggled.entries.len(), 2);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM card_statement_transactions
+                     WHERE statement_id='statement' AND transaction_id='linked'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
     }
 
     #[test]
@@ -5038,6 +5151,7 @@ mod tests {
                 from_date: None,
                 to_date: None,
                 search: None,
+                calculation_target_filter: None,
                 page: 1,
                 page_size: 101,
             },
@@ -5165,5 +5279,90 @@ mod tests {
             ),
             Err(RepositoryError::Conflict)
         ));
+    }
+
+    #[test]
+    fn calculation_target_filters_household_analytics_but_preserves_ledger_and_balances() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        let included = manual_expense("included", "family", 1_000);
+        let excluded = manual_expense("excluded", "family", 2_000);
+        assert!(
+            create_manual_transaction(&connection, &included)
+                .unwrap()
+                .calculation_target
+        );
+        create_manual_transaction(&connection, &excluded).unwrap();
+        let mut update = update_from_manual(&excluded);
+        update.calculation_target = false;
+        let detail = update_posted_transaction(&connection, &update).unwrap();
+        assert!(!detail.calculation_target);
+        assert_eq!(detail.entries.len(), 2);
+
+        connection
+            .execute(
+                "INSERT INTO monthly_category_budgets
+                   (household_id,month,category_account_id,budget_jpy)
+                 VALUES ('family','2026-07','family-groceries',5000)",
+                [],
+            )
+            .unwrap();
+        let dashboard = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Accrual,
+            None,
+            &AttributionScope::All,
+        )
+        .unwrap();
+        assert_eq!(dashboard.expense_jpy, 1_000);
+        assert_eq!(dashboard.posted_transaction_count, 1);
+        assert_eq!(dashboard.assets_jpy, -3_000);
+        assert_eq!(dashboard.net_worth_jpy, -3_000);
+        assert_eq!(
+            list_monthly_category_budgets(&connection, "family", "2026-07").unwrap()[0].actual_jpy,
+            1_000
+        );
+
+        let request = |filter| TransactionPageRequest {
+            household_id: "family".into(),
+            account_group_id: None,
+            attribution_scope: AttributionScope::All,
+            accounting_basis: AccountingBasis::Accrual,
+            from_date: None,
+            to_date: None,
+            search: None,
+            calculation_target_filter: Some(filter),
+            page: 1,
+            page_size: 20,
+        };
+        assert_eq!(
+            list_transactions(&connection, &request(CalculationTargetFilter::All))
+                .unwrap()
+                .total_items,
+            2
+        );
+        assert_eq!(
+            list_transactions(&connection, &request(CalculationTargetFilter::Included))
+                .unwrap()
+                .items[0]
+                .id,
+            "included"
+        );
+        assert_eq!(
+            list_transactions(&connection, &request(CalculationTargetFilter::Excluded))
+                .unwrap()
+                .items[0]
+                .id,
+            "excluded"
+        );
     }
 }

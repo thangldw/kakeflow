@@ -52,6 +52,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0021_aggregate_asset_history.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0022_transaction_calculation_target.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -308,6 +311,12 @@ fn validate_restored_semantics(
     connection: &Connection,
     schema_version: i64,
 ) -> Result<(), PersistenceError> {
+    if schema_version >= 22 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM transactions WHERE calculation_target NOT IN (0,1) LIMIT 1",
+        )?;
+    }
     if schema_version >= 2 {
         reject_if_exists(
             connection,
@@ -687,6 +696,42 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_twenty_two_backfills_included_target_and_enforces_boolean_domain() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 21)
+            .expect("schema twenty one");
+        connection
+            .execute_batch(
+                "INSERT INTO households (id,name) VALUES ('family','Family');
+                 INSERT INTO transactions
+                   (id,household_id,occurred_on,transaction_type,status)
+                 VALUES ('legacy','family','2026-07-01','EXPENSE','POSTED');",
+            )
+            .expect("legacy transaction");
+        migrations
+            .to_version(&mut connection, 22)
+            .expect("schema twenty two");
+        let target: i64 = connection
+            .query_row(
+                "SELECT calculation_target FROM transactions WHERE id='legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(target, 1);
+        assert!(connection
+            .execute(
+                "UPDATE transactions SET calculation_target=2 WHERE id='legacy'",
+                [],
+            )
+            .is_err());
     }
 
     #[test]
