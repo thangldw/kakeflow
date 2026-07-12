@@ -41,6 +41,18 @@ describe('import mapper', () => {
     expect(result.request.cardStatements).toEqual([])
   })
 
+  it('preserves a custom parser external transaction ID on the review candidate', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'custom-delimited-v1', issues: [], metadata: { profileId: 'custom' }, records: [{
+      kind: 'bank-transaction', lineage: { sourceRow: 8, sourceRowEnd: 8, rawFields: ['2026-07-12', 'Store', '-1200', 'bank-row-9'] },
+      transactionDate: '2026-07-12', description: 'Store', descriptionDetail: '', outgoingAmount: 1200, incomingAmount: null,
+      externalTransactionId: 'bank-row-9', balance: null, memo: '', fundsAvailabilityCode: '', debitCreditCode: 'OUT', suggestedType: 'UNKNOWN',
+    }] }
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+    expect(result.request.candidates).toHaveLength(1)
+    expect(result.request.candidates[0]).toMatchObject({ externalTransactionId: 'bank-row-9', reviewStatus: 'PENDING' })
+    expect(result.request.records[0]).toMatchObject({ rowNumber: 8 })
+  })
+
   it('groups PayPay legs while preserving primary, supporting, and split-funding evidence', async () => {
     const parsed: ParsedImport<unknown> = { adapterId: 'paypay-history-v1', issues: [], metadata: {}, records: [{
       kind: 'wallet-event', transactionId: 'pay-1', occurredAt: '2026-07-10T12:30:00+09:00', counterparty: '店舗', eventType: 'Payment + Points, Balance Earned',

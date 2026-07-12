@@ -5,6 +5,7 @@ export type AdapterId =
   | 'rakuten-enavi-v1'
   | 'securities-asset-snapshot-v1'
   | 'japanese-brokerage-transactions-v1'
+  | 'custom-delimited-v1'
 
 export type ParseIssueSeverity = 'warning' | 'error'
 
@@ -52,6 +53,7 @@ export interface BankTransactionCandidate {
   kind: 'bank-transaction'
   lineage: SourceLineage
   accountHint?: string
+  externalTransactionId?: string
   transactionDate: string | null
   description: string
   descriptionDetail: string

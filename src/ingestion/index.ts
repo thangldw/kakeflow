@@ -7,6 +7,7 @@ export { amazonMastercardAdapter } from './adapters/amazonMastercard'
 export { rakutenEnaviAdapter } from './adapters/rakuten'
 export { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 export { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
+export * from './adapters/customDelimited'
 
 import { amazonMastercardAdapter } from './adapters/amazonMastercard'
 import { japaneseBankAdapter } from './adapters/japaneseBank'
