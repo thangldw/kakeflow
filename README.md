@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.5 adds an explainable three-month cash/savings forecast and Action Center, Japanese brokerage transaction history, and page/region-aware PDF, OCR, and receipt evidence. It keeps the v0.4 financial calendar, reports, recurring/anomaly insights, account scopes, and CSV exports. Investment events and snapshots remain separate from household expense totals.
+Version 0.6 adds background sync-folder change discovery, FIFO investment holdings and realized performance, and packaged-app launch validation against a real WebView, IPC boundary, SQLCipher database, and migrations. It keeps the v0.5 forecast, Action Center, brokerage transactions, and page-aware financial evidence.
 
 ## Product tour
 
@@ -109,8 +109,11 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.5 capabilities
+## Current v0.6 capabilities
 
+- Background folder discovery outside Import Inbox with debounced created/modified/removed events.
+- FIFO holdings, open lots, realized P&L, dividends, fees, and taxes with source-event lineage per currency.
+- Packaged application launch smoke using isolated temporary data, real WebView IPC, and migration checks.
 - Three-month cash/savings forecast with explicit historical assumptions, recurring costs, and known card payments.
 - Prioritized Action Center for imports, card reconciliation, budgets, goals, anomalies, and subscription price changes.
 - Brokerage buys, sells, dividends, fees, taxes, deposits, and withdrawals with balanced investment legs and currency summaries.
@@ -127,7 +130,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Add OS-native background filesystem notifications even when the Import Inbox is not open.
-2. Add realized investment performance, lot/cost-basis tracking, corporate actions, and more institution-specific brokerage adapters.
+1. Add native filesystem notification backends to complement the bounded polling supervisor on very large folder trees.
+2. Add corporate actions, FX-aware reporting with explicit rate provenance, and more institution-specific brokerage adapters.
 3. Add visual PDF/image overlays for evidence bounding boxes and improve receipt item extraction across more Japanese formats.
-4. Add packaged UI launch/E2E coverage, production signing/notarization, update keys, and a signed release channel.
+4. Add visual packaged UI interaction coverage, production signing/notarization, update keys, and a signed release channel.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0 — 2026-07-13
+
+- Add a process-wide background folder discovery supervisor that detects created, modified, and removed supported files even when Import Inbox is closed.
+- Emit debounced, household-scoped change events without exposing absolute paths or automatically posting financial data.
+- Add FIFO investment cost basis, open lots, holdings, realized allocations, uncovered-sale warnings, and auditable source event/row lineage.
+- Report realized P&L, dividends, fees, and taxes per currency without inventing FX conversion or combining currencies.
+- Integrate background discovery status and investment performance into the desktop workspace.
+- Add a packaged-app smoke harness that launches the real macOS/Windows bundle in isolated app data, validates the main window, WebView IPC, SQLCipher integrity, and migrations, then exits and cleans up.
+
 ## 0.5.0 — 2026-07-13
 
 - Add a deterministic three-month household cash and savings forecast with visible assumptions, recurring costs, and known card payments.
