@@ -85,6 +85,23 @@ fn map_database_error(error: rusqlite::Error) -> RepositoryError {
     }
 }
 
+fn validate_account_group_scope(
+    connection: &Connection,
+    household_id: &str,
+    group_id: Option<&str>,
+) -> Result<(), RepositoryError> {
+    crate::account_groups_export::validate_account_group_scope(connection, household_id, group_id)
+        .map_err(|error| match error {
+            crate::account_groups_export::AccountGroupExportError::InvalidInput(message) => {
+                RepositoryError::InvalidInput(message)
+            }
+            crate::account_groups_export::AccountGroupExportError::NotFound => {
+                RepositoryError::NotFound
+            }
+            _ => RepositoryError::Unavailable,
+        })
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HouseholdDto {
@@ -488,6 +505,7 @@ impl AccountingBasis {
 #[serde(rename_all = "camelCase")]
 pub struct TransactionPageRequest {
     pub household_id: String,
+    pub account_group_id: Option<String>,
     pub accounting_basis: AccountingBasis,
     pub from_date: Option<String>,
     pub to_date: Option<String>,
@@ -546,6 +564,11 @@ pub fn list_transactions(
         ));
     }
     ensure_household_exists(connection, &request.household_id)?;
+    validate_account_group_scope(
+        connection,
+        &request.household_id,
+        request.account_group_id.as_deref(),
+    )?;
 
     let basis = request.accounting_basis.as_sql_value();
     let search = search_pattern(request.search.as_deref())?;
@@ -569,13 +592,21 @@ pub fn list_transactions(
                       WHERE search_je.transaction_id = t.id
                         AND search_a.household_id = t.household_id
                         AND search_a.name LIKE ?5 ESCAPE '!' COLLATE NOCASE
-                    ))",
+                    ))
+               AND (?6 IS NULL OR EXISTS (
+                    SELECT 1 FROM journal_entries scope_je
+                    JOIN account_group_members scope_gm
+                      ON scope_gm.account_id = scope_je.account_id
+                     AND scope_gm.household_id = t.household_id
+                    WHERE scope_je.transaction_id = t.id
+                      AND scope_gm.account_group_id = ?6))",
             params![
                 request.household_id,
                 request.from_date,
                 request.to_date,
                 basis,
-                search
+                search,
+                request.account_group_id
             ],
             |row| row.get(0),
         )
@@ -625,8 +656,15 @@ pub fn list_transactions(
                         AND search_a.household_id = t.household_id
                         AND search_a.name LIKE ?5 ESCAPE '!' COLLATE NOCASE
                     ))
+               AND (?6 IS NULL OR EXISTS (
+                    SELECT 1 FROM journal_entries scope_je
+                    JOIN account_group_members scope_gm
+                      ON scope_gm.account_id = scope_je.account_id
+                     AND scope_gm.household_id = t.household_id
+                    WHERE scope_je.transaction_id = t.id
+                      AND scope_gm.account_group_id = ?6))
              ORDER BY t.occurred_on DESC, t.created_at DESC, t.id DESC
-             LIMIT ?6 OFFSET ?7",
+             LIMIT ?7 OFFSET ?8",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -637,6 +675,7 @@ pub fn list_transactions(
                 request.to_date,
                 basis,
                 search,
+                request.account_group_id,
                 i64::from(request.page_size),
                 offset as i64
             ],
@@ -1016,6 +1055,7 @@ pub fn create_manual_transaction(
         connection,
         &TransactionPageRequest {
             household_id: input.household_id.clone(),
+            account_group_id: None,
             accounting_basis: if input.transaction_type == ManualTransactionType::CardPayment {
                 AccountingBasis::Cash
             } else {
@@ -1281,10 +1321,12 @@ pub fn dashboard_monthly_totals(
     household_id: &str,
     month: &str,
     accounting_basis: AccountingBasis,
+    account_group_id: Option<&str>,
 ) -> Result<DashboardMonthlyTotalsDto, RepositoryError> {
     validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
     validate_month(connection, month)?;
     ensure_household_exists(connection, household_id)?;
+    validate_account_group_scope(connection, household_id, account_group_id)?;
     let start = format!("{month}-01");
 
     let (income_jpy, expense_jpy, posted_transaction_count): (i64, i64, u64) =
@@ -1303,8 +1345,12 @@ pub fn dashboard_monthly_totals(
                  LEFT JOIN accounts a ON a.id = je.account_id
                  WHERE t.household_id = ?1 AND t.status = 'POSTED'
                    AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
-                   AND t.transaction_type != 'CARD_PAYMENT'",
-                params![household_id, start],
+                   AND t.transaction_type != 'CARD_PAYMENT'
+                   AND (?3 IS NULL OR EXISTS (
+                     SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                       ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                     WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))",
+                params![household_id, start, account_group_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ),
             AccountingBasis::Cash => connection.query_row(
@@ -1320,6 +1366,10 @@ pub fn dashboard_monthly_totals(
                    WHERE t.household_id = ?1 AND t.status = 'POSTED'
                      AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
                      AND t.transaction_type NOT IN ('CARD_PURCHASE', 'TRANSFER')
+                     AND (?3 IS NULL OR EXISTS (
+                       SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                         ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                       WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
                    GROUP BY t.id
                  )
                  SELECT
@@ -1327,7 +1377,7 @@ pub fn dashboard_monthly_totals(
                    COALESCE(SUM(CASE WHEN asset_delta < 0 THEN -asset_delta ELSE 0 END), 0),
                    count(*)
                  FROM cash_by_transaction",
-                params![household_id, start],
+                params![household_id, start, account_group_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             ),
         }
@@ -1346,8 +1396,12 @@ pub fn dashboard_monthly_totals(
              LEFT JOIN journal_entries je ON je.transaction_id = t.id
              LEFT JOIN accounts a ON a.id = je.account_id
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
-               AND t.occurred_on < date(?2, '+1 month')",
-            params![household_id, start],
+               AND t.occurred_on < date(?2, '+1 month')
+               AND (?3 IS NULL OR EXISTS (
+                 SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                   ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                 WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))",
+            params![household_id, start, account_group_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .map_err(map_database_error)?;
@@ -1373,6 +1427,10 @@ pub fn dashboard_monthly_totals(
               AND t.occurred_on >= months.month_start
               AND t.occurred_on < date(months.month_start, '+1 month')
               AND t.transaction_type != 'CARD_PAYMENT'
+              AND (?3 IS NULL OR EXISTS (
+                SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                  ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
              LEFT JOIN journal_entries je ON je.transaction_id = t.id
              LEFT JOIN accounts a ON a.id = je.account_id
              GROUP BY months.month_start
@@ -1380,7 +1438,7 @@ pub fn dashboard_monthly_totals(
         )
         .map_err(map_database_error)?;
     let accrual_trend = trend_statement
-        .query_map(params![household_id, start], |row| {
+        .query_map(params![household_id, start, account_group_id], |row| {
             Ok(DashboardAccrualTrendPointDto {
                 month: row.get(0)?,
                 income_jpy: row.get(1)?,
@@ -1401,13 +1459,17 @@ pub fn dashboard_monthly_totals(
              WHERE t.household_id = ?1 AND t.status = 'POSTED'
                AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
                AND t.transaction_type != 'CARD_PAYMENT'
+               AND (?3 IS NULL OR EXISTS (
+                 SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                   ON scope_gm.account_id = scope_je.account_id AND scope_gm.household_id = t.household_id
+                 WHERE scope_je.transaction_id = t.id AND scope_gm.account_group_id = ?3))
              GROUP BY a.id, a.name
              HAVING SUM(CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END) != 0
              ORDER BY 3 DESC, a.name ASC, a.id ASC",
         )
         .map_err(map_database_error)?;
     let expense_categories = categories_statement
-        .query_map(params![household_id, start], |row| {
+        .query_map(params![household_id, start, account_group_id], |row| {
             Ok(DashboardExpenseCategoryDto {
                 account_id: row.get(0)?,
                 name: row.get(1)?,
@@ -2607,6 +2669,15 @@ mod tests {
                    account_id TEXT NOT NULL REFERENCES accounts(id), entry_side TEXT NOT NULL,
                    amount_jpy INTEGER NOT NULL, line_number INTEGER NOT NULL
                  );
+                 CREATE TABLE account_groups (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   name TEXT NOT NULL, group_kind TEXT NOT NULL, sort_order INTEGER NOT NULL
+                 );
+                 CREATE TABLE account_group_members (
+                   household_id TEXT NOT NULL, account_group_id TEXT NOT NULL REFERENCES account_groups(id),
+                   account_id TEXT NOT NULL REFERENCES accounts(id), sort_order INTEGER NOT NULL,
+                   PRIMARY KEY (account_group_id, account_id)
+                 );
                  CREATE TABLE import_runs (id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
                  CREATE TABLE source_documents (
                    id TEXT PRIMARY KEY, household_id TEXT, import_run_id TEXT,
@@ -3013,6 +3084,7 @@ mod tests {
             &connection,
             &TransactionPageRequest {
                 household_id: "family".to_owned(),
+                account_group_id: None,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -3028,6 +3100,7 @@ mod tests {
                 accounting_basis: AccountingBasis::Cash,
                 ..TransactionPageRequest {
                     household_id: "family".to_owned(),
+                    account_group_id: None,
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
@@ -3043,12 +3116,22 @@ mod tests {
         assert_eq!(cash.total_items, 3);
         assert!(cash.items.iter().all(|item| item.id != "purchase"));
 
-        let accrual_totals =
-            dashboard_monthly_totals(&connection, "family", "2026-07", AccountingBasis::Accrual)
-                .unwrap();
-        let cash_totals =
-            dashboard_monthly_totals(&connection, "family", "2026-07", AccountingBasis::Cash)
-                .unwrap();
+        let accrual_totals = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Accrual,
+            None,
+        )
+        .unwrap();
+        let cash_totals = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Cash,
+            None,
+        )
+        .unwrap();
         assert_eq!(accrual_totals.income_jpy, 3000);
         assert_eq!(accrual_totals.expense_jpy, 1500);
         assert_eq!(accrual_totals.savings_jpy, 1500);
@@ -3084,6 +3167,53 @@ mod tests {
         assert_eq!(cash_totals.net_worth_jpy, accrual_totals.net_worth_jpy);
         assert_eq!(cash_totals.accrual_trend.last().unwrap().expense_jpy, 1500);
         assert_eq!(cash_totals.expense_categories.len(), 2);
+
+        connection
+            .execute_batch(
+                "INSERT INTO account_groups VALUES ('purchase-scope','family','Purchase','CUSTOM',0);
+                 INSERT INTO account_group_members VALUES
+                   ('family','purchase-scope','family-groceries',0),
+                   ('family','purchase-scope','family-card',1);
+                 INSERT INTO households (id,name) VALUES ('other','Other');
+                 INSERT INTO account_groups VALUES ('foreign-scope','other','Foreign','CUSTOM',0);",
+            )
+            .unwrap();
+        let scoped = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                household_id: "family".into(),
+                account_group_id: Some("purchase-scope".into()),
+                accounting_basis: AccountingBasis::Accrual,
+                from_date: None,
+                to_date: None,
+                search: None,
+                page: 1,
+                page_size: 20,
+            },
+        )
+        .unwrap();
+        assert_eq!(scoped.total_items, 1);
+        assert_eq!(scoped.items[0].id, "purchase");
+        let scoped_totals = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Accrual,
+            Some("purchase-scope"),
+        )
+        .unwrap();
+        assert_eq!(scoped_totals.posted_transaction_count, 1);
+        assert_eq!(scoped_totals.expense_jpy, 1000);
+        assert!(matches!(
+            dashboard_monthly_totals(
+                &connection,
+                "family",
+                "2026-07",
+                AccountingBasis::Accrual,
+                Some("foreign-scope")
+            ),
+            Err(RepositoryError::NotFound)
+        ));
     }
 
     #[test]
@@ -3105,6 +3235,7 @@ mod tests {
             &connection,
             &TransactionPageRequest {
                 household_id: "family".into(),
+                account_group_id: None,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -3120,6 +3251,7 @@ mod tests {
                 page: 2,
                 ..TransactionPageRequest {
                     household_id: "family".into(),
+                    account_group_id: None,
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
@@ -3139,6 +3271,7 @@ mod tests {
             &connection,
             &TransactionPageRequest {
                 household_id: "family".into(),
+                account_group_id: None,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
@@ -3163,6 +3296,7 @@ mod tests {
                 search: Some("%".into()),
                 ..TransactionPageRequest {
                     household_id: "family".into(),
+                    account_group_id: None,
                     accounting_basis: AccountingBasis::Accrual,
                     from_date: None,
                     to_date: None,
@@ -3564,9 +3698,14 @@ mod tests {
         )
         .unwrap();
 
-        let totals =
-            dashboard_monthly_totals(&connection, "empty", "2026-02", AccountingBasis::Accrual)
-                .unwrap();
+        let totals = dashboard_monthly_totals(
+            &connection,
+            "empty",
+            "2026-02",
+            AccountingBasis::Accrual,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(totals.income_jpy, 0);
         assert_eq!(totals.expense_jpy, 0);
@@ -3900,6 +4039,7 @@ mod tests {
             &connection,
             &TransactionPageRequest {
                 household_id: "family".to_owned(),
+                account_group_id: None,
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,

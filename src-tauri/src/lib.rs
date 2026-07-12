@@ -247,6 +247,7 @@ impl PackagedSmokeConfig {
 #[serde(rename_all = "camelCase")]
 struct DashboardRequest {
     household_id: String,
+    account_group_id: Option<String>,
     month: String,
     accounting_basis: AccountingBasis,
 }
@@ -918,6 +919,7 @@ fn dashboard_query(
             &request.household_id,
             &request.month,
             request.accounting_basis,
+            request.account_group_id.as_deref(),
         )
     })
 }
