@@ -137,4 +137,19 @@ describe('platform client', () => {
     expect(error).not.toHaveProperty('cause')
     expect(error).toMatchObject({ code: 'COMMAND_FAILED', command: 'app_health' })
   })
+
+  it('rejects malformed financial IPC rows instead of trusting structural casts', async () => {
+    const invoke: Invoke = async <T>(command: AppCommand) => {
+      if (command === 'accounts_list') return [{ id: 'bank', name: 'Bank', accountKind: 'ROOT', accountSubtype: 'BANK', currency: 'JPY' }] as T
+      return {
+        summary: { runId: 'run', documentId: 'document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 4, sha256: 'a'.repeat(64) },
+        candidates: [{ id: 'candidate', accountId: null, occurredOn: '2026-07-12', postedOn: null, amountJpy: -1, direction: 'OUT', reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+      } as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
+    await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+  })
 })
