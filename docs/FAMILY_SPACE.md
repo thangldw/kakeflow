@@ -1,6 +1,6 @@
 # Local Family Space
 
-KakeFlow v0.11 introduces stable household members and account ownership as a
+KakeFlow v0.11 introduced stable household members and account ownership as a
 foundation for family organization. These records contain no login, device, or
 cloud-provider identity. A future synchronization service can map authenticated
 principals to the same member IDs without rewriting financial ownership data.
@@ -26,8 +26,18 @@ authorization, or a promise that another person using the same desktop cannot
 view a personal account. Account groups also remain analytical scopes, not
 permissions.
 
-KakeFlow intentionally does not infer transaction or source-document visibility
-from account ownership. A transfer can touch multiple owners, and a receipt can
-support several financial legs. The next family-data phase must add explicit
-transaction attribution and resource audiences before member-filtered reports,
-multi-device identity, or access control are enabled.
+KakeFlow v0.12 adds two independent transaction dimensions:
+
+- Attribution (`HOUSEHOLD` or one member) answers whose household activity a
+  transaction represents.
+- Audience (`SHARED` or one personal member) is a local organization label.
+
+Source documents have their own audience tuple. Changing a source label never
+changes a linked transaction, and neither tuple is inferred from account
+ownership. A transfer can touch multiple owners, while one statement can support
+transactions attributed to several members.
+
+Member-filtered analytics remain disabled until dashboard, calendar, reports,
+intelligence, forecast, and export all implement the same tagged attribution
+scope. Audience labels still do not provide access control; authenticated
+multi-device enforcement requires a future principal-to-member mapping.

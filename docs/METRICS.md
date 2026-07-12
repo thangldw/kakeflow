@@ -77,6 +77,11 @@ members, so doing so could expose or omit the wrong counterpart. A later member
 reporting/access-control layer must use explicit transaction and document
 audiences.
 
+Transactions now store attribution and audience independently. Source documents
+store their own audience, which may intentionally differ from every linked
+transaction. Current household metrics continue to use all posted transactions;
+v0.12 does not silently apply member filters to only part of the dashboard.
+
 ## Export
 
 Exports contain posted records only, use UTF-8 with BOM for Japanese Excel

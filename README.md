@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.11 adds stable local household members, a dedicated Family Space, and explicit household/member plus shared/personal account organization. It deliberately does not claim login or access control. It keeps v0.10 saved analytical account scopes across household KPIs, transactions, reports, intelligence, forecasts, and exports.
+Version 0.12 adds explicit transaction attribution and independent transaction/source-document audience labels across manual entry, import, editing, ledger rows, and evidence. It deliberately leaves dashboard member filtering disabled until every metric/report/export implements one attribution contract. It keeps v0.11 stable local household members and account ownership.
 
 ## Product tour
 
@@ -109,8 +109,10 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.11 capabilities
+## Current v0.12 capabilities
 
+- Explicit household/member transaction attribution, independent shared/personal audience labels, and archived-member historical references.
+- Independent source-document audience editing that never changes linked transaction metadata.
 - Local Family Space with ordered member creation, editing, archive lifecycle, and truthful no-access-control disclosure.
 - Independent household/member account ownership and shared/personal classification, including atomic account creation and strict same-household active-owner validation.
 - Saved household/personal/daily-spending/custom account scopes across Overview, Transactions, Reports, intelligence, forecasts, Action Center items, and CSV export.
@@ -146,7 +148,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Add explicit transaction/source-document audiences and member attribution before applying member filters or access controls; never infer them from account groups.
-2. Add optional end-to-end encrypted multi-device household synchronization, principal-to-member mapping, and mobile receipt capture while keeping the desktop ledger authoritative.
+1. Propagate one tagged attribution scope consistently across dashboard, ledger totals, calendar/reports, intelligence, forecast, and CSV export before enabling global member analytics.
+2. Add optional end-to-end encrypted multi-device household synchronization, principal-to-member mapping, backend-derived audience enforcement, and mobile receipt capture.
 3. Add more institution-specific brokerage and statement adapters, mixed cash/stock and cross-currency merger allocation, and user-maintained parser mappings.
 4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
