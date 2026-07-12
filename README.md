@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.8 adds dated investment valuation, annual investment tax reporting, locally rendered PDF evidence pages, broader Japanese receipt normalization, and real packaged-WebView interaction evidence. It keeps v0.7 native folder notifications, corporate actions, and provenance-bearing FX reporting.
+Version 0.9 adds Monex U.S. stock-history imports, explicit spin-off/rights/cash-in-lieu accounting, ephemeral password-protected PDF access, and a real read-only DMG integrity gate. It keeps v0.8 dated investment valuation, annual investment reporting, locally rendered evidence pages, and packaged-WebView interaction evidence.
 
 ## Product tour
 
@@ -109,8 +109,12 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.8 capabilities
+## Current v0.9 capabilities
 
+- Monex U.S. stock-history CSV import with source-row provenance and normalized ticker/name fields.
+- Spin-off cost allocation, rights-subscription lots, and cash-in-lieu FIFO disposal from explicit source terms, with annual-report explanations and no guessed values.
+- Password-protected PDF extraction and evidence-page rendering with ephemeral credentials and semantic retry states.
+- Read-only DMG mount validation for bundle version, identifier, executable, resources, signature structure, and clean detach.
 - Dated market-price history, `assetbalance` price reuse, market value, unrealized P&L, and explicit missing-price disclosure by currency.
 - Annual realized P&L, dividend, fee, tax, and FIFO purchase-to-sale source-row reporting.
 - Locally rendered authenticated PDF pages underneath extraction bounding boxes.
@@ -138,7 +142,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Add more institution-specific brokerage adapters and complex corporate actions such as spin-offs, rights issues, mixed cash/stock mergers, and cash-in-lieu allocation.
+1. Add more institution-specific brokerage and statement adapters, plus mixed cash/stock and cross-currency merger allocation from explicit source terms.
 2. Add optional end-to-end encrypted multi-device household synchronization and mobile receipt capture while keeping the desktop ledger authoritative.
-3. Improve item extraction across more Japanese receipt and statement formats, including password-protected documents and institution layout changes.
-4. Add production signing/notarization, update keys, installer-level tests, and a signed release channel.
+3. Improve item extraction across more Japanese receipt and statement layouts and add user-maintained parser mappings for changed formats.
+4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

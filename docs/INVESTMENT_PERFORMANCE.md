@@ -1,6 +1,6 @@
 # Investment performance accounting
 
-KakeFlow v0.8 derives investment holdings, realized performance, and dated market valuation from immutable brokerage events and provenance-bearing observations.
+KakeFlow v0.9 derives investment holdings, realized performance, dated market valuation, and explicit corporate-action allocations from immutable brokerage events and provenance-bearing observations.
 
 ## Market valuation (v0.8)
 
@@ -37,11 +37,22 @@ source row, and total remaining cost are retained. Corporate actions never
 create a realized allocation or gain by themselves.
 
 Unsupported cases are rejected or reported as skipped rather than guessed:
-cash-in-lieu for fractional shares, mixed cash-and-stock mergers, cross-currency
-mergers, spin-offs requiring a source-provided cost allocation, rights issues,
-and actions without an explicit ratio or merger target. Cash components should
-be imported as separate brokerage events until a dedicated allocation model is
-available.
+mixed cash-and-stock mergers, cross-currency mergers, and actions without the
+explicit quantities, ratios, allocation, or target required by their type.
+
+## Complex corporate actions (v0.9)
+
+- `SPIN_OFF` creates target-instrument lots while allocating source-lot cost only
+  from an explicit source-provided ratio. Acquisition date and source lineage are retained.
+- `RIGHTS_SUBSCRIPTION` creates new lots from explicit subscription quantity and
+  confirmed subscription cost.
+- `CASH_IN_LIEU` consumes fractional quantity through FIFO and reports proceeds,
+  allocated cost, and realized P&L.
+
+Every allocation identifies both the corporate-action source row and the
+originating purchase event. Missing terms are surfaced as issues and do not
+produce an estimated lot or gain. Mixed cash/stock and cross-currency mergers
+remain unsupported until their source supplies an unambiguous allocation model.
 
 ## FX reporting (v0.7)
 
