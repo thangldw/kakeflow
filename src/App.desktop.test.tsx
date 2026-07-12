@@ -9,6 +9,7 @@ const desktop = vi.hoisted(() => ({
   createManualTransaction: vi.fn(),
   getTransactionDetail: vi.fn(),
   updateTransaction: vi.fn(),
+  listTransactionSourceRecords: vi.fn(),
   listWatchedFolders: vi.fn(),
   selectWatchedFolder: vi.fn(),
   removeWatchedFolder: vi.fn(),
@@ -30,6 +31,12 @@ const desktop = vi.hoisted(() => ({
   createAccount: vi.fn(),
   renameAccount: vi.fn(),
   archiveAccount: vi.fn(),
+  listClassificationRules: vi.fn(),
+  createClassificationRule: vi.fn(),
+  updateClassificationRule: vi.fn(),
+  deleteClassificationRule: vi.fn(),
+  previewClassificationRules: vi.fn(),
+  applyClassificationRule: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -60,6 +67,7 @@ vi.mock('./platform', async () => {
       createManualTransaction: desktop.createManualTransaction,
       getTransactionDetail: desktop.getTransactionDetail,
       updateTransaction: desktop.updateTransaction,
+      listTransactionSourceRecords: desktop.listTransactionSourceRecords,
       listWatchedFolders: desktop.listWatchedFolders,
       selectWatchedFolder: desktop.selectWatchedFolder,
       removeWatchedFolder: desktop.removeWatchedFolder,
@@ -77,6 +85,12 @@ vi.mock('./platform', async () => {
       restartForRestore: desktop.restartForRestore,
       extractDocument: vi.fn(),
       ocrDocument: vi.fn(),
+      listClassificationRules: desktop.listClassificationRules,
+      createClassificationRule: desktop.createClassificationRule,
+      updateClassificationRule: desktop.updateClassificationRule,
+      deleteClassificationRule: desktop.deleteClassificationRule,
+      previewClassificationRules: desktop.previewClassificationRules,
+      applyClassificationRule: desktop.applyClassificationRule,
     },
   }
 })
@@ -116,6 +130,13 @@ describe('KakeFlow desktop read models', () => {
     desktop.createManualTransaction.mockReset().mockResolvedValue({ id: 'manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: '八百屋', description: null, amountJpy: 1500, status: 'POSTED', debitAccountId: 'family-other-expense', debitAccountName: 'その他', creditAccountId: 'family-bank', creditAccountName: '銀行', categoryAccountId: 'family-other-expense', categoryName: 'その他' })
     desktop.getTransactionDetail.mockReset().mockResolvedValue({ id: 'purchase', householdId: 'family', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', status: 'POSTED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z', editable: true, entries: [{ id: 'debit', accountId: 'family-other-expense', accountName: 'その他', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 120000, lineNumber: 1 }, { id: 'credit', accountId: 'family-card', accountName: 'カード', accountKind: 'LIABILITY', side: 'CREDIT', amountJpy: 120000, lineNumber: 2 }], sourceEvidence: [{ sourceRecordId: 'record', sourceDocumentId: 'document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }] })
     desktop.updateTransaction.mockReset().mockImplementation(async (input) => ({ ...(await desktop.getTransactionDetail()), ...input, id: input.transactionId }))
+    desktop.listTransactionSourceRecords.mockReset().mockResolvedValue([{ id: 'record', sourceDocumentId: 'document', rowNumber: 2, recordHash: 'hash', payloadJson: '{"merchant":"生協","amount":120000}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }])
+    desktop.listClassificationRules.mockReset().mockResolvedValue([])
+    desktop.createClassificationRule.mockReset().mockImplementation(async (input) => ({ ...input, categoryName: 'その他', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
+    desktop.updateClassificationRule.mockReset()
+    desktop.deleteClassificationRule.mockReset().mockResolvedValue(undefined)
+    desktop.previewClassificationRules.mockReset().mockResolvedValue({ winningRuleId: null, matches: [] })
+    desktop.applyClassificationRule.mockReset()
     desktop.listWatchedFolders.mockReset().mockResolvedValue([])
     desktop.selectWatchedFolder.mockReset().mockResolvedValue(null)
     desktop.removeWatchedFolder.mockReset().mockResolvedValue(undefined)
@@ -240,6 +261,9 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByText('card.csv')).toBeInTheDocument()
     expect(screen.getByText(/行 2/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /card.csv/ }))
+    expect(await screen.findByText(/"merchant": "生協"/)).toBeInTheDocument()
+    expect(desktop.listTransactionSourceRecords).toHaveBeenCalledWith('family', 'purchase')
     fireEvent.change(screen.getByDisplayValue('食料品'), { target: { value: '週末の食料品' } })
     fireEvent.click(screen.getByRole('button', { name: '変更を保存' }))
 
@@ -345,5 +369,21 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '口座を追加' }))
 
     await waitFor(() => expect(desktop.createAccount).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })))
+  })
+
+  it('creates a persisted merchant classification rule', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '分類ルール' }))
+    await screen.findByRole('heading', { name: '新しいルール' })
+    fireEvent.change(screen.getByLabelText('ルール名'), { target: { value: '生協を食費へ' } })
+    fireEvent.change(screen.getByLabelText('店舗名の条件'), { target: { value: '生協' } })
+    fireEvent.change(screen.getByLabelText('分類先カテゴリー'), { target: { value: 'family-other-expense' } })
+    fireEvent.change(screen.getByLabelText('タグ'), { target: { value: '#family, #food' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ルールを保存' }))
+
+    await waitFor(() => expect(desktop.createClassificationRule).toHaveBeenCalledWith(expect.objectContaining({
+      householdId: 'family', name: '生協を食費へ', merchantContains: '生協', categoryAccountId: 'family-other-expense', tags: ['family', 'food'], isEnabled: true,
+    })))
   })
 })
