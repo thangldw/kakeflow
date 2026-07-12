@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.9 adds Monex U.S. stock-history imports, explicit spin-off/rights/cash-in-lieu accounting, ephemeral password-protected PDF access, and a real read-only DMG integrity gate. It keeps v0.8 dated investment valuation, annual investment reporting, locally rendered evidence pages, and packaged-WebView interaction evidence.
+Version 0.10 adds saved account scopes that consistently filter household KPIs, transactions, calendars, reports, forecasts, recurring/anomaly intelligence, and exports. It keeps v0.9 Monex U.S. stock imports, explicit corporate-action allocation, ephemeral password-protected PDF access, and DMG integrity validation.
 
 ## Product tour
 
@@ -109,8 +109,10 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.9 capabilities
+## Current v0.10 capabilities
 
+- Saved household/personal/daily-spending/custom account scopes across Overview, Transactions, Reports, intelligence, forecasts, Action Center items, and CSV export.
+- Canonical any-journal-entry group membership with no duplicate transaction counts, strict household validation, and legacy all-account behavior when no scope is selected.
 - Monex U.S. stock-history CSV import with source-row provenance and normalized ticker/name fields.
 - Spin-off cost allocation, rights-subscription lots, and cash-in-lieu FIFO disposal from explicit source terms, with annual-report explanations and no guessed values.
 - Password-protected PDF extraction and evidence-page rendering with ephemeral credentials and semantic retry states.
