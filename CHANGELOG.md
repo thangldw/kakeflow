@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 — 2026-07-13
+
+- Replace folder-only polling with recursive native filesystem notifications, burst debouncing, duplicate suppression, and a bounded polling fallback.
+- Add split, reverse-split, and same-currency share-for-share merger events that preserve FIFO lot cost, acquisition date, and source provenance without creating artificial gains.
+- Add immutable dated FX observations and JPY investment reporting with direct/inverse-rate provenance; missing rates fail visibly instead of producing partial or invented totals.
+- Reuse provenance-bearing FX rates imported with securities portfolio snapshots.
+- Display authenticated receipt images locally with interactive OCR bounding-box overlays, zoom, selection, and source-row drill-down.
+- Expand Japanese receipt extraction for quantities, unit prices, subtotals, change, payment methods, and included/excluded tax modes.
+
 ## 0.6.0 — 2026-07-13
 
 - Add a process-wide background folder discovery supervisor that detects created, modified, and removed supported files even when Import Inbox is closed.
