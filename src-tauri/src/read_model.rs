@@ -1188,7 +1188,7 @@ fn validate_transaction_account_shape(
     }
     let has = |side: ManualEntrySide, kind: &str, subtype: Option<&str>| {
         shapes.iter().any(|shape| {
-            shape.0 == side && shape.1 == kind && subtype.map_or(true, |value| shape.2 == value)
+            shape.0 == side && shape.1 == kind && subtype.is_none_or(|value| shape.2 == value)
         })
     };
     let valid = match transaction_type {

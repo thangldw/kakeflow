@@ -262,11 +262,8 @@ pub fn query_performance(
     )?;
     let analysis = analyze(&events);
     let in_period = |date: &str| {
-        request
-            .date_from
-            .as_deref()
-            .map_or(true, |from| date >= from)
-            && request.date_to.as_deref().map_or(true, |to| date <= to)
+        request.date_from.as_deref().is_none_or(|from| date >= from)
+            && request.date_to.as_deref().is_none_or(|to| date <= to)
     };
     let mut totals = BTreeMap::<String, InvestmentPeriodCurrencyDto>::new();
     for event in events.iter().filter(|event| in_period(&event.event_date)) {
