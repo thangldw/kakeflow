@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.48.0 — 2026-07-13
+
+- Persist an independent widget order and hidden-widget set for every Home dashboard template instead of reusing one layout across all views.
+- Keep template switching presentation-only: it restores that template's saved layout without resetting or overwriting layouts customized elsewhere.
+- Migrate the v0.47 active layout without loss and seed deterministic defaults for the other four templates.
+- Validate all five layouts atomically in SQLite, Rust, and the IPC client, including exhaustive unique order, template-eligible hidden widgets, and at least one visible panel.
+- Preserve household-scoped theme, density, accounting-basis behavior, keyboard controls, DOM reading order, and device-local change-package compatibility.
+- Cover independent customization, switching, reset/last-visible behavior, legacy migration, restore validation, malformed contracts, and household isolation.
+
 ## 0.47.0 — 2026-07-13
 
 - Recover every household-scoped `REVIEW_REQUIRED` import after restart, including manual uploads that are not represented by the watched-folder Inbox.

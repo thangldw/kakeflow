@@ -3,6 +3,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { createPlatformClient, isTauriRuntime, PlatformIpcError } from './client'
 import type { AppCommand, Invoke, PostingDecisionDto, StartImportDto } from './types'
 
+const dashboardLayouts = () => ({
+  FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const, hiddenWidgets: [] as const },
+  HOUSEHOLD_LEDGER: { widgetOrder: ['SPENDING', 'RECENT', 'TREND', 'CARDS'] as const, hiddenWidgets: [] as const },
+  ASSETS_LIABILITIES: { widgetOrder: ['TREND', 'SPENDING', 'CARDS', 'RECENT'] as const, hiddenWidgets: [] as const },
+  CARD_RECONCILIATION: { widgetOrder: ['CARDS', 'RECENT', 'TREND', 'SPENDING'] as const, hiddenWidgets: [] as const },
+  CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'] as const, hiddenWidgets: [] as const },
+})
+
 describe('platform client', () => {
   it('detects the Tauri v2 runtime without assuming window exists', () => {
     expect(isTauriRuntime({ __TAURI_INTERNALS__: {} } as unknown as typeof globalThis)).toBe(true)
@@ -28,7 +36,7 @@ describe('platform client', () => {
     })
     await expect(client.status()).resolves.toEqual({ schemaVersion: 0, integrity: 'failed' })
     await expect(client.getDashboardPreferences('family')).resolves.toMatchObject({
-      householdId: 'family', widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [],
+      householdId: 'family', templateLayouts: dashboardLayouts(),
     })
     await expect(client.getLocalSyncFoundationStatus('family')).rejects.toMatchObject({ command: 'local_sync_foundation_status' })
     await expect(client.listHouseholds()).resolves.toEqual([])
@@ -409,7 +417,7 @@ describe('platform client', () => {
   it('loads and persists strictly validated household dashboard preferences', async () => {
     const saved = {
       householdId: 'family', template: 'CASH_FLOW', theme: 'DARK', density: 'COMPACT',
-      widgetOrder: ['CARDS', 'TREND', 'SPENDING', 'RECENT'], hiddenWidgets: ['RECENT'],
+      templateLayouts: { ...dashboardLayouts(), CASH_FLOW: { widgetOrder: ['CARDS', 'TREND', 'RECENT', 'SPENDING'] as const, hiddenWidgets: ['RECENT'] as const } },
       updatedAt: '2026-07-13T08:30:00.000Z',
     }
     const invokeSpy = vi.fn()
@@ -422,7 +430,7 @@ describe('platform client', () => {
     })
     const input = {
       householdId: 'family', template: 'CASH_FLOW' as const, theme: 'DARK' as const, density: 'COMPACT' as const,
-      widgetOrder: ['CARDS', 'TREND', 'SPENDING', 'RECENT'] as const, hiddenWidgets: ['RECENT'] as const,
+      templateLayouts: saved.templateLayouts,
     }
 
     await expect(client.getDashboardPreferences('family')).resolves.toEqual(saved)
@@ -434,15 +442,15 @@ describe('platform client', () => {
       { ...saved, template: 'CUSTOM' },
       { ...saved, theme: 'AMOLED' },
       { ...saved, density: 'TINY' },
-      { ...saved, widgetOrder: undefined },
-      { ...saved, widgetOrder: ['TREND', 'SPENDING', 'RECENT'] },
-      { ...saved, widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'RECENT'] },
-      { ...saved, widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'UNKNOWN'] },
-      { ...saved, hiddenWidgets: ['TREND', 'TREND'] },
-      { ...saved, hiddenWidgets: ['TREND', 'SPENDING', 'RECENT', 'CARDS'] },
-      { ...saved, hiddenWidgets: ['UNKNOWN'] },
-      { ...saved, hiddenWidgets: undefined },
-      { ...saved, hiddenWidgets: 'RECENT' },
+      { ...saved, templateLayouts: undefined },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS'], hiddenWidgets: [] } } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'CARDS'], hiddenWidgets: [] } } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'UNKNOWN'], hiddenWidgets: [] } } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: ['TREND', 'TREND'] } } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: ['SPENDING'] } } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: ['TREND', 'RECENT', 'CARDS'] } } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, EXTRA: saved.templateLayouts.CASH_FLOW } },
+      { ...saved, templateLayouts: { ...saved.templateLayouts, CASH_FLOW: { ...saved.templateLayouts.CASH_FLOW, extra: true } } },
       { ...saved, householdId: '' },
       { ...saved, updatedAt: 'yesterday' },
     ]

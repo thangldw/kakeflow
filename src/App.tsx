@@ -441,30 +441,39 @@ const dashboardTemplateWidgetOrder: Record<DashboardPreferencesDto['template'], 
   CASH_FLOW: ['TREND', 'RECENT', 'CARDS'],
 }
 
-type DashboardPreferenceChange = Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density' | 'widgetOrder' | 'hiddenWidgets'>>
+type DashboardPreferenceChange = Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>> & {
+  readonly widgetOrder?: readonly DashboardWidgetIdDto[]
+  readonly hiddenWidgets?: readonly DashboardWidgetIdDto[]
+}
 
 function exhaustiveWidgetOrder(template: DashboardPreferencesDto['template']): DashboardWidgetIdDto[] {
   const preferred = dashboardTemplateWidgetOrder[template]
   return [...preferred, ...(['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const).filter((widget) => !preferred.includes(widget))]
 }
 
+function activeDashboardLayout(preferences: DashboardPreferencesDto) {
+  return preferences.templateLayouts[preferences.template]
+}
+
 function effectiveHiddenWidgets(preferences: DashboardPreferencesDto): DashboardWidgetIdDto[] {
-  const available = preferences.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
-  return available.some((widget) => !preferences.hiddenWidgets.includes(widget))
-    ? [...preferences.hiddenWidgets]
-    : preferences.hiddenWidgets.filter((widget) => widget !== available[0])
+  const layout = activeDashboardLayout(preferences)
+  const available = layout.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
+  return available.some((widget) => !layout.hiddenWidgets.includes(widget))
+    ? [...layout.hiddenWidgets]
+    : layout.hiddenWidgets.filter((widget) => widget !== available[0])
 }
 
 function DashboardControls({ preferences, disabled, onChange }: { preferences: DashboardPreferencesDto; disabled: boolean; onChange: (change: DashboardPreferenceChange) => void }) {
   const [editorOpen, setEditorOpen] = useState(false)
   const [dragging, setDragging] = useState<DashboardWidgetIdDto | null>(null)
   const [announcement, setAnnouncement] = useState('')
-  const available = preferences.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
+  const layout = activeDashboardLayout(preferences)
+  const available = layout.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
   const effectiveHidden = effectiveHiddenWidgets(preferences)
   const visibleCount = available.filter((widget) => !effectiveHidden.includes(widget)).length
   const move = (widget: DashboardWidgetIdDto, target: DashboardWidgetIdDto) => {
     if (widget === target) return
-    const next = [...preferences.widgetOrder]
+    const next = [...layout.widgetOrder]
     const from = next.indexOf(widget)
     const to = next.indexOf(target)
     next.splice(from, 1)
@@ -486,7 +495,7 @@ function DashboardControls({ preferences, disabled, onChange }: { preferences: D
   }
   return <div className="dashboard-controls-shell">
     <div className="dashboard-controls" aria-label="ダッシュボード表示設定">
-      <label><span>表示</span><select aria-label="ホームの表示テンプレート" disabled={disabled} value={preferences.template} onChange={(event) => { const template = event.target.value as DashboardPreferencesDto['template']; const widgetOrder = exhaustiveWidgetOrder(template); const eligible = dashboardTemplateWidgetOrder[template]; const hiddenWidgets = eligible.some((widget) => !effectiveHidden.includes(widget)) ? effectiveHidden : effectiveHidden.filter((widget) => widget !== eligible[0]); onChange({ template, widgetOrder, hiddenWidgets }) }}>{Object.entries(dashboardTemplateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label><span>表示</span><select aria-label="ホームの表示テンプレート" disabled={disabled} value={preferences.template} onChange={(event) => { setDragging(null); setAnnouncement(''); onChange({ template: event.target.value as DashboardPreferencesDto['template'] }) }}>{Object.entries(dashboardTemplateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label><span>テーマ</span><select aria-label="アプリのテーマ" disabled={disabled} value={preferences.theme} onChange={(event) => onChange({ theme: event.target.value as DashboardPreferencesDto['theme'] })}><option value="SYSTEM">システム</option><option value="LIGHT">ライト</option><option value="DARK">ダーク</option></select></label>
       <label><span>密度</span><select aria-label="画面の表示密度" disabled={disabled} value={preferences.density} onChange={(event) => onChange({ density: event.target.value as DashboardPreferencesDto['density'] })}><option value="COMFORTABLE">標準</option><option value="COMPACT">コンパクト</option></select></label>
       <button className="secondary-btn dashboard-layout-toggle" type="button" disabled={disabled} aria-expanded={editorOpen} onClick={() => setEditorOpen((open) => !open)}><LayoutDashboard size={15} /> レイアウト</button>
@@ -537,7 +546,8 @@ function Overview({ setPage, openAllActions, householdId, accountGroupId, attrib
     RECENT: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>{cashFlow ? '最近の資金移動' : '最近の取引'}</h2><p>{cashFlow ? 'カード購入を除く実際の入出金' : '確認済みの最新データ'}</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
     CARDS: <div key="cards" className="dashboard-widget dashboard-widget--cards"><ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} /></div>,
   }
-  const availablePanels = preferences.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
+  const activeLayout = activeDashboardLayout(preferences)
+  const availablePanels = activeLayout.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
   const visiblePanels = availablePanels.filter((widget) => !effectiveHiddenWidgets(preferences).includes(widget))
   const panelOrder = visiblePanels.map((widget) => panels[widget])
   return <div className={`overview overview--${preferences.template.toLowerCase().replaceAll('_', '-')}`}>
@@ -1933,7 +1943,20 @@ function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => voi
 }
 
 function defaultDashboardPreferences(householdId = ''): DashboardPreferencesDto {
-  return { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', widgetOrder: exhaustiveWidgetOrder('FINANCIAL_OVERVIEW'), hiddenWidgets: [], updatedAt: new Date(0).toISOString() }
+  return {
+    householdId,
+    template: 'FINANCIAL_OVERVIEW',
+    theme: 'SYSTEM',
+    density: 'COMFORTABLE',
+    templateLayouts: {
+      FINANCIAL_OVERVIEW: { widgetOrder: exhaustiveWidgetOrder('FINANCIAL_OVERVIEW'), hiddenWidgets: [] },
+      HOUSEHOLD_LEDGER: { widgetOrder: exhaustiveWidgetOrder('HOUSEHOLD_LEDGER'), hiddenWidgets: [] },
+      ASSETS_LIABILITIES: { widgetOrder: exhaustiveWidgetOrder('ASSETS_LIABILITIES'), hiddenWidgets: [] },
+      CARD_RECONCILIATION: { widgetOrder: exhaustiveWidgetOrder('CARD_RECONCILIATION'), hiddenWidgets: [] },
+      CASH_FLOW: { widgetOrder: exhaustiveWidgetOrder('CASH_FLOW'), hiddenWidgets: [] },
+    },
+    updatedAt: new Date(0).toISOString(),
+  }
 }
 
 function App() {
@@ -2244,10 +2267,16 @@ function App() {
     const householdId = activeHouseholdId
     if (!householdId || dashboardPreferencesBusy) return
     const previous = dashboardPreferences
-    const next = { ...dashboardPreferences, ...change, householdId }
+    const { widgetOrder, hiddenWidgets, ...globalChange } = change
+    const currentLayout = activeDashboardLayout(dashboardPreferences)
+    const templateLayouts = widgetOrder || hiddenWidgets ? {
+      ...dashboardPreferences.templateLayouts,
+      [dashboardPreferences.template]: { widgetOrder: widgetOrder ?? currentLayout.widgetOrder, hiddenWidgets: hiddenWidgets ?? currentLayout.hiddenWidgets },
+    } : dashboardPreferences.templateLayouts
+    const next = { ...dashboardPreferences, ...globalChange, templateLayouts, householdId }
     setDashboardPreferences(next)
     setDashboardPreferencesBusy(true)
-    void platformClient.upsertDashboardPreferences({ householdId, template: next.template, theme: next.theme, density: next.density, widgetOrder: next.widgetOrder, hiddenWidgets: next.hiddenWidgets }).then((saved) => {
+    void platformClient.upsertDashboardPreferences({ householdId, template: next.template, theme: next.theme, density: next.density, templateLayouts: next.templateLayouts }).then((saved) => {
       setDashboardPreferences((current) => current.householdId === saved.householdId ? saved : current)
     }).catch(() => {
       setDashboardPreferences((current) => current.householdId === previous.householdId ? previous : current)

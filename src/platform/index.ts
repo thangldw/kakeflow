@@ -57,6 +57,8 @@ export type {
   DashboardThemeDto,
   DashboardDensityDto,
   DashboardWidgetIdDto,
+  DashboardWidgetLayoutDto,
+  DashboardTemplateLayoutsDto,
   DashboardPreferencesDto,
   UpsertDashboardPreferencesInputDto,
   DatabaseStatusDto,

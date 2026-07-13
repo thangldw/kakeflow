@@ -92,6 +92,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0039_dashboard_widget_layout.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0040_dashboard_template_layouts.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1123,6 +1126,35 @@ fn validate_restored_semantics(
             ),
         )?;
     }
+    if schema_version >= 40 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM dashboard_template_layouts l
+             LEFT JOIN households h ON h.id=l.household_id
+             WHERE h.id IS NULL
+                OR l.dashboard_template NOT IN (
+                  'FINANCIAL_OVERVIEW','HOUSEHOLD_LEDGER','ASSETS_LIABILITIES',
+                  'CARD_RECONCILIATION','CASH_FLOW')
+                OR l.created_at NOT GLOB '????-??-??T??:??:??*Z'
+                OR l.updated_at NOT GLOB '????-??-??T??:??:??*Z'
+                OR json_valid(l.widget_order)!=1
+                OR json_type(l.widget_order)!='array'
+                OR json_array_length(l.widget_order)!=4
+                OR (SELECT count(DISTINCT value) FROM json_each(l.widget_order))!=4
+                OR EXISTS(SELECT 1 FROM json_each(l.widget_order)
+                          WHERE type!='text' OR value NOT IN ('TREND','SPENDING','RECENT','CARDS'))
+                OR json_valid(l.hidden_widgets)!=1
+                OR json_type(l.hidden_widgets)!='array'
+                OR json_array_length(l.hidden_widgets)>
+                   CASE WHEN l.dashboard_template='CASH_FLOW' THEN 2 ELSE 3 END
+                OR (SELECT count(DISTINCT value) FROM json_each(l.hidden_widgets))
+                   !=json_array_length(l.hidden_widgets)
+                OR EXISTS(SELECT 1 FROM json_each(l.hidden_widgets)
+                          WHERE type!='text' OR value NOT IN ('TREND','SPENDING','RECENT','CARDS')
+                             OR (l.dashboard_template='CASH_FLOW' AND value='SPENDING'))
+             LIMIT 1",
+        )?;
+    }
     if schema_version >= 2 {
         reject_if_exists(
             connection,
@@ -2091,6 +2123,30 @@ mod tests {
                      PRAGMA ignore_check_constraints=OFF;",
                 )?;
                 assert!(validate_restored_semantics(connection, 29).is_err());
+                Ok(())
+            })
+            .expect("database should remain readable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_dashboard_template_layouts() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES ('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO dashboard_template_layouts(
+                       household_id,dashboard_template,widget_order,hidden_widgets)
+                     VALUES('family','CASH_FLOW',
+                       '[\"TREND\",\"RECENT\",\"CARDS\",\"SPENDING\"]',
+                       '[\"SPENDING\"]');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 40).is_err());
                 Ok(())
             })
             .expect("database should remain readable");

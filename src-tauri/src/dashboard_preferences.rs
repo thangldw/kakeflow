@@ -1,6 +1,9 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 const MAX_HOUSEHOLD_ID_LEN: usize = 48;
 
@@ -20,24 +23,38 @@ const CANONICAL_WIDGET_ORDER: [DashboardWidgetId; 4] = [
     DashboardWidgetId::Cards,
 ];
 
-fn default_widget_order() -> Vec<DashboardWidgetId> {
-    CANONICAL_WIDGET_ORDER.to_vec()
-}
-
-fn valid_widget_layout(order: &[DashboardWidgetId], hidden: &[DashboardWidgetId]) -> bool {
+fn valid_widget_layout(
+    template: DashboardTemplate,
+    order: &[DashboardWidgetId],
+    hidden: &[DashboardWidgetId],
+) -> bool {
     let order_set = order.iter().copied().collect::<HashSet<_>>();
     let hidden_set = hidden.iter().copied().collect::<HashSet<_>>();
+    let eligible = match template {
+        DashboardTemplate::CashFlow => vec![
+            DashboardWidgetId::Trend,
+            DashboardWidgetId::Recent,
+            DashboardWidgetId::Cards,
+        ],
+        _ => CANONICAL_WIDGET_ORDER.to_vec(),
+    };
     order.len() == CANONICAL_WIDGET_ORDER.len()
         && order_set.len() == CANONICAL_WIDGET_ORDER.len()
         && CANONICAL_WIDGET_ORDER
             .iter()
             .all(|widget| order_set.contains(widget))
-        && hidden.len() < CANONICAL_WIDGET_ORDER.len()
+        && hidden.len() < eligible.len()
         && hidden_set.len() == hidden.len()
-        && hidden_set.iter().all(|widget| order_set.contains(widget))
+        && hidden_set.iter().all(|widget| eligible.contains(widget))
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+fn valid_template_layouts(layouts: &DashboardTemplateLayouts) -> bool {
+    layouts.iter().all(|(template, layout)| {
+        valid_widget_layout(template, &layout.widget_order, &layout.hidden_widgets)
+    })
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DashboardTemplate {
     FinancialOverview,
@@ -67,6 +84,25 @@ impl DashboardTemplate {
             "CASH_FLOW" => Some(Self::CashFlow),
             _ => None,
         }
+    }
+}
+
+const ALL_TEMPLATES: [DashboardTemplate; 5] = [
+    DashboardTemplate::FinancialOverview,
+    DashboardTemplate::HouseholdLedger,
+    DashboardTemplate::AssetsLiabilities,
+    DashboardTemplate::CardReconciliation,
+    DashboardTemplate::CashFlow,
+];
+
+fn default_widget_order_for(template: DashboardTemplate) -> Vec<DashboardWidgetId> {
+    use DashboardWidgetId::{Cards, Recent, Spending, Trend};
+    match template {
+        DashboardTemplate::FinancialOverview => vec![Trend, Spending, Recent, Cards],
+        DashboardTemplate::HouseholdLedger => vec![Spending, Recent, Trend, Cards],
+        DashboardTemplate::AssetsLiabilities => vec![Trend, Spending, Cards, Recent],
+        DashboardTemplate::CardReconciliation => vec![Cards, Recent, Trend, Spending],
+        DashboardTemplate::CashFlow => vec![Trend, Recent, Cards, Spending],
     }
 }
 
@@ -128,10 +164,7 @@ pub struct UpsertDashboardPreferencesInput {
     pub template: DashboardTemplate,
     pub theme: DashboardTheme,
     pub density: DashboardDensity,
-    #[serde(default = "default_widget_order")]
-    pub widget_order: Vec<DashboardWidgetId>,
-    #[serde(default)]
-    pub hidden_widgets: Vec<DashboardWidgetId>,
+    pub template_layouts: DashboardTemplateLayouts,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -141,9 +174,57 @@ pub struct DashboardPreferencesDto {
     pub template: DashboardTemplate,
     pub theme: DashboardTheme,
     pub density: DashboardDensity,
+    pub template_layouts: DashboardTemplateLayouts,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DashboardWidgetLayout {
     pub widget_order: Vec<DashboardWidgetId>,
     pub hidden_widgets: Vec<DashboardWidgetId>,
-    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub struct DashboardTemplateLayouts {
+    pub financial_overview: DashboardWidgetLayout,
+    pub household_ledger: DashboardWidgetLayout,
+    pub assets_liabilities: DashboardWidgetLayout,
+    pub card_reconciliation: DashboardWidgetLayout,
+    pub cash_flow: DashboardWidgetLayout,
+}
+
+impl DashboardTemplateLayouts {
+    fn get(&self, template: DashboardTemplate) -> &DashboardWidgetLayout {
+        match template {
+            DashboardTemplate::FinancialOverview => &self.financial_overview,
+            DashboardTemplate::HouseholdLedger => &self.household_ledger,
+            DashboardTemplate::AssetsLiabilities => &self.assets_liabilities,
+            DashboardTemplate::CardReconciliation => &self.card_reconciliation,
+            DashboardTemplate::CashFlow => &self.cash_flow,
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (DashboardTemplate, &DashboardWidgetLayout)> {
+        ALL_TEMPLATES
+            .into_iter()
+            .map(|template| (template, self.get(template)))
+    }
+}
+
+fn default_template_layouts() -> DashboardTemplateLayouts {
+    let layout = |template| DashboardWidgetLayout {
+        widget_order: default_widget_order_for(template),
+        hidden_widgets: Vec::new(),
+    };
+    DashboardTemplateLayouts {
+        financial_overview: layout(DashboardTemplate::FinancialOverview),
+        household_ledger: layout(DashboardTemplate::HouseholdLedger),
+        assets_liabilities: layout(DashboardTemplate::AssetsLiabilities),
+        card_reconciliation: layout(DashboardTemplate::CardReconciliation),
+        cash_flow: layout(DashboardTemplate::CashFlow),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,34 +274,121 @@ fn ensure_household(
         .ok_or(DashboardPreferencesError::NotFound)
 }
 
+type StoredPreferencesRow = (String, String, String, String, String, String, String);
+
 fn parse_row(
-    household_id: String,
-    template: String,
-    theme: String,
-    density: String,
-    widget_order: String,
-    hidden_widgets: String,
-    updated_at: String,
+    connection: &Connection,
+    row: StoredPreferencesRow,
 ) -> Result<DashboardPreferencesDto, DashboardPreferencesError> {
-    let widget_order = serde_json::from_str::<Vec<DashboardWidgetId>>(&widget_order)
+    let (household_id, template, theme, density, widget_order, hidden_widgets, updated_at) = row;
+    let legacy_widget_order = serde_json::from_str::<Vec<DashboardWidgetId>>(&widget_order)
         .map_err(|_| DashboardPreferencesError::Unavailable)?;
-    let hidden_widgets = serde_json::from_str::<Vec<DashboardWidgetId>>(&hidden_widgets)
+    let legacy_hidden_widgets = serde_json::from_str::<Vec<DashboardWidgetId>>(&hidden_widgets)
         .map_err(|_| DashboardPreferencesError::Unavailable)?;
-    if !valid_widget_layout(&widget_order, &hidden_widgets) {
+    let template = DashboardTemplate::from_database(&template)
+        .ok_or(DashboardPreferencesError::Unavailable)?;
+    // The v0.47 projection was household-wide, so it may contain a widget
+    // hidden while another template was active. Migration 40 normalizes the
+    // authoritative per-template rows; validate the legacy projection against
+    // its original all-widget domain only.
+    if !valid_widget_layout(
+        DashboardTemplate::FinancialOverview,
+        &legacy_widget_order,
+        &legacy_hidden_widgets,
+    ) {
         return Err(DashboardPreferencesError::Unavailable);
     }
+    let template_layouts = load_template_layouts(
+        connection,
+        &household_id,
+        template,
+        legacy_widget_order,
+        legacy_hidden_widgets,
+    )?;
     Ok(DashboardPreferencesDto {
         household_id,
-        template: DashboardTemplate::from_database(&template)
-            .ok_or(DashboardPreferencesError::Unavailable)?,
+        template,
         theme: DashboardTheme::from_database(&theme)
             .ok_or(DashboardPreferencesError::Unavailable)?,
         density: DashboardDensity::from_database(&density)
             .ok_or(DashboardPreferencesError::Unavailable)?,
-        widget_order,
-        hidden_widgets,
+        template_layouts,
         updated_at,
     })
+}
+
+fn load_template_layouts(
+    connection: &Connection,
+    household_id: &str,
+    active_template: DashboardTemplate,
+    legacy_widget_order: Vec<DashboardWidgetId>,
+    legacy_hidden_widgets: Vec<DashboardWidgetId>,
+) -> Result<DashboardTemplateLayouts, DashboardPreferencesError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT dashboard_template,widget_order,hidden_widgets
+             FROM dashboard_template_layouts WHERE household_id=?1",
+        )
+        .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    let rows = statement
+        .query_map([household_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    let mut persisted = HashMap::new();
+    for row in rows {
+        let (template, widget_order, hidden_widgets) =
+            row.map_err(|_| DashboardPreferencesError::Unavailable)?;
+        let template = DashboardTemplate::from_database(&template)
+            .ok_or(DashboardPreferencesError::Unavailable)?;
+        let widget_order = serde_json::from_str::<Vec<DashboardWidgetId>>(&widget_order)
+            .map_err(|_| DashboardPreferencesError::Unavailable)?;
+        let hidden_widgets = serde_json::from_str::<Vec<DashboardWidgetId>>(&hidden_widgets)
+            .map_err(|_| DashboardPreferencesError::Unavailable)?;
+        if !valid_widget_layout(template, &widget_order, &hidden_widgets)
+            || persisted
+                .insert(
+                    template,
+                    DashboardWidgetLayout {
+                        widget_order,
+                        hidden_widgets,
+                    },
+                )
+                .is_some()
+        {
+            return Err(DashboardPreferencesError::Unavailable);
+        }
+    }
+
+    let mut take = |template| {
+        persisted.remove(&template).unwrap_or_else(|| {
+            if template == active_template {
+                DashboardWidgetLayout {
+                    widget_order: legacy_widget_order.clone(),
+                    hidden_widgets: legacy_hidden_widgets.clone(),
+                }
+            } else {
+                DashboardWidgetLayout {
+                    widget_order: default_widget_order_for(template),
+                    hidden_widgets: Vec::new(),
+                }
+            }
+        })
+    };
+    let layouts = DashboardTemplateLayouts {
+        financial_overview: take(DashboardTemplate::FinancialOverview),
+        household_ledger: take(DashboardTemplate::HouseholdLedger),
+        assets_liabilities: take(DashboardTemplate::AssetsLiabilities),
+        card_reconciliation: take(DashboardTemplate::CardReconciliation),
+        cash_flow: take(DashboardTemplate::CashFlow),
+    };
+    valid_template_layouts(&layouts)
+        .then_some(layouts)
+        .ok_or(DashboardPreferencesError::Unavailable)
 }
 
 pub fn get(
@@ -261,25 +429,29 @@ pub fn get(
             hidden_widgets,
             updated_at,
         )) => parse_row(
-            household_id,
-            template,
-            theme,
-            density,
-            widget_order,
-            hidden_widgets,
-            updated_at,
+            connection,
+            (
+                household_id,
+                template,
+                theme,
+                density,
+                widget_order,
+                hidden_widgets,
+                updated_at,
+            ),
         ),
-        None => Ok(DashboardPreferencesDto {
-            household_id: household_id.to_owned(),
-            template: DashboardTemplate::FinancialOverview,
-            theme: DashboardTheme::System,
-            density: DashboardDensity::Comfortable,
-            widget_order: default_widget_order(),
-            hidden_widgets: Vec::new(),
-            // A stable sentinel keeps default reads deterministic and does not
-            // pretend the user has saved a preference.
-            updated_at: "1970-01-01T00:00:00.000Z".to_owned(),
-        }),
+        None => {
+            Ok(DashboardPreferencesDto {
+                household_id: household_id.to_owned(),
+                template: DashboardTemplate::FinancialOverview,
+                theme: DashboardTheme::System,
+                density: DashboardDensity::Comfortable,
+                template_layouts: default_template_layouts(),
+                // A stable sentinel keeps default reads deterministic and does not
+                // pretend the user has saved a preference.
+                updated_at: "1970-01-01T00:00:00.000Z".to_owned(),
+            })
+        }
     }
 }
 
@@ -290,11 +462,14 @@ pub fn upsert(
     if !valid_identifier(&input.household_id) {
         return Err(DashboardPreferencesError::InvalidInput);
     }
-    if !valid_widget_layout(&input.widget_order, &input.hidden_widgets) {
+    if !valid_template_layouts(&input.template_layouts) {
         return Err(DashboardPreferencesError::InvalidInput);
     }
     ensure_household(connection, &input.household_id)?;
-    connection
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+        .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    let active_layout = input.template_layouts.get(input.template);
+    transaction
         .execute(
             "INSERT INTO dashboard_preferences
                (household_id,dashboard_template,theme,density,widget_order,hidden_widgets)
@@ -311,14 +486,39 @@ pub fn upsert(
                 input.template.as_str(),
                 input.theme.as_str(),
                 input.density.as_str(),
-                serde_json::to_string(&input.widget_order)
+                serde_json::to_string(&active_layout.widget_order)
                     .map_err(|_| DashboardPreferencesError::InvalidInput)?,
-                serde_json::to_string(&input.hidden_widgets)
+                serde_json::to_string(&active_layout.hidden_widgets)
                     .map_err(|_| DashboardPreferencesError::InvalidInput)?,
             ],
         )
         .map_err(|_| DashboardPreferencesError::Unavailable)?;
-    get(connection, &input.household_id)
+    for (template, layout) in input.template_layouts.iter() {
+        transaction
+            .execute(
+                "INSERT INTO dashboard_template_layouts
+               (household_id,dashboard_template,widget_order,hidden_widgets)
+             VALUES (?1,?2,?3,?4)
+             ON CONFLICT(household_id,dashboard_template) DO UPDATE SET
+               widget_order=excluded.widget_order,
+               hidden_widgets=excluded.hidden_widgets,
+               updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                params![
+                    input.household_id,
+                    template.as_str(),
+                    serde_json::to_string(&layout.widget_order)
+                        .map_err(|_| DashboardPreferencesError::InvalidInput)?,
+                    serde_json::to_string(&layout.hidden_widgets)
+                        .map_err(|_| DashboardPreferencesError::InvalidInput)?,
+                ],
+            )
+            .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    }
+    let saved = get(&transaction, &input.household_id)?;
+    transaction
+        .commit()
+        .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    Ok(saved)
 }
 
 #[cfg(test)]
@@ -346,6 +546,21 @@ mod tests {
             ))
             .expect("widget-layout migration");
         connection
+            .execute_batch(include_str!(
+                "../migrations/0040_dashboard_template_layouts.sql"
+            ))
+            .expect("template-layout migration");
+        connection
+    }
+
+    fn input(template: DashboardTemplate) -> UpsertDashboardPreferencesInput {
+        UpsertDashboardPreferencesInput {
+            household_id: "family".to_owned(),
+            template,
+            theme: DashboardTheme::System,
+            density: DashboardDensity::Comfortable,
+            template_layouts: default_template_layouts(),
+        }
     }
 
     #[test]
@@ -355,8 +570,15 @@ mod tests {
         assert_eq!(preferences.template, DashboardTemplate::FinancialOverview);
         assert_eq!(preferences.theme, DashboardTheme::System);
         assert_eq!(preferences.density, DashboardDensity::Comfortable);
-        assert_eq!(preferences.widget_order, CANONICAL_WIDGET_ORDER);
-        assert!(preferences.hidden_widgets.is_empty());
+        assert_eq!(
+            preferences.template_layouts.financial_overview.widget_order,
+            CANONICAL_WIDGET_ORDER
+        );
+        assert!(preferences
+            .template_layouts
+            .financial_overview
+            .hidden_widgets
+            .is_empty());
         assert_eq!(preferences.updated_at, "1970-01-01T00:00:00.000Z");
         let count: u64 = connection
             .query_row("SELECT count(*) FROM dashboard_preferences", [], |row| {
@@ -369,29 +591,28 @@ mod tests {
     #[test]
     fn upsert_round_trips_each_preference() {
         let connection = database();
-        let saved = upsert(
-            &connection,
-            &UpsertDashboardPreferencesInput {
-                household_id: "family".to_owned(),
-                template: DashboardTemplate::AssetsLiabilities,
-                theme: DashboardTheme::Dark,
-                density: DashboardDensity::Compact,
-                widget_order: vec![
-                    DashboardWidgetId::Cards,
-                    DashboardWidgetId::Recent,
-                    DashboardWidgetId::Spending,
-                    DashboardWidgetId::Trend,
-                ],
-                hidden_widgets: vec![DashboardWidgetId::Recent, DashboardWidgetId::Cards],
-            },
-        )
-        .expect("save");
+        let mut request = input(DashboardTemplate::AssetsLiabilities);
+        request.theme = DashboardTheme::Dark;
+        request.density = DashboardDensity::Compact;
+        request.template_layouts.assets_liabilities = DashboardWidgetLayout {
+            widget_order: vec![
+                DashboardWidgetId::Cards,
+                DashboardWidgetId::Recent,
+                DashboardWidgetId::Spending,
+                DashboardWidgetId::Trend,
+            ],
+            hidden_widgets: vec![DashboardWidgetId::Recent, DashboardWidgetId::Cards],
+        };
+        let saved = upsert(&connection, &request).expect("save");
         assert_eq!(saved.template, DashboardTemplate::AssetsLiabilities);
         assert_eq!(saved.theme, DashboardTheme::Dark);
         assert_eq!(saved.density, DashboardDensity::Compact);
-        assert_eq!(saved.widget_order[0], DashboardWidgetId::Cards);
         assert_eq!(
-            saved.hidden_widgets,
+            saved.template_layouts.assets_liabilities.widget_order[0],
+            DashboardWidgetId::Cards
+        );
+        assert_eq!(
+            saved.template_layouts.assets_liabilities.hidden_widgets,
             vec![DashboardWidgetId::Recent, DashboardWidgetId::Cards]
         );
         assert_ne!(saved.updated_at, "1970-01-01T00:00:00.000Z");
@@ -404,17 +625,54 @@ mod tests {
         let saved = upsert(
             &connection,
             &UpsertDashboardPreferencesInput {
-                household_id: "family".to_owned(),
-                template: DashboardTemplate::CashFlow,
-                theme: DashboardTheme::System,
                 density: DashboardDensity::Compact,
-                widget_order: default_widget_order(),
-                hidden_widgets: Vec::new(),
+                ..input(DashboardTemplate::CashFlow)
             },
         )
         .expect("save cash flow");
         assert_eq!(saved.template, DashboardTemplate::CashFlow);
         assert_eq!(get(&connection, "family").expect("read"), saved);
+    }
+
+    #[test]
+    fn switching_templates_preserves_each_independent_layout() {
+        let connection = database();
+        let mut request = input(DashboardTemplate::FinancialOverview);
+        request.template_layouts.financial_overview.widget_order = vec![
+            DashboardWidgetId::Cards,
+            DashboardWidgetId::Trend,
+            DashboardWidgetId::Spending,
+            DashboardWidgetId::Recent,
+        ];
+        request.template_layouts.financial_overview.hidden_widgets =
+            vec![DashboardWidgetId::Spending];
+        request.template_layouts.household_ledger.widget_order = vec![
+            DashboardWidgetId::Recent,
+            DashboardWidgetId::Spending,
+            DashboardWidgetId::Trend,
+            DashboardWidgetId::Cards,
+        ];
+        request.template_layouts.household_ledger.hidden_widgets = vec![DashboardWidgetId::Cards];
+        upsert(&connection, &request).expect("first layout save");
+
+        request.template = DashboardTemplate::HouseholdLedger;
+        let saved = upsert(&connection, &request).expect("template switch");
+        assert_eq!(
+            saved.template_layouts.financial_overview.hidden_widgets,
+            vec![DashboardWidgetId::Spending]
+        );
+        assert_eq!(
+            saved.template_layouts.household_ledger.hidden_widgets,
+            vec![DashboardWidgetId::Cards]
+        );
+        assert_eq!(
+            saved.template_layouts.financial_overview.widget_order[0],
+            DashboardWidgetId::Cards
+        );
+        assert_eq!(
+            saved.template_layouts.household_ledger.widget_order[0],
+            DashboardWidgetId::Recent
+        );
     }
 
     #[test]
@@ -433,8 +691,9 @@ mod tests {
     #[test]
     fn rejects_duplicate_incomplete_or_fully_hidden_widget_layouts() {
         let connection = database();
-        for (widget_order, hidden_widgets) in [
+        for (template, widget_order, hidden_widgets) in [
             (
+                DashboardTemplate::FinancialOverview,
                 vec![
                     DashboardWidgetId::Trend,
                     DashboardWidgetId::Trend,
@@ -444,6 +703,7 @@ mod tests {
                 Vec::new(),
             ),
             (
+                DashboardTemplate::FinancialOverview,
                 vec![
                     DashboardWidgetId::Trend,
                     DashboardWidgetId::Spending,
@@ -451,24 +711,44 @@ mod tests {
                 ],
                 Vec::new(),
             ),
-            (default_widget_order(), default_widget_order()),
             (
-                default_widget_order(),
+                DashboardTemplate::FinancialOverview,
+                CANONICAL_WIDGET_ORDER.to_vec(),
+                CANONICAL_WIDGET_ORDER.to_vec(),
+            ),
+            (
+                DashboardTemplate::FinancialOverview,
+                CANONICAL_WIDGET_ORDER.to_vec(),
                 vec![DashboardWidgetId::Cards, DashboardWidgetId::Cards],
             ),
+            (
+                DashboardTemplate::CashFlow,
+                default_widget_order_for(DashboardTemplate::CashFlow),
+                vec![DashboardWidgetId::Spending],
+            ),
+            (
+                DashboardTemplate::CashFlow,
+                default_widget_order_for(DashboardTemplate::CashFlow),
+                vec![
+                    DashboardWidgetId::Trend,
+                    DashboardWidgetId::Recent,
+                    DashboardWidgetId::Cards,
+                ],
+            ),
         ] {
+            let mut request = input(template);
+            *match template {
+                DashboardTemplate::FinancialOverview => {
+                    &mut request.template_layouts.financial_overview
+                }
+                DashboardTemplate::CashFlow => &mut request.template_layouts.cash_flow,
+                _ => unreachable!(),
+            } = DashboardWidgetLayout {
+                widget_order,
+                hidden_widgets,
+            };
             assert_eq!(
-                upsert(
-                    &connection,
-                    &UpsertDashboardPreferencesInput {
-                        household_id: "family".to_owned(),
-                        template: DashboardTemplate::FinancialOverview,
-                        theme: DashboardTheme::System,
-                        density: DashboardDensity::Comfortable,
-                        widget_order,
-                        hidden_widgets,
-                    },
-                ),
+                upsert(&connection, &request),
                 Err(DashboardPreferencesError::InvalidInput)
             );
         }
@@ -502,13 +782,46 @@ mod tests {
                 "../migrations/0039_dashboard_widget_layout.sql"
             ))
             .expect("widget layout");
+        connection
+            .execute(
+                "UPDATE dashboard_preferences SET widget_order='[\"CARDS\",\"TREND\",\"RECENT\",\"SPENDING\"]',
+                 hidden_widgets='[\"SPENDING\",\"RECENT\"]' WHERE household_id='family'",
+                [],
+            )
+            .expect("legacy custom layout");
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0040_dashboard_template_layouts.sql"
+            ))
+            .expect("template layouts");
 
         let saved = get(&connection, "family").expect("read migrated row");
         assert_eq!(saved.template, DashboardTemplate::CashFlow);
         assert_eq!(saved.theme, DashboardTheme::Dark);
         assert_eq!(saved.density, DashboardDensity::Compact);
-        assert_eq!(saved.widget_order, CANONICAL_WIDGET_ORDER);
-        assert!(saved.hidden_widgets.is_empty());
+        assert_eq!(
+            saved.template_layouts.cash_flow.widget_order,
+            vec![
+                DashboardWidgetId::Cards,
+                DashboardWidgetId::Trend,
+                DashboardWidgetId::Recent,
+                DashboardWidgetId::Spending,
+            ]
+        );
+        assert_eq!(
+            saved.template_layouts.cash_flow.hidden_widgets,
+            vec![DashboardWidgetId::Recent]
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM dashboard_template_layouts",
+                    [],
+                    |row| row.get::<_, u64>(0)
+                )
+                .expect("layout count"),
+            5
+        );
     }
 
     #[test]
@@ -524,12 +837,8 @@ mod tests {
         upsert(
             &connection,
             &UpsertDashboardPreferencesInput {
-                household_id: "family".to_owned(),
-                template: DashboardTemplate::HouseholdLedger,
                 theme: DashboardTheme::Light,
-                density: DashboardDensity::Comfortable,
-                widget_order: default_widget_order(),
-                hidden_widgets: Vec::new(),
+                ..input(DashboardTemplate::HouseholdLedger)
             },
         )
         .expect("save");
@@ -561,5 +870,13 @@ mod tests {
             })
             .expect("count");
         assert_eq!(count, 0);
+        let layout_count: u64 = connection
+            .query_row(
+                "SELECT count(*) FROM dashboard_template_layouts",
+                [],
+                |row| row.get(0),
+            )
+            .expect("layout count");
+        assert_eq!(layout_count, 0);
     }
 }
