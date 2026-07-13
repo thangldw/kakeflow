@@ -9,6 +9,7 @@ export { rakutenEnaviAdapter } from './adapters/rakuten'
 export { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
 export { smbcVpassAdapter } from './adapters/smbcVpass'
 export { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
+export { sbiSecuritiesTradeHistoryAdapter } from './adapters/sbiSecuritiesTradeHistory'
 export { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
 export { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
 export { moneyForwardHouseholdLedgerAdapter } from './adapters/moneyForwardHouseholdLedger'
@@ -22,6 +23,7 @@ import { rakutenEnaviAdapter } from './adapters/rakuten'
 import { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
 import { smbcVpassAdapter } from './adapters/smbcVpass'
 import { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
+import { sbiSecuritiesTradeHistoryAdapter } from './adapters/sbiSecuritiesTradeHistory'
 import { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
 import { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
 import { moneyForwardHouseholdLedgerAdapter } from './adapters/moneyForwardHouseholdLedger'
@@ -36,6 +38,7 @@ export const importAdapters = [
   jcbMyJcbAdapter,
   smbcVpassAdapter,
   securitiesAssetSnapshotAdapter,
+  sbiSecuritiesTradeHistoryAdapter,
   japaneseBrokerageTransactionsAdapter,
   moneyForwardAssetTrendAdapter,
   moneyForwardHouseholdLedgerAdapter,

@@ -211,6 +211,7 @@ pub fn export_pending_import(
             adapter,
             "securities-asset-snapshot-v1"
                 | "japanese-brokerage-transactions-v1"
+                | "sbi-securities-trade-history-v1"
                 | "money-forward-me-asset-trend-v1"
         )
     {
@@ -920,6 +921,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<()> {
             adapter,
             "securities-asset-snapshot-v1"
                 | "japanese-brokerage-transactions-v1"
+                | "sbi-securities-trade-history-v1"
                 | "money-forward-me-asset-trend-v1"
         )
     {

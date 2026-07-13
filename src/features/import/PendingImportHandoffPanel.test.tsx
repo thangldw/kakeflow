@@ -28,6 +28,7 @@ const candidateRun: PendingReviewRunDto = {
 const receiptRun: PendingReviewRunDto = { ...candidateRun, runId: 'receipt', originalFilename: 'receipt.jpg', adapterId: 'receipt-image-ocr-v1' }
 const futureReceiptRun: PendingReviewRunDto = { ...candidateRun, runId: 'future-receipt', originalFilename: 'receipt.heic', adapterId: 'receipt-camera-v9' }
 const investmentRun: PendingReviewRunDto = { ...candidateRun, runId: 'investment', originalFilename: 'asset.csv', adapterId: 'securities-asset-snapshot-v1' }
+const sbiInvestmentRun: PendingReviewRunDto = { ...candidateRun, runId: 'sbi-investment', originalFilename: 'sbi-trades.csv', adapterId: 'sbi-securities-trade-history-v1' }
 const sourceOnlyRun: PendingReviewRunDto = { ...candidateRun, runId: 'source-only', originalFilename: 'source.pdf', completionState: 'SOURCE_READY' }
 
 const accounts: readonly AccountDto[] = [
@@ -57,13 +58,14 @@ describe('PendingImportHandoffPanel', () => {
   })
 
   it('states the local-only boundary and exports only eligible candidate-review runs', async () => {
-    render(<PendingImportHandoffPanel householdId="family" accounts={accounts} members={members} pendingRuns={[candidateRun, receiptRun, futureReceiptRun, investmentRun, sourceOnlyRun]} onApplied={vi.fn()} />)
+    render(<PendingImportHandoffPanel householdId="family" accounts={accounts} members={members} pendingRuns={[candidateRun, receiptRun, futureReceiptRun, investmentRun, sbiInvestmentRun, sourceOnlyRun]} onApplied={vi.fn()} />)
     expect(screen.getByText(/ネットワーク送受信やクラウド同期は行いません/)).toBeInTheDocument()
     expect(screen.getByText(/改めて確認と承認が必要/)).toBeInTheDocument()
     expect(await screen.findByText('paypay.csv')).toBeInTheDocument()
     expect(screen.queryByText('receipt.jpg')).not.toBeInTheDocument()
     expect(screen.queryByText('receipt.heic')).not.toBeInTheDocument()
     expect(screen.queryByText('asset.csv')).not.toBeInTheDocument()
+    expect(screen.queryByText('sbi-trades.csv')).not.toBeInTheDocument()
     expect(screen.queryByText('source.pdf')).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('保存用パスフレーズ'), { target: { value: 'long-enough-passphrase' } })
