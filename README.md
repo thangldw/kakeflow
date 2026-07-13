@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.44 adds a strict [SMBC Card Vpass statement adapter](docs/SMBC_VPASS_IMPORT.md) for the official headerless eleven-position CSV field order. It uses the billed amount, retains source/FX evidence, requires an explicit card liability account and statement total, and blocks unsupported deferred-payment semantics or any total/sign ambiguity instead of guessing. Layouts that do not match the built-in detector remain available to the custom CSV rescue workflow; detected files with integrity errors stay blocked until corrected.
+Version 0.45 extends the [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) to full exports containing multiple `保有金融機関` values. Import Inbox renders one explicit Asset/Liability account mapping per normalized institution and keeps staging disabled until every mapping is complete. Candidate rows retain their own source institution, transfer/calculation-target semantics, categories, memo, stable external ID, and immutable evidence; KakeFlow never guesses or auto-creates the destination accounts.
 
 ## Product tour
 

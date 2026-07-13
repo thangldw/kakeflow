@@ -6,6 +6,8 @@ export const MONEY_FORWARD_HOUSEHOLD_HEADERS = [
   '計算対象', '日付', '内容', '金額(円)', '保有金融機関', '大項目', '中項目', 'メモ', '振替', 'ID',
 ] as const
 
+const MAX_INSTITUTIONS_PER_FILE = 50
+
 function normalizedHeader(value: string): string {
   return normalizeHeader(value).replace('金額（円）', '金額(円)')
 }
@@ -81,9 +83,9 @@ export const moneyForwardHouseholdLedgerAdapter: ImportAdapter<MoneyForwardHouse
         isTransfer, externalTransactionId,
       })
     }
-    if (institutions.size > 1) issues.push({
-      code: 'MONEY_FORWARD_MULTIPLE_INSTITUTIONS',
-      message: 'This release accepts one 保有金融機関 per file so rows cannot be silently assigned to the wrong KakeFlow account. Export one institution at a time.',
+    if (institutions.size > MAX_INSTITUTIONS_PER_FILE) issues.push({
+      code: 'MONEY_FORWARD_INSTITUTION_LIMIT_EXCEEDED',
+      message: `A Money Forward ME household-ledger file can contain at most ${MAX_INSTITUTIONS_PER_FILE} distinct 保有金融機関 values.`,
       severity: 'error',
     })
     return { adapterId: this.id, records, issues, metadata: { headerRow: csv.rows[headerIndex].sourceRow, institutions: [...institutions] } }

@@ -61,7 +61,7 @@ describe('import mapper', () => {
       sourceFields, calculationTarget: false, transactionDate: '2026-07-12', content: 'カード引落', signedAmountJpy: -1000,
       institution: 'MUFG', majorCategory: '振替', minorCategory: 'カード', memo: 'July', isTransfer: true, externalTransactionId: 'mf-1',
     }] }
-    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+    const deps = dependencies(); const result = await mapParsedImportToStartImport({ ...input(parsed), institutionAccountMappings: { MUFG: 'account-1' } }, deps.ids, deps.hash)
     expect(result.request.candidates[0]).toMatchObject({
       accountId: 'account-1', direction: 'OUT', amountJpy: 1000, calculationTarget: false,
       suggestedTransactionType: 'TRANSFER', externalSource: 'MONEY_FORWARD_ME', externalTransactionId: 'mf-1',
@@ -69,6 +69,40 @@ describe('import mapper', () => {
     })
     expect(result.request.candidates[0].externalFactHash).toHaveLength(64)
     expect(JSON.parse(result.request.records[0].payloadJson)).toMatchObject({ fields: sourceFields })
+  })
+
+  it('maps each Money Forward institution independently and rejects incomplete or unknown mappings', async () => {
+    const makeRecord = (sourceRow: number, institution: string, amount: number) => ({
+      kind: 'money-forward-household-transaction' as const,
+      lineage: { sourceRow, sourceRowEnd: sourceRow, rawFields: [institution, String(amount)] },
+      sourceFields: { 保有金融機関: institution, '金額(円)': String(amount) }, calculationTarget: true,
+      transactionDate: '2026-07-12', content: `${institution} item`, signedAmountJpy: amount,
+      institution, majorCategory: '食費', minorCategory: '食料品', memo: '', isTransfer: false,
+      externalTransactionId: `mf-${sourceRow}`,
+    })
+    const parsed: ParsedImport<unknown> = {
+      adapterId: 'money-forward-me-household-ledger-v1', issues: [], metadata: { institutions: ['MUFG', '楽天銀行'] },
+      records: [makeRecord(2, 'MUFG', -1000), makeRecord(3, '楽天銀行', 3000)],
+    }
+    const deps = dependencies()
+    const mapped = await mapParsedImportToStartImport({ ...input(parsed), file: { ...input(parsed).file, accountId: null }, institutionAccountMappings: { MUFG: 'bank-1', 楽天銀行: 'bank-2' } }, deps.ids, deps.hash)
+    expect(mapped.issues).toEqual([])
+    expect(mapped.request.candidates.map((candidate) => [candidate.institutionRaw, candidate.accountId])).toEqual([['MUFG', 'bank-1'], ['楽天銀行', 'bank-2']])
+
+    const incompleteDeps = dependencies()
+    const incomplete = await mapParsedImportToStartImport({ ...input(parsed), institutionAccountMappings: { MUFG: 'bank-1', UNKNOWN: 'bank-9' } }, incompleteDeps.ids, incompleteDeps.hash)
+    expect(incomplete.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'ACCOUNT_MAPPING_MISSING', message: expect.stringContaining('楽天銀行') }),
+      expect.objectContaining({ code: 'ACCOUNT_MAPPING_UNKNOWN', message: expect.stringContaining('UNKNOWN') }),
+    ]))
+    expect(incomplete.request.records).toEqual([])
+    expect(incomplete.request.candidates).toEqual([])
+
+    const inheritedNameDeps = dependencies()
+    const inheritedNameParsed = { ...parsed, metadata: { institutions: ['toString'] }, records: [makeRecord(4, 'toString', -500)] }
+    const inheritedName = await mapParsedImportToStartImport({ ...input(inheritedNameParsed), institutionAccountMappings: {} }, inheritedNameDeps.ids, inheritedNameDeps.hash)
+    expect(inheritedName.issues).toContainEqual(expect.objectContaining({ code: 'ACCOUNT_MAPPING_MISSING', message: expect.stringContaining('toString') }))
+    expect(inheritedName.request.candidates).toEqual([])
   })
 
   it('groups PayPay legs while preserving primary, supporting, and split-funding evidence', async () => {

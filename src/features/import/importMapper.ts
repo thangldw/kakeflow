@@ -32,6 +32,8 @@ export interface ImportMapperInput {
   file: ImportFileMetadata
   detectedAdapterId: AdapterId
   parsed: ParsedImport<unknown>
+  /** Exact source-institution to canonical-account mapping for Money Forward ME household exports. */
+  institutionAccountMappings?: Readonly<Record<string, string>>
 }
 
 export type ImportIdKind = 'run' | 'document' | 'sourceRecord' | 'candidate' | 'statement'
@@ -110,7 +112,7 @@ export interface StartImportCardStatement {
 }
 
 export interface ImportMapperIssue {
-  code: 'ADAPTER_MISMATCH' | 'UNSUPPORTED_RECORD' | 'INVALID_DATE' | 'INVALID_AMOUNT' | 'AMBIGUOUS_DIRECTION' | 'PAYLOAD_TOO_LARGE'
+  code: 'ADAPTER_MISMATCH' | 'UNSUPPORTED_RECORD' | 'INVALID_DATE' | 'INVALID_AMOUNT' | 'AMBIGUOUS_DIRECTION' | 'PAYLOAD_TOO_LARGE' | 'ACCOUNT_MAPPING_MISSING' | 'ACCOUNT_MAPPING_UNKNOWN'
   message: string
   severity: 'warning' | 'error'
   sourceRow?: number
@@ -125,6 +127,7 @@ interface MappingContext {
   ids: IdFactory
   hash: HashFn
   accountId: string | null
+  institutionAccountMappings: Readonly<Record<string, string>>
   records: StartImportSourceRecord[]
   issues: ImportMapperIssue[]
   lineageRecords: Map<string, StartImportSourceRecord | null>
@@ -163,6 +166,12 @@ function isoDate(value: string | null): string | null {
 function positiveInteger(value: number | null): number | null {
   if (value == null || !Number.isSafeInteger(value) || value === 0) return null
   return Math.abs(value)
+}
+
+function mappedAccountId(mappings: Readonly<Record<string, string>>, institution: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(mappings, institution)) return null
+  const value: unknown = mappings[institution]
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 function issueInvalid(context: MappingContext, code: 'INVALID_DATE' | 'INVALID_AMOUNT' | 'AMBIGUOUS_DIRECTION', message: string, row?: number): void {
@@ -259,13 +268,14 @@ async function mapMoneyForward(record: MoneyForwardHouseholdTransactionCandidate
   const amount = positiveInteger(record.signedAmountJpy)
   if (!date) issueInvalid(context, 'INVALID_DATE', 'Money Forward transaction has no valid ISO date.', record.lineage.sourceRow)
   if (amount == null) issueInvalid(context, 'INVALID_AMOUNT', 'Money Forward transaction has no non-zero integer JPY amount.', record.lineage.sourceRow)
-  if (!evidence || !date || amount == null) return []
+  const accountId = mappedAccountId(context.institutionAccountMappings, record.institution)
+  if (!evidence || !date || amount == null || !accountId) return []
   const factHash = record.externalTransactionId ? await context.hash(JSON.stringify({
     date, amount, direction: record.signedAmountJpy! < 0 ? 'OUT' : 'IN', content: record.content,
     institution: record.institution, isTransfer: record.isTransfer, calculationTarget: record.calculationTarget,
     majorCategory: record.majorCategory, minorCategory: record.minorCategory, memo: record.memo,
   })) : null
-  return [candidate(context, {
+  return [{ ...candidate(context, {
     occurredOn: date, postedOn: null, amountJpy: amount, direction: record.signedAmountJpy! < 0 ? 'OUT' : 'IN',
     descriptionRaw: record.memo || null, merchantRaw: record.content || null,
     externalTransactionId: record.externalTransactionId || null, externalSource: record.externalTransactionId ? 'MONEY_FORWARD_ME' : null,
@@ -273,7 +283,7 @@ async function mapMoneyForward(record: MoneyForwardHouseholdTransactionCandidate
     suggestedTransactionType: record.isTransfer ? 'TRANSFER' : null, institutionRaw: record.institution,
     categoryMajorRaw: record.majorCategory || null, categoryMinorRaw: record.minorCategory || null, memoRaw: record.memo || null,
     evidence: [{ sourceRecordId: evidence.id, role: 'PRIMARY' }],
-  })]
+  }), accountId }]
 }
 
 function isBank(value: unknown): value is BankTransactionCandidate { return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'bank-transaction' }
@@ -286,10 +296,23 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
   const documentId = ids.next('document')
   const issues: ImportMapperIssue[] = []
   if (input.detectedAdapterId !== input.parsed.adapterId) issues.push({ code: 'ADAPTER_MISMATCH', message: `Detected adapter ${input.detectedAdapterId} does not match parsed adapter ${input.parsed.adapterId}.`, severity: 'error' })
-  const context: MappingContext = { ids, hash, accountId: input.file.accountId ?? null, records: [], issues, lineageRecords: new Map() }
+  const institutionAccountMappings = input.institutionAccountMappings ?? {}
+  if (input.detectedAdapterId === 'money-forward-me-household-ledger-v1' && input.detectedAdapterId === input.parsed.adapterId) {
+    const institutions = new Set(input.parsed.records.filter(isMoneyForward).map((record) => record.institution))
+    for (const institution of institutions) {
+      if (!mappedAccountId(institutionAccountMappings, institution)) issues.push({ code: 'ACCOUNT_MAPPING_MISSING', message: `Money Forward institution ${institution} has no explicit destination account.`, severity: 'error' })
+    }
+    for (const institution of Object.keys(institutionAccountMappings)) {
+      if (!institutions.has(institution)) issues.push({ code: 'ACCOUNT_MAPPING_UNKNOWN', message: `Money Forward account mapping contains unknown institution ${institution}.`, severity: 'error' })
+    }
+  } else if (Object.keys(institutionAccountMappings).length > 0) {
+    issues.push({ code: 'ACCOUNT_MAPPING_UNKNOWN', message: 'Institution account mappings are only valid for Money Forward ME household-ledger imports.', severity: 'error' })
+  }
+  const context: MappingContext = { ids, hash, accountId: input.file.accountId ?? null, institutionAccountMappings, records: [], issues, lineageRecords: new Map() }
   const candidates: StartImportCandidate[] = []
   const cardStatements: StartImportCardStatement[] = []
-  if (input.detectedAdapterId === input.parsed.adapterId) {
+  const accountMappingInvalid = issues.some((issue) => issue.code === 'ACCOUNT_MAPPING_MISSING' || issue.code === 'ACCOUNT_MAPPING_UNKNOWN')
+  if (input.detectedAdapterId === input.parsed.adapterId && !accountMappingInvalid) {
     for (const record of input.parsed.records) {
       if (isBank(record)) candidates.push(...await mapBank(record, context))
       else if (isWallet(record)) candidates.push(...await mapPayPay(record, context))

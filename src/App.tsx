@@ -128,6 +128,35 @@ function hasCompatibleStandardImportAccount(adapterId: AdapterId | undefined, ac
   return !requirement || accounts.some((account) => account.accountKind === requirement.kind && account.accountSubtype === requirement.subtype)
 }
 
+function moneyForwardInstitutions(item: ImportPreview): readonly string[] {
+  if (item.detectedAdapterId !== 'money-forward-me-household-ledger-v1' || !item.parsed) return []
+  const institutions = item.parsed.records.flatMap((record) => {
+    if (typeof record !== 'object' || record === null) return []
+    const candidate = record as { kind?: unknown; institution?: unknown }
+    return candidate.kind === 'money-forward-household-transaction' && typeof candidate.institution === 'string' && candidate.institution ? [candidate.institution] : []
+  })
+  return [...new Set(institutions)]
+}
+
+function eligibleMoneyForwardAccounts(accounts: readonly AccountDto[]): readonly AccountDto[] {
+  return accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY')
+}
+
+function importAccountDescriptionId(item: ImportPreview, accounts: readonly AccountDto[]): string | undefined {
+  if (!hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts)) return `standard-account-empty-${item.id}`
+  if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && eligibleMoneyForwardAccounts(accounts).length === 0) return `money-forward-account-empty-${item.id}`
+  return undefined
+}
+
+function hasCompleteMoneyForwardMapping(item: ImportPreview, mappings: Readonly<Record<string, string>> | undefined, accounts: readonly AccountDto[]): boolean {
+  const institutions = moneyForwardInstitutions(item)
+  if (institutions.length === 0 || !mappings || Object.keys(mappings).length !== institutions.length) return false
+  return institutions.every((institution) => {
+    const account = eligibleMoneyForwardAccounts(accounts).find((candidate) => candidate.id === mappings[institution])
+    return account?.accountKind === 'ASSET' || account?.accountKind === 'LIABILITY'
+  })
+}
+
 function currentTokyoPeriod(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(now)
   const year = Number(parts.find((part) => part.type === 'year')?.value)
@@ -794,7 +823,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [selectedParserProfiles, setSelectedParserProfiles] = useState<Record<string, string>>({})
   const [customParserPreviews, setCustomParserPreviews] = useState<Record<string, CustomDelimitedPreview>>({})
   const [customParserAccounts, setCustomParserAccounts] = useState<Record<string, string>>({})
-  const [moneyForwardAccounts, setMoneyForwardAccounts] = useState<Record<string, string>>({})
+  const [moneyForwardAccounts, setMoneyForwardAccounts] = useState<Record<string, Record<string, string>>>({})
   const [yuchoAccounts, setYuchoAccounts] = useState<Record<string, string>>({})
   const [standardImportAccounts, setStandardImportAccounts] = useState<Record<string, string>>({})
   const [originalParserPreviews, setOriginalParserPreviews] = useState<Record<string, ImportPreview>>({})
@@ -806,6 +835,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     hydratedStagedRunsRef.current.clear()
     setStaged({})
     setReceiptStagedIds(new Set())
+    setMoneyForwardAccounts({})
     setStandardImportAccounts({})
     setRescuePreviewId(null)
   }, [householdId])
@@ -813,6 +843,10 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   useEffect(() => {
     const activeIds = new Set(previews.map((preview) => preview.id))
     setStandardImportAccounts((current) => {
+      const entries = Object.entries(current).filter(([previewId]) => activeIds.has(previewId))
+      return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries)
+    })
+    setMoneyForwardAccounts((current) => {
       const entries = Object.entries(current).filter(([previewId]) => activeIds.has(previewId))
       return entries.length === Object.keys(current).length ? current : Object.fromEntries(entries)
     })
@@ -949,7 +983,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       const selected = accounts.find((account) => account.id === customParserAccounts[item.id])
       if (!selected || (selected.accountKind !== 'ASSET' && selected.accountKind !== 'LIABILITY')) { setNotice('カスタム形式の有効な取込先口座を選択してください。'); return }
     }
-    if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !moneyForwardAccounts[item.id]) { setNotice('Money Forwardの「保有金融機関」に対応する取込先口座を選択してください。'); return }
+    if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], accounts)) { setNotice('Money Forwardのすべての「保有金融機関」に対応する取込先口座を選択してください。'); return }
     if (item.detectedAdapterId === 'yucho-direct-ledger-v1' && !yuchoAccounts[item.id]) { setNotice('ゆうちょCSVの取込先銀行口座を選択してください。'); return }
     const standardRequirement = STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId]
     const standardAccountId = standardImportAccounts[item.id]
@@ -964,7 +998,6 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         ? standardAccountId
         : item.detectedAdapterId === 'yucho-direct-ledger-v1' ? yuchoAccounts[item.id] ?? ''
         : item.detectedAdapterId === 'custom-delimited-v1' ? customParserAccounts[item.id] ?? ''
-        : item.detectedAdapterId === 'money-forward-me-household-ledger-v1' ? moneyForwardAccounts[item.id] ?? ''
         : ''
       const mapping = await mapParsedImportToStartImport({
         file: {
@@ -975,6 +1008,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         },
         detectedAdapterId: item.detectedAdapterId,
         parsed: item.parsed,
+        institutionAccountMappings: item.detectedAdapterId === 'money-forward-me-household-ledger-v1' ? moneyForwardAccounts[item.id] : undefined,
       }, { next: () => globalThis.crypto.randomUUID() }, sha256Text)
       if (mapping.issues.some((issue) => issue.severity === 'error') || mapping.request.candidates.length === 0) {
         setPreviews((current) => current.map((preview) => preview.id === item.id ? {
@@ -1185,7 +1219,10 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
           </div>
         })}
       </div>}
-      {previews.some((item) => item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && item.status === 'ready') && <div className="custom-parser-files"><div><strong>Money Forward ME 家計簿CSV</strong><small>1ファイル1金融機関を明示的にKakeFlow口座へ対応付けます。振替と計算対象は元データを保持します。</small></div>{previews.filter((item) => item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && item.status === 'ready').map((item) => <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>保有金融機関を推測せず、選択した口座へ取り込みます。</small></span><select aria-label={`${item.filename}のMoney Forward取込先口座`} value={moneyForwardAccounts[item.id] ?? ''} onChange={(event) => setMoneyForwardAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">対応する口座を選択</option>{accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)}</div>}
+      {previews.some((item) => item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && item.status === 'ready') && <div className="custom-parser-files"><div><strong>Money Forward ME 家計簿CSV</strong><small>原本内の保有金融機関ごとにKakeFlow口座を明示します。振替と計算対象は元データを保持します。</small></div>{previews.filter((item) => item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && item.status === 'ready').flatMap((item) => {
+        const eligibleAccounts = eligibleMoneyForwardAccounts(accounts)
+        return moneyForwardInstitutions(item).map((institution, index) => <div className="custom-parser-file" key={`${item.id}:${institution}`}><span><strong>{institution}</strong><small>{item.filename} ・ 口座を推測または自動作成しません。</small>{index === 0 && eligibleAccounts.length === 0 && <small id={`money-forward-account-empty-${item.id}`} role="status">設定ページで先に資産または負債口座を追加してください。追加するまで取込は開始できません。</small>}</span><select aria-label={`${item.filename}の${institution}取込先口座`} aria-describedby={eligibleAccounts.length === 0 ? `money-forward-account-empty-${item.id}` : undefined} disabled={eligibleAccounts.length === 0} value={moneyForwardAccounts[item.id]?.[institution] ?? ''} onChange={(event) => setMoneyForwardAccounts((current) => ({ ...current, [item.id]: { ...current[item.id], [institution]: event.target.value } }))}><option value="">対応する口座を選択</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)
+      })}</div>}
       {previews.some((item) => item.detectedAdapterId === 'yucho-direct-ledger-v1' && item.status === 'ready') && <div className="custom-parser-files"><div><strong>ゆうちょダイレクトCSV</strong><small>ZIP内のCSVもファイルごとに対応する銀行口座を明示的に選択します。</small></div>{previews.filter((item) => item.detectedAdapterId === 'yucho-direct-ledger-v1' && item.status === 'ready').map((item) => <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>口座情報を推測せず、選択した銀行口座へ取り込みます。</small></span><select aria-label={`${item.filename}のゆうちょ取込先口座`} value={yuchoAccounts[item.id] ?? ''} onChange={(event) => setYuchoAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">銀行口座を選択</option>{accounts.filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)}</div>}
       {previews.some((item) => item.detectedAdapterId != null && STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId] != null && item.status === 'ready') && <div className="custom-parser-files"><div><strong>取込先口座を明示的に選択</strong><small>ファイル名、カード会社名、既定口座から推測せず、原本ごとに対応する口座を選択します。</small></div>{previews.filter((item) => item.detectedAdapterId != null && STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId] != null && item.status === 'ready').map((item) => {
         const requirement = STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId!]!
@@ -1193,7 +1230,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         return <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{item.adapterId} ・ {requirement.kindLabel}のみ選択できます。</small>{eligibleAccounts.length === 0 && <small id={`standard-account-empty-${item.id}`} role="status">設定ページで先に{requirement.kindLabel}を追加してください。追加するまで取込は開始できません。</small>}</span><select aria-label={`${item.filename}の取込先${requirement.kindLabel}`} disabled={eligibleAccounts.length === 0} value={standardImportAccounts[item.id] ?? ''} onChange={(event) => setStandardImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{requirement.kindLabel}を選択</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       })}</div>}
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => issue.message).join(' / ')}</small>}</div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-label={previews.length > 1 ? `${item.filename}の取込開始` : undefined} aria-describedby={!hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts) ? `standard-account-empty-${item.id}` : undefined} disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || !hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts) || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : item.status === 'unsupported' && item.fileBytes && /\.(?:csv|tsv)$/i.test(item.filename) ? <button className="mini-btn" onClick={(event) => { rescueTriggerRef.current = event.currentTarget; setRescuePreviewId(item.id) }}>このファイルを読み取る</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => issue.message).join(' / ')}</small>}</div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-label={previews.length > 1 ? `${item.filename}の取込開始` : undefined} aria-describedby={importAccountDescriptionId(item, accounts)} disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || !hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts) || (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], accounts)) || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : item.status === 'unsupported' && item.fileBytes && /\.(?:csv|tsv)$/i.test(item.filename) ? <button className="mini-btn" onClick={(event) => { rescueTriggerRef.current = event.currentTarget; setRescuePreviewId(item.id) }}>このファイルを読み取る</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
