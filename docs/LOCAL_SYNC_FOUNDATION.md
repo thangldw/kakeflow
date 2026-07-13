@@ -68,6 +68,12 @@ source references now reconstruct the Cards and forecast read models on the
 receiving installation. Schema-v1 packages remain accepted and cannot delete
 the new card graph by omission.
 
+KakeFlow 0.41 introduces package schema v3 with five whole investment
+aggregates: portfolio snapshots, brokerage events, investment FX rates, market
+prices, and aggregate asset history. The matching evidence capsule is hydrated
+first; apply then resolves exact origin/document/row aliases, reconstructs the
+facts atomically, and recomputes derived investment read models locally.
+
 ## Restore validation
 
 Schema 36 restore validation checks device, principal, member-binding, local
@@ -81,8 +87,8 @@ logical principals and historical origin/envelope records remain in the backup.
 ## Explicit non-goals
 
 This release does not provide a sync server, network transport, automatic
-package delivery, source-document/blob transport, source/import aggregate graph,
-investment/portfolio aggregate graph,
+package delivery, automatic source-document/blob transport, source/import
+aggregate graph, pending-import replication,
 end-to-end sync protocol, field-level merge, login,
 remote authentication, access control, backend audience enforcement, or mobile
 receipt capture. Device-local watched-folder state also remains local. Those

@@ -15,7 +15,8 @@ use crate::document_vault::DocumentVault;
 use crate::persistence;
 use crate::sync_foundation;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
+const LEGACY_SCHEMA_VERSION: u32 = 1;
 const APPLICATION_ID: i64 = 0x4b464556; // KFEV
 const MAX_DOCUMENTS: usize = 2_048;
 const MAX_RECORDS: usize = 100_000;
@@ -91,6 +92,8 @@ struct ManifestDocument {
     records: Vec<ManifestRecord>,
     transaction_links: Vec<ManifestTransactionLink>,
     card_statement_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    investment_links: Vec<ManifestInvestmentLink>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +123,14 @@ struct ManifestTransactionLink {
     transaction_id: String,
     source_record_id: String,
     candidate_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ManifestInvestmentLink {
+    entity_kind: String,
+    entity_id: String,
+    source_row: Option<u64>,
 }
 
 pub struct StagedEvidenceBundle {
@@ -157,7 +168,7 @@ pub fn export_confirmed_evidence(
     if documents.is_empty() {
         return Err(EvidenceBundleError::Empty);
     }
-    validate_documents(&documents)?;
+    validate_documents(&documents, SCHEMA_VERSION)?;
 
     let created_at: String = connection
         .query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| {
@@ -428,6 +439,59 @@ fn load_confirmed_documents(
                  JOIN card_statement_portable_source_refs p
                    ON p.source_document_id=da.portable_document_id
                  WHERE da.local_document_id=sd.id
+               ) OR EXISTS (
+                 SELECT 1 FROM portfolio_snapshots p
+                 WHERE p.source_document_id=sd.id AND p.household_id=sd.household_id
+                   AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
+                     JOIN evidence_source_document_aliases da
+                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                     WHERE r.entity_kind='PORTFOLIO_SNAPSHOT' AND r.entity_id=p.id
+                       AND da.local_document_id=p.source_document_id)
+               ) OR EXISTS (
+                 SELECT 1 FROM brokerage_events e
+                 WHERE e.source_document_id=sd.id AND e.household_id=sd.household_id
+                   AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
+                     JOIN evidence_source_document_aliases da
+                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                     WHERE r.entity_kind='BROKERAGE_EVENT' AND r.entity_id=e.id
+                       AND da.local_document_id=e.source_document_id)
+               ) OR EXISTS (
+                 SELECT 1 FROM investment_fx_rates r
+                 WHERE r.source_document_id=sd.id AND r.household_id=sd.household_id
+                   AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs p
+                     JOIN evidence_source_document_aliases da
+                       ON da.household_id=p.household_id AND da.portable_document_id=p.source_document_id
+                     WHERE p.entity_kind='INVESTMENT_FX_RATE' AND p.entity_id=r.id
+                       AND da.local_document_id=r.source_document_id)
+               ) OR EXISTS (
+                 SELECT 1 FROM investment_market_prices p
+                 WHERE p.source_document_id=sd.id AND p.household_id=sd.household_id
+                   AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
+                     JOIN evidence_source_document_aliases da
+                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                     WHERE r.entity_kind='INVESTMENT_MARKET_PRICE' AND r.entity_id=p.id
+                       AND da.local_document_id=p.source_document_id)
+               ) OR EXISTS (
+                 SELECT 1 FROM aggregate_asset_snapshots a
+                 WHERE a.source_document_id=sd.id AND a.household_id=sd.household_id
+                   AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
+                     JOIN evidence_source_document_aliases da
+                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                     WHERE r.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND r.entity_id=a.id
+                       AND da.local_document_id=a.source_document_id)
+               ) OR EXISTS (
+                 SELECT 1 FROM evidence_source_document_aliases da
+                JOIN investment_portable_source_refs p
+                   ON p.household_id=da.household_id
+                  AND p.origin_installation_id=da.origin_installation_id
+                  AND p.source_document_id=da.portable_document_id
+                 WHERE da.local_document_id=sd.id AND (
+                   EXISTS(SELECT 1 FROM portfolio_snapshots x WHERE p.entity_kind='PORTFOLIO_SNAPSHOT' AND x.id=p.entity_id AND x.household_id=sd.household_id)
+                   OR EXISTS(SELECT 1 FROM brokerage_events x WHERE p.entity_kind='BROKERAGE_EVENT' AND x.id=p.entity_id AND x.household_id=sd.household_id)
+                   OR EXISTS(SELECT 1 FROM investment_fx_rates x WHERE p.entity_kind='INVESTMENT_FX_RATE' AND x.id=p.entity_id AND x.household_id=sd.household_id)
+                   OR EXISTS(SELECT 1 FROM investment_market_prices x WHERE p.entity_kind='INVESTMENT_MARKET_PRICE' AND x.id=p.entity_id AND x.household_id=sd.household_id)
+                   OR EXISTS(SELECT 1 FROM aggregate_asset_snapshots x WHERE p.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND x.id=p.entity_id AND x.household_id=sd.household_id)
+                 )
                )
              )
              ORDER BY sd.imported_at,sd.id",
@@ -447,6 +511,41 @@ fn load_confirmed_documents(
                WHERE sr.source_document_id=?1 AND t.household_id=?2 AND t.status='POSTED'
                UNION ALL SELECT 1 FROM card_statements cs
                WHERE cs.source_document_id=?1 AND cs.household_id=?2
+               UNION ALL SELECT 1 FROM portfolio_snapshots p
+               WHERE p.source_document_id=?1 AND p.household_id=?2 AND NOT EXISTS(
+                 SELECT 1 FROM investment_portable_source_refs r
+                 JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.portable_document_id=r.source_document_id
+                 WHERE r.entity_kind='PORTFOLIO_SNAPSHOT' AND r.entity_id=p.id
+                   AND da.local_document_id=p.source_document_id)
+               UNION ALL SELECT 1 FROM brokerage_events e
+               WHERE e.source_document_id=?1 AND e.household_id=?2 AND NOT EXISTS(
+                 SELECT 1 FROM investment_portable_source_refs r
+                 JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.portable_document_id=r.source_document_id
+                 WHERE r.entity_kind='BROKERAGE_EVENT' AND r.entity_id=e.id
+                   AND da.local_document_id=e.source_document_id)
+               UNION ALL SELECT 1 FROM investment_fx_rates r
+               WHERE r.source_document_id=?1 AND r.household_id=?2 AND NOT EXISTS(
+                 SELECT 1 FROM investment_portable_source_refs p
+                 JOIN evidence_source_document_aliases da ON da.household_id=p.household_id
+                   AND da.portable_document_id=p.source_document_id
+                 WHERE p.entity_kind='INVESTMENT_FX_RATE' AND p.entity_id=r.id
+                   AND da.local_document_id=r.source_document_id)
+               UNION ALL SELECT 1 FROM investment_market_prices p
+               WHERE p.source_document_id=?1 AND p.household_id=?2 AND NOT EXISTS(
+                 SELECT 1 FROM investment_portable_source_refs r
+                 JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.portable_document_id=r.source_document_id
+                 WHERE r.entity_kind='INVESTMENT_MARKET_PRICE' AND r.entity_id=p.id
+                   AND da.local_document_id=p.source_document_id)
+               UNION ALL SELECT 1 FROM aggregate_asset_snapshots a
+               WHERE a.source_document_id=?1 AND a.household_id=?2 AND NOT EXISTS(
+                 SELECT 1 FROM investment_portable_source_refs r
+                 JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.portable_document_id=r.source_document_id
+                 WHERE r.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND r.entity_id=a.id
+                   AND da.local_document_id=a.source_document_id)
              )", params![id,household_id], |row| row.get(0)
         ).map_err(|_| EvidenceBundleError::Database)?;
         if native {
@@ -470,6 +569,16 @@ fn load_confirmed_documents(
                    AND ra.portable_document_id=da.portable_document_id AND t.status='POSTED')
                OR EXISTS(SELECT 1 FROM card_statement_portable_source_refs p
                  WHERE p.source_document_id=da.portable_document_id)
+               OR EXISTS(SELECT 1 FROM investment_portable_source_refs p
+                 WHERE p.household_id=da.household_id
+                   AND p.origin_installation_id=da.origin_installation_id
+                   AND p.source_document_id=da.portable_document_id AND (
+                     EXISTS(SELECT 1 FROM portfolio_snapshots x WHERE p.entity_kind='PORTFOLIO_SNAPSHOT' AND x.id=p.entity_id AND x.household_id=da.household_id)
+                     OR EXISTS(SELECT 1 FROM brokerage_events x WHERE p.entity_kind='BROKERAGE_EVENT' AND x.id=p.entity_id AND x.household_id=da.household_id)
+                     OR EXISTS(SELECT 1 FROM investment_fx_rates x WHERE p.entity_kind='INVESTMENT_FX_RATE' AND x.id=p.entity_id AND x.household_id=da.household_id)
+                     OR EXISTS(SELECT 1 FROM investment_market_prices x WHERE p.entity_kind='INVESTMENT_MARKET_PRICE' AND x.id=p.entity_id AND x.household_id=da.household_id)
+                     OR EXISTS(SELECT 1 FROM aggregate_asset_snapshots x WHERE p.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND x.id=p.entity_id AND x.household_id=da.household_id)
+                   ))
              ) ORDER BY origin_installation_id,portable_document_id"
         ).map_err(|_| EvidenceBundleError::Database)?;
         let aliases = aliases
@@ -540,6 +649,7 @@ fn load_document(
                     records: Vec::new(),
                     transaction_links: Vec::new(),
                     card_statement_ids: Vec::new(),
+                    investment_links: Vec::new(),
                 })
             },
         )
@@ -653,29 +763,104 @@ fn load_document(
         .map_err(|_| EvidenceBundleError::Database)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| EvidenceBundleError::Database)?;
+
+    let investment_sql = if alias.is_none() {
+        "SELECT 'PORTFOLIO_SNAPSHOT',id,NULL FROM portfolio_snapshots
+         WHERE household_id=?1 AND source_document_id=?2 AND ?3 IS NOT NULL AND NOT EXISTS(
+           SELECT 1 FROM investment_portable_source_refs r
+           JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.portable_document_id=r.source_document_id
+           WHERE r.entity_kind='PORTFOLIO_SNAPSHOT' AND r.entity_id=portfolio_snapshots.id
+             AND da.local_document_id=portfolio_snapshots.source_document_id)
+         UNION ALL SELECT 'BROKERAGE_EVENT',id,source_row FROM brokerage_events
+         WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
+           SELECT 1 FROM investment_portable_source_refs r
+           JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.portable_document_id=r.source_document_id
+           WHERE r.entity_kind='BROKERAGE_EVENT' AND r.entity_id=brokerage_events.id
+             AND da.local_document_id=brokerage_events.source_document_id)
+         UNION ALL SELECT 'INVESTMENT_FX_RATE',id,source_row FROM investment_fx_rates
+         WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
+           SELECT 1 FROM investment_portable_source_refs r
+           JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.portable_document_id=r.source_document_id
+           WHERE r.entity_kind='INVESTMENT_FX_RATE' AND r.entity_id=investment_fx_rates.id
+             AND da.local_document_id=investment_fx_rates.source_document_id)
+         UNION ALL SELECT 'INVESTMENT_MARKET_PRICE',id,source_row FROM investment_market_prices
+         WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
+           SELECT 1 FROM investment_portable_source_refs r
+           JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.portable_document_id=r.source_document_id
+           WHERE r.entity_kind='INVESTMENT_MARKET_PRICE' AND r.entity_id=investment_market_prices.id
+             AND da.local_document_id=investment_market_prices.source_document_id)
+         UNION ALL SELECT 'AGGREGATE_ASSET_SNAPSHOT',id,source_row FROM aggregate_asset_snapshots
+         WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
+           SELECT 1 FROM investment_portable_source_refs r
+           JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.portable_document_id=r.source_document_id
+           WHERE r.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND r.entity_id=aggregate_asset_snapshots.id
+             AND da.local_document_id=aggregate_asset_snapshots.source_document_id)
+         ORDER BY 1,2"
+    } else {
+        "SELECT p.entity_kind,p.entity_id,p.source_row
+         FROM investment_portable_source_refs p
+         WHERE p.household_id=?1 AND p.source_document_id=?2
+           AND p.origin_installation_id=?3 AND (
+           EXISTS(SELECT 1 FROM portfolio_snapshots x WHERE p.entity_kind='PORTFOLIO_SNAPSHOT' AND x.id=p.entity_id AND x.household_id=p.household_id)
+           OR EXISTS(SELECT 1 FROM brokerage_events x WHERE p.entity_kind='BROKERAGE_EVENT' AND x.id=p.entity_id AND x.household_id=p.household_id)
+           OR EXISTS(SELECT 1 FROM investment_fx_rates x WHERE p.entity_kind='INVESTMENT_FX_RATE' AND x.id=p.entity_id AND x.household_id=p.household_id)
+           OR EXISTS(SELECT 1 FROM investment_market_prices x WHERE p.entity_kind='INVESTMENT_MARKET_PRICE' AND x.id=p.entity_id AND x.household_id=p.household_id)
+           OR EXISTS(SELECT 1 FROM aggregate_asset_snapshots x WHERE p.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND x.id=p.entity_id AND x.household_id=p.household_id)
+         ) ORDER BY 1,2"
+    };
+    let mut investments = connection
+        .prepare(investment_sql)
+        .map_err(|_| EvidenceBundleError::Database)?;
+    document.investment_links = investments
+        .query_map(
+            params![household_id, document.id, document.origin_installation_id],
+            |row| {
+                let source_row: Option<i64> = row.get(2)?;
+                Ok(ManifestInvestmentLink {
+                    entity_kind: row.get(0)?,
+                    entity_id: row.get(1)?,
+                    source_row: source_row.and_then(|value| u64::try_from(value).ok()),
+                })
+            },
+        )
+        .map_err(|_| EvidenceBundleError::Database)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| EvidenceBundleError::Database)?;
+    document.investment_links.sort();
+    document.investment_links.dedup();
     Ok(document)
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<()> {
-    if manifest.schema_version != SCHEMA_VERSION || manifest.documents.is_empty() {
+    if !matches!(
+        manifest.schema_version,
+        LEGACY_SCHEMA_VERSION | SCHEMA_VERSION
+    ) || manifest.documents.is_empty()
+    {
         return Err(EvidenceBundleError::Corrupt);
     }
     validate_id(&manifest.bundle_id)?;
     validate_id(&manifest.household_id)?;
     validate_id(&manifest.origin_installation_id)?;
-    validate_documents(&manifest.documents)?;
+    validate_documents(&manifest.documents, manifest.schema_version)?;
     if !valid_hash(&manifest.bundle_id) || manifest_identity(manifest)? != manifest.bundle_id {
         return Err(EvidenceBundleError::Corrupt);
     }
     Ok(())
 }
 
-fn validate_documents(documents: &[ManifestDocument]) -> Result<()> {
+fn validate_documents(documents: &[ManifestDocument], schema_version: u32) -> Result<()> {
     if documents.len() > MAX_DOCUMENTS {
         return Err(EvidenceBundleError::LimitExceeded);
     }
     let mut document_ids = BTreeSet::new();
     let mut record_ids = BTreeSet::new();
+    let mut investment_entity_ids = BTreeSet::new();
     let mut total_records = 0_usize;
     let mut total_bytes = 0_u64;
     for document in documents {
@@ -714,6 +899,11 @@ fn validate_documents(documents: &[ManifestDocument]) -> Result<()> {
             .iter()
             .map(|record| record.id.as_str())
             .collect::<BTreeSet<_>>();
+        let contained_rows = document
+            .records
+            .iter()
+            .map(|record| record.row_number)
+            .collect::<BTreeSet<_>>();
         for link in &document.transaction_links {
             validate_id(&link.transaction_id)?;
             validate_id(&link.source_record_id)?;
@@ -726,6 +916,30 @@ fn validate_documents(documents: &[ManifestDocument]) -> Result<()> {
         }
         for statement in &document.card_statement_ids {
             validate_id(statement)?;
+        }
+        if schema_version == LEGACY_SCHEMA_VERSION && !document.investment_links.is_empty() {
+            return Err(EvidenceBundleError::Corrupt);
+        }
+        let mut investment_links = BTreeSet::new();
+        for link in &document.investment_links {
+            validate_id(&link.entity_id)?;
+            let valid_shape = match link.entity_kind.as_str() {
+                "PORTFOLIO_SNAPSHOT" => link.source_row.is_none(),
+                "BROKERAGE_EVENT"
+                | "INVESTMENT_FX_RATE"
+                | "INVESTMENT_MARKET_PRICE"
+                | "AGGREGATE_ASSET_SNAPSHOT" => link
+                    .source_row
+                    .is_some_and(|row| row <= i64::MAX as u64 && contained_rows.contains(&row)),
+                _ => false,
+            };
+            if !valid_shape
+                || !investment_links.insert(link)
+                || !investment_entity_ids
+                    .insert((link.entity_kind.as_str(), link.entity_id.as_str()))
+            {
+                return Err(EvidenceBundleError::Corrupt);
+            }
         }
         total_records = total_records
             .checked_add(document.records.len())
@@ -740,9 +954,12 @@ fn validate_documents(documents: &[ManifestDocument]) -> Result<()> {
 fn validate_dependencies(connection: &Connection, manifest: &Manifest) -> Result<()> {
     for document in &manifest.documents {
         for link in &document.transaction_links {
-            let exists: bool = connection
+            let (target_exists, exact_link): (bool, bool) = connection
                 .query_row(
                     "SELECT EXISTS(
+                       SELECT 1 FROM transactions t
+                       WHERE t.id=?1 AND t.household_id=?2 AND t.status='POSTED'),
+                     EXISTS(
                    SELECT 1 FROM transactions t
                    WHERE t.id=?1 AND t.household_id=?2 AND t.status='POSTED' AND (
                      EXISTS(SELECT 1 FROM transaction_portable_source_links p
@@ -758,26 +975,28 @@ fn validate_dependencies(connection: &Connection, manifest: &Manifest) -> Result
                         link.source_record_id,
                         link.candidate_id
                     ],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .map_err(|_| EvidenceBundleError::Database)?;
-            if !exists {
+            if (manifest.schema_version == LEGACY_SCHEMA_VERSION || target_exists) && !exact_link {
                 return Err(EvidenceBundleError::MissingDependency);
             }
         }
         for statement in &document.card_statement_ids {
-            let exists: bool = connection
+            let (target_exists, exact_link): (bool, bool) = connection
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM card_statements s
+                       WHERE s.id=?1 AND s.household_id=?2),
+                     EXISTS(SELECT 1 FROM card_statements s
                      WHERE s.id=?1 AND s.household_id=?2 AND (
                        s.source_document_id=?3 OR EXISTS(
                          SELECT 1 FROM card_statement_portable_source_refs p
                          WHERE p.statement_id=s.id AND p.source_document_id=?3)))",
                     params![statement, manifest.household_id, document.id],
-                    |row| row.get(0),
+                    |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .map_err(|_| EvidenceBundleError::Database)?;
-            if !exists {
+            if (manifest.schema_version == LEGACY_SCHEMA_VERSION || target_exists) && !exact_link {
                 return Err(EvidenceBundleError::MissingDependency);
             }
         }
@@ -978,6 +1197,42 @@ fn materialize_document(
             return Err(EvidenceBundleError::Conflict);
         }
     }
+    for link in &document.investment_links {
+        transaction
+            .execute(
+                "INSERT INTO investment_portable_source_refs(
+                   household_id,entity_kind,entity_id,origin_installation_id,
+                   source_document_id,source_row)
+                 VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
+                params![
+                    manifest.household_id,
+                    link.entity_kind,
+                    link.entity_id,
+                    document.origin_installation_id,
+                    document.id,
+                    link.source_row.map(|row| row as i64)
+                ],
+            )
+            .map_err(|_| EvidenceBundleError::Conflict)?;
+        let linked_source: (String, String, Option<i64>) = transaction
+            .query_row(
+                "SELECT origin_installation_id,source_document_id,source_row
+                 FROM investment_portable_source_refs
+                 WHERE household_id=?1 AND entity_kind=?2 AND entity_id=?3",
+                params![manifest.household_id, link.entity_kind, link.entity_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(|_| EvidenceBundleError::Conflict)?;
+        if linked_source
+            != (
+                document.origin_installation_id.clone(),
+                document.id.clone(),
+                link.source_row.map(|row| row as i64),
+            )
+        {
+            return Err(EvidenceBundleError::Conflict);
+        }
+    }
     Ok(())
 }
 
@@ -1008,7 +1263,10 @@ fn validate_manifest_schema(connection: &Connection) -> Result<()> {
             row.get(0)
         })
         .map_err(|_| EvidenceBundleError::Corrupt)?;
-    if app != APPLICATION_ID || version != SCHEMA_VERSION || count != 1 {
+    if app != APPLICATION_ID
+        || !matches!(version, LEGACY_SCHEMA_VERSION | SCHEMA_VERSION)
+        || count != 1
+    {
         return Err(EvidenceBundleError::Corrupt);
     }
     Ok(())
@@ -1154,6 +1412,156 @@ mod tests {
         }).unwrap();
     }
 
+    fn seed_investment_source(state: &AppState, vault: &DocumentVault) {
+        let stored = vault
+            .put(b"investment evidence rows\n", "text/csv")
+            .unwrap();
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('broker','family','Broker','ASSET','SECURITIES')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO import_runs(id,household_id,status,adapter_id,adapter_version)
+                     VALUES('investment-run','family','POSTED','investment-test','1')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO source_documents(id,household_id,import_run_id,source_type,
+                       original_filename,media_type,byte_size,sha256,storage_path)
+                     VALUES('investment-document','family','investment-run','MANUAL_UPLOAD',
+                       'investment.csv','text/csv',?1,?2,?3)",
+                    params![
+                        stored.plaintext_size as i64,
+                        stored.sha256,
+                        format!("vault://{}", stored.sha256)
+                    ],
+                )?;
+                for row_number in 1_i64..=4 {
+                    connection.execute(
+                        "INSERT INTO source_records(
+                           id,source_document_id,row_number,record_hash,raw_payload_json)
+                         VALUES(?1,'investment-document',?2,?3,?4)",
+                        params![
+                            format!("investment-record-{row_number}"),
+                            row_number,
+                            hex_digest(format!("investment-record-{row_number}").as_bytes()),
+                            format!("{{\"row\":{row_number}}}")
+                        ],
+                    )?;
+                }
+                connection.execute(
+                    "INSERT INTO portfolio_snapshots(
+                       id,household_id,account_id,source_document_id,as_of,
+                       market_value_jpy,cash_value_jpy)
+                     VALUES('portfolio-1','family','broker','investment-document',
+                       '2026-07-12T00:00:00Z',10000,1000)",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO brokerage_events(
+                       id,household_id,account_id,source_document_id,source_row,event_type,
+                       trade_date,instrument_code,instrument_name,brokerage_account_type,currency,
+                       gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,
+                       reconciliation_difference,raw_transaction_type)
+                     VALUES('event-1','family','broker','investment-document',1,'BUY',
+                       '2026-07-10','JP0001','Example','TAXABLE','JPY',1000,0,0,1000,
+                       'BALANCED',0,'BUY')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO investment_fx_rates(
+                       id,household_id,rate_date,base_currency,quote_currency,rate,source_kind,
+                       provider,source_document_id,source_row,observed_at)
+                     VALUES('fx-1','family','2026-07-11','USD','JPY',150,
+                       'BROKERAGE_STATEMENT','test','investment-document',2,
+                       '2026-07-11T00:00:00Z')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO investment_market_prices(
+                       id,household_id,price_date,instrument_code,instrument_name,currency,
+                       unit_price,source_kind,provider,source_document_id,source_row,observed_at)
+                     VALUES('price-1','family','2026-07-11','JP0001','Example','JPY',100,
+                       'BROKERAGE_STATEMENT','test','investment-document',3,
+                       '2026-07-11T00:00:00Z')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO aggregate_asset_snapshots(
+                       id,household_id,source_document_id,source_row,as_of,total_assets_jpy)
+                     VALUES('aggregate-1','family','investment-document',4,'2026-07-12',10000)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn materialize_investment_facts_from_evidence(state: &AppState) {
+        state
+            .with_connection(|connection| {
+                let document_id: String = connection.query_row(
+                    "SELECT local_document_id FROM evidence_source_document_aliases
+                     WHERE household_id='family' AND portable_document_id='investment-document'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('broker','family','Broker','ASSET','SECURITIES')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO portfolio_snapshots(
+                       id,household_id,account_id,source_document_id,as_of,
+                       market_value_jpy,cash_value_jpy)
+                     VALUES('portfolio-1','family','broker',?1,'2026-07-12T00:00:00Z',10000,1000)",
+                    [&document_id],
+                )?;
+                connection.execute(
+                    "INSERT INTO brokerage_events(
+                       id,household_id,account_id,source_document_id,source_row,event_type,
+                       trade_date,instrument_code,instrument_name,brokerage_account_type,currency,
+                       gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,
+                       reconciliation_difference,raw_transaction_type)
+                     VALUES('event-1','family','broker',?1,1,'BUY','2026-07-10','JP0001',
+                       'Example','TAXABLE','JPY',1000,0,0,1000,'BALANCED',0,'BUY')",
+                    [&document_id],
+                )?;
+                connection.execute(
+                    "INSERT INTO investment_fx_rates(
+                       id,household_id,rate_date,base_currency,quote_currency,rate,source_kind,
+                       provider,source_document_id,source_row,observed_at)
+                     VALUES('fx-1','family','2026-07-11','USD','JPY',150,
+                       'BROKERAGE_STATEMENT','test',?1,2,'2026-07-11T00:00:00Z')",
+                    [&document_id],
+                )?;
+                connection.execute(
+                    "INSERT INTO investment_market_prices(
+                       id,household_id,price_date,instrument_code,instrument_name,currency,
+                       unit_price,source_kind,provider,source_document_id,source_row,observed_at)
+                     VALUES('price-1','family','2026-07-11','JP0001','Example','JPY',100,
+                       'BROKERAGE_STATEMENT','test',?1,3,'2026-07-11T00:00:00Z')",
+                    [&document_id],
+                )?;
+                connection.execute(
+                    "INSERT INTO aggregate_asset_snapshots(
+                       id,household_id,source_document_id,source_row,as_of,total_assets_jpy)
+                     VALUES('aggregate-1','family',?1,4,'2026-07-12',10000)",
+                    [&document_id],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
     #[test]
     fn confirmed_csv_round_trips_and_reapply_is_idempotent() {
         let temp = tempfile::tempdir().unwrap();
@@ -1274,6 +1682,80 @@ mod tests {
                     |row| row.get(0),
                 )?;
                 assert_eq!(identities, "record,second-record");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_two_evidence_can_hydrate_before_its_transaction_package() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_state = AppState::in_memory(&[31_u8; 32]).unwrap();
+        let source_vault =
+            DocumentVault::new(temp.path().join("early-source"), &[32_u8; 32]).unwrap();
+        seed_source(&source_state, &source_vault, true);
+        let archive = temp.path().join("early.kakeflow-evidence");
+        source_state
+            .with_connection(|connection| {
+                Ok(export_confirmed_evidence(
+                    connection,
+                    &source_vault,
+                    "family",
+                    &archive,
+                    "correct horse battery staple",
+                )
+                .unwrap())
+            })
+            .unwrap();
+
+        let receiver_state = AppState::in_memory(&[33_u8; 32]).unwrap();
+        receiver_state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let receiver_vault =
+            DocumentVault::new(temp.path().join("early-receiver"), &[34_u8; 32]).unwrap();
+        let staged = stage_evidence_bundle(&archive, "correct horse battery staple").unwrap();
+        receiver_state
+            .with_connection(|connection| {
+                apply_evidence_bundle(connection, &receiver_vault, &staged).unwrap();
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM evidence_source_document_aliases",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    1
+                );
+                assert_eq!(
+                    connection.query_row("SELECT count(*) FROM transactions", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                    0
+                );
+                connection.execute_batch(
+                    "INSERT INTO transactions(
+                       id,household_id,occurred_on,transaction_type,status,payee)
+                     VALUES('tx','family','2026-07-12','EXPENSE','POSTED','STORE');
+                     INSERT INTO transaction_portable_source_links(
+                       transaction_id,source_record_id,candidate_id)
+                     VALUES('tx','record',NULL);",
+                )?;
+                let hydrated: bool = connection.query_row(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM transaction_portable_source_links link
+                       JOIN evidence_source_record_aliases alias
+                         ON alias.portable_record_id=link.source_record_id
+                       WHERE link.transaction_id='tx' AND alias.household_id='family')",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert!(hydrated);
                 Ok(())
             })
             .unwrap();
@@ -1411,5 +1893,211 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn investment_evidence_seeds_all_five_pending_portable_dependencies() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_state = AppState::in_memory(&[21_u8; 32]).unwrap();
+        let source_vault =
+            DocumentVault::new(temp.path().join("investment-source"), &[22_u8; 32]).unwrap();
+        seed_investment_source(&source_state, &source_vault);
+        let archive = temp.path().join("investment.kakeflow-evidence");
+        let exported = source_state
+            .with_connection(|connection| {
+                Ok(export_confirmed_evidence(
+                    connection,
+                    &source_vault,
+                    "family",
+                    &archive,
+                    "correct horse battery staple",
+                )
+                .unwrap())
+            })
+            .unwrap();
+        assert_eq!((exported.document_count, exported.record_count), (1, 4));
+
+        let receiver_state = AppState::in_memory(&[23_u8; 32]).unwrap();
+        receiver_state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let receiver_vault =
+            DocumentVault::new(temp.path().join("investment-receiver"), &[24_u8; 32]).unwrap();
+        let staged = stage_evidence_bundle(&archive, "correct horse battery staple").unwrap();
+        receiver_state
+            .with_connection(|connection| {
+                Ok(apply_evidence_bundle(connection, &receiver_vault, &staged).unwrap())
+            })
+            .unwrap();
+        receiver_state
+            .with_connection(|connection| {
+                let links: String = connection.query_row(
+                    "SELECT group_concat(entity_kind || ':' || entity_id || ':' ||
+                       COALESCE(source_row,'none'),'|') FROM (
+                       SELECT entity_kind,entity_id,source_row
+                       FROM investment_portable_source_refs ORDER BY entity_kind)",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(
+                    links,
+                    "AGGREGATE_ASSET_SNAPSHOT:aggregate-1:4|BROKERAGE_EVENT:event-1:1|\
+                     INVESTMENT_FX_RATE:fx-1:2|INVESTMENT_MARKET_PRICE:price-1:3|\
+                     PORTFOLIO_SNAPSHOT:portfolio-1:none"
+                );
+                let aggregates: i64 = connection.query_row(
+                    "SELECT (SELECT count(*) FROM portfolio_snapshots)
+                          +(SELECT count(*) FROM brokerage_events)
+                          +(SELECT count(*) FROM investment_fx_rates)
+                          +(SELECT count(*) FROM investment_market_prices)
+                          +(SELECT count(*) FROM aggregate_asset_snapshots)",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(aggregates, 0, "evidence must not publish aggregate facts");
+                Ok(())
+            })
+            .unwrap();
+        let reapplied = receiver_state
+            .with_connection(|connection| {
+                Ok(apply_evidence_bundle(connection, &receiver_vault, &staged).unwrap())
+            })
+            .unwrap();
+        assert_eq!(reapplied.imported_document_count, 0);
+        assert_eq!(reapplied.deduplicated_document_count, 1);
+
+        materialize_investment_facts_from_evidence(&receiver_state);
+        let forwarded_archive = temp.path().join("forwarded-investment.kakeflow-evidence");
+        let forwarded = receiver_state
+            .with_connection(|connection| {
+                Ok(export_confirmed_evidence(
+                    connection,
+                    &receiver_vault,
+                    "family",
+                    &forwarded_archive,
+                    "another correct horse battery",
+                )
+                .unwrap())
+            })
+            .unwrap();
+        assert_eq!(
+            forwarded.document_count, 1,
+            "hydrated portable evidence must not be re-exported as a second local origin"
+        );
+        let forwarded_staged =
+            stage_evidence_bundle(&forwarded_archive, "another correct horse battery").unwrap();
+        assert_eq!(
+            forwarded_staged.manifest.documents[0]
+                .investment_links
+                .len(),
+            5
+        );
+        assert_eq!(
+            forwarded_staged.manifest.documents[0].origin_installation_id,
+            staged.manifest.documents[0].origin_installation_id
+        );
+    }
+
+    #[test]
+    fn conflicting_investment_dependency_rolls_back_document_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_state = AppState::in_memory(&[25_u8; 32]).unwrap();
+        let source_vault =
+            DocumentVault::new(temp.path().join("conflict-source"), &[26_u8; 32]).unwrap();
+        seed_investment_source(&source_state, &source_vault);
+        let archive = temp.path().join("conflict.kakeflow-evidence");
+        source_state
+            .with_connection(|connection| {
+                Ok(export_confirmed_evidence(
+                    connection,
+                    &source_vault,
+                    "family",
+                    &archive,
+                    "correct horse battery staple",
+                )
+                .unwrap())
+            })
+            .unwrap();
+
+        let receiver_state = AppState::in_memory(&[27_u8; 32]).unwrap();
+        receiver_state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO investment_portable_source_refs(
+                       household_id,entity_kind,entity_id,origin_installation_id,
+                       source_document_id,source_row)
+                     VALUES('family','PORTFOLIO_SNAPSHOT','portfolio-1','other-origin',
+                            'different-document',NULL)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let receiver_vault =
+            DocumentVault::new(temp.path().join("conflict-receiver"), &[28_u8; 32]).unwrap();
+        let staged = stage_evidence_bundle(&archive, "correct horse battery staple").unwrap();
+        let result = receiver_state
+            .with_connection(|connection| {
+                Ok(apply_evidence_bundle(connection, &receiver_vault, &staged))
+            })
+            .unwrap();
+        assert!(matches!(result, Err(EvidenceBundleError::Conflict)));
+        receiver_state
+            .with_connection(|connection| {
+                let published: i64 = connection.query_row(
+                    "SELECT count(*) FROM evidence_source_document_aliases",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let receipts: i64 = connection.query_row(
+                    "SELECT count(*) FROM evidence_bundle_receipts",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!((published, receipts), (0, 0));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_one_manifest_without_investment_field_retains_its_identity() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = AppState::in_memory(&[29_u8; 32]).unwrap();
+        let vault = DocumentVault::new(temp.path().join("legacy"), &[30_u8; 32]).unwrap();
+        seed_source(&state, &vault, true);
+        let mut documents = state
+            .with_connection(|connection| {
+                let identity = sync_foundation::get_local_status(connection, "family").unwrap();
+                Ok(load_confirmed_documents(connection, "family", &identity.device.id).unwrap())
+            })
+            .unwrap();
+        for document in &mut documents {
+            document.investment_links.clear();
+        }
+        let mut legacy = Manifest {
+            schema_version: LEGACY_SCHEMA_VERSION,
+            bundle_id: String::new(),
+            household_id: "family".to_owned(),
+            origin_installation_id: "legacy-installation".to_owned(),
+            created_at: "2026-07-12T00:00:00Z".to_owned(),
+            documents,
+        };
+        legacy.bundle_id = manifest_identity(&legacy).unwrap();
+        let encoded = serde_json::to_string(&legacy).unwrap();
+        assert!(!encoded.contains("investmentLinks"));
+        let decoded: Manifest = serde_json::from_str(&encoded).unwrap();
+        validate_manifest(&decoded).unwrap();
+        assert_eq!(manifest_identity(&decoded).unwrap(), legacy.bundle_id);
     }
 }

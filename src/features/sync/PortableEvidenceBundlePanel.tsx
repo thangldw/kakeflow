@@ -55,8 +55,8 @@ export function PortableEvidenceBundlePanel({ householdId }: Props) {
   }
 
   return <section className="panel portable-evidence-bundle" aria-busy={busy !== null}>
-    <div className="panel-head"><div><h2>確定済み原本カプセル</h2><p>確定取引に紐づく元のCSV・PDF・画像と読み取り行だけを、別の端末へ持ち運びます。</p></div><span className="local-only-badge">原本のみ</span></div>
-    <p className="evidence-bundle-scope">Import Inbox の未確定・要確認データは含みません。読み込みは追加のみで、同じ原本は重複せず何度でも安全に再利用できます。</p>
+    <div className="panel-head"><div><h2>確定済み原本カプセル</h2><p>確定取引・カード請求・投資データに紐づく元のCSV・PDF・画像と読み取り行を、別の端末へ持ち運びます。</p></div><span className="local-only-badge">手順 1 / 2</span></div>
+    <p className="evidence-bundle-scope">投資データを移すときは、この原本を先に読み込んでから変更パッケージを反映します。Import Inbox の未確定・要確認データは含みません。読み込みは追加のみで、同じ原本は重複せず再利用できます。</p>
     {platformClient.runtime !== 'tauri' ? <p className="empty-state">原本カプセルはデスクトップ版で利用できます。</p> : <>
       <div className="evidence-bundle-controls">
         <label htmlFor="evidence-bundle-passphrase">パスフレーズ</label>

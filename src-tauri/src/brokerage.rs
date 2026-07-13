@@ -392,7 +392,7 @@ fn validate_batch(input: &ImportBrokerageEventsInput) -> Result<(), BrokerageErr
     Ok(())
 }
 
-fn validate_event(event: &ImportBrokerageEventInput) -> bool {
+pub(crate) fn validate_event(event: &ImportBrokerageEventInput) -> bool {
     let event_types = [
         "BUY",
         "SELL",

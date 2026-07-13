@@ -43,6 +43,8 @@ describe('LocalChangePackagePanel', () => {
     render(<LocalChangePackagePanel householdId="family" />)
     expect(await screen.findByText('反映前の確認')).toBeInTheDocument()
     expect(screen.getByText(/ネットワーク送受信は行いません/)).toBeInTheDocument()
+    expect(screen.getByText(/先に原本カプセル/)).toBeInTheDocument()
+    expect(screen.getByText('手順 2 / 2')).toBeInTheDocument()
     expect(screen.queryByText('同期済み')).not.toBeInTheDocument()
     const confirm = screen.getByRole('button', { name: '選択内容を確定' })
     expect(confirm).toBeDisabled()
@@ -77,6 +79,24 @@ describe('LocalChangePackagePanel', () => {
     render(<LocalChangePackagePanel householdId="family" />)
     expect(await screen.findByText('カード請求・statement-1')).toBeInTheDocument()
     expect(screen.getByText('カード引落照合・payment-1')).toBeInTheDocument()
+  })
+
+  it('uses distinct review labels for every portable investment aggregate', async () => {
+    activeReview.mockResolvedValue({
+      ...review,
+      recordCount: 5,
+      records: [
+        { ...review.records[0], entityKind: 'PORTFOLIO_SNAPSHOT', entityId: 'portfolio-1' },
+        { ...review.records[0], entityKind: 'BROKERAGE_EVENT', entityId: 'event-1' },
+        { ...review.records[0], entityKind: 'INVESTMENT_FX_RATE', entityId: 'fx-1' },
+        { ...review.records[0], entityKind: 'INVESTMENT_MARKET_PRICE', entityId: 'price-1' },
+        { ...review.records[0], entityKind: 'AGGREGATE_ASSET_SNAPSHOT', entityId: 'aggregate-1' },
+      ],
+    })
+    render(<LocalChangePackagePanel householdId="family" />)
+    for (const label of ['資産残高', '証券取引', '投資用為替レート', '市場価格', '総資産履歴']) {
+      expect(await screen.findByText(new RegExp(`^${label}・`))).toBeInTheDocument()
+    }
   })
 
   it('ignores a file-picker result after the household changes', async () => {

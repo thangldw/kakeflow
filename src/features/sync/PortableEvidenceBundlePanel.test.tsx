@@ -31,6 +31,8 @@ describe('PortableEvidenceBundlePanel', () => {
     expect(screen.getByText(/元のCSV・PDF・画像/)).toBeInTheDocument()
     expect(screen.getByText(/Import Inbox の未確定・要確認データは含みません/)).toBeInTheDocument()
     expect(screen.getByText(/読み込みは追加のみ/)).toBeInTheDocument()
+    expect(screen.getByText(/先に読み込んでから変更パッケージ/)).toBeInTheDocument()
+    expect(screen.getByText('手順 1 / 2')).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('パスフレーズ'), { target: { value: 'twelve-chars-passphrase' } })
     fireEvent.click(screen.getByRole('button', { name: '確定済み原本を保存' }))
