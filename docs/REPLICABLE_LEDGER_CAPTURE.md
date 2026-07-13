@@ -67,11 +67,16 @@ metadata/reference sets are unchanged.
 ## Boundary of this release
 
 Source links are logical references. Source documents, source rows, candidates,
-encrypted source bytes, import runs, portfolio observations, planning data, and
-device-local watched-folder paths are not transported by 0.36. Card statements,
+encrypted source bytes, import runs, portfolio observations, and device-local
+watched-folder paths are not transported by 0.36. Card statements,
 statement-to-purchase rows, confirmed card-payment links, and receipt-candidate
 links remain in their source/reconciliation graphs and are also deferred until
 those parent aggregates have a defined dependency order.
+
+KakeFlow 0.37 separately defines deterministic local envelopes for seven
+household planning and portable configuration aggregates. See the [replicable
+planning and configuration contract](REPLICABLE_PLANNING_CONFIG_CAPTURE.md).
+That extension does not change the ledger payload or add incoming apply.
 
 KakeFlow 0.36 still has no incoming-envelope runtime, remote transport, conflict
 resolution, login, or cloud synchronization. The two-database replay is an

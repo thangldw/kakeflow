@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.36 adds [replicable ledger aggregates](docs/REPLICABLE_LEDGER_CAPTURE.md) to the truthful [local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md). A canonical transaction envelope now retains its complete header, ordered balanced journal, labels, tags, source references, and external identity. Automated two-database replay proves the contract, while cloud or multi-device synchronization is still not claimed.
+Version 0.37 adds [replicable planning and configuration aggregates](docs/REPLICABLE_PLANNING_CONFIG_CAPTURE.md) to the truthful [local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md). Monthly budgets, savings goals, classification rules, account groups, card settlement mappings, dashboard preferences, and parser profiles now have deterministic local envelope contracts alongside the [replicable ledger](docs/REPLICABLE_LEDGER_CAPTURE.md). Automated two-database replay proves reproducibility, while incoming apply, cloud transport, and multi-device synchronization are still not claimed.
 
 ## Product tour
 
@@ -117,7 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
-- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, explicit family-member mapping, deterministic immutable change envelopes, transport-free outbox status, and restore validation; [replicable ledger capture](docs/REPLICABLE_LEDGER_CAPTURE.md) coalesces complete transaction headers, balanced journals, metadata, source references, and external identity into one final state; no server, login, incoming apply runtime, remote sync, or access-control claim.
+- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, explicit family-member mapping, deterministic immutable change envelopes, transport-free outbox status, and restore validation; [replicable ledger capture](docs/REPLICABLE_LEDGER_CAPTURE.md) coalesces complete transaction headers, balanced journals, metadata, source references, and external identity, while [replicable planning/config capture](docs/REPLICABLE_PLANNING_CONFIG_CAPTURE.md) covers seven portable user-authored aggregates; no server, login, incoming apply runtime, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
 - [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard files, with adapter-compatible account filtering, per-preview selection, and no default or name-based inference.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
@@ -188,6 +188,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Add optional end-to-end encrypted remote transport, authenticated remote-principal mapping, conflict/merge semantics, backend-derived audience enforcement, and mobile receipt capture.
+1. Define the remaining portable source/import, card/reconciliation, and investment/portfolio aggregate graphs, then add incoming apply, conflict/merge semantics, optional end-to-end encrypted remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
 2. Add more institution-specific brokerage and statement adapters.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

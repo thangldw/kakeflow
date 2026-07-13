@@ -258,61 +258,66 @@ fn drain_local_change_capture(connection: &Connection, household_id: &str) -> Re
         return Ok(());
     }
     let transaction = connection.unchecked_transaction()?;
-    let captured = {
-        let mut statement = transaction.prepare(
-            "SELECT c.capture_sequence,c.entity_kind,c.entity_id,c.operation,c.payload_json
-             FROM sync_local_change_capture c
-             WHERE c.household_id=?1 AND c.processed_envelope_id IS NULL
-               AND c.capture_sequence=(
-                 SELECT max(latest.capture_sequence)
-                 FROM sync_local_change_capture latest
-                 WHERE latest.household_id=c.household_id
-                   AND latest.entity_kind=c.entity_kind
-                   AND latest.entity_id=c.entity_id
-                   AND latest.processed_envelope_id IS NULL
-               )
-             ORDER BY c.capture_sequence LIMIT 1000",
-        )?;
-        let rows = statement.query_map([household_id], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        })?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()?
-    };
-    for (capture_sequence, entity_kind, entity_id, operation, payload_json) in captured {
-        let payload: Value =
-            serde_json::from_str(&payload_json).map_err(|_| SyncFoundationError::Encoding)?;
-        let canonical_payload_json = canonical_json(&payload)?;
-        let mutation_id = format!("capture:{capture_sequence}");
-        let envelope_id = enqueue_change_in_transaction(
-            &transaction,
-            household_id,
-            &mutation_id,
-            &entity_kind,
-            &entity_id,
-            &operation,
-            &payload,
-        )?;
-        transaction.execute(
-            "UPDATE sync_local_change_capture
-             SET processed_envelope_id=?1,operation=?2,payload_json=?3
-             WHERE household_id=?4 AND entity_kind=?5 AND entity_id=?6
-               AND capture_sequence<=?7 AND processed_envelope_id IS NULL",
-            params![
-                envelope_id,
-                operation,
-                canonical_payload_json,
+    loop {
+        let captured = {
+            let mut statement = transaction.prepare(
+                "SELECT c.capture_sequence,c.entity_kind,c.entity_id,c.operation,c.payload_json
+                 FROM sync_local_change_capture c
+                 WHERE c.household_id=?1 AND c.processed_envelope_id IS NULL
+                   AND c.capture_sequence=(
+                     SELECT max(latest.capture_sequence)
+                     FROM sync_local_change_capture latest
+                     WHERE latest.household_id=c.household_id
+                       AND latest.entity_kind=c.entity_kind
+                       AND latest.entity_id=c.entity_id
+                       AND latest.processed_envelope_id IS NULL
+                   )
+                 ORDER BY c.capture_sequence LIMIT 1000",
+            )?;
+            let rows = statement.query_map([household_id], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        if captured.is_empty() {
+            break;
+        }
+        for (capture_sequence, entity_kind, entity_id, operation, payload_json) in captured {
+            let payload: Value =
+                serde_json::from_str(&payload_json).map_err(|_| SyncFoundationError::Encoding)?;
+            let canonical_payload_json = canonical_json(&payload)?;
+            let mutation_id = format!("capture:{capture_sequence}");
+            let envelope_id = enqueue_change_in_transaction(
+                &transaction,
                 household_id,
-                entity_kind,
-                entity_id,
-                capture_sequence
-            ],
-        )?;
+                &mutation_id,
+                &entity_kind,
+                &entity_id,
+                &operation,
+                &payload,
+            )?;
+            transaction.execute(
+                "UPDATE sync_local_change_capture
+                 SET processed_envelope_id=?1,operation=?2,payload_json=?3
+                 WHERE household_id=?4 AND entity_kind=?5 AND entity_id=?6
+                   AND capture_sequence<=?7 AND processed_envelope_id IS NULL",
+                params![
+                    envelope_id,
+                    operation,
+                    canonical_payload_json,
+                    household_id,
+                    entity_kind,
+                    entity_id,
+                    capture_sequence
+                ],
+            )?;
+        }
     }
     transaction.commit()?;
     Ok(())
@@ -609,12 +614,6 @@ mod tests {
                entry_side TEXT NOT NULL, amount_jpy INTEGER NOT NULL, line_number INTEGER NOT NULL,
                created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
                UNIQUE(transaction_id,line_number)) STRICT;
-             CREATE TABLE transaction_labels(
-               transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
-               label TEXT NOT NULL, PRIMARY KEY(transaction_id,label)) STRICT, WITHOUT ROWID;
-             CREATE TABLE transaction_tags(
-               transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
-               tag TEXT NOT NULL, PRIMARY KEY(transaction_id,tag)) STRICT, WITHOUT ROWID;
              CREATE TABLE transaction_sources(
                transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
                source_record_id TEXT NOT NULL,candidate_id TEXT,
@@ -629,6 +628,31 @@ mod tests {
              VALUES('taro','family','Taro','ACTIVE',0);",
         ).unwrap();
         connection
+            .execute_batch(include_str!("../migrations/0007_planning.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0009_classification_rules.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0011_account_groups.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0019_delimited_parser_profiles.sql"
+            ))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0023_card_settlement_bank_mappings.sql"
+            ))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0029_dashboard_preferences.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0030_cash_flow_dashboard.sql"))
+            .unwrap();
+        connection
             .execute_batch(include_str!("../migrations/0031_sync_foundation.sql"))
             .unwrap();
         connection
@@ -640,6 +664,59 @@ mod tests {
             ))
             .unwrap();
         connection
+            .execute_batch(include_str!(
+                "../migrations/0034_replicable_planning_capture.sql"
+            ))
+            .unwrap();
+        connection
+    }
+
+    fn seed_planning_configuration(connection: &Connection) {
+        connection
+            .execute_batch(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('bank','family','Bank','ASSET','BANK'),
+                       ('card','family','Card','LIABILITY','CREDIT_CARD'),
+                       ('food','family','Food','EXPENSE','OTHER'),
+                       ('travel','family','Travel','EXPENSE','OTHER');
+                 INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
+                 VALUES('family','2026-08','travel',30000),('family','2026-07','food',50000);
+                 INSERT INTO savings_goals(id,household_id,name,target_jpy,saved_jpy,target_date,status)
+                 VALUES('goal','family','Emergency',500000,100000,'2027-07-01','ACTIVE');
+                 INSERT INTO classification_rules(
+                   id,household_id,name,priority,is_enabled,merchant_contains,category_account_id)
+                 VALUES('rule','family','Market',10,1,'MARKET','food');
+                 INSERT INTO classification_rule_labels VALUES('rule','Reviewed'),('rule','Recurring');
+                 INSERT INTO classification_rule_tags VALUES('rule','weekly'),('rule','family');
+                 INSERT INTO account_groups(id,household_id,name,group_kind,sort_order)
+                 VALUES('group','family','Daily','DAILY_SPENDING',0);
+                 INSERT INTO account_group_members(household_id,account_group_id,account_id,sort_order)
+                 VALUES('family','group','food',1),('family','group','bank',0);
+                 INSERT INTO card_settlement_bank_mappings(household_id,card_account_id,bank_account_id)
+                 VALUES('family','card','bank');
+                 INSERT INTO dashboard_preferences(household_id,dashboard_template,theme,density)
+                 VALUES('family','CASH_FLOW','DARK','COMPACT');
+                 INSERT INTO delimited_parser_profiles(
+                   id,household_id,name,delimiter,encoding,header_row,date_column,date_format,
+                   description_column,payee_column,amount_mode,signed_positive_direction,
+                   signed_amount_column,debit_column,credit_column,is_enabled,priority,version)
+                 VALUES('profile','family','Bank CSV','COMMA','CP932',2,'Date','YYYY_MM_DD',
+                   'Description',NULL,'SIGNED','OUT','Amount',NULL,NULL,1,5,2);",
+            )
+            .unwrap();
+    }
+
+    fn latest_payload(connection: &Connection, kind: &str, id: &str) -> (String, Value) {
+        let envelope = list_pending_envelopes(connection, "family", 500)
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.entity_kind == kind && item.entity_id == id)
+            .max_by_key(|item| item.origin_sequence)
+            .expect("expected planning/config envelope");
+        (
+            envelope.operation,
+            serde_json::from_str(&envelope.canonical_payload_json).unwrap(),
+        )
     }
 
     #[test]
@@ -1036,5 +1113,221 @@ mod tests {
                 []
             )
             .is_err());
+    }
+
+    #[test]
+    fn planning_configuration_captures_complete_coalesced_payloads() {
+        let connection = database();
+        let baseline = get_local_status(&connection, "family")
+            .unwrap()
+            .outbox
+            .latest_sequence;
+        seed_planning_configuration(&connection);
+        get_local_status(&connection, "family").unwrap();
+
+        let planning = list_pending_envelopes(&connection, "family", 500)
+            .unwrap()
+            .into_iter()
+            .filter(|item| {
+                item.origin_sequence > baseline
+                    && matches!(
+                        item.entity_kind.as_str(),
+                        "MONTHLY_BUDGET_PLAN"
+                            | "SAVINGS_GOAL"
+                            | "CLASSIFICATION_RULE"
+                            | "ACCOUNT_GROUP"
+                            | "CARD_SETTLEMENT_MAPPING"
+                            | "DASHBOARD_PREFERENCES"
+                            | "DELIMITED_PARSER_PROFILE"
+                    )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(planning.len(), 7);
+        for kind in [
+            "MONTHLY_BUDGET_PLAN",
+            "SAVINGS_GOAL",
+            "CLASSIFICATION_RULE",
+            "ACCOUNT_GROUP",
+            "CARD_SETTLEMENT_MAPPING",
+            "DASHBOARD_PREFERENCES",
+            "DELIMITED_PARSER_PROFILE",
+        ] {
+            assert_eq!(
+                planning
+                    .iter()
+                    .filter(|item| item.entity_kind == kind)
+                    .count(),
+                1,
+                "{kind} should coalesce to one envelope"
+            );
+        }
+
+        let (_, budget) = latest_payload(&connection, "MONTHLY_BUDGET_PLAN", "family");
+        assert_eq!(budget["recordKind"], "MONTHLY_BUDGET_PLAN");
+        assert_eq!(budget["budgets"].as_array().unwrap().len(), 2);
+        assert_eq!(budget["budgets"][0]["month"], "2026-07");
+        assert_eq!(budget["budgets"][1]["month"], "2026-08");
+
+        let (_, goal) = latest_payload(&connection, "SAVINGS_GOAL", "goal");
+        assert_eq!(goal["targetJpy"], 500_000);
+        assert_eq!(goal["savedJpy"], 100_000);
+        assert_eq!(goal["status"], "ACTIVE");
+
+        let (_, rule) = latest_payload(&connection, "CLASSIFICATION_RULE", "rule");
+        assert_eq!(rule["categoryAccountId"], "food");
+        assert_eq!(rule["labels"], serde_json::json!(["Recurring", "Reviewed"]));
+        assert_eq!(rule["tags"], serde_json::json!(["family", "weekly"]));
+
+        let (_, group) = latest_payload(&connection, "ACCOUNT_GROUP", "group");
+        assert_eq!(group["members"][0]["accountId"], "bank");
+        assert_eq!(group["members"][1]["accountId"], "food");
+
+        let (_, mapping) = latest_payload(&connection, "CARD_SETTLEMENT_MAPPING", "card");
+        assert_eq!(mapping["bankAccountId"], "bank");
+        let (_, dashboard) = latest_payload(&connection, "DASHBOARD_PREFERENCES", "family");
+        assert_eq!(dashboard["dashboardTemplate"], "CASH_FLOW");
+        let (_, profile) = latest_payload(&connection, "DELIMITED_PARSER_PROFILE", "profile");
+        assert_eq!(profile["amountMode"], "SIGNED");
+        assert_eq!(profile["signedPositiveDirection"], "OUT");
+
+        let before = list_pending_envelopes(&connection, "family", 500)
+            .unwrap()
+            .len();
+        get_local_status(&connection, "family").unwrap();
+        assert_eq!(
+            list_pending_envelopes(&connection, "family", 500)
+                .unwrap()
+                .len(),
+            before
+        );
+    }
+
+    #[test]
+    fn planning_children_empty_state_and_parent_deletes_capture_final_state() {
+        let connection = database();
+        get_local_status(&connection, "family").unwrap();
+        seed_planning_configuration(&connection);
+        get_local_status(&connection, "family").unwrap();
+
+        connection
+            .execute_batch(
+                "UPDATE classification_rule_labels SET label='Automatic'
+                   WHERE rule_id='rule' AND label='Recurring';
+                 DELETE FROM classification_rule_tags WHERE rule_id='rule' AND tag='weekly';
+                 DELETE FROM account_group_members
+                   WHERE account_group_id='group' AND account_id='food';
+                 DELETE FROM monthly_category_budgets WHERE household_id='family';",
+            )
+            .unwrap();
+        get_local_status(&connection, "family").unwrap();
+        let (budget_operation, budget) =
+            latest_payload(&connection, "MONTHLY_BUDGET_PLAN", "family");
+        assert_eq!(budget_operation, "UPSERT");
+        assert_eq!(budget["budgets"], serde_json::json!([]));
+        let (_, rule) = latest_payload(&connection, "CLASSIFICATION_RULE", "rule");
+        assert_eq!(rule["labels"], serde_json::json!(["Automatic", "Reviewed"]));
+        assert_eq!(rule["tags"], serde_json::json!(["family"]));
+        let (_, group) = latest_payload(&connection, "ACCOUNT_GROUP", "group");
+        assert_eq!(group["members"].as_array().unwrap().len(), 1);
+        assert_eq!(group["members"][0]["accountId"], "bank");
+
+        connection
+            .execute_batch(
+                "DELETE FROM classification_rules WHERE id='rule';
+                 DELETE FROM account_groups WHERE id='group';
+                 DELETE FROM savings_goals WHERE id='goal';
+                 DELETE FROM card_settlement_bank_mappings WHERE card_account_id='card';
+                 DELETE FROM dashboard_preferences WHERE household_id='family';
+                 DELETE FROM delimited_parser_profiles WHERE id='profile';",
+            )
+            .unwrap();
+        get_local_status(&connection, "family").unwrap();
+        for (kind, id) in [
+            ("CLASSIFICATION_RULE", "rule"),
+            ("ACCOUNT_GROUP", "group"),
+            ("SAVINGS_GOAL", "goal"),
+            ("CARD_SETTLEMENT_MAPPING", "card"),
+            ("DASHBOARD_PREFERENCES", "family"),
+            ("DELIMITED_PARSER_PROFILE", "profile"),
+        ] {
+            let (operation, payload) = latest_payload(&connection, kind, id);
+            assert_eq!(operation, "DELETE", "{kind} delete must win coalescing");
+            assert_eq!(payload["recordKind"], kind);
+        }
+    }
+
+    #[test]
+    fn drain_processes_more_than_one_thousand_distinct_config_entities() {
+        let connection = database();
+        get_local_status(&connection, "family").unwrap();
+        let transaction = connection.unchecked_transaction().unwrap();
+        for index in 0..1_001 {
+            transaction
+                .execute(
+                    "INSERT INTO savings_goals(
+                       id,household_id,name,target_jpy,saved_jpy,target_date,status)
+                     VALUES(?1,'family',?2,1000,0,'2027-01-01','ACTIVE')",
+                    params![format!("goal-{index}"), format!("Goal {index}")],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+
+        get_local_status(&connection, "family").unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_change_envelopes
+                     WHERE household_id='family' AND entity_kind='SAVINGS_GOAL'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1_001
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_local_change_capture
+                     WHERE household_id='family' AND processed_envelope_id IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn household_delete_cascades_without_creating_orphan_captures() {
+        let connection = database();
+        seed_planning_configuration(&connection);
+        connection
+            .execute(
+                "INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES('tx','family','2026-07-13','EXPENSE','DRAFT')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute("DELETE FROM households WHERE id='family'", [])
+            .expect("household cascade must not violate capture foreign keys");
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM households", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_local_change_capture",
+                    [],
+                    |row| { row.get::<_, i64>(0) }
+                )
+                .unwrap(),
+            0
+        );
     }
 }

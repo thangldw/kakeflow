@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.37.0 — 2026-07-13
+
+- Capture one deterministic household monthly-budget plan plus complete savings-goal, dashboard-preference, and versioned parser-profile records.
+- Capture classification rules with sorted labels/tags and account groups with ordered members as parent aggregates, coalescing child replacements into the final pending state.
+- Capture explicit card-to-bank settlement mappings without treating card statements, due dates, or payment links as detached configuration.
+- Seed existing planning and configuration state after its household/account dependencies and prove all seven aggregate contracts by replaying them into a second production-schema database.
+- Extend schema-34 restore validation across payload types, enum domains, household/account relations, deterministic arrays, processed-envelope equality, and delete tombstones.
+- Keep source/import evidence, card-statement and payment graphs, investments, device-local folder state, incoming apply, conflict handling, and remote transport outside this release.
+
 ## 0.36.0 — 2026-07-13
 
 - Capture a canonical transaction as one complete deterministic aggregate containing its full scope-aware header, ordered journal entries, sorted labels/tags, source references, and provider external keys.

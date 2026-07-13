@@ -76,6 +76,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0033_replicable_ledger_capture.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0034_replicable_planning_capture.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -587,6 +590,287 @@ fn validate_restored_semantics(
                        ELSE 1 END)
                      FROM json_each(c.payload_json,'$.journalEntries') j),1)!=0
                  ))
+               ))
+             ) LIMIT 1",
+        )?;
+        if schema_version >= 34 {
+            reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.operation='UPSERT'
+               AND c.entity_kind IN ('MONTHLY_BUDGET_PLAN','CLASSIFICATION_RULE',
+                                     'ACCOUNT_GROUP','CARD_SETTLEMENT_MAPPING')
+               AND c.capture_sequence=(
+                 SELECT max(latest.capture_sequence) FROM sync_local_change_capture latest
+                 WHERE latest.household_id=c.household_id
+                   AND latest.entity_kind=c.entity_kind AND latest.entity_id=c.entity_id
+               ) AND (
+                 (c.entity_kind='MONTHLY_BUDGET_PLAN' AND EXISTS(
+                   SELECT 1 FROM json_each(c.payload_json,'$.budgets') b
+                   LEFT JOIN accounts a ON a.id=json_extract(b.value,'$.categoryAccountId')
+                   WHERE a.id IS NULL OR a.household_id!=c.household_id OR a.account_kind!='EXPENSE'))
+                 OR (c.entity_kind='CLASSIFICATION_RULE' AND NOT EXISTS(
+                   SELECT 1 FROM accounts a
+                   WHERE a.id=json_extract(c.payload_json,'$.categoryAccountId')
+                     AND a.household_id=c.household_id AND a.account_kind='EXPENSE'))
+                 OR (c.entity_kind='ACCOUNT_GROUP' AND EXISTS(
+                   SELECT 1 FROM json_each(c.payload_json,'$.members') m
+                   LEFT JOIN accounts a ON a.id=json_extract(m.value,'$.accountId')
+                   WHERE a.id IS NULL OR a.household_id!=c.household_id))
+                 OR (c.entity_kind='CARD_SETTLEMENT_MAPPING' AND NOT EXISTS(
+                   SELECT 1 FROM accounts card JOIN accounts bank
+                   WHERE card.id=json_extract(c.payload_json,'$.cardAccountId')
+                     AND bank.id=json_extract(c.payload_json,'$.bankAccountId')
+                     AND card.household_id=c.household_id AND bank.household_id=c.household_id
+                     AND card.account_kind='LIABILITY' AND card.account_subtype='CREDIT_CARD'
+                     AND bank.account_kind='ASSET' AND bank.account_subtype='BANK'
+                     AND card.is_archived=0 AND bank.is_archived=0))
+               ) LIMIT 1",
+            )?;
+            reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.operation='UPSERT' AND (
+               (c.entity_kind='MONTHLY_BUDGET_PLAN' AND EXISTS(
+                 SELECT 1 FROM json_each(c.payload_json,'$.budgets') a
+                 JOIN json_each(c.payload_json,'$.budgets') b ON b.key=a.key+1
+                 WHERE json_extract(a.value,'$.month')>json_extract(b.value,'$.month')
+                    OR (json_extract(a.value,'$.month')=json_extract(b.value,'$.month')
+                        AND json_extract(a.value,'$.categoryAccountId')>
+                            json_extract(b.value,'$.categoryAccountId'))))
+               OR (c.entity_kind='CLASSIFICATION_RULE' AND (
+                 EXISTS(SELECT 1 FROM json_each(c.payload_json,'$.labels') a
+                        JOIN json_each(c.payload_json,'$.labels') b ON b.key=a.key+1
+                        WHERE a.value>b.value)
+                 OR EXISTS(SELECT 1 FROM json_each(c.payload_json,'$.tags') a
+                           JOIN json_each(c.payload_json,'$.tags') b ON b.key=a.key+1
+                           WHERE a.value>b.value)))
+               OR (c.entity_kind='ACCOUNT_GROUP' AND EXISTS(
+                 SELECT 1 FROM json_each(c.payload_json,'$.members') a
+                 JOIN json_each(c.payload_json,'$.members') b ON b.key=a.key+1
+                 WHERE json_extract(a.value,'$.sortOrder')>json_extract(b.value,'$.sortOrder')
+                    OR (json_extract(a.value,'$.sortOrder')=json_extract(b.value,'$.sortOrder')
+                        AND json_extract(a.value,'$.accountId')>json_extract(b.value,'$.accountId'))))
+             ) LIMIT 1",
+            )?;
+        }
+    }
+    if schema_version >= 34 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind IN (
+               'MONTHLY_BUDGET_PLAN','SAVINGS_GOAL','CLASSIFICATION_RULE','ACCOUNT_GROUP',
+               'CARD_SETTLEMENT_MAPPING','DASHBOARD_PREFERENCES','DELIMITED_PARSER_PROFILE'
+             ) AND (
+               COALESCE(json_type(c.payload_json,'$.recordKind'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.recordKind')!=c.entity_kind
+               OR COALESCE(json_type(c.payload_json,'$.householdId'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.householdId')!=c.household_id
+               OR c.operation NOT IN ('UPSERT','DELETE')
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='MONTHLY_BUDGET_PLAN' AND (
+               c.entity_id!=c.household_id OR c.operation!='UPSERT'
+               OR COALESCE(json_type(c.payload_json,'$.budgets'),'missing')!='array'
+               OR EXISTS(
+                 SELECT 1 FROM json_each(c.payload_json,'$.budgets') b
+                 WHERE COALESCE(json_type(b.value,'$.householdId'),'missing')!='text'
+                   OR json_extract(b.value,'$.householdId')!=c.household_id
+                   OR COALESCE(json_type(b.value,'$.month'),'missing')!='text'
+                   OR json_extract(b.value,'$.month') NOT GLOB '????-??'
+                   OR substr(json_extract(b.value,'$.month'),6,2) NOT BETWEEN '01' AND '12'
+                   OR COALESCE(json_type(b.value,'$.categoryAccountId'),'missing')!='text'
+                   OR trim(json_extract(b.value,'$.categoryAccountId'))=''
+                   OR COALESCE(json_type(b.value,'$.budgetJpy'),'missing')!='integer'
+                   OR json_extract(b.value,'$.budgetJpy')<0
+                   OR COALESCE(json_type(b.value,'$.createdAt'),'missing')!='text'
+                   OR COALESCE(json_type(b.value,'$.updatedAt'),'missing')!='text'
+               )
+               OR json_array_length(c.payload_json,'$.budgets')!=(
+                 SELECT count(DISTINCT json_extract(b.value,'$.month')||char(0)||
+                                       json_extract(b.value,'$.categoryAccountId'))
+                 FROM json_each(c.payload_json,'$.budgets') b
+               )
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='SAVINGS_GOAL' AND (
+               COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.name'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.name'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.targetJpy'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.targetJpy')<=0
+                 OR COALESCE(json_type(c.payload_json,'$.savedJpy'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.savedJpy')<0
+                 OR COALESCE(json_type(c.payload_json,'$.targetDate'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.targetDate') NOT GLOB '????-??-??'
+                 OR COALESCE(json_type(c.payload_json,'$.status'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.status') NOT IN ('ACTIVE','PAUSED','COMPLETED','CANCELLED')
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='CLASSIFICATION_RULE' AND (
+               COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.name'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.name'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.priority'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.priority') NOT BETWEEN 0 AND 1000000
+                 OR COALESCE(json_type(c.payload_json,'$.isEnabled'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.isEnabled') NOT IN (0,1)
+                 OR COALESCE(json_type(c.payload_json,'$.merchantContains'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.descriptionContains'),'missing') NOT IN ('text','null')
+                 OR (COALESCE(trim(json_extract(c.payload_json,'$.merchantContains')),'')=''
+                     AND COALESCE(trim(json_extract(c.payload_json,'$.descriptionContains')),'')='')
+                 OR COALESCE(json_type(c.payload_json,'$.categoryAccountId'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.labels'),'missing')!='array'
+                 OR COALESCE(json_type(c.payload_json,'$.tags'),'missing')!='array'
+                 OR EXISTS(SELECT 1 FROM json_each(c.payload_json,'$.labels') v
+                           WHERE v.type!='text' OR trim(v.value)='')
+                 OR EXISTS(SELECT 1 FROM json_each(c.payload_json,'$.tags') v
+                           WHERE v.type!='text' OR trim(v.value)='')
+                 OR json_array_length(c.payload_json,'$.labels')!=(
+                      SELECT count(DISTINCT v.value) FROM json_each(c.payload_json,'$.labels') v)
+                 OR json_array_length(c.payload_json,'$.tags')!=(
+                      SELECT count(DISTINCT v.value) FROM json_each(c.payload_json,'$.tags') v)
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='ACCOUNT_GROUP' AND (
+               COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.name'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.name'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.groupKind'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.groupKind') NOT IN (
+                   'FAMILY','PERSONAL','DAILY_SPENDING','INVESTMENT','BUSINESS','TAX','EDUCATION','CUSTOM')
+                 OR COALESCE(json_type(c.payload_json,'$.sortOrder'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.sortOrder')<0
+                 OR COALESCE(json_type(c.payload_json,'$.members'),'missing')!='array'
+                 OR EXISTS(
+                   SELECT 1 FROM json_each(c.payload_json,'$.members') m
+                   WHERE COALESCE(json_type(m.value,'$.householdId'),'missing')!='text'
+                     OR json_extract(m.value,'$.householdId')!=c.household_id
+                     OR COALESCE(json_type(m.value,'$.accountGroupId'),'missing')!='text'
+                     OR json_extract(m.value,'$.accountGroupId')!=c.entity_id
+                     OR COALESCE(json_type(m.value,'$.accountId'),'missing')!='text'
+                     OR COALESCE(json_type(m.value,'$.sortOrder'),'missing')!='integer'
+                     OR json_extract(m.value,'$.sortOrder')<0
+                 )
+                 OR json_array_length(c.payload_json,'$.members')!=(
+                   SELECT count(DISTINCT json_extract(m.value,'$.accountId'))
+                   FROM json_each(c.payload_json,'$.members') m)
+                 OR json_array_length(c.payload_json,'$.members')!=(
+                   SELECT count(DISTINCT json_extract(m.value,'$.sortOrder'))
+                   FROM json_each(c.payload_json,'$.members') m)
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='CARD_SETTLEMENT_MAPPING' AND (
+               COALESCE(json_type(c.payload_json,'$.cardAccountId'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.cardAccountId')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.bankAccountId'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.bankAccountId')=c.entity_id
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='DASHBOARD_PREFERENCES' AND (
+               c.entity_id!=c.household_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.dashboardTemplate'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.dashboardTemplate') NOT IN (
+                   'FINANCIAL_OVERVIEW','HOUSEHOLD_LEDGER','ASSETS_LIABILITIES',
+                   'CARD_RECONCILIATION','CASH_FLOW')
+                 OR COALESCE(json_type(c.payload_json,'$.theme'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.theme') NOT IN ('SYSTEM','LIGHT','DARK')
+                 OR COALESCE(json_type(c.payload_json,'$.density'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.density') NOT IN ('COMFORTABLE','COMPACT')
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='DELIMITED_PARSER_PROFILE' AND (
+               COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.name'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.name'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.delimiter'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.delimiter') NOT IN ('AUTO','COMMA','TAB','SEMICOLON')
+                 OR COALESCE(json_type(c.payload_json,'$.encoding'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.encoding') NOT IN ('AUTO','UTF8','CP932')
+                 OR COALESCE(json_type(c.payload_json,'$.headerRow'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.headerRow') NOT BETWEEN 1 AND 1000
+                 OR COALESCE(json_type(c.payload_json,'$.dateColumn'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.dateColumn'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.dateFormat'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.dateFormat') NOT IN (
+                   'AUTO','YYYY_MM_DD','YYYYMMDD','MM_DD_YYYY','DD_MM_YYYY')
+                 OR COALESCE(json_type(c.payload_json,'$.amountMode'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.amountMode') NOT IN ('SIGNED','DEBIT_CREDIT')
+                 OR COALESCE(json_type(c.payload_json,'$.descriptionColumn'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.payeeColumn'),'missing') NOT IN ('text','null')
+                 OR (COALESCE(trim(json_extract(c.payload_json,'$.descriptionColumn')),'')=''
+                     AND COALESCE(trim(json_extract(c.payload_json,'$.payeeColumn')),'')='')
+                 OR COALESCE(json_type(c.payload_json,'$.externalIdColumn'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.accountHintColumn'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.isEnabled'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.isEnabled') NOT IN (0,1)
+                 OR COALESCE(json_type(c.payload_json,'$.priority'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.priority') NOT BETWEEN 0 AND 10000
+                 OR COALESCE(json_type(c.payload_json,'$.version'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.version')<=0
+                 OR (json_extract(c.payload_json,'$.amountMode')='SIGNED' AND (
+                   COALESCE(json_type(c.payload_json,'$.signedPositiveDirection'),'missing')!='text'
+                   OR json_extract(c.payload_json,'$.signedPositiveDirection') NOT IN ('IN','OUT')
+                   OR COALESCE(json_type(c.payload_json,'$.signedAmountColumn'),'missing')!='text'
+                   OR trim(json_extract(c.payload_json,'$.signedAmountColumn'))=''
+                   OR json_type(c.payload_json,'$.debitColumn')!='null'
+                   OR json_type(c.payload_json,'$.creditColumn')!='null'))
+                 OR (json_extract(c.payload_json,'$.amountMode')='DEBIT_CREDIT' AND (
+                   json_type(c.payload_json,'$.signedPositiveDirection')!='null'
+                   OR json_type(c.payload_json,'$.signedAmountColumn')!='null'
+                   OR COALESCE(json_type(c.payload_json,'$.debitColumn'),'missing')!='text'
+                   OR trim(json_extract(c.payload_json,'$.debitColumn'))=''
+                   OR COALESCE(json_type(c.payload_json,'$.creditColumn'),'missing')!='text'
+                   OR trim(json_extract(c.payload_json,'$.creditColumn'))=''))
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
                ))
              ) LIMIT 1",
         )?;
@@ -2525,5 +2809,531 @@ mod tests {
         assert_eq!(count, 0);
         drop(connection);
         let _ = fs::remove_dir_all(test_directory);
+    }
+
+    #[test]
+    fn migration_thirty_four_bootstraps_planning_config_and_preserves_capture_links() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 33)
+            .expect("schema thirty three");
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('bank','family','Bank','ASSET','BANK'),
+                       ('card','family','Card','LIABILITY','CREDIT_CARD'),
+                       ('food','family','Food','EXPENSE','OTHER');",
+            )
+            .unwrap();
+        crate::sync_foundation::get_local_status(&connection, "family").unwrap();
+        let processed_before: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM sync_local_change_capture
+                 WHERE processed_envelope_id IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let envelopes_before: i64 = connection
+            .query_row("SELECT count(*) FROM sync_change_envelopes", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let max_before: i64 = connection
+            .query_row(
+                "SELECT max(capture_sequence) FROM sync_local_change_capture",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // These rows deliberately predate schema-34 triggers and therefore
+        // exercise the migration bootstrap rather than ordinary write capture.
+        connection
+            .execute_batch(
+                "INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
+                 VALUES('family','2026-07','food',50000);
+                 INSERT INTO savings_goals(id,household_id,name,target_jpy,saved_jpy,target_date,status)
+                 VALUES('goal','family','Emergency',500000,100000,'2027-07-01','ACTIVE');
+                 INSERT INTO classification_rules(
+                   id,household_id,name,priority,is_enabled,merchant_contains,category_account_id)
+                 VALUES('rule','family','Market',10,1,'MARKET','food');
+                 INSERT INTO classification_rule_labels VALUES('rule','Recurring');
+                 INSERT INTO classification_rule_tags VALUES('rule','family');
+                 INSERT INTO account_groups(id,household_id,name,group_kind,sort_order)
+                 VALUES('group','family','Daily','DAILY_SPENDING',0);
+                 INSERT INTO account_group_members(household_id,account_group_id,account_id,sort_order)
+                 VALUES('family','group','bank',0);
+                 INSERT INTO card_settlement_bank_mappings(household_id,card_account_id,bank_account_id)
+                 VALUES('family','card','bank');
+                 INSERT INTO dashboard_preferences(household_id,dashboard_template,theme,density)
+                 VALUES('family','CASH_FLOW','DARK','COMPACT');
+                 INSERT INTO delimited_parser_profiles(
+                   id,household_id,name,delimiter,encoding,header_row,date_column,date_format,
+                   description_column,payee_column,amount_mode,signed_positive_direction,
+                   signed_amount_column,debit_column,credit_column,is_enabled,priority,version)
+                 VALUES('profile','family','Bank CSV','COMMA','CP932',2,'Date','YYYY_MM_DD',
+                   'Description',NULL,'SIGNED','OUT','Amount',NULL,NULL,1,5,2);",
+            )
+            .unwrap();
+
+        migrations
+            .to_version(&mut connection, 34)
+            .expect("schema thirty four");
+        let planning_kinds =
+            "'MONTHLY_BUDGET_PLAN','SAVINGS_GOAL','CLASSIFICATION_RULE','ACCOUNT_GROUP',
+             'CARD_SETTLEMENT_MAPPING','DASHBOARD_PREFERENCES','DELIMITED_PARSER_PROFILE'";
+        let bootstrap: (i64, i64, i64) = connection
+            .query_row(
+                &format!(
+                    "SELECT count(*),min(capture_sequence),
+                            sum(processed_envelope_id IS NULL)
+                     FROM sync_local_change_capture WHERE entity_kind IN ({planning_kinds})"
+                ),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(bootstrap.0, 7);
+        assert_eq!(bootstrap.2, 7);
+        assert!(bootstrap.1 > max_before);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_local_change_capture
+                     WHERE processed_envelope_id IS NOT NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            processed_before
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM sync_change_envelopes", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            envelopes_before
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_local_change_capture c
+                     JOIN sync_change_envelopes e ON e.envelope_id=c.processed_envelope_id
+                     WHERE c.operation!=e.operation OR c.payload_json!=e.canonical_payload_json",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+
+        crate::sync_foundation::get_local_status(&connection, "family").unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    &format!(
+                        "SELECT count(*) FROM sync_change_envelopes
+                         WHERE entity_kind IN ({planning_kinds})"
+                    ),
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            7
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_local_change_capture
+                     WHERE processed_envelope_id IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+    }
+
+    fn seed_complete_planning_config(connection: &Connection) -> rusqlite::Result<()> {
+        connection.execute_batch(
+            "INSERT INTO households(id,name) VALUES('family','Family');
+             INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+             VALUES('bank','family','Bank','ASSET','BANK'),
+                   ('card','family','Card','LIABILITY','CREDIT_CARD'),
+                   ('food','family','Food','EXPENSE','OTHER'),
+                   ('travel','family','Travel','EXPENSE','OTHER');
+             INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
+             VALUES('family','2026-08','travel',30000),('family','2026-07','food',50000);
+             INSERT INTO savings_goals(id,household_id,name,target_jpy,saved_jpy,target_date,status)
+             VALUES('goal','family','Emergency',500000,100000,'2027-07-01','ACTIVE');
+             INSERT INTO classification_rules(
+               id,household_id,name,priority,is_enabled,merchant_contains,category_account_id)
+             VALUES('rule','family','Market',10,1,'MARKET','food');
+             INSERT INTO classification_rule_labels VALUES('rule','Reviewed'),('rule','Recurring');
+             INSERT INTO classification_rule_tags VALUES('rule','weekly'),('rule','family');
+             INSERT INTO account_groups(id,household_id,name,group_kind,sort_order)
+             VALUES('group','family','Daily','DAILY_SPENDING',0);
+             INSERT INTO account_group_members(household_id,account_group_id,account_id,sort_order)
+             VALUES('family','group','food',1),('family','group','bank',0);
+             INSERT INTO card_settlement_bank_mappings(household_id,card_account_id,bank_account_id)
+             VALUES('family','card','bank');
+             INSERT INTO dashboard_preferences(household_id,dashboard_template,theme,density)
+             VALUES('family','CASH_FLOW','DARK','COMPACT');
+             INSERT INTO delimited_parser_profiles(
+               id,household_id,name,delimiter,encoding,header_row,date_column,date_format,
+               description_column,payee_column,amount_mode,signed_positive_direction,
+               signed_amount_column,debit_column,credit_column,external_id_column,
+               account_hint_column,is_enabled,priority,version)
+             VALUES('profile','family','Bank CSV','COMMA','CP932',2,'Date','YYYY_MM_DD',
+               'Description',NULL,'SIGNED','OUT','Amount',NULL,NULL,'External ID',
+               'Account',1,5,2);",
+        )
+    }
+
+    fn apply_planning_config_upsert(
+        connection: &Connection,
+        kind: &str,
+        payload_json: &str,
+    ) -> rusqlite::Result<()> {
+        let payload: serde_json::Value =
+            serde_json::from_str(payload_json).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let text = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
+        match kind {
+            "MONTHLY_BUDGET_PLAN" => {
+                connection.execute(
+                    "DELETE FROM monthly_category_budgets WHERE household_id=?1",
+                    [text("householdId")],
+                )?;
+                for budget in payload["budgets"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO monthly_category_budgets(
+                           household_id,month,category_account_id,budget_jpy,created_at,updated_at)
+                         VALUES(?1,?2,?3,?4,?5,?6)",
+                        rusqlite::params![
+                            budget["householdId"].as_str(),
+                            budget["month"].as_str(),
+                            budget["categoryAccountId"].as_str(),
+                            budget["budgetJpy"].as_i64(),
+                            budget["createdAt"].as_str(),
+                            budget["updatedAt"].as_str()
+                        ],
+                    )?;
+                }
+            }
+            "SAVINGS_GOAL" => {
+                connection.execute(
+                    "INSERT INTO savings_goals(
+                       id,household_id,name,target_jpy,saved_jpy,target_date,status,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+                     ON CONFLICT(id) DO UPDATE SET name=excluded.name,target_jpy=excluded.target_jpy,
+                       saved_jpy=excluded.saved_jpy,target_date=excluded.target_date,
+                       status=excluded.status,updated_at=excluded.updated_at",
+                    rusqlite::params![
+                        text("id"), text("householdId"), text("name"),
+                        payload["targetJpy"].as_i64(), payload["savedJpy"].as_i64(),
+                        text("targetDate"), text("status"), text("createdAt"), text("updatedAt")
+                    ],
+                )?;
+            }
+            "CLASSIFICATION_RULE" => {
+                connection.execute(
+                    "INSERT INTO classification_rules(
+                       id,household_id,name,priority,is_enabled,merchant_contains,
+                       description_contains,category_account_id,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+                     ON CONFLICT(id) DO UPDATE SET name=excluded.name,priority=excluded.priority,
+                       is_enabled=excluded.is_enabled,merchant_contains=excluded.merchant_contains,
+                       description_contains=excluded.description_contains,
+                       category_account_id=excluded.category_account_id,updated_at=excluded.updated_at",
+                    rusqlite::params![
+                        text("id"), text("householdId"), text("name"), payload["priority"].as_i64(),
+                        payload["isEnabled"].as_i64(), text("merchantContains"),
+                        text("descriptionContains"), text("categoryAccountId"),
+                        text("createdAt"), text("updatedAt")
+                    ],
+                )?;
+                connection.execute(
+                    "DELETE FROM classification_rule_labels WHERE rule_id=?1",
+                    [text("id")],
+                )?;
+                connection.execute(
+                    "DELETE FROM classification_rule_tags WHERE rule_id=?1",
+                    [text("id")],
+                )?;
+                for label in payload["labels"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO classification_rule_labels VALUES(?1,?2)",
+                        rusqlite::params![text("id"), label.as_str()],
+                    )?;
+                }
+                for tag in payload["tags"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO classification_rule_tags VALUES(?1,?2)",
+                        rusqlite::params![text("id"), tag.as_str()],
+                    )?;
+                }
+            }
+            "ACCOUNT_GROUP" => {
+                connection.execute(
+                    "INSERT INTO account_groups(
+                       id,household_id,name,group_kind,sort_order,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7)
+                     ON CONFLICT(id) DO UPDATE SET name=excluded.name,group_kind=excluded.group_kind,
+                       sort_order=excluded.sort_order,updated_at=excluded.updated_at",
+                    rusqlite::params![
+                        text("id"), text("householdId"), text("name"), text("groupKind"),
+                        payload["sortOrder"].as_i64(), text("createdAt"), text("updatedAt")
+                    ],
+                )?;
+                connection.execute(
+                    "DELETE FROM account_group_members WHERE account_group_id=?1",
+                    [text("id")],
+                )?;
+                for member in payload["members"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO account_group_members(
+                           household_id,account_group_id,account_id,sort_order) VALUES(?1,?2,?3,?4)",
+                        rusqlite::params![
+                            member["householdId"].as_str(), member["accountGroupId"].as_str(),
+                            member["accountId"].as_str(), member["sortOrder"].as_i64()
+                        ],
+                    )?;
+                }
+            }
+            "CARD_SETTLEMENT_MAPPING" => {
+                connection.execute(
+                    "INSERT INTO card_settlement_bank_mappings(
+                       household_id,card_account_id,bank_account_id,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5)
+                     ON CONFLICT(household_id,card_account_id) DO UPDATE SET
+                       bank_account_id=excluded.bank_account_id,updated_at=excluded.updated_at",
+                    rusqlite::params![
+                        text("householdId"),
+                        text("cardAccountId"),
+                        text("bankAccountId"),
+                        text("createdAt"),
+                        text("updatedAt")
+                    ],
+                )?;
+            }
+            "DASHBOARD_PREFERENCES" => {
+                connection.execute(
+                    "INSERT INTO dashboard_preferences(
+                       household_id,dashboard_template,theme,density,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6)
+                     ON CONFLICT(household_id) DO UPDATE SET
+                       dashboard_template=excluded.dashboard_template,theme=excluded.theme,
+                       density=excluded.density,updated_at=excluded.updated_at",
+                    rusqlite::params![
+                        text("householdId"),
+                        text("dashboardTemplate"),
+                        text("theme"),
+                        text("density"),
+                        text("createdAt"),
+                        text("updatedAt")
+                    ],
+                )?;
+            }
+            "DELIMITED_PARSER_PROFILE" => {
+                connection.execute(
+                    "INSERT INTO delimited_parser_profiles(
+                       id,household_id,name,delimiter,encoding,header_row,date_column,date_format,
+                       description_column,payee_column,amount_mode,signed_positive_direction,
+                       signed_amount_column,debit_column,credit_column,external_id_column,
+                       account_hint_column,is_enabled,priority,version,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)
+                     ON CONFLICT(id) DO UPDATE SET name=excluded.name,delimiter=excluded.delimiter,
+                       encoding=excluded.encoding,header_row=excluded.header_row,
+                       date_column=excluded.date_column,date_format=excluded.date_format,
+                       description_column=excluded.description_column,payee_column=excluded.payee_column,
+                       amount_mode=excluded.amount_mode,signed_positive_direction=excluded.signed_positive_direction,
+                       signed_amount_column=excluded.signed_amount_column,debit_column=excluded.debit_column,
+                       credit_column=excluded.credit_column,external_id_column=excluded.external_id_column,
+                       account_hint_column=excluded.account_hint_column,is_enabled=excluded.is_enabled,
+                       priority=excluded.priority,version=excluded.version,updated_at=excluded.updated_at",
+                    rusqlite::params![
+                        text("id"), text("householdId"), text("name"), text("delimiter"),
+                        text("encoding"), payload["headerRow"].as_i64(), text("dateColumn"),
+                        text("dateFormat"), text("descriptionColumn"), text("payeeColumn"),
+                        text("amountMode"), text("signedPositiveDirection"), text("signedAmountColumn"),
+                        text("debitColumn"), text("creditColumn"), text("externalIdColumn"),
+                        text("accountHintColumn"), payload["isEnabled"].as_i64(),
+                        payload["priority"].as_i64(), payload["version"].as_i64(),
+                        text("createdAt"), text("updatedAt")
+                    ],
+                )?;
+            }
+            _ => return Err(rusqlite::Error::InvalidQuery),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn restored_semantics_accept_complete_planning_captures_and_reject_malformed_payloads() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                seed_complete_planning_config(connection)?;
+                assert!(validate_restored_semantics(connection, 34).is_ok());
+
+                connection.execute(
+                    "UPDATE sync_local_change_capture
+                     SET payload_json=json_set(payload_json,'$.budgets[0].budgetJpy',-1)
+                     WHERE capture_sequence=(SELECT max(capture_sequence)
+                       FROM sync_local_change_capture
+                       WHERE entity_kind='MONTHLY_BUDGET_PLAN' AND entity_id='family')",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 34).is_err());
+                connection.execute(
+                    "UPDATE sync_local_change_capture
+                     SET payload_json=(SELECT payload_json FROM sync_monthly_budget_plan_payloads
+                                       WHERE household_id='family')
+                     WHERE capture_sequence=(SELECT max(capture_sequence)
+                       FROM sync_local_change_capture
+                       WHERE entity_kind='MONTHLY_BUDGET_PLAN' AND entity_id='family')",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 34).is_ok());
+
+                connection.execute(
+                    "UPDATE sync_local_change_capture
+                     SET payload_json=json_set(payload_json,'$.debitColumn','Debit')
+                     WHERE capture_sequence=(SELECT max(capture_sequence)
+                       FROM sync_local_change_capture
+                       WHERE entity_kind='DELIMITED_PARSER_PROFILE' AND entity_id='profile')",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 34).is_err());
+                Ok(())
+            })
+            .expect("restore validation should remain queryable");
+    }
+
+    #[test]
+    fn planning_config_upserts_replay_into_second_production_schema() {
+        let source = AppState::in_memory(TEST_KEY).expect("source schema");
+        let envelopes = source
+            .with_connection(|connection| {
+                seed_complete_planning_config(connection)?;
+                crate::sync_foundation::get_local_status(connection, "family").unwrap();
+                Ok(
+                    crate::sync_foundation::list_pending_envelopes(connection, "family", 100)
+                        .unwrap()
+                        .into_iter()
+                        .filter(|item| {
+                            matches!(
+                                item.entity_kind.as_str(),
+                                "MONTHLY_BUDGET_PLAN"
+                                    | "SAVINGS_GOAL"
+                                    | "CLASSIFICATION_RULE"
+                                    | "ACCOUNT_GROUP"
+                                    | "CARD_SETTLEMENT_MAPPING"
+                                    | "DASHBOARD_PREFERENCES"
+                                    | "DELIMITED_PARSER_PROFILE"
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .unwrap();
+        assert_eq!(envelopes.len(), 7);
+        assert!(envelopes
+            .windows(2)
+            .all(|pair| pair[0].origin_sequence < pair[1].origin_sequence));
+
+        let destination = AppState::in_memory(TEST_KEY).expect("destination schema");
+        destination
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK'),
+                           ('card','family','Card','LIABILITY','CREDIT_CARD'),
+                           ('food','family','Food','EXPENSE','OTHER'),
+                           ('travel','family','Travel','EXPENSE','OTHER');",
+                )?;
+                for envelope in &envelopes {
+                    assert_eq!(envelope.operation, "UPSERT");
+                    apply_planning_config_upsert(
+                        connection,
+                        &envelope.entity_kind,
+                        &envelope.canonical_payload_json,
+                    )?;
+                }
+                assert!(validate_restored_semantics(connection, 34).is_ok());
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*),sum(budget_jpy) FROM monthly_category_budgets
+                         WHERE household_id='family'",
+                        [],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    )?,
+                    (2, 80_000)
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT target_jpy||':'||saved_jpy||':'||status FROM savings_goals WHERE id='goal'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "500000:100000:ACTIVE"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT
+                           (SELECT group_concat(label,',') FROM classification_rule_labels WHERE rule_id='rule'),
+                           (SELECT group_concat(tag,',') FROM classification_rule_tags WHERE rule_id='rule')",
+                        [],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                    )?,
+                    ("Recurring,Reviewed".to_owned(), "family,weekly".to_owned())
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT group_concat(account_id,',') FROM
+                           (SELECT account_id FROM account_group_members
+                            WHERE account_group_id='group' ORDER BY sort_order)",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "bank,food"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT bank_account_id FROM card_settlement_bank_mappings
+                         WHERE card_account_id='card'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "bank"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT dashboard_template||':'||theme||':'||density
+                         FROM dashboard_preferences WHERE household_id='family'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "CASH_FLOW:DARK:COMPACT"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT amount_mode||':'||signed_positive_direction||':'||version
+                         FROM delimited_parser_profiles WHERE id='profile'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "SIGNED:OUT:2"
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 }
