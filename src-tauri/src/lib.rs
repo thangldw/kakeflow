@@ -20,6 +20,7 @@ mod persistence;
 pub mod portfolio;
 mod private_fs;
 mod read_model;
+pub mod receipt_matching;
 mod record_scope;
 pub mod recurring_analytics;
 pub mod restore;
@@ -2147,6 +2148,8 @@ pub fn run() {
             card_settlement_mapping::card_settlement_bank_mapping_upsert,
             card_settlement_mapping::card_settlement_bank_mapping_delete,
             card_settlement_mapping::card_settlement_balance_coverage_query,
+            receipt_matching::receipt_match_suggestions,
+            receipt_matching::receipt_match_confirm,
             fixed_cost_review::fixed_cost_review_query,
             forecast_action::forecast_action_query,
             dashboard_query,

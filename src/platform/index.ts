@@ -69,6 +69,8 @@ export type {
   NormalizedCandidateDto,
   PostingDecisionDto,
   PreviewCandidateDto,
+  ReceiptMatchSuggestionDto,
+  ReceiptMatchConfirmationDto,
   StartImportDto,
   Invoke,
   PlatformClient,

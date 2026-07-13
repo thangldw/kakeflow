@@ -52,6 +52,8 @@ describe('platform client', () => {
     await expect(client.restartForRestore()).rejects.toMatchObject({ command: 'app_restart_for_restore' })
     await expect(client.extractDocument(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ command: 'document_extract' })
     await expect(client.ocrDocument(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({ command: 'document_ocr' })
+    await expect(client.suggestReceiptMatches('family', 'candidate')).resolves.toEqual([])
+    await expect(client.confirmReceiptMatch('family', 'candidate', 'transaction')).rejects.toMatchObject({ command: 'receipt_match_confirm' })
     await expect(client.listCardSettlements('family')).resolves.toEqual([])
     await expect(client.confirmCardMatch('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_match_confirm' })
     await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual([])
@@ -133,6 +135,8 @@ describe('platform client', () => {
       app_restart_for_restore: null,
       document_extract: { method: 'EMBEDDED_TEXT', text: 'STORE TOTAL 1200', confidenceBps: 9000, issues: [] },
       document_ocr: { method: 'OCR', text: 'STORE TOTAL 1200', confidenceBps: 7800, issues: ['LOW_CONFIDENCE'] },
+      receipt_match_suggestions: [{ candidateId: 'candidate-1', transactionId: 'transaction-1', occurredOn: '2026-07-12', payee: 'STORE', description: null, transactionType: 'EXPENSE', amountJpy: 1200, dayDifference: 0, merchantSimilarityBps: 10000, scoreBps: 10000, reasons: ['Exact receipt and posted-expense amount'] }],
+      receipt_match_confirm: { runId: 'run-1', candidateId: 'candidate-1', transactionId: 'transaction-1', resolutionStatus: 'LINKED', evidenceCount: 1, runStatus: 'POSTED' },
       cards_list: [{
         id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: null,
         periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: null,
@@ -221,6 +225,8 @@ describe('platform client', () => {
     await expect(client.restartForRestore()).resolves.toBeUndefined()
     await expect(client.extractDocument(new Uint8Array([37, 80, 68, 70]), 'application/pdf')).resolves.toEqual(responses.document_extract)
     await expect(client.ocrDocument(new Uint8Array([1, 2, 3]), 'image/png')).resolves.toEqual(responses.document_ocr)
+    await expect(client.suggestReceiptMatches('family', 'candidate-1')).resolves.toEqual(responses.receipt_match_suggestions)
+    await expect(client.confirmReceiptMatch('family', 'candidate-1', 'transaction-1')).resolves.toEqual(responses.receipt_match_confirm)
     await expect(client.listCardSettlements('family')).resolves.toEqual(responses.cards_list)
     await expect(client.confirmCardMatch('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_match_confirm)
     const mappingInput = { householdId: 'family', cardAccountId: 'family-rakuten-card', bankAccountId: 'family-bank' }
@@ -256,13 +262,15 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('app_restart_for_restore', undefined)
     expect(invokeSpy).toHaveBeenCalledWith('document_extract', { fileBytes: [37, 80, 68, 70], mediaType: 'application/pdf' })
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
+    expect(invokeSpy).toHaveBeenCalledWith('receipt_match_suggestions', { request: { householdId: 'family', candidateId: 'candidate-1' } })
+    expect(invokeSpy).toHaveBeenCalledWith('receipt_match_confirm', { request: { householdId: 'family', candidateId: 'candidate-1', transactionId: 'transaction-1' } })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mappings_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_upsert', { input: mappingInput })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
-    expect(invokeSpy).toHaveBeenCalledTimes(40)
+    expect(invokeSpy).toHaveBeenCalledTimes(42)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {
@@ -277,6 +285,16 @@ describe('platform client', () => {
       command: 'app_status',
       message: 'The desktop service returned an invalid response.',
     })
+  })
+
+  it('rejects malformed receipt match scores and confirmations', async () => {
+    const invoke: Invoke = async <T>(command: AppCommand) => (command === 'receipt_match_suggestions'
+      ? [{ candidateId: 'candidate-1', transactionId: 'transaction-1', occurredOn: '2026-07-12', payee: null, description: null, transactionType: 'EXPENSE', amountJpy: 1200, dayDifference: 4, merchantSimilarityBps: 10000, scoreBps: 10000, reasons: [] }]
+      : { runId: 'run-1', candidateId: 'candidate-1', transactionId: 'transaction-1', resolutionStatus: 'DECLINED', evidenceCount: 0, runStatus: 'REVIEW_REQUIRED' }) as T
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.suggestReceiptMatches('family', 'candidate-1')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'receipt_match_suggestions' })
+    await expect(client.confirmReceiptMatch('family', 'candidate-1', 'transaction-1')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'receipt_match_confirm' })
   })
 
   it('validates planning DTOs and keeps household scope in every command', async () => {

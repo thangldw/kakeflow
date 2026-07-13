@@ -272,13 +272,19 @@ pub fn list_transaction_source_records(
         .prepare(
             "SELECT sr.id, sr.source_document_id, sr.row_number, sr.record_hash,
                     sr.raw_payload_json, sr.created_at,
-                    COALESCE(cs.evidence_role, 'PRIMARY')
+                    CASE WHEN rcl.candidate_id IS NOT NULL
+                         THEN 'SUPPORTING'
+                         ELSE COALESCE(cs.evidence_role, 'PRIMARY')
+                    END
              FROM transaction_sources ts
              JOIN source_records sr ON sr.id = ts.source_record_id
              JOIN source_documents sd ON sd.id = sr.source_document_id
              LEFT JOIN candidate_sources cs
                ON cs.candidate_id = ts.candidate_id
               AND cs.source_record_id = ts.source_record_id
+             LEFT JOIN receipt_candidate_links rcl
+               ON rcl.candidate_id = ts.candidate_id
+              AND rcl.transaction_id = ts.transaction_id
              WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
              ORDER BY sd.imported_at, sd.id, sr.row_number, sr.id
              LIMIT ?3",
@@ -356,6 +362,9 @@ mod tests {
                  CREATE TABLE candidate_sources (
                    candidate_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
                    evidence_role TEXT NOT NULL, PRIMARY KEY(candidate_id, source_record_id));
+                 CREATE TABLE receipt_candidate_links (
+                   candidate_id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
+                   transaction_id TEXT NOT NULL);
                  INSERT INTO households VALUES ('family'), ('other');
                  INSERT INTO household_members VALUES
                    ('family-primary', 'family', 'Family member', 'ARCHIVED'),
@@ -462,6 +471,28 @@ mod tests {
             list_transaction_source_records(&database(), "family", "transaction").unwrap();
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].row_number, 2);
+        assert_eq!(records[0].evidence_role.as_deref(), Some("SUPPORTING"));
+    }
+
+    #[test]
+    fn receipt_links_are_always_presented_as_supporting_evidence() {
+        let connection = database();
+        connection
+            .execute(
+                "UPDATE candidate_sources SET evidence_role='PRIMARY' WHERE candidate_id='candidate'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO receipt_candidate_links VALUES ('candidate','family','transaction')",
+                [],
+            )
+            .unwrap();
+
+        let records =
+            list_transaction_source_records(&connection, "family", "transaction").unwrap();
+
         assert_eq!(records[0].evidence_role.as_deref(), Some("SUPPORTING"));
     }
 
