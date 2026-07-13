@@ -258,7 +258,7 @@ describe('KakeFlow desktop read models', () => {
         const months = Array.from({ length: 12 }, (_, index) => ({ month: `2026-${String(index + 1).padStart(2, '0')}`, status: index < 6 ? 'COMPLETE' : index === 6 ? 'PARTIAL' : 'FUTURE', incomeJpy: index < 6 ? 100000 : 0, expenseJpy: index < 6 ? 50000 : 0, savingsJpy: index < 6 ? 50000 : 0, savingsRateBps: index < 6 ? 5000 : null, postedTransactionCount: index < 6 ? 2 : 0 }))
         return { period: '2026', asOf: '2026-07-13', throughMonth: '2026-06', completedMonthCount: 6, isCompleteYear: false, currentComparable: current, priorYearComparable: prior, vsPriorYearComparable: delta, current, priorYear: prior, vsPriorYear: delta, months, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 90000, previousJpy: 70000, deltaJpy: 20000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 60000, previousJpy: 50000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 6, fullyReconciled: 5, possibleMatches: 1, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
       }
-      if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }] }
+      if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }, { id: 'import-review', kind: 'IMPORT_REVIEW', priority: 'MEDIUM', title: '取込を確認', detail: '候補を確認してください', dueOn: null, amountJpy: null, entityId: null, reasons: ['未確定'] }, { id: 'card-due', kind: 'CARD_PAYMENT_DUE', priority: 'MEDIUM', title: 'カード引落を確認', detail: '引落予定があります', dueOn: '2026-07-27', amountJpy: 20000, entityId: 'card', reasons: ['支払期日'] }, { id: 'anomaly', kind: 'SPENDING_ANOMALY', priority: 'LOW', title: '支出を確認', detail: '通常より高額です', dueOn: null, amountJpy: 9000, entityId: 'purchase', reasons: ['履歴比較'] }] }
       if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
       if (command === 'fixed_cost_review_query') {
         const monthlyPoints = [9000, 10000, 11000, 12000, 13000, 14000].map((totalJpy, index) => ({ month: `2026-${String(index + 1).padStart(2, '0')}`, totalJpy, recurringPayeeCount: 1, transactionCount: 1 }))
@@ -313,6 +313,24 @@ describe('KakeFlow desktop read models', () => {
     expect(within(dataQuality).getByText('3件')).toBeInTheDocument()
     expect(within(dataQuality).getByText('42行 ・ 2種類')).toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
+  })
+
+  it('shows the bounded Home Action Center and opens its workspace or complete forecast view', async () => {
+    render(<App />)
+
+    expect(await screen.findByText('食費予算を超過')).toBeInTheDocument()
+    expect(screen.getByText('カード引落を確認')).toBeInTheDocument()
+    expect(screen.getByText('取込を確認')).toBeInTheDocument()
+    expect(screen.queryByText('支出を確認')).not.toBeInTheDocument()
+    expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', { request: { householdId: 'family', accountGroupId: null, attributionScope: { kind: 'ALL' }, asOf: '2026-07-31' } })
+
+    fireEvent.click(screen.getByRole('button', { name: '食費予算を超過を確認' }))
+    expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ホーム' }))
+    fireEvent.click(await screen.findByRole('button', { name: '4件すべて見る' }))
+    expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: '予測・アクション' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('loads and persists household dashboard appearance and focus presets', async () => {

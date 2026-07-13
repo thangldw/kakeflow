@@ -34,4 +34,14 @@ describe('ForecastActionViews', () => {
     fireEvent.click(screen.getByRole('button', { name: '楽天カードの金額不一致を確認' }))
     expect(onAction).toHaveBeenCalledWith(data.actions[0])
   })
+
+  it('uses deterministic priority and due-date ordering', () => {
+    const actions = [
+      { ...data.actions[1], id: 'later', dueOn: '2026-08-01' },
+      { ...data.actions[0], id: 'critical-z' },
+      { ...data.actions[0], id: 'critical-a' },
+    ]
+    const { container } = render(<ForecastActionViews data={{ ...data, actions }} />)
+    expect([...container.querySelectorAll('.action-copy h3')].map((node) => node.textContent)).toEqual([actions[2].title, actions[1].title, actions[0].title])
+  })
 })

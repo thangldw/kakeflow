@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.32.0 — 2026-07-13
+
+- Promote the existing source-backed Action Center to Home with the three highest-priority actions and an exact total count.
+- Apply one deterministic priority, due-date, and stable-ID order in both Home and the full Forecast workspace.
+- Route every action kind through an exhaustive workspace map and open “view all” directly on Reports → Forecast & Actions.
+- Query actions independently from dashboard metrics, retain the last valid same-scope snapshot on refresh failure, and provide explicit loading, retry, stale, empty, and browser-preview states.
+- Use the selected month's final day as the visible action baseline and disclose that import review remains household-wide under account/member filters.
+- Refresh Home actions after import, card, budget, and savings-goal mutations without creating a second alert model.
+
 ## 0.31.0 — 2026-07-13
 
 - Require a destination account for every generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard file before staging.
