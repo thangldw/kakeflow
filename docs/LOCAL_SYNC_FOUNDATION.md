@@ -53,9 +53,17 @@ The [planning and configuration contract](REPLICABLE_PLANNING_CONFIG_CAPTURE.md)
 has its own dependency-ordered two-database replay proof. It does not add an
 incoming-envelope application runtime or transmit an outbox record.
 
+KakeFlow 0.38 adds a separate, user-driven [local change package](LOCAL_CHANGE_PACKAGES.md)
+workflow. It exports one consistent current-state snapshot for all eleven
+covered aggregate kinds, stages it durably on another installation, requires an
+explicit decision for every conflict or omission deletion, and applies the
+accepted result in one SQLite transaction. Incoming package writes are guarded
+from local capture, so applying a package does not echo it into the outbox. This
+is file transfer initiated by the user, not outbox delivery or network sync.
+
 ## Restore validation
 
-Schema 34 restore validation checks device, principal, member-binding, local
+Schema 35 restore validation checks device, principal, member-binding, local
 context, envelope, outbox, and transactional-capture relations before activation.
 It also validates the final replayable aggregate shape, journal account scope,
 line uniqueness, positive integer amounts, debit/credit balance, planning and
@@ -65,10 +73,10 @@ logical principals and historical origin/envelope records remain in the backup.
 
 ## Explicit non-goals
 
-This release does not provide a sync server, network transport, incoming apply
-runtime, source-document/blob transport, source/import aggregate graph,
+This release does not provide a sync server, network transport, automatic
+package delivery, source-document/blob transport, source/import aggregate graph,
 card-statement/payment aggregate graph, investment/portfolio aggregate graph,
-end-to-end sync protocol, cross-device conflict resolution, merge UI, login,
+end-to-end sync protocol, field-level merge, login,
 remote authentication, access control, backend audience enforcement, or mobile
 receipt capture. Device-local watched-folder state also remains local. Those
 remain separate roadmap milestones.

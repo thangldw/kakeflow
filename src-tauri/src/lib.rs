@@ -3,6 +3,7 @@ pub mod aggregate_asset_history;
 pub mod backup;
 pub mod brokerage;
 pub mod card_settlement_mapping;
+pub mod change_package;
 pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_vault;
@@ -496,6 +497,121 @@ fn principal_member_binding_update(
                 .map_err(|_| rusqlite::Error::InvalidQuery.into())
         })
         .map_err(|_| "Principal member binding could not be updated".to_owned())
+}
+
+fn change_package_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> change_package::Result<T>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| {
+            operation(connection).map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Change package operation could not be completed".to_owned())
+}
+
+#[tauri::command]
+async fn change_package_export_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Option<String>, String> {
+    let package = change_package_result(&state, |connection| {
+        change_package::export_current_state(connection, &household_id)
+    })?;
+    let bytes = change_package::encode_pretty(&package)
+        .map_err(|_| "Change package could not be encoded".to_owned())?;
+    let file_name = format!(
+        "kakeflow-change-{}.kakeflow-change.json",
+        &package.snapshot_sha256[..12]
+    );
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Change Package", &["json"])
+        .set_file_name(&file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected change package destination is unavailable".to_owned())?;
+    std::fs::write(destination, bytes)
+        .map_err(|_| "Change package could not be saved".to_owned())?;
+    Ok(Some(file_name))
+}
+
+#[tauri::command]
+async fn change_package_pick_and_stage(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Option<change_package::ChangePackageReviewDto>, String> {
+    const MAX_CHANGE_PACKAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Change Package", &["json"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|_| "Selected change package is unavailable".to_owned())?;
+    let metadata = std::fs::metadata(&path)
+        .map_err(|_| "Selected change package is unavailable".to_owned())?;
+    if !metadata.is_file() || metadata.len() > MAX_CHANGE_PACKAGE_BYTES {
+        return Err("Selected change package is too large".to_owned());
+    }
+    let bytes =
+        std::fs::read(path).map_err(|_| "Selected change package could not be read".to_owned())?;
+    change_package_result(&state, |connection| {
+        change_package::stage_package(connection, &household_id, &bytes)
+    })
+    .map(Some)
+}
+
+#[tauri::command]
+fn change_package_active_review(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Option<change_package::ChangePackageReviewDto>, String> {
+    change_package_result(&state, |connection| {
+        change_package::get_active_review(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn change_package_resolve(
+    state: tauri::State<'_, AppState>,
+    package_id: String,
+    resolutions: Vec<change_package::ChangePackageResolutionInput>,
+) -> Result<change_package::ChangePackageReviewDto, String> {
+    change_package_result(&state, |connection| {
+        change_package::resolve_package(connection, &package_id, &resolutions)
+    })
+}
+
+#[tauri::command]
+fn change_package_apply(
+    state: tauri::State<'_, AppState>,
+    package_id: String,
+) -> Result<change_package::ChangePackageReviewDto, String> {
+    change_package_result(&state, |connection| {
+        change_package::apply_package(connection, &package_id)
+    })
+}
+
+#[tauri::command]
+fn change_package_discard(
+    state: tauri::State<'_, AppState>,
+    package_id: String,
+) -> Result<(), String> {
+    change_package_result(&state, |connection| {
+        change_package::discard_package(connection, &package_id)
+    })
 }
 
 fn database_status(state: &AppState) -> Result<DatabaseStatus, String> {
@@ -2380,6 +2496,12 @@ pub fn run() {
             app_status,
             local_sync_foundation_status,
             principal_member_binding_update,
+            change_package_export_save,
+            change_package_pick_and_stage,
+            change_package_active_review,
+            change_package_resolve,
+            change_package_apply,
+            change_package_discard,
             packaged_smoke_complete,
             packaged_smoke_failure,
             packaged_smoke_progress,

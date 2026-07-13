@@ -506,7 +506,7 @@ fn local_device_name() -> &'static str {
     }
 }
 
-fn canonical_json(value: &Value) -> Result<String> {
+pub(crate) fn canonical_json(value: &Value) -> Result<String> {
     fn sorted(value: &Value) -> Value {
         match value {
             Value::Object(object) => {
@@ -553,7 +553,7 @@ fn envelope_id(seed: &EnvelopeSeed<'_>) -> String {
     format!("envelope-{}", sha256_hex(source.as_bytes()))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 fn hex(bytes: &[u8]) -> String {

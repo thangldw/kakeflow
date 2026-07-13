@@ -79,6 +79,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0034_replicable_planning_capture.sql"
     )),
+    M::up(include_str!("../migrations/0035_local_change_packages.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -132,7 +133,7 @@ impl AppState {
     }
 
     #[cfg(test)]
-    fn in_memory(key: &[u8]) -> Result<Self, PersistenceError> {
+    pub(crate) fn in_memory(key: &[u8]) -> Result<Self, PersistenceError> {
         let connection = Connection::open_in_memory()?;
         apply_key(&connection, key)?;
         configure_connection(&connection)?;
@@ -1446,6 +1447,181 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn change_package_schema_guards_capture_and_preserves_portable_source_links() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK');
+                     INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                     VALUES('tx','family','2026-07-13','ADJUSTMENT','DRAFT');",
+                )?;
+                let before: i64 = connection.query_row(
+                    "SELECT count(*) FROM sync_local_change_capture",
+                    [],
+                    |row| row.get(0),
+                )?;
+                connection.execute(
+                    "INSERT INTO sync_apply_guard(household_id,package_id)
+                     VALUES('family','package-1')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO transaction_portable_source_links(
+                       transaction_id,source_record_id,candidate_id)
+                     VALUES('tx','source-1','candidate-1')",
+                    [],
+                )?;
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM sync_local_change_capture",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    before
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT json_extract(payload_json,'$.sourceLinks[0].sourceRecordId')
+                         FROM sync_transaction_aggregate_payloads WHERE transaction_id='tx'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "source-1"
+                );
+                connection.execute(
+                    "DELETE FROM sync_apply_guard WHERE household_id='family'",
+                    [],
+                )?;
+                connection.execute(
+                    "UPDATE transaction_portable_source_links SET candidate_id='candidate-2'
+                     WHERE transaction_id='tx' AND source_record_id='source-1'",
+                    [],
+                )?;
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM sync_local_change_capture",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    before + 1
+                );
+                assert!(integrity_check(connection)?);
+                Ok(())
+            })
+            .expect("package schema should remain valid");
+    }
+
+    #[test]
+    fn change_package_lineage_is_unique_and_household_delete_cascades() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                const DIGEST_A: &str =
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                const DIGEST_B: &str =
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK');
+                     INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                     VALUES('tx','family','2026-07-13','ADJUSTMENT','DRAFT');
+                     INSERT INTO transaction_portable_source_links(transaction_id,source_record_id)
+                     VALUES('tx','source-1');",
+                )?;
+                connection.execute(
+                    "INSERT INTO change_packages(
+                       package_id,target_household_id,source_installation_id,source_revision,
+                       source_principal_id,snapshot_sha256,manifest_json,package_sha256,
+                       state,record_count,create_count,source_created_at,
+                       staged_at,reviewed_at,applied_at,updated_at)
+                     VALUES('package-1','family','source-device',1,'source-principal',?1,'{}',?1,
+                       'APPLIED',1,1,'2026-07-13T00:00:00Z',
+                       '2026-07-13T00:00:00Z','2026-07-13T01:00:00Z',
+                       '2026-07-13T01:00:00Z','2026-07-13T01:00:00Z')",
+                    [DIGEST_A],
+                )?;
+                connection.execute(
+                    "INSERT INTO change_package_records(
+                       package_id,record_order,entity_kind,entity_id,operation,
+                       canonical_payload_json,payload_sha256,review_state,resolution)
+                     VALUES('package-1',0,'ACCOUNT','bank','UPSERT',
+                       '{\"recordKind\":\"ACCOUNT\",\"id\":\"bank\"}',?1,'CREATE','APPLY_INCOMING')",
+                    [DIGEST_A],
+                )?;
+                connection.execute(
+                    "INSERT INTO applied_change_packages(
+                       package_id,source_installation_id,household_id,source_revision,snapshot_sha256)
+                     VALUES('package-1','source-device','family',1,?1)",
+                    [DIGEST_A],
+                )?;
+                connection.execute(
+                    "INSERT INTO sync_replica_entity_heads(
+                       household_id,entity_kind,entity_id,source_installation_id,package_id,
+                       source_revision,operation,payload_sha256)
+                     VALUES('family','ACCOUNT','bank','source-device','package-1',1,'UPSERT',?1)",
+                    [DIGEST_A],
+                )?;
+
+                connection.execute(
+                    "INSERT INTO change_packages(
+                       package_id,target_household_id,source_installation_id,source_revision,
+                       source_principal_id,snapshot_sha256,manifest_json,package_sha256,
+                       state,record_count,source_created_at,
+                       staged_at,reviewed_at,applied_at,updated_at)
+                     VALUES('package-equivocation','family','source-device',1,'source-principal',?1,
+                       '{}',?1,'APPLIED',0,'2026-07-13T00:00:00Z',
+                       '2026-07-13T00:00:00Z','2026-07-13T01:00:00Z',
+                       '2026-07-13T01:00:00Z','2026-07-13T01:00:00Z')",
+                    [DIGEST_B],
+                )?;
+                assert!(connection.execute(
+                    "INSERT INTO applied_change_packages(
+                       package_id,source_installation_id,household_id,source_revision,snapshot_sha256)
+                     VALUES('package-equivocation','source-device','family',1,?1)",
+                    [DIGEST_B],
+                ).is_err());
+
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('guard-family','Guard family');
+                     INSERT INTO sync_apply_guard(household_id,package_id)
+                     VALUES('guard-family','package-guard');
+                     DELETE FROM households WHERE id='guard-family';",
+                )?;
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM sync_apply_guard WHERE household_id='guard-family'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    0
+                );
+                connection.execute("DELETE FROM households WHERE id='family'", [])?;
+                for table in [
+                    "change_packages",
+                    "change_package_records",
+                    "applied_change_packages",
+                    "sync_replica_entity_heads",
+                    "sync_apply_guard",
+                    "transaction_portable_source_links",
+                ] {
+                    let sql = format!("SELECT count(*) FROM {table}");
+                    assert_eq!(
+                        connection.query_row(&sql, [], |row| row.get::<_, i64>(0))?,
+                        0,
+                        "{table} should cascade or clean up"
+                    );
+                }
+                assert!(integrity_check(connection)?);
+                Ok(())
+            })
+            .expect("package lineage should remain valid");
     }
 
     #[test]
