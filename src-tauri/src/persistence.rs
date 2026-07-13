@@ -72,6 +72,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0029_dashboard_preferences.sql")),
     M::up(include_str!("../migrations/0030_cash_flow_dashboard.sql")),
     M::up(include_str!("../migrations/0031_sync_foundation.sql")),
+    M::up(include_str!("../migrations/0032_core_change_capture.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -364,6 +365,18 @@ fn validate_restored_semantics(
             "SELECT 1 FROM sync_outbox o
              LEFT JOIN sync_change_envelopes e ON e.envelope_id=o.envelope_id
              WHERE e.envelope_id IS NULL LIMIT 1",
+        )?;
+    }
+    if schema_version >= 32 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             LEFT JOIN households h ON h.id=c.household_id
+             LEFT JOIN sync_change_envelopes e ON e.envelope_id=c.processed_envelope_id
+             WHERE h.id IS NULL OR (c.processed_envelope_id IS NOT NULL AND (
+               e.envelope_id IS NULL OR e.household_id!=c.household_id
+               OR e.entity_kind!=c.entity_kind OR e.entity_id!=c.entity_id
+             )) LIMIT 1",
         )?;
     }
     if schema_version >= 22 {

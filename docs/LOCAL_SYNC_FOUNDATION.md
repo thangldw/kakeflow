@@ -29,10 +29,18 @@ Delivery state lives in a separate outbox row so a future acknowledgement does
 not mutate the canonical envelope. In 0.34 the outbox has no transport and every
 status is labelled `端末内のみ`.
 
+KakeFlow 0.35 adds a transactional capture layer for household-member, account,
+and canonical transaction inserts/updates (plus transaction deletes). SQLite
+records the capture in the same commit as the domain write. The local foundation
+drains captures in monotonically increasing order into the immutable envelope
+and outbox contract. This covers the core ledger identity surfaces; planning,
+import workflow, investment snapshots, documents, and derived analytics are not
+yet change-envelope producers.
+
 ## Restore validation
 
-Schema 31 restore validation checks device, principal, member-binding, local
-context, envelope, and outbox relations before activation. Device-local context
+Schema 32 restore validation checks device, principal, member-binding, local
+context, envelope, outbox, and transactional-capture relations before activation. Device-local context
 is cleared during portable restore, while logical principals and historical
 origin/envelope records remain in the backup.
 
@@ -42,4 +50,3 @@ This release does not provide a sync server, network transport, end-to-end sync
 protocol, cross-device conflict resolution, merge UI, login, remote
 authentication, access control, backend audience enforcement, or mobile receipt
 capture. Those remain separate roadmap milestones.
-

@@ -97,6 +97,7 @@ pub fn get_local_status(
 ) -> Result<LocalSyncFoundationStatusDto> {
     validate_id(household_id)?;
     ensure_local_context(connection, household_id)?;
+    drain_local_change_capture(connection, household_id)?;
     connection
         .query_row(
             "SELECT d.id, d.display_name, d.platform, d.created_at,
@@ -244,6 +245,58 @@ pub fn list_pending_envelopes(
         })
     })?;
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
+fn drain_local_change_capture(connection: &Connection, household_id: &str) -> Result<()> {
+    let available: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master
+         WHERE type='table' AND name='sync_local_change_capture')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !available {
+        return Ok(());
+    }
+    let transaction = connection.unchecked_transaction()?;
+    let captured = {
+        let mut statement = transaction.prepare(
+            "SELECT capture_sequence,entity_kind,entity_id,operation,payload_json
+             FROM sync_local_change_capture
+             WHERE household_id=?1 AND processed_envelope_id IS NULL
+             ORDER BY capture_sequence LIMIT 1000",
+        )?;
+        let rows = statement.query_map([household_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for (capture_sequence, entity_kind, entity_id, operation, payload_json) in captured {
+        let payload: Value =
+            serde_json::from_str(&payload_json).map_err(|_| SyncFoundationError::Encoding)?;
+        let mutation_id = format!("capture:{capture_sequence}");
+        let envelope_id = enqueue_change_in_transaction(
+            &transaction,
+            household_id,
+            &mutation_id,
+            &entity_kind,
+            &entity_id,
+            &operation,
+            &payload,
+        )?;
+        transaction.execute(
+            "UPDATE sync_local_change_capture SET processed_envelope_id=?1
+             WHERE capture_sequence=?2 AND processed_envelope_id IS NULL",
+            params![envelope_id, capture_sequence],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 fn ensure_local_context(connection: &Connection, household_id: &str) -> Result<()> {
@@ -507,12 +560,30 @@ mod tests {
              CREATE TABLE household_members(
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
                display_name TEXT NOT NULL, status TEXT NOT NULL, sort_order INTEGER NOT NULL,
+               relationship_label TEXT, created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
+               updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
                UNIQUE(household_id,id)) STRICT;
+             CREATE TABLE accounts(
+               id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+               name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
+               is_archived INTEGER NOT NULL DEFAULT 0, owner_member_id TEXT,
+               ownership_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', visibility TEXT NOT NULL DEFAULT 'SHARED',
+               updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z') STRICT;
+             CREATE TABLE transactions(
+               id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+               occurred_on TEXT NOT NULL, posted_on TEXT, transaction_type TEXT NOT NULL,
+               payee TEXT, description TEXT, status TEXT NOT NULL DEFAULT 'POSTED',
+               calculation_target INTEGER NOT NULL DEFAULT 1,
+               updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z') STRICT;
              INSERT INTO households VALUES('family');
-             INSERT INTO household_members VALUES('taro','family','Taro','ACTIVE',0);",
+             INSERT INTO household_members(id,household_id,display_name,status,sort_order)
+             VALUES('taro','family','Taro','ACTIVE',0);",
         ).unwrap();
         connection
             .execute_batch(include_str!("../migrations/0031_sync_foundation.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0032_core_change_capture.sql"))
             .unwrap();
         connection
     }
@@ -576,5 +647,41 @@ mod tests {
             update_principal_member_binding(&connection, &input),
             Err(SyncFoundationError::Conflict)
         ));
+    }
+
+    #[test]
+    fn core_domain_writes_are_captured_and_drained_in_order() {
+        let connection = database();
+        get_local_status(&connection, "family").unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+             VALUES('bank','family','Bank','ASSET','BANK')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO transactions(id,household_id,occurred_on,transaction_type,payee)
+             VALUES('tx','family','2026-07-13','EXPENSE','Store')",
+                [],
+            )
+            .unwrap();
+        let status = get_local_status(&connection, "family").unwrap();
+        let pending = list_pending_envelopes(&connection, "family", 20).unwrap();
+        assert_eq!(status.outbox.envelope_count, 2);
+        assert_eq!(
+            pending
+                .iter()
+                .map(|item| item.entity_kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ACCOUNT", "TRANSACTION"]
+        );
+        assert_eq!(pending[0].origin_sequence, 1);
+        assert_eq!(pending[1].origin_sequence, 2);
+        assert_eq!(connection.query_row(
+            "SELECT count(*) FROM sync_local_change_capture WHERE processed_envelope_id IS NULL",
+            [], |row| row.get::<_, i64>(0),
+        ).unwrap(), 0);
     }
 }
