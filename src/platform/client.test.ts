@@ -34,6 +34,7 @@ describe('platform client', () => {
     await expect(client.createManualTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_manual_create' })
     await expect(client.getTransactionDetail('family', 'tx')).rejects.toMatchObject({ command: 'transaction_detail_get' })
     await expect(client.updateTransaction({} as never)).rejects.toMatchObject({ command: 'transaction_update' })
+    await expect(client.bulkUpdateTransactionMetadata({} as never)).rejects.toMatchObject({ command: 'transaction_metadata_bulk_update' })
     await expect(client.getSourceDocument('family', 'document')).rejects.toMatchObject({ command: 'source_document_get' })
     await expect(client.updateSourceDocumentAudience({} as never)).rejects.toMatchObject({ command: 'source_document_audience_update' })
     await expect(client.querySourceDocumentRecords({ householdId: 'family', sourceDocumentId: 'document', page: 1, pageSize: 20 })).rejects.toMatchObject({ command: 'source_document_records_query' })
@@ -86,15 +87,16 @@ describe('platform client', () => {
       transaction_manual_create: {
         id: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null,
         amountJpy: 1000, status: 'POSTED', calculationTarget: true, debitAccountId: 'expense', debitAccountName: 'Food', creditAccountId: 'bank', creditAccountName: 'Bank', categoryAccountId: 'expense', categoryName: 'Food',
-        attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
+        attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, labels: ['SUBSCRIPTION'], tags: ['food'],
       },
       transaction_detail_get: {
         id: 'tx-manual', householdId: 'family', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE', payee: 'Store', description: null, status: 'POSTED', calculationTarget: true, createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z', editable: true,
-        attributionKind: 'MEMBER', attributedMemberId: 'member-1', attributedMemberName: 'Taro', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-1', audienceMemberName: 'Taro',
+        attributionKind: 'MEMBER', attributedMemberId: 'member-1', attributedMemberName: 'Taro', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-1', audienceMemberName: 'Taro', labels: ['REIMBURSABLE'], tags: ['trip'],
         entries: [{ id: 'entry-1', accountId: 'expense', accountName: 'Food', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 1000, lineNumber: 1 }, { id: 'entry-2', accountId: 'bank', accountName: 'Bank', accountKind: 'ASSET', side: 'CREDIT', amountJpy: 1000, lineNumber: 2 }],
         sourceEvidence: [{ sourceRecordId: 'record-1', sourceDocumentId: 'document-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
       },
       transaction_update: null,
+      transaction_metadata_bulk_update: { updatedCount: 1 },
       source_document_get: {
         id: 'document-1', householdId: 'family', importRunId: 'run-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv',
         mediaType: 'text/csv', byteSize: 42, sha256: 'a'.repeat(64), sourceModifiedAt: null, importedAt: '2026-07-12T00:00:00Z',
@@ -204,6 +206,8 @@ describe('platform client', () => {
     responses.transaction_update = responses.transaction_detail_get
     const updateInput = { householdId: 'family', transactionId: 'tx-manual', occurredOn: '2026-07-12', postedOn: null, transactionType: 'EXPENSE' as const, payee: 'Store', description: null, calculationTarget: true, attributionKind: 'MEMBER' as const, attributedMemberId: 'member-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1', entries: [] }
     await expect(client.updateTransaction(updateInput)).resolves.toEqual(responses.transaction_detail_get)
+    const metadataInput = { householdId: 'family', transactionIds: ['tx-manual'], addLabels: ['REIMBURSABLE' as const], removeLabels: [], addTags: ['trip'], removeTags: [] }
+    await expect(client.bulkUpdateTransactionMetadata(metadataInput)).resolves.toEqual({ updatedCount: 1 })
     await expect(client.getSourceDocument('family', 'document-1')).resolves.toEqual(responses.source_document_get)
     const sourceAudience = { householdId: 'family', sourceDocumentId: 'document-1', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-1' }
     await expect(client.updateSourceDocumentAudience(sourceAudience)).resolves.toEqual(responses.source_document_audience_update)
@@ -270,7 +274,8 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_upsert', { input: mappingInput })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
-    expect(invokeSpy).toHaveBeenCalledTimes(42)
+    expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
+    expect(invokeSpy).toHaveBeenCalledTimes(43)
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

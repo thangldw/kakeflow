@@ -23,6 +23,8 @@ export interface Transaction {
   attributionLabel?: string
   audienceLabel?: string
   calculationTarget?: boolean
+  labels?: readonly string[]
+  tags?: readonly string[]
 }
 
 export interface CardSettlement {

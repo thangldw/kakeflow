@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.22.0 — 2026-07-13
+
+- Add seven controlled workflow labels and household-defined tags without changing accounting categories, journals, balances, budgets, or card reconciliation.
+- Show sorted labels and tags on transaction rows and details, with exact label/tag filters in the persisted ledger query.
+- Add explicit current-page and per-row selection plus atomic bulk add/remove for up to 200 posted transactions.
+- Reject duplicate IDs, conflicting add/remove operations, invalid tags, non-posted rows, and cross-household batches without partial metadata changes.
+- Keep bulk operations idempotent and report only transactions whose metadata actually changed.
+
 ## 0.21.0 — 2026-07-13
 
 - Add receipt-match suggestions for offline OCR candidates against existing posted expenses and card purchases, requiring an exact expense amount and a transaction date within three days.

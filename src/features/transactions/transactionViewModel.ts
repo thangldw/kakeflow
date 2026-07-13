@@ -68,5 +68,7 @@ export function toTransactionViewModel(row: TransactionRowDto): Transaction {
     attributionLabel: row.attributionKind === 'HOUSEHOLD' ? '世帯共通' : row.attributedMemberName ?? 'メンバー',
     audienceLabel: row.audienceVisibility === 'SHARED' ? '共有' : `個人・${row.audienceMemberName ?? 'メンバー'}`,
     calculationTarget: row.calculationTarget,
+    labels: row.labels,
+    tags: row.tags,
   }
 }
