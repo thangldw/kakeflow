@@ -1,8 +1,14 @@
 # Custom CSV/TSV parser profiles
 
-KakeFlow v0.14 can normalize JPY transaction files that do not match a built-in
+KakeFlow can normalize JPY transaction files that do not match a built-in
 institution adapter. Profiles are saved in the encrypted household database and
 are applied only when the user explicitly selects one for a file in Import Inbox.
+
+Version 0.43 adds an inline rescue workflow. An unsupported CSV/TSV always shows
+`このファイルを読み取る`, including when no profile exists. The dialog reads the
+file locally, offers header candidates from its first twelve physical rows, and
+populates every mapping dropdown only from the selected header. Changing that
+row clears stale mappings.
 
 ## Supported mapping
 
@@ -38,7 +44,10 @@ The import then follows the standard pipeline:
 
 ```text
 Local file
-  -> saved profile + real preview
+  -> actual-header mapping + local preview
+  -> saved household profile
+  -> ready-to-stage preview
+  -> explicit `取込開始`
   -> immutable source rows
   -> pending transaction candidates
   -> account/category/reconciliation review

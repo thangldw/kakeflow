@@ -672,6 +672,7 @@ fn file_identity(
 fn supported_media_type(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "csv" => Some("text/csv"),
+        "tsv" => Some("text/tab-separated-values"),
         "xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         "xls" => Some("application/vnd.ms-excel"),
         "pdf" => Some("application/pdf"),
@@ -771,6 +772,10 @@ mod tests {
             .unwrap()
             .write_all(b"date,amount")
             .unwrap();
+        fs::File::create(root.join("wallet.tsv"))
+            .unwrap()
+            .write_all(b"date\tamount")
+            .unwrap();
         fs::File::create(root.join("nested").join("receipt.JPG"))
             .unwrap()
             .write_all(b"image")
@@ -778,11 +783,13 @@ mod tests {
         fs::File::create(root.join("ignore.txt")).unwrap();
 
         let files = scan_directory(&root).unwrap();
-        assert_eq!(files.len(), 2);
+        assert_eq!(files.len(), 3);
         assert_eq!(files[0].relative_path, "bank.csv");
         assert_eq!(files[0].byte_size, 11);
         assert_eq!(files[1].relative_path, "nested/receipt.JPG");
         assert_eq!(files[1].media_type, "image/jpeg");
+        assert_eq!(files[2].relative_path, "wallet.tsv");
+        assert_eq!(files[2].media_type, "text/tab-separated-values");
         fs::remove_dir_all(root).unwrap();
     }
 

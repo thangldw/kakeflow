@@ -261,7 +261,12 @@ function parseDecoded(
 }
 
 function decodeProfileBytes(bytes: Uint8Array, encoding: SavedCustomParserProfileDto['encoding']): { text: string; encoding: string; issue?: ParseIssue } {
-  if (encoding === 'AUTO') return decodeCsvBytes(bytes)
+  if (encoding === 'AUTO') {
+    const decoded = decodeCsvBytes(bytes)
+    return decoded.encoding.endsWith('-invalid') || decoded.text.includes('\uFFFD')
+      ? { ...decoded, issue: { code: 'CUSTOM_ENCODING_INVALID', message: 'Source bytes are not valid UTF-8 or CP932.', severity: 'error' } }
+      : decoded
+  }
   const hasBom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
   try {
     if (encoding === 'UTF8') return { text: new TextDecoder('utf-8', { fatal: true }).decode(hasBom ? bytes.subarray(3) : bytes), encoding: hasBom ? 'utf-8-bom' : 'utf-8' }

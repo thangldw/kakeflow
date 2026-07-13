@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.42 adds a narrow, source-row-preserving [JCB MyJCB statement adapter](docs/JCB_MYJCB_IMPORT.md). It recognizes an explicit v1 header contract, supports reordered columns, signed refunds and explicit foreign-currency fields, excludes statement totals from purchases, and requires the user to select the destination credit-card liability account. Unknown JCB layouts remain unsupported rather than being guessed.
+Version 0.43 turns unsupported CSV/TSV files into a recoverable Import Inbox workflow. The [inline mapping dialog](docs/CUSTOM_PARSER_PROFILES.md) derives choices from the actual local header, previews candidates and row errors before saving, requires an explicit Asset/Liability account, persists the household profile, and returns the same file to a ready-to-stage preview. The user still chooses `取込開始` before the normal pending review. Built-in adapters remain preferred and no candidate is posted automatically.
 
 ## Product tour
 
@@ -146,7 +146,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Mixed cash/stock and cross-currency merger ingestion with explicit stock-basis allocation, consideration currencies, and source-to-output FX rates.
 - FIFO merger allocations that expose source acquisition evidence, source/output basis and currency, exact conversion rate, cash proceeds, and realized P&L.
 - Per-currency balanced merger legs and cash-flow totals; incomplete or unnecessary terms are rejected instead of inferred.
-- Persisted [custom CSV/TSV mappings](docs/CUSTOM_PARSER_PROFILES.md) with optimistic concurrency, UTF-8/CP932 decoding, explicit signed/debit-credit semantics, and JPY-only validation.
+- Persisted [custom CSV/TSV mappings](docs/CUSTOM_PARSER_PROFILES.md) with an inline unsupported-file rescue dialog, actual-header dropdowns, local sample/candidate preview, optimistic concurrency, UTF-8/CP932 decoding, explicit signed/debit-credit semantics, and JPY-only validation.
 - Per-file profile application with matched-header, candidate, excluded-row, and issue preview; error rows block staging and every valid candidate remains pending review.
 - Immutable custom source-row/raw-field provenance, external transaction ID propagation, and an explicit Asset/Liability target account.
 - Persisted whole-household, household-common, or member activity scope with archived-member historical reporting.

@@ -1149,6 +1149,39 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
   })
 
+  it('rescues an unsupported CSV inline when no parser profile exists', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'delimited_parser_profiles_list') return []
+      if (command === 'delimited_parser_profile_create') {
+        const input = args?.input as Record<string, unknown>
+        return { ...input, version: 1, createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }
+      }
+      return fallback(command, args)
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const file = new File(['Date,Description,Amount\n2026/07/12,Local shop,-1200'], 'new-bank.csv', { type: 'text/csv' })
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [file] } })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'このファイルを読み取る' }))
+    expect(screen.getByRole('dialog', { name: 'このCSVを読み取る' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('日付列'), { target: { value: 'Date' } })
+    fireEvent.change(screen.getByLabelText('支払先列'), { target: { value: 'Description' } })
+    fireEvent.change(screen.getByLabelText('符号付き金額列'), { target: { value: 'Amount' } })
+    fireEvent.change(screen.getByLabelText('救済取込先口座'), { target: { value: 'family-bank' } })
+    expect(await screen.findByText('utf-8 ・ 区切り「,」・ 候補 1件 ・ 除外 0行 ・ エラー 0件')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'プロファイルを保存してプレビューへ' }))
+
+    expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'custom-delimited-v1', candidates: [expect.objectContaining({ accountId: 'family-bank', merchantRaw: 'Local shop', amountJpy: 1200, direction: 'OUT' })],
+    }), expect.any(Uint8Array)))
+    expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+  })
+
   it('blocks custom staging when a preview has rejected error rows', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')
