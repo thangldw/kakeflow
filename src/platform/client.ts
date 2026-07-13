@@ -157,6 +157,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       ocrDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'document_ocr') },
       listCardSettlements: async () => [],
       confirmCardMatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_match_confirm') },
+      confirmCardPaymentLink: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_payment_link_confirm') },
       listCardSettlementBankMappings: async () => [],
       upsertCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_upsert') },
       deleteCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_delete') },
@@ -221,6 +222,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     ocrDocument: (fileBytes, mediaType) => invokeValidated(invoke, 'document_ocr', parseExtractedDocument, { fileBytes: Array.from(fileBytes), mediaType }),
     listCardSettlements: (householdId) => invokeValidated(invoke, 'cards_list', parseCardSettlements, { householdId }),
     confirmCardMatch: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_match_confirm', parseCardMatchConfirmation, { householdId, statementId, paymentId }),
+    confirmCardPaymentLink: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_payment_link_confirm', parseCardSettlement, { householdId, statementId, paymentId }),
     listCardSettlementBankMappings: (householdId) => invokeValidated(invoke, 'card_settlement_bank_mappings_list', parseCardSettlementBankMappings, { householdId }),
     upsertCardSettlementBankMapping: (input) => invokeValidated(invoke, 'card_settlement_bank_mapping_upsert', parseCardSettlementBankMapping, { input }),
     deleteCardSettlementBankMapping: async (input) => { await invokeValidated(invoke, 'card_settlement_bank_mapping_delete', parseVoid, { input }) },
@@ -377,23 +379,56 @@ function parseExtractedDocument(value: unknown): ExtractedDocumentDto {
 
 const CARD_STATUSES: readonly CardReconciliationStatusDto[] = ['UNMATCHED', 'POSSIBLE_MATCH', 'FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'OVERPAID', 'UNDERPAID', 'MANUAL_OVERRIDE']
 
-function parseCardSettlements(value: unknown): readonly CardSettlementDto[] {
-  if (!Array.isArray(value)) throw new TypeError('card settlements')
-  return value.map((item) => {
-    const record = asRecord(item)
+function parseCardSettlementPayment(value: unknown) {
+  const record = asRecord(value)
+  const matchScoreBps = asNullableSafeInteger(record.matchScoreBps)
+  if (matchScoreBps != null && matchScoreBps > 10_000) throw new TypeError('card payment score')
+  return {
+    paymentId: asRequiredString(record.paymentId), bankTransactionId: asRequiredString(record.bankTransactionId),
+    paymentAmountJpy: asSafeInteger(record.paymentAmountJpy), paymentOn: asIsoDate(record.paymentOn), matchScoreBps,
+  }
+}
+
+function parseCardSettlement(value: unknown): CardSettlementDto {
+    const record = asRecord(value)
     if (!CARD_STATUSES.includes(record.reconciliationStatus as CardReconciliationStatusDto)) throw new TypeError('card status')
     const matchScoreBps = asNullableSafeInteger(record.matchScoreBps)
     if (matchScoreBps != null && matchScoreBps > 10_000) throw new TypeError('card score')
+    if (!Array.isArray(record.payments) || !Array.isArray(record.eligiblePayments)) throw new TypeError('card payments')
+    const payments = record.payments.map(parseCardSettlementPayment)
+    const eligiblePayments = record.eligiblePayments.map(parseCardSettlementPayment)
+    const allPaymentIds = new Set<string>(); const allBankTransactionIds = new Set<string>()
+    for (const collection of [payments, eligiblePayments]) collection.forEach((payment, index) => {
+      if (allPaymentIds.has(payment.paymentId) || allBankTransactionIds.has(payment.bankTransactionId)) throw new TypeError('duplicate card payment')
+      allPaymentIds.add(payment.paymentId); allBankTransactionIds.add(payment.bankTransactionId)
+      if (index > 0) {
+        const prior = collection[index - 1]
+        if (prior.paymentOn > payment.paymentOn || (prior.paymentOn === payment.paymentOn && prior.paymentId >= payment.paymentId)) throw new TypeError('card payment order')
+      }
+    })
+    const statementAmountJpy = asSafeInteger(record.statementAmountJpy)
+    const paidAmountJpy = asSafeInteger(record.paidAmountJpy)
+    const outstandingAmountJpy = asSafeInteger(record.outstandingAmountJpy)
+    const overpaidAmountJpy = asSafeInteger(record.overpaidAmountJpy)
+    if (paidAmountJpy !== payments.reduce((sum, payment) => sum + payment.paymentAmountJpy, 0)) throw new TypeError('card paid amount')
+    if (outstandingAmountJpy !== Math.max(statementAmountJpy - paidAmountJpy, 0) || overpaidAmountJpy !== Math.max(paidAmountJpy - statementAmountJpy, 0)) throw new TypeError('card settlement balance')
+    const expectedStatus: CardReconciliationStatusDto = paidAmountJpy === 0 ? 'UNMATCHED' : paidAmountJpy < statementAmountJpy ? 'PARTIALLY_RECONCILED' : paidAmountJpy === statementAmountJpy ? 'FULLY_RECONCILED' : 'OVERPAID'
+    if (record.reconciliationStatus !== expectedStatus) throw new TypeError('card settlement status')
     return {
       id: asRequiredString(record.id), cardAccountId: asRequiredString(record.cardAccountId), cardName: asRequiredString(record.cardName),
-      maskedIdentifier: asNullableString(record.maskedIdentifier), periodStart: asRequiredString(record.periodStart), periodEnd: asRequiredString(record.periodEnd),
-      paymentDueOn: asNullableString(record.paymentDueOn), statementAmountJpy: asSafeInteger(record.statementAmountJpy),
+      maskedIdentifier: asNullableString(record.maskedIdentifier), periodStart: asIsoDate(record.periodStart), periodEnd: asIsoDate(record.periodEnd),
+      paymentDueOn: asNullableIsoDate(record.paymentDueOn), statementAmountJpy,
       detailAmountJpy: asSafeSignedInteger(record.detailAmountJpy), lineCount: asSafeInteger(record.lineCount),
       paymentId: asNullableString(record.paymentId), bankTransactionId: asNullableString(record.bankTransactionId),
-      paymentAmountJpy: asNullableSafeInteger(record.paymentAmountJpy), paymentOn: asNullableString(record.paymentOn),
+      paymentAmountJpy: asNullableSafeInteger(record.paymentAmountJpy), paymentOn: asNullableIsoDate(record.paymentOn),
       matchScoreBps, reconciliationStatus: record.reconciliationStatus as CardReconciliationStatusDto,
+      paidAmountJpy, outstandingAmountJpy, overpaidAmountJpy, payments, eligiblePayments,
     }
-  })
+}
+
+function parseCardSettlements(value: unknown): readonly CardSettlementDto[] {
+  if (!Array.isArray(value)) throw new TypeError('card settlements')
+  return value.map(parseCardSettlement)
 }
 
 function parseCardMatchConfirmation(value: unknown): CardMatchConfirmationDto {
@@ -409,6 +444,10 @@ function asIsoDate(value: unknown): string {
   const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]); const parsed = new Date(Date.UTC(year, month - 1, day))
   if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) throw new TypeError('date')
   return result
+}
+
+function asNullableIsoDate(value: unknown): string | null {
+  return value == null ? null : asIsoDate(value)
 }
 
 function parseCardSettlementBankMapping(value: unknown): CardSettlementBankMappingDto {

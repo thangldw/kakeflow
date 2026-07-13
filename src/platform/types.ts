@@ -152,12 +152,18 @@ export interface ExtractedDocumentDto {
   readonly regions?: readonly ExtractedRegionDto[]
 }
 export type CardReconciliationStatusDto = 'UNMATCHED' | 'POSSIBLE_MATCH' | 'FULLY_RECONCILED' | 'PARTIALLY_RECONCILED' | 'OVERPAID' | 'UNDERPAID' | 'MANUAL_OVERRIDE'
+export interface CardSettlementPaymentDto {
+  readonly paymentId: string; readonly bankTransactionId: string; readonly paymentAmountJpy: number
+  readonly paymentOn: string; readonly matchScoreBps: number | null
+}
 export interface CardSettlementDto {
   readonly id: string; readonly cardAccountId: string; readonly cardName: string; readonly maskedIdentifier: string | null
   readonly periodStart: string; readonly periodEnd: string; readonly paymentDueOn: string | null
   readonly statementAmountJpy: number; readonly detailAmountJpy: number; readonly lineCount: number
   readonly paymentId: string | null; readonly bankTransactionId: string | null; readonly paymentAmountJpy: number | null
   readonly paymentOn: string | null; readonly matchScoreBps: number | null; readonly reconciliationStatus: CardReconciliationStatusDto
+  readonly paidAmountJpy: number; readonly outstandingAmountJpy: number; readonly overpaidAmountJpy: number
+  readonly payments: readonly CardSettlementPaymentDto[]; readonly eligiblePayments: readonly CardSettlementPaymentDto[]
 }
 export interface CardMatchConfirmationDto { readonly statementId: string; readonly paymentId: string; readonly reconciliationStatus: 'FULLY_RECONCILED' }
 export interface CardSettlementBankMappingDto {
@@ -431,6 +437,7 @@ export type AppCommand =
   | 'document_ocr'
   | 'cards_list'
   | 'card_match_confirm'
+  | 'card_payment_link_confirm'
   | 'card_settlement_bank_mappings_list'
   | 'card_settlement_bank_mapping_upsert'
   | 'card_settlement_bank_mapping_delete'
@@ -495,6 +502,7 @@ export interface PlatformClient {
   ocrDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
   listCardSettlements(householdId: string): Promise<readonly CardSettlementDto[]>
   confirmCardMatch(householdId: string, statementId: string, paymentId: string): Promise<CardMatchConfirmationDto>
+  confirmCardPaymentLink(householdId: string, statementId: string, paymentId: string): Promise<CardSettlementDto>
   listCardSettlementBankMappings(householdId: string): Promise<readonly CardSettlementBankMappingDto[]>
   upsertCardSettlementBankMapping(input: UpsertCardSettlementBankMappingInputDto): Promise<CardSettlementBankMappingDto>
   deleteCardSettlementBankMapping(input: DeleteCardSettlementBankMappingInputDto): Promise<void>

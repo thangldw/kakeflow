@@ -1,4 +1,6 @@
-use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
+use rusqlite::{
+    params, Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior,
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fmt};
 
@@ -3300,6 +3302,16 @@ pub fn import_run_counts(
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CardSettlementPaymentDto {
+    pub payment_id: String,
+    pub bank_transaction_id: String,
+    pub payment_amount_jpy: i64,
+    pub payment_on: String,
+    pub match_score_bps: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CardSettlementDto {
     pub id: String,
     pub card_account_id: String,
@@ -3317,6 +3329,11 @@ pub struct CardSettlementDto {
     pub payment_on: Option<String>,
     pub match_score_bps: Option<i64>,
     pub reconciliation_status: String,
+    pub paid_amount_jpy: i64,
+    pub outstanding_amount_jpy: i64,
+    pub overpaid_amount_jpy: i64,
+    pub payments: Vec<CardSettlementPaymentDto>,
+    pub eligible_payments: Vec<CardSettlementPaymentDto>,
 }
 
 pub fn list_card_settlements(
@@ -3334,40 +3351,331 @@ pub fn list_card_settlements(
              SELECT cs.id, cs.card_account_id, a.name, a.masked_identifier,
                     cs.period_start, cs.period_end, cs.payment_due_on, cs.statement_amount_jpy,
                     COALESCE(lt.detail_total, 0), COALESCE(lt.line_count, 0),
-                    cp.id, cp.bank_transaction_id, cp.payment_amount_jpy, cp.payment_on,
-                    cp.match_score_bps, cs.reconciliation_status
+                    cs.reconciliation_status
              FROM card_statements cs
              JOIN accounts a ON a.id = cs.card_account_id
              LEFT JOIN line_totals lt ON lt.statement_id = cs.id
-             LEFT JOIN card_payments cp ON cp.statement_id = cs.id
              WHERE cs.household_id = ?1
              ORDER BY cs.period_end DESC, cs.id DESC",
         )
         .map_err(map_database_error)?;
     let rows = statement
         .query_map([household_id], |row| {
-            Ok(CardSettlementDto {
-                id: row.get(0)?,
-                card_account_id: row.get(1)?,
-                card_name: row.get(2)?,
-                masked_identifier: row.get(3)?,
-                period_start: row.get(4)?,
-                period_end: row.get(5)?,
-                payment_due_on: row.get(6)?,
-                statement_amount_jpy: row.get(7)?,
-                detail_amount_jpy: row.get(8)?,
-                line_count: row.get(9)?,
-                payment_id: row.get(10)?,
-                bank_transaction_id: row.get(11)?,
-                payment_amount_jpy: row.get(12)?,
-                payment_on: row.get(13)?,
-                match_score_bps: row.get(14)?,
-                reconciliation_status: row.get(15)?,
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, u64>(9)?,
+                row.get::<_, String>(10)?,
+            ))
+        })
+        .map_err(map_database_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    drop(statement);
+
+    rows.into_iter()
+        .map(
+            |(
+                id,
+                card_account_id,
+                card_name,
+                masked_identifier,
+                period_start,
+                period_end,
+                payment_due_on,
+                statement_amount_jpy,
+                detail_amount_jpy,
+                line_count,
+                reconciliation_status,
+            )| {
+                let payments = list_statement_payments(connection, &id, true)?;
+                let eligible_payments = list_eligible_statement_payments(
+                    connection,
+                    household_id,
+                    &id,
+                    &card_account_id,
+                    &period_end,
+                    statement_amount_jpy,
+                )?;
+                let paid_amount_jpy = payments.iter().try_fold(0_i64, |total, payment| {
+                    total
+                        .checked_add(payment.payment_amount_jpy)
+                        .ok_or(RepositoryError::Unavailable)
+                })?;
+                let outstanding_amount_jpy =
+                    statement_amount_jpy.saturating_sub(paid_amount_jpy).max(0);
+                let overpaid_amount_jpy =
+                    paid_amount_jpy.saturating_sub(statement_amount_jpy).max(0);
+                let legacy = payments.first().or_else(|| eligible_payments.first());
+                Ok(CardSettlementDto {
+                    id,
+                    card_account_id,
+                    card_name,
+                    masked_identifier,
+                    period_start,
+                    period_end,
+                    payment_due_on,
+                    statement_amount_jpy,
+                    detail_amount_jpy,
+                    line_count,
+                    payment_id: legacy.map(|payment| payment.payment_id.clone()),
+                    bank_transaction_id: legacy.map(|payment| payment.bank_transaction_id.clone()),
+                    payment_amount_jpy: legacy.map(|payment| payment.payment_amount_jpy),
+                    payment_on: legacy.map(|payment| payment.payment_on.clone()),
+                    match_score_bps: legacy.and_then(|payment| payment.match_score_bps),
+                    reconciliation_status,
+                    paid_amount_jpy,
+                    outstanding_amount_jpy,
+                    overpaid_amount_jpy,
+                    payments,
+                    eligible_payments,
+                })
+            },
+        )
+        .collect()
+}
+
+fn list_statement_payments(
+    connection: &Connection,
+    statement_id: &str,
+    confirmed: bool,
+) -> Result<Vec<CardSettlementPaymentDto>, RepositoryError> {
+    let mut query = connection
+        .prepare(
+            "SELECT id, bank_transaction_id, payment_amount_jpy, payment_on, match_score_bps
+             FROM card_payments
+             WHERE statement_id = ?1
+               AND ((?2 = 1 AND confirmed_at IS NOT NULL)
+                 OR (?2 = 0 AND confirmed_at IS NULL))
+             ORDER BY payment_on, id",
+        )
+        .map_err(map_database_error)?;
+    let result = query
+        .query_map(params![statement_id, confirmed], |row| {
+            Ok(CardSettlementPaymentDto {
+                payment_id: row.get(0)?,
+                bank_transaction_id: row.get(1)?,
+                payment_amount_jpy: row.get(2)?,
+                payment_on: row.get(3)?,
+                match_score_bps: row.get(4)?,
             })
         })
+        .map_err(map_database_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(map_database_error);
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn list_eligible_statement_payments(
+    connection: &Connection,
+    household_id: &str,
+    statement_id: &str,
+    card_account_id: &str,
+    period_end: &str,
+    statement_amount_jpy: i64,
+) -> Result<Vec<CardSettlementPaymentDto>, RepositoryError> {
+    let mut query = connection
+        .prepare(
+            "SELECT cp.id, cp.bank_transaction_id, cp.payment_amount_jpy, cp.payment_on,
+                    COALESCE(cp.match_score_bps,
+                      4000
+                      + CASE WHEN cp.payment_amount_jpy <= MAX(?5 - (
+                          SELECT COALESCE(SUM(confirmed.payment_amount_jpy), 0)
+                          FROM card_payments confirmed
+                          WHERE confirmed.statement_id = ?2
+                            AND confirmed.confirmed_at IS NOT NULL
+                        ), 0) THEN 3000 ELSE 1000 END
+                      + CASE WHEN julianday(cp.payment_on) - julianday(?4) <= 45
+                             THEN 3000 ELSE 1500 END)
+             FROM card_payments cp
+             JOIN transactions t ON t.id = cp.bank_transaction_id
+             WHERE cp.household_id = ?1 AND cp.card_account_id = ?3
+               AND cp.confirmed_at IS NULL
+               AND (cp.statement_id IS NULL OR cp.statement_id = ?2)
+               AND t.household_id = ?1 AND t.status = 'POSTED'
+               AND t.transaction_type = 'CARD_PAYMENT'
+               AND cp.payment_on >= ?4
+               AND cp.payment_on <= date(?4, '+120 days')
+             ORDER BY cp.payment_on, cp.id
+             LIMIT 200",
+        )
         .map_err(map_database_error)?;
-    rows.collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(map_database_error)
+    let result = query
+        .query_map(
+            params![
+                household_id,
+                statement_id,
+                card_account_id,
+                period_end,
+                statement_amount_jpy
+            ],
+            |row| {
+                Ok(CardSettlementPaymentDto {
+                    payment_id: row.get(0)?,
+                    bank_transaction_id: row.get(1)?,
+                    payment_amount_jpy: row.get(2)?,
+                    payment_on: row.get(3)?,
+                    match_score_bps: row.get(4)?,
+                })
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(map_database_error);
+    result
+}
+
+pub fn confirm_card_payment_link(
+    connection: &Connection,
+    household_id: &str,
+    statement_id: &str,
+    payment_id: &str,
+) -> Result<CardSettlementDto, RepositoryError> {
+    validate_id(household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    validate_id(statement_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(payment_id, MAX_LOOKUP_ID_LEN)?;
+
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let statement: (String, i64, String) = tx
+        .query_row(
+            "SELECT card_account_id, statement_amount_jpy, period_end
+             FROM card_statements WHERE id = ?1 AND household_id = ?2",
+            params![statement_id, household_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    let payment: (Option<String>, String, String, i64, Option<String>, String) = tx
+        .query_row(
+            "SELECT statement_id, bank_transaction_id, card_account_id,
+                    payment_amount_jpy, confirmed_at, payment_on
+             FROM card_payments WHERE id = ?1 AND household_id = ?2",
+            params![payment_id, household_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+
+    if payment.2 != statement.0 {
+        return Err(RepositoryError::InvalidInput(
+            "Card payment does not belong to this card",
+        ));
+    }
+    if payment
+        .0
+        .as_deref()
+        .is_some_and(|linked| linked != statement_id)
+    {
+        return Err(RepositoryError::Conflict);
+    }
+    if payment.5.as_str() < statement.2.as_str()
+        || tx
+            .query_row(
+                "SELECT ?1 > date(?2, '+120 days')",
+                params![payment.5, statement.2],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(map_database_error)?
+    {
+        return Err(RepositoryError::InvalidInput(
+            "Card payment is outside the statement settlement window",
+        ));
+    }
+
+    let journal_shape: Option<(i64, i64)> = tx
+        .query_row(
+            "SELECT
+               COALESCE(SUM(CASE WHEN je.account_id = ?3 AND je.entry_side = 'DEBIT'
+                                 THEN je.amount_jpy ELSE 0 END), 0),
+               COUNT(DISTINCT CASE WHEN a.account_kind = 'LIABILITY'
+                                    AND a.account_subtype = 'CREDIT_CARD'
+                                    AND je.entry_side = 'DEBIT' THEN je.account_id END)
+             FROM transactions t
+             JOIN journal_entries je ON je.transaction_id = t.id
+             JOIN accounts a ON a.id = je.account_id
+             WHERE t.id = ?1 AND t.household_id = ?2
+               AND t.status = 'POSTED' AND t.transaction_type = 'CARD_PAYMENT'",
+            params![payment.1, household_id, statement.0],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?;
+    let (card_debit, card_account_count) = journal_shape.ok_or(RepositoryError::NotFound)?;
+    if card_debit != payment.3 || card_account_count != 1 {
+        return Err(RepositoryError::InvalidInput(
+            "Card payment journal does not match this statement",
+        ));
+    }
+
+    if payment.4.is_none() {
+        tx.execute(
+            "UPDATE card_payments
+             SET statement_id = ?1, match_score_bps = 10000,
+                 reconciliation_status = 'FULLY_RECONCILED',
+                 confirmed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE id = ?2 AND household_id = ?3 AND confirmed_at IS NULL",
+            params![statement_id, payment_id, household_id],
+        )
+        .map_err(map_database_error)?;
+    }
+
+    let confirmed_total: i64 = tx
+        .query_row(
+            "SELECT COALESCE(SUM(payment_amount_jpy), 0)
+             FROM card_payments
+             WHERE statement_id = ?1 AND household_id = ?2 AND confirmed_at IS NOT NULL",
+            params![statement_id, household_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    let status = reconciliation_status_for_total(statement.1, confirmed_total);
+    tx.execute(
+        "UPDATE card_statements SET reconciliation_status = ?1
+         WHERE id = ?2 AND household_id = ?3",
+        params![status, statement_id, household_id],
+    )
+    .map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+
+    list_card_settlements(connection, household_id)?
+        .into_iter()
+        .find(|settlement| settlement.id == statement_id)
+        .ok_or(RepositoryError::NotFound)
+}
+
+fn reconciliation_status_for_total(
+    statement_amount_jpy: i64,
+    confirmed_total: i64,
+) -> &'static str {
+    if confirmed_total == 0 {
+        "UNMATCHED"
+    } else if confirmed_total < statement_amount_jpy {
+        "PARTIALLY_RECONCILED"
+    } else if confirmed_total == statement_amount_jpy {
+        "FULLY_RECONCILED"
+    } else {
+        "OVERPAID"
+    }
 }
 
 fn validate_id(value: &str, max_len: usize) -> Result<(), RepositoryError> {
@@ -3729,7 +4037,8 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, statement_id TEXT,
                    bank_transaction_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
                    payment_amount_jpy INTEGER NOT NULL, payment_on TEXT NOT NULL,
-                   match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);
+                   match_score_bps INTEGER, reconciliation_status TEXT NOT NULL,
+                   confirmed_at TEXT);
                  CREATE TABLE staged_card_statements (
                    id TEXT PRIMARY KEY, import_run_id TEXT NOT NULL, household_id TEXT NOT NULL,
                    card_account_id TEXT NOT NULL REFERENCES accounts(id), issuer TEXT NOT NULL,
@@ -5456,7 +5765,7 @@ mod tests {
                       ('bank-payment','family','2026-07-27','CARD_PAYMENT','POSTED');
              INSERT INTO card_statements
                (id, household_id, card_account_id, period_start, period_end, statement_amount_jpy, reconciliation_status)
-               VALUES ('statement','family','family-rakuten-card','2026-06-01','2026-06-30',3000,'POSSIBLE_MATCH');
+               VALUES ('statement','family','family-rakuten-card','2026-06-01','2026-06-30',3000,'UNMATCHED');
              INSERT INTO card_statement_transactions
                (statement_id,transaction_id,statement_line_number,billed_amount_jpy)
                VALUES ('statement','purchase-1',1,1000),('statement','purchase-2',2,2000);
@@ -5470,7 +5779,230 @@ mod tests {
         assert_eq!(rows[0].line_count, 2);
         assert_eq!(rows[0].detail_amount_jpy, 3000);
         assert_eq!(rows[0].payment_amount_jpy, Some(3000));
-        assert_eq!(rows[0].reconciliation_status, "POSSIBLE_MATCH");
+        assert_eq!(rows[0].reconciliation_status, "UNMATCHED");
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_card_payment(
+        connection: &Connection,
+        household_id: &str,
+        transaction_id: &str,
+        payment_id: &str,
+        card_account_id: &str,
+        bank_account_id: &str,
+        payment_on: &str,
+        amount: i64,
+    ) {
+        connection
+            .execute(
+                "INSERT INTO transactions
+                 (id,household_id,occurred_on,transaction_type,status)
+                 VALUES (?1,?2,?3,'CARD_PAYMENT','POSTED')",
+                params![transaction_id, household_id, payment_on],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO journal_entries
+                 (id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES (?1||'-debit',?1,?2,'DEBIT',?4,1),
+                        (?1||'-credit',?1,?3,'CREDIT',?4,2)",
+                params![transaction_id, card_account_id, bank_account_id, amount],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO card_payments
+                 (id,household_id,statement_id,bank_transaction_id,card_account_id,
+                  payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
+                 VALUES (?1,?2,NULL,?3,?4,?5,?6,NULL,'UNMATCHED',NULL)",
+                params![
+                    payment_id,
+                    household_id,
+                    transaction_id,
+                    card_account_id,
+                    amount,
+                    payment_on
+                ],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn cumulative_card_payments_move_from_partial_to_full_idempotently() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        connection.execute("INSERT INTO card_statements
+            (id,household_id,card_account_id,period_start,period_end,payment_due_on,statement_amount_jpy,reconciliation_status)
+            VALUES ('statement','family','family-rakuten-card','2026-06-01','2026-06-30','2026-07-27',100000,'UNMATCHED')", []).unwrap();
+        insert_card_payment(
+            &connection,
+            "family",
+            "bank-40",
+            "payment-40",
+            "family-rakuten-card",
+            "family-bank",
+            "2026-07-20",
+            40_000,
+        );
+        insert_card_payment(
+            &connection,
+            "family",
+            "bank-60",
+            "payment-60",
+            "family-rakuten-card",
+            "family-bank",
+            "2026-07-27",
+            60_000,
+        );
+        let journal_count_before: i64 = connection
+            .query_row("SELECT count(*) FROM journal_entries", [], |row| row.get(0))
+            .unwrap();
+
+        let partial =
+            confirm_card_payment_link(&connection, "family", "statement", "payment-40").unwrap();
+        assert_eq!(partial.reconciliation_status, "PARTIALLY_RECONCILED");
+        assert_eq!(partial.paid_amount_jpy, 40_000);
+        assert_eq!(partial.outstanding_amount_jpy, 60_000);
+        assert_eq!(partial.overpaid_amount_jpy, 0);
+        assert_eq!(partial.payments.len(), 1);
+        assert_eq!(partial.eligible_payments.len(), 1);
+
+        let full =
+            confirm_card_payment_link(&connection, "family", "statement", "payment-60").unwrap();
+        assert_eq!(full.reconciliation_status, "FULLY_RECONCILED");
+        assert_eq!(full.paid_amount_jpy, 100_000);
+        assert_eq!(full.outstanding_amount_jpy, 0);
+        assert_eq!(full.payments.len(), 2);
+        assert!(full.eligible_payments.is_empty());
+        assert_eq!(full.payments[0].payment_id, "payment-40");
+        assert_eq!(full.payments[1].payment_id, "payment-60");
+
+        let repeated =
+            confirm_card_payment_link(&connection, "family", "statement", "payment-60").unwrap();
+        assert_eq!(repeated.paid_amount_jpy, 100_000);
+        assert_eq!(repeated.payments.len(), 2);
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM journal_entries", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            journal_count_before
+        );
+    }
+
+    #[test]
+    fn cumulative_card_payment_reports_overpayment() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        connection.execute("INSERT INTO card_statements
+            (id,household_id,card_account_id,period_start,period_end,statement_amount_jpy,reconciliation_status)
+            VALUES ('statement','family','family-rakuten-card','2026-06-01','2026-06-30',100000,'UNMATCHED')", []).unwrap();
+        insert_card_payment(
+            &connection,
+            "family",
+            "bank-110",
+            "payment-110",
+            "family-rakuten-card",
+            "family-bank",
+            "2026-07-27",
+            110_000,
+        );
+
+        let result =
+            confirm_card_payment_link(&connection, "family", "statement", "payment-110").unwrap();
+        assert_eq!(result.reconciliation_status, "OVERPAID");
+        assert_eq!(result.paid_amount_jpy, 110_000);
+        assert_eq!(result.outstanding_amount_jpy, 0);
+        assert_eq!(result.overpaid_amount_jpy, 10_000);
+    }
+
+    #[test]
+    fn card_payment_link_rejections_are_atomic_and_single_statement_scoped() {
+        let connection = database();
+        for id in ["family", "other"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        connection.execute_batch("INSERT INTO card_statements
+            (id,household_id,card_account_id,period_start,period_end,statement_amount_jpy,reconciliation_status)
+            VALUES ('first','family','family-rakuten-card','2026-06-01','2026-06-30',50000,'UNMATCHED'),
+                   ('second','family','family-rakuten-card','2026-07-01','2026-07-31',50000,'UNMATCHED'),
+                   ('foreign','other','other-rakuten-card','2026-06-01','2026-06-30',50000,'UNMATCHED')").unwrap();
+        insert_card_payment(
+            &connection,
+            "family",
+            "bank-preperiod",
+            "payment-preperiod",
+            "family-rakuten-card",
+            "family-bank",
+            "2026-06-29",
+            50_000,
+        );
+        assert!(matches!(
+            confirm_card_payment_link(&connection, "family", "first", "payment-preperiod"),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            confirm_card_payment_link(&connection, "other", "foreign", "payment-preperiod"),
+            Err(RepositoryError::NotFound)
+        ));
+        let state: (Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT statement_id,confirmed_at FROM card_payments WHERE id='payment-preperiod'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state, (None, None));
+
+        connection
+            .execute(
+                "UPDATE card_payments SET payment_on='2026-07-01' WHERE id='payment-preperiod'",
+                [],
+            )
+            .unwrap();
+        confirm_card_payment_link(&connection, "family", "first", "payment-preperiod").unwrap();
+        assert!(matches!(
+            confirm_card_payment_link(&connection, "family", "second", "payment-preperiod"),
+            Err(RepositoryError::Conflict)
+        ));
+        let linked_statement: String = connection
+            .query_row(
+                "SELECT statement_id FROM card_payments WHERE id='payment-preperiod'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked_statement, "first");
+        let second_status: String = connection
+            .query_row(
+                "SELECT reconciliation_status FROM card_statements WHERE id='second'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(second_status, "UNMATCHED");
     }
 
     #[test]

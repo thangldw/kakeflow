@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.0 — 2026-07-13
+
+- Reconcile one credit-card statement with multiple explicitly confirmed bank debits and show each payment leg once.
+- Derive statement status and paid, outstanding, and overpaid totals strictly from confirmed links.
+- Surface bounded same-card settlement candidates while requiring an explicit user confirmation for every link.
+- Keep confirmation household-scoped, atomic, idempotent, immutable after confirmation, and limited to posted card-payment journals within 120 days after the statement period.
+- Preserve card purchases as the expense facts and leave journals, source evidence, balances, budgets, and payment initiation untouched.
+- Normalize legacy reconciliation state and validate cumulative links and derived status during restore.
+
 ## 0.22.0 — 2026-07-13
 
 - Add seven controlled workflow labels and household-defined tags without changing accounting categories, journals, balances, budgets, or card reconciliation.

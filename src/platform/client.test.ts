@@ -57,6 +57,7 @@ describe('platform client', () => {
     await expect(client.confirmReceiptMatch('family', 'candidate', 'transaction')).rejects.toMatchObject({ command: 'receipt_match_confirm' })
     await expect(client.listCardSettlements('family')).resolves.toEqual([])
     await expect(client.confirmCardMatch('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_match_confirm' })
+    await expect(client.confirmCardPaymentLink('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_payment_link_confirm' })
     await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual([])
     await expect(client.upsertCardSettlementBankMapping({} as never)).rejects.toMatchObject({ command: 'card_settlement_bank_mapping_upsert' })
     await expect(client.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13' })).resolves.toMatchObject({ horizonDays: 45, banks: [] })
@@ -144,9 +145,20 @@ describe('platform client', () => {
         periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: null,
         statementAmountJpy: 1000, detailAmountJpy: 1000, lineCount: 1,
         paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000,
-        paymentOn: '2026-08-10', matchScoreBps: 8000, reconciliationStatus: 'POSSIBLE_MATCH',
+        paymentOn: '2026-08-10', matchScoreBps: 8000, reconciliationStatus: 'UNMATCHED',
+        paidAmountJpy: 0, outstandingAmountJpy: 1000, overpaidAmountJpy: 0, payments: [],
+        eligiblePayments: [{ paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000, paymentOn: '2026-08-10', matchScoreBps: 8000 }],
       }],
       card_match_confirm: { statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' },
+      card_payment_link_confirm: {
+        id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: null,
+        periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: null,
+        statementAmountJpy: 1000, detailAmountJpy: 1000, lineCount: 1,
+        paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000,
+        paymentOn: '2026-08-10', matchScoreBps: 8000, reconciliationStatus: 'FULLY_RECONCILED',
+        paidAmountJpy: 1000, outstandingAmountJpy: 0, overpaidAmountJpy: 0,
+        payments: [{ paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000, paymentOn: '2026-08-10', matchScoreBps: 8000 }], eligiblePayments: [],
+      },
       card_settlement_bank_mappings_list: [{ householdId: 'family', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', bankAccountId: 'family-bank', bankAccountName: 'Bank', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }],
       card_settlement_bank_mapping_upsert: { householdId: 'family', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', bankAccountId: 'family-bank', bankAccountName: 'Bank', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' },
       card_settlement_bank_mapping_delete: null,
@@ -233,6 +245,7 @@ describe('platform client', () => {
     await expect(client.confirmReceiptMatch('family', 'candidate-1', 'transaction-1')).resolves.toEqual(responses.receipt_match_confirm)
     await expect(client.listCardSettlements('family')).resolves.toEqual(responses.cards_list)
     await expect(client.confirmCardMatch('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_match_confirm)
+    await expect(client.confirmCardPaymentLink('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_payment_link_confirm)
     const mappingInput = { householdId: 'family', cardAccountId: 'family-rakuten-card', bankAccountId: 'family-bank' }
     await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual(responses.card_settlement_bank_mappings_list)
     await expect(client.upsertCardSettlementBankMapping(mappingInput)).resolves.toEqual(responses.card_settlement_bank_mapping_upsert)
@@ -270,12 +283,41 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('receipt_match_confirm', { request: { householdId: 'family', candidateId: 'candidate-1', transactionId: 'transaction-1' } })
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
+    expect(invokeSpy).toHaveBeenCalledWith('card_payment_link_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mappings_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_upsert', { input: mappingInput })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(43)
+    expect(invokeSpy).toHaveBeenCalledTimes(44)
+  })
+
+  it('rejects inconsistent cumulative card-payment rows', async () => {
+    const payment = { paymentId: 'payment-1', bankTransactionId: 'bank-1', paymentAmountJpy: 400, paymentOn: '2026-07-27', matchScoreBps: null }
+    const valid = {
+      id: 'statement-1', cardAccountId: 'card-1', cardName: 'Card', maskedIdentifier: null,
+      periodStart: '2026-06-01', periodEnd: '2026-06-30', paymentDueOn: '2026-07-27',
+      statementAmountJpy: 1000, detailAmountJpy: 1000, lineCount: 1,
+      paymentId: 'payment-1', bankTransactionId: 'bank-1', paymentAmountJpy: 400, paymentOn: '2026-07-27', matchScoreBps: null,
+      reconciliationStatus: 'PARTIALLY_RECONCILED', paidAmountJpy: 400, outstandingAmountJpy: 600, overpaidAmountJpy: 0,
+      payments: [payment], eligiblePayments: [],
+    }
+    const invalidRows = [
+      { ...valid, paidAmountJpy: 399 },
+      { ...valid, outstandingAmountJpy: 599 },
+      { ...valid, overpaidAmountJpy: 1 },
+      { ...valid, reconciliationStatus: 'FULLY_RECONCILED' },
+      { ...valid, payments: [payment, payment] },
+      { ...valid, eligiblePayments: [{ ...payment }] },
+      { ...valid, payments: [{ ...payment, paymentAmountJpy: -1 }] },
+      { ...valid, payments: [{ ...payment, paymentOn: '2026-02-30' }] },
+      { ...valid, eligiblePayments: [{ ...payment, paymentId: 'candidate', bankTransactionId: 'candidate-bank', matchScoreBps: 10001 }] },
+      { ...valid, periodEnd: 'not-a-date' },
+    ]
+    for (const response of invalidRows) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => [response] as T })
+      await expect(client.listCardSettlements('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'cards_list' })
+    }
   })
 
   it('rejects malformed responses with a sanitized typed error', async () => {

@@ -65,6 +65,9 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0025_receipt_evidence_linking.sql"
     )),
     M::up(include_str!("../migrations/0026_transaction_metadata.sql")),
+    M::up(include_str!(
+        "../migrations/0027_cumulative_card_payments.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -411,6 +414,56 @@ fn validate_restored_semantics(
                      AND ts.source_record_id=cs.source_record_id
                  )
              ) LIMIT 1",
+        )?;
+    }
+    if schema_version >= 27 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM card_payments cp
+             LEFT JOIN card_statements cs ON cs.id=cp.statement_id
+             LEFT JOIN transactions t ON t.id=cp.bank_transaction_id
+             WHERE cp.confirmed_at IS NOT NULL AND (
+                cs.id IS NULL
+                OR cp.confirmed_at NOT GLOB '????-??-??T??:??:??*Z'
+                OR cs.household_id!=cp.household_id
+                OR cs.card_account_id!=cp.card_account_id
+                OR t.id IS NULL OR t.household_id!=cp.household_id
+                OR t.status!='POSTED' OR t.transaction_type!='CARD_PAYMENT'
+                OR cp.reconciliation_status!='FULLY_RECONCILED'
+                OR cp.payment_on<cs.period_end
+                OR cp.payment_on>date(cs.period_end,'+120 days')
+                OR cp.payment_amount_jpy!=(
+                    SELECT COALESCE(SUM(je.amount_jpy),0)
+                    FROM journal_entries je
+                    WHERE je.transaction_id=t.id
+                      AND je.account_id=cs.card_account_id
+                      AND je.entry_side='DEBIT'
+                )
+                OR 1!=(
+                    SELECT COUNT(DISTINCT je.account_id)
+                    FROM journal_entries je JOIN accounts a ON a.id=je.account_id
+                    WHERE je.transaction_id=t.id AND je.entry_side='DEBIT'
+                      AND a.account_kind='LIABILITY' AND a.account_subtype='CREDIT_CARD'
+                )
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM card_statements cs
+             WHERE cs.reconciliation_status != CASE
+               WHEN (SELECT COALESCE(SUM(cp.payment_amount_jpy),0)
+                     FROM card_payments cp
+                     WHERE cp.statement_id=cs.id AND cp.confirmed_at IS NOT NULL)=0
+                 THEN 'UNMATCHED'
+               WHEN (SELECT COALESCE(SUM(cp.payment_amount_jpy),0)
+                     FROM card_payments cp
+                     WHERE cp.statement_id=cs.id AND cp.confirmed_at IS NOT NULL)<cs.statement_amount_jpy
+                 THEN 'PARTIALLY_RECONCILED'
+               WHEN (SELECT COALESCE(SUM(cp.payment_amount_jpy),0)
+                     FROM card_payments cp
+                     WHERE cp.statement_id=cs.id AND cp.confirmed_at IS NOT NULL)=cs.statement_amount_jpy
+                 THEN 'FULLY_RECONCILED'
+               ELSE 'OVERPAID' END LIMIT 1",
         )?;
     }
     if schema_version >= 2 {
@@ -848,6 +901,60 @@ mod tests {
             validate_restored_semantics(connection, 23)
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn restored_semantics_require_cumulative_card_payment_shape_and_derived_status() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households (id,name) VALUES ('family','Family');
+                     INSERT INTO accounts
+                       (id,household_id,name,account_kind,account_subtype,currency)
+                     VALUES ('card','family','Card','LIABILITY','CREDIT_CARD','JPY'),
+                            ('bank','family','Bank','ASSET','BANK','JPY');
+                     INSERT INTO transactions
+                       (id,household_id,occurred_on,transaction_type,status)
+                     VALUES ('payment-tx','family','2026-07-27','CARD_PAYMENT','POSTED');
+                     INSERT INTO journal_entries
+                       (id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES ('debit','payment-tx','card','DEBIT',100000,1),
+                            ('credit','payment-tx','bank','CREDIT',100000,2);
+                     INSERT INTO card_statements
+                       (id,household_id,card_account_id,period_start,period_end,
+                        statement_amount_jpy,reconciliation_status)
+                     VALUES ('statement','family','card','2026-06-01','2026-06-30',
+                             100000,'FULLY_RECONCILED');
+                     INSERT INTO card_payments
+                       (id,household_id,statement_id,bank_transaction_id,card_account_id,
+                        payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
+                     VALUES ('payment','family','statement','payment-tx','card',100000,
+                             '2026-07-27',10000,'FULLY_RECONCILED','2026-07-27T00:00:00Z');",
+                )?;
+                assert!(validate_restored_semantics(connection, 27).is_ok());
+
+                connection.execute(
+                    "UPDATE card_statements SET reconciliation_status='UNMATCHED'
+                     WHERE id='statement'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 27).is_err());
+                connection.execute(
+                    "UPDATE card_statements SET reconciliation_status='FULLY_RECONCILED'
+                     WHERE id='statement'",
+                    [],
+                )?;
+
+                connection.execute_batch(
+                    "DROP TRIGGER card_payments_confirmed_link_immutable;
+                     DROP TRIGGER card_payments_confirmed_shape_update;
+                     UPDATE card_payments SET payment_on='2026-06-29' WHERE id='payment';",
+                )?;
+                assert!(validate_restored_semantics(connection, 27).is_err());
+                Ok(())
+            })
+            .expect("restore semantic audit should execute");
     }
 
     #[test]
