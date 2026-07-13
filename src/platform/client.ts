@@ -46,6 +46,7 @@ import type {
   ReceiptMatchSuggestionDto,
   ReceiptMatchConfirmationDto,
   BulkUpdateTransactionMetadataResultDto,
+  ChangePackageReviewDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -114,6 +115,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       status: async () => WEB_STATUS,
       getLocalSyncFoundationStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'local_sync_foundation_status') },
       updatePrincipalMemberBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'principal_member_binding_update') },
+      exportChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_export_save') },
+      pickAndStageChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_pick_and_stage') },
+      getActiveChangePackageReview: async () => null,
+      resolveChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_resolve') },
+      applyChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_apply') },
+      discardChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_discard') },
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listHouseholdMembers: async () => [],
@@ -193,6 +200,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     status: () => invokeValidated(invoke, 'app_status', parseStatus),
     getLocalSyncFoundationStatus: (householdId) => invokeValidated(invoke, 'local_sync_foundation_status', parseLocalSyncFoundationStatus, { householdId }),
     updatePrincipalMemberBinding: (input) => invokeValidated(invoke, 'principal_member_binding_update', parseLocalSyncFoundationStatus, { input }),
+    exportChangePackage: (householdId) => invokeValidated(invoke, 'change_package_export_save', parseNullableString, { householdId }),
+    pickAndStageChangePackage: (householdId) => invokeValidated(invoke, 'change_package_pick_and_stage', parseNullableChangePackageReview, { householdId }),
+    getActiveChangePackageReview: (householdId) => invokeValidated(invoke, 'change_package_active_review', parseNullableChangePackageReview, { householdId }),
+    resolveChangePackage: (packageId, resolutions) => invokeValidated(invoke, 'change_package_resolve', parseChangePackageReview, { packageId, resolutions }),
+    applyChangePackage: (packageId) => invokeValidated(invoke, 'change_package_apply', parseChangePackageReview, { packageId }),
+    discardChangePackage: async (packageId) => { await invokeValidated(invoke, 'change_package_discard', parseVoid, { packageId }) },
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
     listHouseholdMembers: (householdId) => invokeValidated(invoke, 'household_members_list', parseHouseholdMembers, { householdId }),
@@ -336,6 +349,47 @@ function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStat
     },
     outbox: { envelopeCount: asSafeInteger(outbox.envelopeCount), latestSequence: asSafeInteger(outbox.latestSequence), latestRecordedAt },
     remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED',
+  }
+}
+
+function parseNullableString(value: unknown): string | null {
+  if (value === null || typeof value === 'string') return value
+  throw new TypeError('nullable string')
+}
+
+function parseNullableChangePackageReview(value: unknown): ChangePackageReviewDto | null {
+  return value === null ? null : parseChangePackageReview(value)
+}
+
+function parseChangePackageReview(value: unknown): ChangePackageReviewDto {
+  const record = asRecord(value)
+  const states = ['STAGED', 'REVIEW_REQUIRED', 'READY', 'APPLIED', 'REJECTED'] as const
+  if (!states.includes(record.state as typeof states[number]) || !Array.isArray(record.records)) throw new TypeError('change package review')
+  return {
+    packageId: asRequiredString(record.packageId), targetHouseholdId: asRequiredString(record.targetHouseholdId),
+    sourceInstallationId: asRequiredString(record.sourceInstallationId), sourceRevision: asSafeInteger(record.sourceRevision),
+    sourceCreatedAt: asRequiredString(record.sourceCreatedAt), state: record.state as ChangePackageReviewDto['state'],
+    recordCount: asSafeInteger(record.recordCount), createCount: asSafeInteger(record.createCount),
+    updateCount: asSafeInteger(record.updateCount), unchangedCount: asSafeInteger(record.unchangedCount),
+    deleteCount: asSafeInteger(record.deleteCount), conflictCount: asSafeInteger(record.conflictCount),
+    records: record.records.map((item) => {
+      const entry = asRecord(item)
+      const operations = ['UPSERT', 'DELETE'] as const
+      const reviewStates = ['CREATE', 'UPDATE', 'UNCHANGED', 'DELETE', 'CONFLICT'] as const
+      const resolutions = ['PENDING', 'APPLY_INCOMING', 'KEEP_LOCAL', 'SKIP'] as const
+      if (!operations.includes(entry.operation as typeof operations[number])
+          || !reviewStates.includes(entry.reviewState as typeof reviewStates[number])
+          || !resolutions.includes(entry.resolution as typeof resolutions[number])) throw new TypeError('change package record')
+      return {
+        recordOrder: asSafeInteger(entry.recordOrder), entityKind: asRequiredString(entry.entityKind),
+        entityId: asRequiredString(entry.entityId), operation: entry.operation as 'UPSERT' | 'DELETE',
+        payloadSha256: asRequiredString(entry.payloadSha256),
+        reviewState: entry.reviewState as ChangePackageReviewDto['records'][number]['reviewState'],
+        resolution: entry.resolution as ChangePackageReviewDto['records'][number]['resolution'],
+        currentPayloadSha256: asNullableString(entry.currentPayloadSha256),
+        conflictReason: asNullableString(entry.conflictReason),
+      }
+    }),
   }
 }
 

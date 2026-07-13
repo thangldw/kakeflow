@@ -149,6 +149,26 @@ export interface LocalSyncFoundationStatusDto {
 export interface UpdatePrincipalMemberBindingInputDto {
   readonly householdId: string; readonly principalId: string; readonly memberId: string | null; readonly mutationId: string
 }
+export type ChangePackageResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
+export interface ChangePackageRecordReviewDto {
+  readonly recordOrder: number; readonly entityKind: string; readonly entityId: string
+  readonly operation: 'UPSERT' | 'DELETE'; readonly payloadSha256: string
+  readonly reviewState: 'CREATE' | 'UPDATE' | 'UNCHANGED' | 'DELETE' | 'CONFLICT'
+  readonly resolution: ChangePackageResolutionDto
+  readonly currentPayloadSha256: string | null; readonly conflictReason: string | null
+}
+export interface ChangePackageReviewDto {
+  readonly packageId: string; readonly targetHouseholdId: string; readonly sourceInstallationId: string
+  readonly sourceRevision: number; readonly sourceCreatedAt: string
+  readonly state: 'STAGED' | 'REVIEW_REQUIRED' | 'READY' | 'APPLIED' | 'REJECTED'
+  readonly recordCount: number; readonly createCount: number; readonly updateCount: number
+  readonly unchangedCount: number; readonly deleteCount: number; readonly conflictCount: number
+  readonly records: readonly ChangePackageRecordReviewDto[]
+}
+export interface ChangePackageResolutionInputDto {
+  readonly entityKind: string; readonly entityId: string
+  readonly resolution: 'APPLY_INCOMING' | 'KEEP_LOCAL'
+}
 export interface ExtractedRegionDto {
   readonly pageNumber: number
   readonly coordinateSpace: 'PIXELS' | 'PDF_POINTS' | 'UNLOCATED'
@@ -459,6 +479,12 @@ export type AppCommand =
   | 'app_status'
   | 'local_sync_foundation_status'
   | 'principal_member_binding_update'
+  | 'change_package_export_save'
+  | 'change_package_pick_and_stage'
+  | 'change_package_active_review'
+  | 'change_package_resolve'
+  | 'change_package_apply'
+  | 'change_package_discard'
   | 'households_list'
   | 'household_create'
   | 'household_members_list'
@@ -538,6 +564,12 @@ export interface PlatformClient {
   status(): Promise<AppStatusDto>
   getLocalSyncFoundationStatus(householdId: string): Promise<LocalSyncFoundationStatusDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
+  exportChangePackage(householdId: string): Promise<string | null>
+  pickAndStageChangePackage(householdId: string): Promise<ChangePackageReviewDto | null>
+  getActiveChangePackageReview(householdId: string): Promise<ChangePackageReviewDto | null>
+  resolveChangePackage(packageId: string, resolutions: readonly ChangePackageResolutionInputDto[]): Promise<ChangePackageReviewDto>
+  applyChangePackage(packageId: string): Promise<ChangePackageReviewDto>
+  discardChangePackage(packageId: string): Promise<void>
   listHouseholds(): Promise<readonly HouseholdDto[]>
   createHousehold(input: CreateHouseholdInputDto): Promise<HouseholdDto>
   listHouseholdMembers(householdId: string): Promise<readonly HouseholdMemberDto[]>

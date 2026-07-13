@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.38.0 — 2026-07-13
+
+- Add native save/select workflows for full-current-state local change packages covering exactly 11 household, ledger, planning, and configuration aggregate kinds.
+- Validate canonical payload, snapshot, package, kind-count, identity, duplicate-key, source-installation, revision, and applied-lineage invariants before review.
+- Stage package review durably with explicit add/update/unchanged/delete/conflict counts; require a no-default keep-local or use-package decision for every conflict and deletion.
+- Recompare destination aggregate hashes immediately before apply, materialize accepted changes in dependency order, and roll back the whole package on any failed relation or write.
+- Preserve source-record and candidate identifiers through portable transaction evidence links until the original source graph is available locally.
+- Record accepted source revision/entity heads, reject stale or equivocated revisions, make repeated apply idempotent, and suppress incoming apply writes from the local capture/outbox.
+- Keep the workflow in Settings and label it `端末内のみ`; no file is sent over a network and this release does not claim cloud sync or automatic multi-device delivery.
+
 ## 0.37.0 — 2026-07-13
 
 - Capture one deterministic household monthly-budget plan plus complete savings-goal, dashboard-preference, and versioned parser-profile records.
