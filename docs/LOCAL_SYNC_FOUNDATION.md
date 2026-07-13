@@ -61,9 +61,16 @@ accepted result in one SQLite transaction. Incoming package writes are guarded
 from local capture, so applying a package does not echo it into the outbox. This
 is file transfer initiated by the user, not outbox delivery or network sync.
 
+KakeFlow 0.39 introduces package schema v2 and extends that atomic graph with
+card statements and card payments. Ordered statement lines, due dates,
+unconfirmed suggestions, confirmed settlement links, and portable statement
+source references now reconstruct the Cards and forecast read models on the
+receiving installation. Schema-v1 packages remain accepted and cannot delete
+the new card graph by omission.
+
 ## Restore validation
 
-Schema 35 restore validation checks device, principal, member-binding, local
+Schema 36 restore validation checks device, principal, member-binding, local
 context, envelope, outbox, and transactional-capture relations before activation.
 It also validates the final replayable aggregate shape, journal account scope,
 line uniqueness, positive integer amounts, debit/credit balance, planning and
@@ -75,7 +82,7 @@ logical principals and historical origin/envelope records remain in the backup.
 
 This release does not provide a sync server, network transport, automatic
 package delivery, source-document/blob transport, source/import aggregate graph,
-card-statement/payment aggregate graph, investment/portfolio aggregate graph,
+investment/portfolio aggregate graph,
 end-to-end sync protocol, field-level merge, login,
 remote authentication, access control, backend audience enforcement, or mobile
 receipt capture. Device-local watched-folder state also remains local. Those

@@ -66,6 +66,19 @@ describe('LocalChangePackagePanel', () => {
     expect(await screen.findByText('このパッケージは反映済みです。')).toBeInTheDocument()
   })
 
+  it('names card statement and settlement records in the review', async () => {
+    activeReview.mockResolvedValue({
+      ...review,
+      records: [
+        { ...review.records[0], entityKind: 'CARD_STATEMENT', entityId: 'statement-1' },
+        { ...review.records[1], entityKind: 'CARD_PAYMENT', entityId: 'payment-1' },
+      ],
+    })
+    render(<LocalChangePackagePanel householdId="family" />)
+    expect(await screen.findByText('カード請求・statement-1')).toBeInTheDocument()
+    expect(screen.getByText('カード引落照合・payment-1')).toBeInTheDocument()
+  })
+
   it('ignores a file-picker result after the household changes', async () => {
     activeReview.mockResolvedValue(null)
     let finishPick: (value: typeof review) => void = () => undefined

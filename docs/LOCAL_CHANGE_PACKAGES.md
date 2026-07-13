@@ -1,31 +1,42 @@
 # Local change packages
 
-KakeFlow 0.38 provides a user-driven file workflow for moving the current
+KakeFlow 0.39 provides a user-driven file workflow for moving the current
 household state between KakeFlow desktop installations. It does not connect to a
 server, poll another device, or transmit a file over a network.
 
 ## Covered current state
 
-Every package declares exactly these eleven aggregate kinds:
+Package schema v2 declares exactly these thirteen aggregate kinds:
 
 1. household;
 2. household members;
 3. accounts;
 4. posted/draft transaction aggregates, including ordered journal entries,
    labels, tags, portable source references, and provider external keys;
-5. the complete monthly budget plan, including an empty plan;
-6. savings goals;
-7. classification rules with labels and tags;
-8. account groups with ordered members;
-9. card-to-bank settlement mappings;
-10. dashboard preferences; and
-11. delimited parser profiles.
+5. card statements with period, due date, amount, derived status, ordered lines,
+   and a portable source-document identifier;
+6. card payments, including unconfirmed suggestions and confirmed bank-payment
+   links;
+7. the complete monthly budget plan, including an empty plan;
+8. savings goals;
+9. classification rules with labels and tags;
+10. account groups with ordered members;
+11. card-to-bank settlement mappings;
+12. dashboard preferences; and
+13. delimited parser profiles.
 
-Source documents and their bytes, import runs/candidates, card statements and
-payment links, investment snapshots/events, watched-folder grants, and derived
-analytics are not included. Transaction source identifiers are retained as
+Schema-v1 packages with the original eleven kinds remain valid. Their omission
+of card statements and payments never creates deletion candidates for those
+aggregates on the receiver.
+
+Source documents and their bytes, import runs/candidates, investment
+snapshots/events, watched-folder grants, and derived analytics are not included.
+Transaction source identifiers are retained as
 portable references; they do not pretend that the missing source document is
-present on the receiving installation.
+present on the receiving installation. The same rule applies to a statement's
+source-document identifier: an equal local ID alone does not prove equal bytes,
+so it remains portable unless the destination statement already has that exact
+actual source link.
 
 ## Export and validation
 
@@ -56,7 +67,9 @@ choose one whole-aggregate outcome:
 - use the package aggregate (or delete it when omitted).
 
 Households and household members are never inferred as omission deletes.
-KakeFlow 0.38 does not perform field-level merges.
+KakeFlow 0.39 does not perform field-level merges. Accepted mixed choices are
+also checked against the derived card status and confirmed-payment invariants;
+an inconsistent graph rolls back as one transaction.
 
 ## Atomic apply and lineage
 

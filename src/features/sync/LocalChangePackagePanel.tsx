@@ -8,6 +8,7 @@ type Choice = ChangePackageResolutionInputDto['resolution']
 
 const kindLabels: Readonly<Record<string, string>> = {
   HOUSEHOLD: '世帯', HOUSEHOLD_MEMBER: 'メンバー', ACCOUNT: '口座', TRANSACTION: '取引',
+  CARD_STATEMENT: 'カード請求', CARD_PAYMENT: 'カード引落照合',
   MONTHLY_BUDGET_PLAN: '月間予算', SAVINGS_GOAL: '貯蓄目標', CLASSIFICATION_RULE: '分類ルール',
   ACCOUNT_GROUP: '口座グループ', CARD_SETTLEMENT_MAPPING: 'カード引落口座',
   DASHBOARD_PREFERENCES: 'ダッシュボード設定', DELIMITED_PARSER_PROFILE: 'CSV読込設定',
@@ -94,7 +95,7 @@ export function LocalChangePackagePanel({ householdId }: Props) {
   }
 
   return <section className="panel local-change-package" aria-busy={busy}>
-    <div className="panel-head"><div><h2 ref={heading} tabIndex={-1}>変更パッケージ</h2><p>KakeFlowで作成した変更パッケージを選び、内容を確認してからこの端末へ反映します。ネットワーク送受信は行いません。</p></div><span className="local-only-badge">端末内のみ</span></div>
+    <div className="panel-head"><div><h2 ref={heading} tabIndex={-1}>変更パッケージ</h2><p>取引・計画設定に加え、カード請求と銀行引落の照合状態も確認してこの端末へ反映します。ネットワーク送受信は行いません。</p></div><span className="local-only-badge">端末内のみ</span></div>
     {platformClient.runtime !== 'tauri' ? <p className="empty-state">変更パッケージはデスクトップ版で利用できます。</p> : <>
       <div className="change-package-actions">
         <button className="primary-btn" disabled={busy || !householdId || Boolean(review && review.state !== 'APPLIED')} onClick={() => void pick()}>ローカルパッケージを選択</button>
