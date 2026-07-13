@@ -50,6 +50,7 @@ describe('platform client', () => {
     await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).rejects.toMatchObject({ command: 'watched_folder_file_read' })
     await expect(client.listWatchedFileInbox('family')).resolves.toEqual([])
     await expect(client.countWatchedFileInbox('family')).resolves.toEqual({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 0 })
+    await expect(client.listPendingReviews('family')).resolves.toEqual({ householdId: 'family', runs: [] })
     await expect(client.claimWatchedFileInboxItems('family', ['item'])).rejects.toMatchObject({ command: 'watched_file_inbox_claim' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
@@ -142,6 +143,13 @@ describe('platform client', () => {
       watched_file_inbox_ignore: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'IGNORED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
       watched_file_inbox_retry: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'DISCOVERED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0, latestSuccessfulImportAt: null, latestSourceFilename: null, latestSourceType: null, distinctSourceTypes: 0 },
+      pending_review_list: {
+        householdId: 'family',
+        runs: [
+          { runId: 'run-2', documentId: 'document-2', status: 'REVIEW_REQUIRED', adapterId: 'paypay-history-v1', adapterVersion: '1', startedAt: '2026-07-13T12:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'paypay.csv', mediaType: 'text/csv', byteSize: 2048, sourceModifiedAt: '2026-07-13T11:59:00Z', recordCount: 20, candidateCount: 10, completionState: 'CANDIDATE_REVIEW' },
+          { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: null, adapterVersion: null, startedAt: '2026-07-12T12:00:00.000Z', sourceType: 'LOCAL_FOLDER', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1024, sourceModifiedAt: null, recordCount: 8, candidateCount: 8, completionState: 'CANDIDATE_REVIEW' },
+        ],
+      },
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       import_preview: {
         summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
@@ -278,6 +286,7 @@ describe('platform client', () => {
     await expect(client.markWatchedFileInboxFailed('family', 'a'.repeat(64), 'c'.repeat(64), 'PREVIEW_FAILED')).resolves.toEqual(responses.watched_file_inbox_mark_failed)
     await expect(client.markWatchedFileInboxStaged('family', 'a'.repeat(64), 'c'.repeat(64), 'run-1')).resolves.toEqual(responses.watched_file_inbox_mark_staged)
     await expect(client.importSummary('family')).resolves.toEqual(responses.import_summary)
+    await expect(client.listPendingReviews('family')).resolves.toEqual(responses.pending_review_list)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
     await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
@@ -309,6 +318,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('household_member_archive', { householdId: 'family', memberId: 'member-1' })
     expect(invokeSpy).toHaveBeenCalledWith('accounts_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('import_start', { request: { import: importRequest, fileBytes: [1, 2, 3] } })
+    expect(invokeSpy).toHaveBeenCalledWith('pending_review_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_manual_create', { input: manualInput })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_detail_get', { householdId: 'family', transactionId: 'tx-manual' })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_update', { input: updateInput })
@@ -349,7 +359,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(56)
+    expect(invokeSpy).toHaveBeenCalledTimes(57)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {
@@ -588,6 +598,37 @@ describe('platform client', () => {
     ]) {
       const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
       await expect(client.importSummary('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_summary' })
+    }
+  })
+
+  it('strictly validates the bounded and ordered pending-review list', async () => {
+    const older = { runId: 'run-b', documentId: 'document-b', status: 'REVIEW_REQUIRED', adapterId: null, adapterVersion: null, startedAt: '2026-07-12T12:00:00Z', sourceType: 'LOCAL_FOLDER', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 100, sourceModifiedAt: null, recordCount: 2, candidateCount: 1, completionState: 'CANDIDATE_REVIEW' }
+    const newer = { ...older, runId: 'run-a', documentId: 'document-a', startedAt: '2026-07-13T12:00:00.000Z', adapterId: 'paypay-history-v1', adapterVersion: '1' }
+    const valid = { householdId: 'family', runs: [newer, older] }
+    const validClient = createPlatformClient({ tauri: true, invoke: async <T>() => valid as T })
+    await expect(validClient.listPendingReviews('family')).resolves.toEqual(valid)
+
+    const invalidResponses: readonly unknown[] = [
+      { ...valid, householdId: '' },
+      { ...valid, householdId: 'other-household' },
+      { ...valid, runs: [{ ...newer, status: 'POSTED' }] },
+      { ...valid, runs: [older, newer] },
+      { ...valid, runs: [newer, { ...older, runId: newer.runId }] },
+      { ...valid, runs: [newer, { ...older, documentId: newer.documentId }] },
+      { ...valid, runs: [{ ...newer, startedAt: '2026-07-13' }] },
+      { ...valid, runs: [{ ...newer, sourceModifiedAt: 'yesterday' }] },
+      { ...valid, runs: [{ ...newer, adapterId: '' }] },
+      { ...valid, runs: [{ ...newer, adapterId: undefined }] },
+      { ...valid, runs: [{ ...newer, completionState: undefined }] },
+      { ...valid, runs: [{ ...newer, completionState: 'SOURCE_READY' }] },
+      { ...valid, runs: [{ ...newer, sourceModifiedAt: undefined }] },
+      { ...valid, runs: [{ ...newer, originalFilename: '' }] },
+      { ...valid, runs: [{ ...newer, byteSize: -1 }] },
+      { ...valid, runs: Array.from({ length: 201 }, (_, index) => ({ ...newer, runId: `run-${index}`, documentId: `document-${index}` })) },
+    ]
+    for (const response of invalidResponses) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(client.listPendingReviews('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'pending_review_list' })
     }
   })
 

@@ -50,8 +50,8 @@ use brokerage::{
 use dashboard_preferences::{DashboardPreferencesDto, UpsertDashboardPreferencesInput};
 use document_vault::DocumentVault;
 use import_workflow::{
-    CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
-    StartImport,
+    CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PendingReviewListDto,
+    PostingDecision, StartImport,
 };
 use investment_fx::{
     ImportInvestmentFxRatesInput, InvestmentFxImportSummaryDto, InvestmentFxRateDto,
@@ -2151,6 +2151,16 @@ fn import_preview(
 }
 
 #[tauri::command]
+fn pending_review_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<PendingReviewListDto, String> {
+    workflow_result(&state, |connection| {
+        import_workflow::list_pending_reviews(connection, &household_id)
+    })
+}
+
+#[tauri::command]
 fn import_commit(
     state: tauri::State<'_, AppState>,
     run_id: String,
@@ -2699,6 +2709,7 @@ pub fn run() {
             card_statement_due_date_update,
             import_start,
             import_preview,
+            pending_review_list,
             import_commit,
             import_rollback,
             backup_create,
