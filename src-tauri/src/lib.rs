@@ -28,6 +28,7 @@ pub mod restore;
 pub mod source_pdf_preview;
 pub mod source_preview;
 mod source_viewer;
+pub mod sync_foundation;
 pub mod watched_file_inbox;
 pub mod watched_folders;
 
@@ -91,6 +92,7 @@ use source_viewer::{
     SourceDocumentViewDto, SourceRecordPageDto, SourceRecordPageRequest, SourceRecordViewDto,
     UpdateSourceDocumentAudienceInput,
 };
+use sync_foundation::{LocalSyncFoundationStatusDto, UpdatePrincipalMemberBindingInput};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use zeroize::Zeroizing;
@@ -468,6 +470,32 @@ fn app_status(state: tauri::State<'_, AppState>) -> Result<StatusResponse, Strin
             })
         })
         .map_err(|_| "Database status is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn local_sync_foundation_status(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<LocalSyncFoundationStatusDto, String> {
+    state
+        .with_connection(|connection| {
+            sync_foundation::get_local_status(connection, &household_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Local sync foundation is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn principal_member_binding_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdatePrincipalMemberBindingInput,
+) -> Result<LocalSyncFoundationStatusDto, String> {
+    state
+        .with_connection(|connection| {
+            sync_foundation::update_principal_member_binding(connection, &input)
+                .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Principal member binding could not be updated".to_owned())
 }
 
 fn database_status(state: &AppState) -> Result<DatabaseStatus, String> {
@@ -2350,6 +2378,8 @@ pub fn run() {
             app_bootstrap,
             app_health,
             app_status,
+            local_sync_foundation_status,
+            principal_member_binding_update,
             packaged_smoke_complete,
             packaged_smoke_failure,
             packaged_smoke_progress,

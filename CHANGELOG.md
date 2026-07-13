@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.0 — 2026-07-13
+
+- Add stable local device origins and logical principals without treating either as a login or authorization identity.
+- Add an explicit local-principal-to-household-member mapping in Family Space; never infer it from account ownership or display names.
+- Add canonical schema-v1 change envelopes with per-device sequence, idempotent mutation IDs, deterministic IDs, canonical JSON payloads, SHA-256 digests, and a separate local outbox.
+- Show device, principal, change-log, and restore-validation status in Settings with an explicit `端末内のみ` boundary.
+- Validate sync-foundation relations during portable restore and clear only the active device-local context while preserving logical identity and origin history.
+- Keep remote transport, cloud synchronization, login, conflict resolution, audience enforcement, and mobile capture outside this release.
+
 ## 0.33.0 — 2026-07-13
 
 - Expand packaged-WebView smoke from Home-only evidence to all ten top-level workspaces, including Settings.
