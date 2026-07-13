@@ -4,6 +4,12 @@ KakeFlow 0.39 provides a user-driven file workflow for moving the current
 household state between KakeFlow desktop installations. It does not connect to a
 server, poll another device, or transmit a file over a network.
 
+KakeFlow 0.40 keeps original source bytes outside this bounded JSON graph. After
+applying a change package, use the separate
+[portable confirmed-evidence bundle](PORTABLE_EVIDENCE_BUNDLES.md) to hydrate
+the immutable CSV/PDF/image and raw-row provenance referenced by its portable
+transaction and card identifiers.
+
 ## Covered current state
 
 Package schema v2 declares exactly these thirteen aggregate kinds:

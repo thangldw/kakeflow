@@ -7,6 +7,7 @@ pub mod change_package;
 pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_vault;
+pub mod evidence_bundle;
 pub mod financial_calendar;
 pub mod fixed_cost_review;
 mod folder_discovery;
@@ -612,6 +613,97 @@ fn change_package_discard(
     change_package_result(&state, |connection| {
         change_package::discard_package(connection, &package_id)
     })
+}
+
+fn evidence_bundle_message(error: evidence_bundle::EvidenceBundleError) -> String {
+    match error {
+        evidence_bundle::EvidenceBundleError::Empty => {
+            "No confirmed source evidence is available for this household"
+        }
+        evidence_bundle::EvidenceBundleError::MissingDependency => {
+            "Apply the matching change package before importing its source evidence"
+        }
+        evidence_bundle::EvidenceBundleError::Conflict => {
+            "This evidence conflicts with existing local provenance"
+        }
+        evidence_bundle::EvidenceBundleError::LimitExceeded => {
+            "The evidence bundle exceeds supported limits"
+        }
+        _ => "Evidence bundle operation could not be completed",
+    }
+    .to_owned()
+}
+
+#[tauri::command]
+async fn evidence_bundle_export_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+    passphrase: String,
+) -> Result<Option<evidence_bundle::EvidenceBundleSummaryDto>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Confirmed Evidence", &["kakeflow-evidence"])
+        .set_file_name("kakeflow-confirmed-evidence.kakeflow-evidence")
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected evidence destination is unavailable".to_owned())?;
+    let passphrase = Zeroizing::new(passphrase);
+    state
+        .with_connection(|connection| {
+            Ok(evidence_bundle::export_confirmed_evidence(
+                connection,
+                &vault,
+                &household_id,
+                &destination,
+                passphrase.as_str(),
+            ))
+        })
+        .map_err(|_| "Evidence bundle operation could not be completed".to_owned())?
+        .map(Some)
+        .map_err(evidence_bundle_message)
+}
+
+#[tauri::command]
+async fn evidence_bundle_pick_and_import(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+    passphrase: String,
+) -> Result<Option<evidence_bundle::EvidenceBundleSummaryDto>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Confirmed Evidence", &["kakeflow-evidence"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let source = selected
+        .into_path()
+        .map_err(|_| "Selected evidence bundle is unavailable".to_owned())?;
+    let passphrase = Zeroizing::new(passphrase);
+    let staged = evidence_bundle::stage_evidence_bundle(&source, passphrase.as_str())
+        .map_err(evidence_bundle_message)?;
+    if staged.summary().household_id != household_id {
+        return Err("The evidence bundle belongs to a different household".to_owned());
+    }
+    state
+        .with_connection(|connection| {
+            Ok(evidence_bundle::apply_evidence_bundle(
+                connection, &vault, &staged,
+            ))
+        })
+        .map_err(|_| "Evidence bundle operation could not be completed".to_owned())?
+        .map(Some)
+        .map_err(evidence_bundle_message)
 }
 
 fn database_status(state: &AppState) -> Result<DatabaseStatus, String> {
@@ -2502,6 +2594,8 @@ pub fn run() {
             change_package_resolve,
             change_package_apply,
             change_package_discard,
+            evidence_bundle_export_save,
+            evidence_bundle_pick_and_import,
             packaged_smoke_complete,
             packaged_smoke_failure,
             packaged_smoke_progress,

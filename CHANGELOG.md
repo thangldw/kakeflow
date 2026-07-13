@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.40.0 — 2026-07-13
+
+- Add a separate passphrase-protected confirmed-evidence capsule carrying original CSV, PDF, and receipt-image bytes plus every immutable source row behind posted transactions and card statements.
+- Authenticate the capsule manifest and vault objects, enforce document/record/byte budgets, validate exact household and ledger/card dependencies, and publish database aliases atomically only after all source bytes are verified.
+- Reuse source documents by household SHA-256, reject portable-ID/content collisions, make repeated imports idempotent, and clean newly written unreferenced vault objects after a failed database apply.
+- Preserve origin document and record identities across A → B → C forwarding while keeping portable transaction/card source references dormant, so evidence hydration does not change canonical aggregate hashes or echo a local change.
+- Resolve hydrated aliases in transaction detail, raw-row pagination, image preview, and PDF preview while retaining the immutable original payload and source audience controls.
+- Add a dedicated Settings workflow with explicit confirmed-only scope, pending-Inbox exclusion, imported/reused counts, and native `.kakeflow-evidence` save/select dialogs.
+
 ## 0.39.0 — 2026-07-13
 
 - Extend local change-package schema v2 to exactly 13 aggregate kinds with complete card statements and card payments while retaining schema-v1 compatibility.

@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.39 extends reviewable [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) with the complete credit-card reconciliation graph. Package schema v2 moves 13 household aggregates, including ordered statement lines, due dates, unconfirmed match suggestions, confirmed bank-payment links, and portable statement-document references. Schema-v1 packages remain readable and never imply deletion of the two new card aggregates. Cloud sync and automatic multi-device delivery are still not claimed.
+Version 0.40 adds a separate, passphrase-protected [portable confirmed-evidence capsule](docs/PORTABLE_EVIDENCE_BUNDLES.md). After a schema-v2 local change package moves the household ledger and card graph, the capsule carries the original CSV/PDF/image bytes and immutable raw rows behind posted transactions and card statements. Content-addressed aliases restore source viewers without changing canonical transaction/card hashes. Pending Inbox candidates and automatic multi-device delivery remain outside this release.
 
 ## Product tour
 
@@ -117,6 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with authenticated original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, exact dependency checks, idempotent content reuse, atomic database publication, and transaction source-viewer hydration without change-package hash drift. Pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
 - [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v2 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 13-kind household snapshot, preserve ledger and card-reconciliation references, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
 - [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard files, with adapter-compatible account filtering, per-preview selection, and no default or name-based inference.
@@ -188,6 +189,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Define the remaining portable source/import and investment/portfolio aggregate graphs, then add incoming apply and conflict semantics for those domains, optional end-to-end encrypted remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
+1. Define the remaining portable investment/portfolio aggregate graph and pending-import handoff semantics, then add optional end-to-end encrypted remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
 2. Add more institution-specific brokerage and statement adapters.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

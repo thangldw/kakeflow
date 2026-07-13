@@ -91,7 +91,15 @@ pub fn get_source_document(
              FROM source_documents sd
              JOIN import_runs ir ON ir.id = sd.import_run_id
              LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
-             WHERE sd.id = ?1 AND sd.household_id = ?2",
+             WHERE sd.household_id = ?2
+               AND (sd.id = ?1 OR EXISTS (
+                 SELECT 1 FROM evidence_source_document_aliases alias
+                 WHERE alias.household_id = ?2
+                   AND alias.portable_document_id = ?1
+                   AND alias.local_document_id = sd.id
+               ))
+             ORDER BY CASE WHEN sd.id = ?1 THEN 0 ELSE 1 END
+             LIMIT 1",
             params![document_id, household_id],
             |row| {
                 let byte_size: i64 = row.get(6)?;
@@ -149,6 +157,8 @@ pub fn update_source_document_audience(
             ));
         }
     }
+    let local_document_id =
+        get_source_document(connection, &input.household_id, &input.source_document_id)?.id;
     let changed = connection
         .execute(
             "UPDATE source_documents
@@ -157,7 +167,7 @@ pub fn update_source_document_audience(
             params![
                 input.audience_visibility.as_sql(),
                 input.audience_member_id,
-                input.source_document_id,
+                local_document_id,
                 input.household_id
             ],
         )
@@ -181,7 +191,7 @@ pub fn list_source_document_records(
     }
     // This tenant-scoped lookup also prevents document identifiers from being
     // used to infer another household's source metadata.
-    get_source_document(
+    let document = get_source_document(
         connection,
         &request.household_id,
         &request.source_document_id,
@@ -190,7 +200,7 @@ pub fn list_source_document_records(
     let total: i64 = connection
         .query_row(
             "SELECT count(*) FROM source_records WHERE source_document_id = ?1",
-            [&request.source_document_id],
+            [&document.id],
             |row| row.get(0),
         )
         .map_err(|_| RepositoryError::Unavailable)?;
@@ -218,11 +228,7 @@ pub fn list_source_document_records(
         .map_err(|_| RepositoryError::Unavailable)?;
     let items = statement
         .query_map(
-            params![
-                request.source_document_id,
-                i64::from(request.page_size),
-                offset
-            ],
+            params![document.id, i64::from(request.page_size), offset],
             |row| {
                 Ok(SourceRecordViewDto {
                     id: row.get(0)?,
@@ -270,23 +276,51 @@ pub fn list_transaction_source_records(
 
     let mut statement = connection
         .prepare(
-            "SELECT sr.id, sr.source_document_id, sr.row_number, sr.record_hash,
-                    sr.raw_payload_json, sr.created_at,
-                    CASE WHEN rcl.candidate_id IS NOT NULL
-                         THEN 'SUPPORTING'
-                         ELSE COALESCE(cs.evidence_role, 'PRIMARY')
-                    END
-             FROM transaction_sources ts
-             JOIN source_records sr ON sr.id = ts.source_record_id
-             JOIN source_documents sd ON sd.id = sr.source_document_id
-             LEFT JOIN candidate_sources cs
-               ON cs.candidate_id = ts.candidate_id
-              AND cs.source_record_id = ts.source_record_id
-             LEFT JOIN receipt_candidate_links rcl
-               ON rcl.candidate_id = ts.candidate_id
-              AND rcl.transaction_id = ts.transaction_id
-             WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
-             ORDER BY sd.imported_at, sd.id, sr.row_number, sr.id
+            "SELECT id, source_document_id, row_number, record_hash,
+                    raw_payload_json, created_at, evidence_role
+             FROM (
+               SELECT sr.id, sr.source_document_id, sr.row_number, sr.record_hash,
+                      sr.raw_payload_json, sr.created_at,
+                      CASE WHEN rcl.candidate_id IS NOT NULL
+                           THEN 'SUPPORTING'
+                           ELSE COALESCE(cs.evidence_role, 'PRIMARY')
+                      END AS evidence_role,
+                      sd.imported_at AS sort_imported_at, sd.id AS sort_document_id,
+                      sr.id AS sort_record_id
+               FROM transaction_sources ts
+               JOIN source_records sr ON sr.id = ts.source_record_id
+               JOIN source_documents sd ON sd.id = sr.source_document_id
+               LEFT JOIN candidate_sources cs
+                 ON cs.candidate_id = ts.candidate_id
+                AND cs.source_record_id = ts.source_record_id
+               LEFT JOIN receipt_candidate_links rcl
+                 ON rcl.candidate_id = ts.candidate_id
+                AND rcl.transaction_id = ts.transaction_id
+               WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
+               UNION ALL
+               SELECT alias.portable_record_id, document_alias.portable_document_id,
+                      sr.row_number, sr.record_hash, sr.raw_payload_json, sr.created_at,
+                      CASE WHEN portable.candidate_id IS NOT NULL THEN 'SUPPORTING' ELSE 'PRIMARY' END,
+                      sd.imported_at, document_alias.portable_document_id,
+                      alias.portable_record_id
+               FROM transaction_portable_source_links portable
+               JOIN evidence_source_record_aliases alias
+                 ON alias.household_id = ?2
+                AND alias.portable_record_id = portable.source_record_id
+               JOIN evidence_source_document_aliases document_alias
+                 ON document_alias.household_id = alias.household_id
+                AND document_alias.origin_installation_id = alias.origin_installation_id
+                AND document_alias.portable_document_id = alias.portable_document_id
+               JOIN source_records sr ON sr.id = alias.local_record_id
+               JOIN source_documents sd ON sd.id = document_alias.local_document_id
+               WHERE portable.transaction_id = ?1
+                 AND NOT EXISTS (
+                   SELECT 1 FROM transaction_sources actual
+                   WHERE actual.transaction_id = portable.transaction_id
+                     AND actual.source_record_id = alias.local_record_id
+                 )
+             )
+             ORDER BY sort_imported_at, sort_document_id, row_number, sort_record_id
              LIMIT ?3",
         )
         .map_err(|_| RepositoryError::Unavailable)?;
@@ -365,6 +399,21 @@ mod tests {
                  CREATE TABLE receipt_candidate_links (
                    candidate_id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
                    transaction_id TEXT NOT NULL);
+                 CREATE TABLE transaction_portable_source_links (
+                   transaction_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
+                   candidate_id TEXT, PRIMARY KEY(transaction_id, source_record_id));
+                 CREATE TABLE evidence_source_document_aliases (
+                   household_id TEXT NOT NULL, origin_installation_id TEXT NOT NULL,
+                   portable_document_id TEXT NOT NULL, portable_import_run_id TEXT NOT NULL,
+                   local_document_id TEXT NOT NULL, content_sha256 TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   PRIMARY KEY(household_id, origin_installation_id, portable_document_id));
+                 CREATE TABLE evidence_source_record_aliases (
+                   household_id TEXT NOT NULL, origin_installation_id TEXT NOT NULL,
+                   portable_document_id TEXT NOT NULL, portable_record_id TEXT NOT NULL,
+                   local_record_id TEXT NOT NULL, record_hash TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   PRIMARY KEY(household_id, origin_installation_id, portable_record_id));
                  INSERT INTO households VALUES ('family'), ('other');
                  INSERT INTO household_members VALUES
                    ('family-primary', 'family', 'Family member', 'ARCHIVED'),
@@ -472,6 +521,47 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].row_number, 2);
         assert_eq!(records[0].evidence_role.as_deref(), Some("SUPPORTING"));
+    }
+
+    #[test]
+    fn portable_aliases_restore_document_and_transaction_evidence_views() {
+        let connection = database();
+        connection
+            .execute_batch(
+                "INSERT INTO evidence_source_document_aliases VALUES(
+                   'family','origin-device','portable-document','portable-run','document',
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                   '2026-07-13T01:00:00Z');
+                 INSERT INTO evidence_source_record_aliases VALUES(
+                   'family','origin-device','portable-document','portable-record','record-2',
+                   'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                   '2026-07-13T01:00:00Z');
+                 INSERT INTO transaction_portable_source_links VALUES(
+                   'transaction','portable-record',NULL);",
+            )
+            .unwrap();
+
+        let document = get_source_document(&connection, "family", "portable-document").unwrap();
+        assert_eq!(document.id, "document");
+        let page = list_source_document_records(
+            &connection,
+            &SourceRecordPageRequest {
+                household_id: "family".into(),
+                source_document_id: "portable-document".into(),
+                page: 1,
+                page_size: 20,
+            },
+        )
+        .unwrap();
+        assert_eq!(page.total_items, 2);
+
+        let evidence =
+            list_transaction_source_records(&connection, "family", "transaction").unwrap();
+        assert!(evidence.iter().any(|record| {
+            record.id == "portable-record"
+                && record.source_document_id == "portable-document"
+                && record.evidence_role.as_deref() == Some("PRIMARY")
+        }));
     }
 
     #[test]

@@ -135,6 +135,16 @@ export interface ReceiptMatchConfirmationDto {
   readonly resolutionStatus: 'LINKED'; readonly evidenceCount: number; readonly runStatus: string
 }
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
+export interface EvidenceBundleSummaryDto {
+  readonly bundleId: string
+  readonly householdId: string
+  readonly originInstallationId: string
+  readonly documentCount: number
+  readonly recordCount: number
+  readonly plaintextBytes: number
+  readonly importedDocumentCount: number
+  readonly deduplicatedDocumentCount: number
+}
 export interface LocalSyncIdentityDto { readonly id: string; readonly displayName: string; readonly createdAt: string }
 export interface PrincipalMemberBindingDto {
   readonly householdId: string; readonly principalId: string
@@ -485,6 +495,8 @@ export type AppCommand =
   | 'change_package_resolve'
   | 'change_package_apply'
   | 'change_package_discard'
+  | 'evidence_bundle_export_save'
+  | 'evidence_bundle_pick_and_import'
   | 'households_list'
   | 'household_create'
   | 'household_members_list'
@@ -570,6 +582,8 @@ export interface PlatformClient {
   resolveChangePackage(packageId: string, resolutions: readonly ChangePackageResolutionInputDto[]): Promise<ChangePackageReviewDto>
   applyChangePackage(packageId: string): Promise<ChangePackageReviewDto>
   discardChangePackage(packageId: string): Promise<void>
+  exportEvidenceBundle(householdId: string, passphrase: string): Promise<EvidenceBundleSummaryDto | null>
+  pickAndImportEvidenceBundle(householdId: string, passphrase: string): Promise<EvidenceBundleSummaryDto | null>
   listHouseholds(): Promise<readonly HouseholdDto[]>
   createHousehold(input: CreateHouseholdInputDto): Promise<HouseholdDto>
   listHouseholdMembers(householdId: string): Promise<readonly HouseholdMemberDto[]>
