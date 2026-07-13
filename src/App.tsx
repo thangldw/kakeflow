@@ -250,7 +250,7 @@ function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: str
     <article className="kpi-card">
       <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{label}</span></div>
       <strong>{value}</strong>
-      <div className="kpi-meta">{trend && <em><ArrowUpRight size={13} />{trend}</em>}<span>{meta}</span></div>
+      <div className="kpi-meta">{trend && <em aria-label={`${trend} 増加`}><ArrowUpRight aria-hidden="true" size={13} /><span aria-hidden="true">{trend}</span></em>}<span>{meta}</span></div>
     </article>
   )
 }
@@ -275,6 +275,7 @@ function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month,
         {data.map((d, i) => <circle key={`i${d.month}`} cx={x(i)} cy={y(d.income)} r="3.5" className="dot-income" />)}
         {data.map((d, i) => <circle key={`e${d.month}`} cx={x(i)} cy={y(d.expense)} r="3.5" className="dot-expense" />)}
       </svg>
+      <table className="visually-hidden"><caption>{`直近6か月の${incomeLabel}と${expenseLabel}`}</caption><thead><tr><th>月</th><th>{incomeLabel}</th><th>{expenseLabel}</th></tr></thead><tbody>{data.map((point) => <tr key={`table-${point.month}`}><th>{point.month}</th><td>{point.income}円</td><td>{point.expense}円</td></tr>)}</tbody></table>
       <div className="chart-x">{data.map((d) => <span key={d.month}>{d.month.includes('-') ? `${Number(d.month.slice(5))}月` : d.month}</span>)}</div>
     </div>
   )
@@ -344,6 +345,18 @@ function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonl
   )
 }
 
+function DashboardDataQuality({ counts, desktop, onOpenImport }: { counts: ImportRunCountsDto | null; desktop: boolean; onOpenImport: () => void }) {
+  const data = desktop ? counts : { sourceDocuments: 12, sourceRecords: 1_248, pendingCandidates: 4, readyCandidates: 2, failed: 0, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho-202607.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 4 } as ImportRunCountsDto
+  const reviewCount = (data?.pendingCandidates ?? 0) + (data?.readyCandidates ?? 0)
+  const state = !data || data.sourceDocuments === 0 ? '原本データなし' : data.failed > 0 ? '取込エラーあり' : reviewCount > 0 ? '確認待ちあり' : '確認済みデータを反映'
+  const latest = data?.latestSuccessfulImportAt ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.latestSuccessfulImportAt)) : 'まだありません'
+  return <section className="panel dashboard-data-quality" aria-labelledby="dashboard-data-quality-title">
+    <div className="panel-head"><div><h2 id="dashboard-data-quality-title">データ品質</h2><p>{desktop ? 'この端末の原本・取込・確認状態' : 'ブラウザプレビュー用のサンプル状態'}</p></div><b className={data?.failed ? 'error' : reviewCount ? 'review' : 'ready'}>{state}</b></div>
+    <div className="data-quality-grid"><div><span>最終確定取込</span><strong>{latest}</strong><small>{data?.latestSourceFilename ?? '原本未登録'}{data?.latestSourceType ? ` ・ ${data.latestSourceType}` : ''}</small></div><div><span>原本とソース行</span><strong>{data?.sourceDocuments ?? 0}原本</strong><small>{(data?.sourceRecords ?? 0).toLocaleString('ja-JP')}行 ・ {data?.distinctSourceTypes ?? 0}種類</small></div><div><span>確認待ち候補</span><strong>{reviewCount}件</strong><small>確定するまでダッシュボード集計外</small></div><div><span>失敗した取込</span><strong>{data?.failed ?? 0}件</strong><small>再実行または原本確認が必要</small></div></div>
+    <button className="secondary-btn" onClick={onOpenImport}>インポート Inboxを確認 <ArrowRight size={14} /></button>
+  </section>
+}
+
 const dashboardTemplateLabels: Record<DashboardPreferencesDto['template'], string> = {
   FINANCIAL_OVERVIEW: '財務概要',
   HOUSEHOLD_LEDGER: '家計簿',
@@ -360,7 +373,7 @@ function DashboardControls({ preferences, disabled, onChange }: { preferences: D
   </div>
 }
 
-function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
+function Overview({ setPage, liveDashboard, liveTransactions, liveCards, importCounts, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; importCounts: ImportRunCountsDto | null; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
   const cashFlow = preferences.template === 'CASH_FLOW'
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
@@ -391,11 +404,13 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
   const panelOrder = cashFlow ? [panels.trend, panels.recent, panels.cards] : preferences.template === 'HOUSEHOLD_LEDGER' ? [panels.spending, panels.recent, panels.trend, panels.cards] : preferences.template === 'ASSETS_LIABILITIES' ? [panels.trend, panels.spending, panels.cards, panels.recent] : preferences.template === 'CARD_RECONCILIATION' ? [panels.cards, panels.recent, panels.trend, panels.spending] : [panels.trend, panels.spending, panels.recent, panels.cards]
   return <div className={`overview overview--${preferences.template.toLowerCase().replaceAll('_', '-')}`}>
     <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を${cashFlow ? '資金移動' : '発生'}ベースで集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
-      <DashboardControls preferences={preferences} disabled={preferencesBusy} onChange={updatePreferences} />
+      <DashboardControls preferences={preferences} disabled={preferencesBusy || !desktop} onChange={updatePreferences} />
+      {!desktop && <span className="dashboard-preview-note">表示設定の保存はデスクトップ版で利用できます。</span>}
       {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> 資産・投資を見る</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> カード照合を開く</button> : cashFlow ? <button className="primary-btn" onClick={() => setPage('transactions')}><WalletCards size={17} /> 資金移動を見る</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>}
     </PageHeader>
     <section className="kpi-grid">{kpis}</section>
     <section className="dashboard-grid">{panelOrder}</section>
+    <DashboardDataQuality counts={importCounts} desktop={desktop} onOpenImport={() => setPage('import')} />
     <div className="data-footnote"><FileCheck2 size={15} /> 確定済み台帳から{cashFlow ? '実際の資産入出金を' : ''}集計 ・ 未確認の候補は含みません</div>
   </div>
 }
@@ -1977,7 +1992,7 @@ function App() {
   }
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,

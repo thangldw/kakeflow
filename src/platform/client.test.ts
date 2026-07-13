@@ -135,7 +135,7 @@ describe('platform client', () => {
       watched_file_inbox_mark_staged: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
       watched_file_inbox_ignore: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'IGNORED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
       watched_file_inbox_retry: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'DISCOVERED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
-      import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
+      import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0, latestSuccessfulImportAt: null, latestSourceFilename: null, latestSourceType: null, distinctSourceTypes: 0 },
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       import_preview: {
         summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
@@ -549,6 +549,22 @@ describe('platform client', () => {
 
     await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+  })
+
+  it('validates import freshness as an atomic source-backed tuple', async () => {
+    const base = { totalRuns: 1, discovered: 0, extracting: 0, reviewRequired: 0, posted: 1, failed: 0, rolledBack: 0, sourceDocuments: 1, sourceRecords: 1, pendingCandidates: 0, readyCandidates: 0, latestSuccessfulImportAt: '2026-07-12T12:00:00Z', latestSourceFilename: 'bank.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 1 }
+    const validClient = createPlatformClient({ tauri: true, invoke: async <T>() => base as T })
+    await expect(validClient.importSummary('family')).resolves.toEqual(base)
+
+    for (const response of [
+      { ...base, latestSuccessfulImportAt: '2026-07-12' },
+      { ...base, latestSourceFilename: null },
+      { ...base, latestSourceType: null },
+      { ...base, distinctSourceTypes: -1 },
+    ]) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(client.importSummary('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_summary' })
+    }
   })
 
   it('rejects impossible card coverage dates and inconsistent financial projections', async () => {

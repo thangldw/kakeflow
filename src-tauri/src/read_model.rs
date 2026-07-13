@@ -3332,6 +3332,10 @@ pub struct ImportRunCountsDto {
     pub source_records: u64,
     pub pending_candidates: u64,
     pub ready_candidates: u64,
+    pub latest_successful_import_at: Option<String>,
+    pub latest_source_filename: Option<String>,
+    pub latest_source_type: Option<String>,
+    pub distinct_source_types: u64,
 }
 
 pub fn import_run_counts(
@@ -3342,7 +3346,17 @@ pub fn import_run_counts(
     ensure_household_exists(connection, household_id)?;
     connection
         .query_row(
-            "SELECT
+            "WITH latest_successful AS (
+               SELECT sd.imported_at, sd.original_filename, sd.source_type
+                 FROM source_documents sd
+                 JOIN import_runs ir ON ir.id = sd.import_run_id
+                  AND ir.household_id = sd.household_id
+                WHERE sd.household_id = ?1
+                  AND ir.status = 'POSTED'
+                ORDER BY sd.imported_at DESC, sd.id DESC
+                LIMIT 1
+             )
+             SELECT
                (SELECT count(*) FROM import_runs WHERE household_id = ?1),
                (SELECT count(*) FROM import_runs WHERE household_id = ?1 AND status = 'DISCOVERED'),
                (SELECT count(*) FROM import_runs WHERE household_id = ?1 AND status = 'EXTRACTING'),
@@ -3355,7 +3369,11 @@ pub fn import_run_counts(
                   JOIN source_documents sd ON sd.id = sr.source_document_id
                  WHERE sd.household_id = ?1),
                (SELECT count(*) FROM transaction_candidates WHERE household_id = ?1 AND review_status = 'PENDING'),
-               (SELECT count(*) FROM transaction_candidates WHERE household_id = ?1 AND review_status = 'READY')",
+               (SELECT count(*) FROM transaction_candidates WHERE household_id = ?1 AND review_status = 'READY'),
+               (SELECT imported_at FROM latest_successful),
+               (SELECT original_filename FROM latest_successful),
+               (SELECT source_type FROM latest_successful),
+               (SELECT count(DISTINCT source_type) FROM source_documents WHERE household_id = ?1)",
             [household_id],
             |row| {
                 Ok(ImportRunCountsDto {
@@ -3370,6 +3388,10 @@ pub fn import_run_counts(
                     source_records: row.get(8)?,
                     pending_candidates: row.get(9)?,
                     ready_candidates: row.get(10)?,
+                    latest_successful_import_at: row.get(11)?,
+                    latest_source_filename: row.get(12)?,
+                    latest_source_type: row.get(13)?,
+                    distinct_source_types: row.get(14)?,
                 })
             },
         )
@@ -6906,5 +6928,56 @@ mod tests {
                 .id,
             "excluded"
         );
+    }
+
+    #[test]
+    fn import_counts_report_household_scoped_deterministic_source_freshness() {
+        let connection = database();
+        for id in ["family", "other"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO import_runs (id, household_id, status) VALUES
+                   ('run-posted-a','family','POSTED'),
+                   ('run-posted-z','family','POSTED'),
+                   ('run-review','family','REVIEW_REQUIRED'),
+                   ('run-other','other','POSTED');
+                 INSERT INTO source_documents
+                   (id,household_id,import_run_id,source_type,original_filename,media_type,byte_size,sha256,storage_path,imported_at)
+                 VALUES
+                   ('doc-a','family','run-posted-a','MANUAL_UPLOAD','older-tie.csv','text/csv',1,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','a','2026-07-12T12:00:00Z'),
+                   ('doc-z','family','run-posted-z','LOCAL_FOLDER','latest-tie.csv','text/csv',1,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','z','2026-07-12T12:00:00Z'),
+                   ('doc-review','family','run-review','CAMERA_SCAN','not-successful.png','image/png',1,'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','r','2026-07-13T12:00:00Z'),
+                   ('doc-other','other','run-other','OTHER','other.csv','text/csv',1,'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd','o','2026-07-14T12:00:00Z');",
+            )
+            .unwrap();
+
+        let counts = import_run_counts(&connection, "family").unwrap();
+        assert_eq!(counts.total_runs, 3);
+        assert_eq!(counts.source_documents, 3);
+        assert_eq!(counts.distinct_source_types, 3);
+        assert_eq!(
+            counts.latest_successful_import_at.as_deref(),
+            Some("2026-07-12T12:00:00Z")
+        );
+        assert_eq!(
+            counts.latest_source_filename.as_deref(),
+            Some("latest-tie.csv")
+        );
+        assert_eq!(counts.latest_source_type.as_deref(), Some("LOCAL_FOLDER"));
+
+        let other = import_run_counts(&connection, "other").unwrap();
+        assert_eq!(other.total_runs, 1);
+        assert_eq!(other.source_documents, 1);
+        assert_eq!(other.distinct_source_types, 1);
+        assert_eq!(other.latest_source_filename.as_deref(), Some("other.csv"));
     }
 }

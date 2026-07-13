@@ -160,7 +160,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       deleteClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_delete') },
       previewClassificationRules: async () => ({ winningRuleId: null, matches: [] }),
       applyClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_apply') },
-      importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 }),
+      importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0, latestSuccessfulImportAt: null, latestSourceFilename: null, latestSourceType: null, distinctSourceTypes: 0 }),
       startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
       commitImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_commit') },
@@ -926,7 +926,12 @@ function parseWatchedFileInboxClaim(value: unknown): WatchedFileInboxClaimDto {
 function parseImportSummary(value: unknown): ImportRunCountsDto {
   const record = asRecord(value)
   const keys = ['totalRuns', 'discovered', 'extracting', 'reviewRequired', 'posted', 'failed', 'rolledBack', 'sourceDocuments', 'sourceRecords', 'pendingCandidates', 'readyCandidates'] as const
-  return Object.fromEntries(keys.map((key) => [key, asSafeInteger(record[key])])) as unknown as ImportRunCountsDto
+  const counts = Object.fromEntries(keys.map((key) => [key, asSafeInteger(record[key])])) as unknown as Omit<ImportRunCountsDto, 'latestSuccessfulImportAt' | 'latestSourceFilename' | 'latestSourceType' | 'distinctSourceTypes'>
+  const latestSuccessfulImportAt = record.latestSuccessfulImportAt === null ? null : asIsoTimestamp(record.latestSuccessfulImportAt)
+  const latestSourceFilename = asNullableString(record.latestSourceFilename)
+  const latestSourceType = asNullableString(record.latestSourceType)
+  if ((latestSuccessfulImportAt === null) !== (latestSourceFilename === null) || (latestSuccessfulImportAt === null) !== (latestSourceType === null)) throw new TypeError('import freshness')
+  return { ...counts, latestSuccessfulImportAt, latestSourceFilename, latestSourceType, distinctSourceTypes: asSafeInteger(record.distinctSourceTypes) }
 }
 
 function parseBootstrap(value: unknown): AppBootstrapDto {

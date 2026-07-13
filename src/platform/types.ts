@@ -404,6 +404,10 @@ export interface ImportRunCountsDto {
   readonly sourceRecords: number
   readonly pendingCandidates: number
   readonly readyCandidates: number
+  readonly latestSuccessfulImportAt: string | null
+  readonly latestSourceFilename: string | null
+  readonly latestSourceType: string | null
+  readonly distinctSourceTypes: number
 }
 
 export interface MonthlyCategoryBudgetDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly categoryName: string; readonly budgetJpy: number; readonly actualJpy: number; readonly remainingJpy: number }
