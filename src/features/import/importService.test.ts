@@ -15,6 +15,21 @@ describe('import preview service', () => {
     expect(result.status).toBe('ready')
   })
 
+  it('detects the official Yucho Direct CSV after its account preamble', async () => {
+    const file = new File([
+      'お客さま口座情報\n' +
+      '現在高：,140000,円\n' +
+      '取引日,入出金明細ID,受入金額（円）,払出金額（円）,詳細1,詳細2,現在（貸付）高\n' +
+      '20260701,1,50000,,給与,勤務先,150000\n' +
+      '20260702,2,,10000,カード,ATM,140000',
+    ], 'yucho-direct.csv', { type: 'text/csv' })
+
+    const result = await previewImportFile(file)
+
+    expect(result).toMatchObject({ adapterId: 'yucho-direct-ledger-v1', recordCount: 2, status: 'ready' })
+    expect(result.parsed?.metadata).toMatchObject({ institution: 'JP_BANK', exportSequenceIsDurableTransactionId: false })
+  })
+
   it('detects the official Money Forward ME household-ledger export', async () => {
     const file = new File([
       '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID\n' +
