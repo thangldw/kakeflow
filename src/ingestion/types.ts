@@ -7,6 +7,7 @@ export type AdapterId =
   | 'jcb-myjcb-statement-v1'
   | 'smbc-vpass-statement-v1'
   | 'securities-asset-snapshot-v1'
+  | 'sbi-securities-trade-history-v1'
   | 'japanese-brokerage-transactions-v1'
   | 'money-forward-me-asset-trend-v1'
   | 'money-forward-me-household-ledger-v1'
@@ -269,6 +270,8 @@ export interface BrokerageEventCandidate {
   settlementDate: string | null
   instrumentCode: string
   instrumentName: string
+  /** Exchange/market parsed from a provider's combined security field, when present. */
+  market?: string
   accountType: string
   currency: string
   quantity: number | null

@@ -23,6 +23,7 @@ type BusyAction = `EXPORT:${string}` | 'STAGE' | 'APPLY' | 'DISCARD' | null
 const UNSUPPORTED_HANDOFF_ADAPTERS = new Set([
   'securities-asset-snapshot-v1',
   'japanese-brokerage-transactions-v1',
+  'sbi-securities-trade-history-v1',
   'money-forward-me-asset-trend-v1',
 ])
 

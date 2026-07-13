@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.51.0 — 2026-07-14
+
+- Add the dedicated `sbi-securities-trade-history-v1` adapter for SBI Securities domestic and foreign `約定履歴` CSV exports, grounded in SBI's published field semantics rather than generic brokerage-column guessing.
+- Limit the supported contract to spot stock purchases and sales; reject margin, margin settlement, delivery/receipt, derivatives, and other unsupported product or transaction rows instead of assigning incorrect investment legs.
+- Preserve trade and settlement dates, parsed security code/ticker, name and market, custody/account classification, quantity, unit price, currency, settlement amount, and exact physical-row evidence; foreign product/order fields remain available in the immutable raw row.
+- Normalize accepted rows into balanced `BUY` or `SELL` investment events, retain source-settlement mismatches as explicit auditable adjustments with warnings, and keep brokerage activity outside household-expense metrics.
+- Require an explicit active securities-account mapping and `証券取引に保存` action; filename, provider text, and file discovery never select an account or save an event.
+- Add only synthetic, fictitious domestic and foreign fixtures plus focused detection, parsing, rejection, provenance, mapping, and posting coverage; no customer export is checked into the repository.
+
 ## 0.50.0 — 2026-07-14
 
 - Extend local change packages to schema v4 while retaining the same bounded eighteen-kind household snapshot and the existing explicit review/apply workflow.

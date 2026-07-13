@@ -2,6 +2,8 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Version 0.51 adds a strict, dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for supported domestic and foreign spot stock purchases and sales. It preserves the official export fields and physical-row evidence, requires an explicit securities-account mapping, and rejects margin and other unsupported transaction types instead of guessing their accounting treatment.
+
 Version 0.50 carries the independent Home widget layouts for Financial Overview, Household Ledger, Assets & Liabilities, Card Reconciliation, and Cash Flow inside schema-v4 local change packages. Moving a household between desktops now preserves each view's order and visibility without weakening schema-v1 through schema-v3 compatibility. See [dashboard preferences](docs/DASHBOARD_PREFERENCES.md).
 
 Version 0.47 made pending import review restart-safe. Import Inbox discovers every household-scoped manual or folder import still in `REVIEW_REQUIRED`, restores its existing immutable preview, deduplicates the two discovery paths, and still requires explicit approval before posting. See [pending import recovery](docs/PENDING_IMPORT_RECOVERY.md).
@@ -123,6 +125,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- Dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for the official domestic and foreign `約定履歴` CSV structures, limited to supported spot stock purchases and sales with explicit securities-account selection, immutable row provenance, auditable source-settlement adjustments, and rejection of margin, derivatives, and other unsupported rows; checked-in fixtures are synthetic and contain no customer data.
 - [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, evidence-first investment dependencies, idempotent content reuse, atomic database publication, and source-viewer hydration without change-package hash drift. Schema-v1 capsules remain compatible; pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
 - [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v4 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 18-kind household snapshot spanning ledger, card reconciliation, confirmed investment facts, and all five dashboard layouts, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind, schema-v2 13-kind, and schema-v3 18-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
