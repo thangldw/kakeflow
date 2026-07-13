@@ -175,7 +175,7 @@ describe('KakeFlow desktop read models', () => {
       { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
     ])
-    desktop.getDashboardPreferences.mockReset().mockImplementation(async (householdId: string) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' }))
+    desktop.getDashboardPreferences.mockReset().mockImplementation(async (householdId: string) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [], updatedAt: '2026-07-13T00:00:00Z' }))
     desktop.upsertDashboardPreferences.mockReset().mockImplementation(async (input) => ({ ...input, updatedAt: '2026-07-13T00:01:00Z' }))
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.importSummary.mockReset().mockResolvedValue({ totalRuns: 3, discovered: 0, extracting: 0, reviewRequired: 1, posted: 2, failed: 0, rolledBack: 0, sourceDocuments: 2, sourceRecords: 42, pendingCandidates: 1, readyCandidates: 2, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 2 })
@@ -335,7 +335,7 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('loads and persists household dashboard appearance and focus presets', async () => {
-    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'HOUSEHOLD_LEDGER', theme: 'DARK', density: 'COMPACT', updatedAt: '2026-07-13T00:00:00Z' })
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'HOUSEHOLD_LEDGER', theme: 'DARK', density: 'COMPACT', widgetOrder: ['SPENDING', 'RECENT', 'TREND', 'CARDS'], hiddenWidgets: [], updatedAt: '2026-07-13T00:00:00Z' })
     render(<App />)
 
     await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('HOUSEHOLD_LEDGER'))
@@ -345,13 +345,57 @@ describe('KakeFlow desktop read models', () => {
     expect(document.documentElement).toHaveAttribute('data-density', 'compact')
 
     fireEvent.change(screen.getByLabelText('ホームの表示テンプレート'), { target: { value: 'ASSETS_LIABILITIES' } })
-    await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledWith({ householdId: 'family', template: 'ASSETS_LIABILITIES', theme: 'DARK', density: 'COMPACT' }))
+    await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledWith({ householdId: 'family', template: 'ASSETS_LIABILITIES', theme: 'DARK', density: 'COMPACT', widgetOrder: ['TREND', 'SPENDING', 'CARDS', 'RECENT'], hiddenWidgets: [] }))
     expect(await screen.findByRole('button', { name: /資産・投資を見る/ })).toBeInTheDocument()
+    expect(Array.from(document.querySelector('.dashboard-grid')!.children).map((element) => element.className)).toEqual([expect.stringContaining('dashboard-widget--trend'), 'dashboard-widget dashboard-widget--spending', 'dashboard-widget dashboard-widget--cards', expect.stringContaining('dashboard-widget--recent')])
 
     fireEvent.change(screen.getByLabelText('アプリのテーマ'), { target: { value: 'LIGHT' } })
     await waitFor(() => expect(document.documentElement).toHaveAttribute('data-theme', 'light'))
     fireEvent.change(screen.getByLabelText('画面の表示密度'), { target: { value: 'COMFORTABLE' } })
     await waitFor(() => expect(document.documentElement).toHaveAttribute('data-density', 'comfortable'))
+  })
+
+  it('restores, reorders, and hides dashboard widgets without changing metric semantics', async () => {
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'FINANCIAL_OVERVIEW', theme: 'LIGHT', density: 'COMFORTABLE', widgetOrder: ['CARDS', 'TREND', 'SPENDING', 'RECENT'], hiddenWidgets: ['SPENDING'], updatedAt: '2026-07-13T00:00:00Z' })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW'))
+    expect(Array.from(document.querySelector('.dashboard-grid')!.children).map((element) => element.className)).toEqual(['dashboard-widget dashboard-widget--cards', expect.stringContaining('dashboard-widget--trend'), expect.stringContaining('dashboard-widget--recent')])
+    expect(screen.queryByRole('heading', { name: '支出の内訳' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /レイアウト/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'カード支払いを下へ移動' }))
+    await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledWith(expect.objectContaining({ widgetOrder: ['TREND', 'CARDS', 'SPENDING', 'RECENT'], hiddenWidgets: ['SPENDING'] })))
+    expect(screen.getByText('カード支払いを2/4へ移動しました')).toBeInTheDocument()
+  })
+
+  it('persists native drag-and-drop widget order and renders the same DOM order', async () => {
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /レイアウト/ }))
+    const editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
+    const trendRow = within(editor).getByText('収支の推移').closest<HTMLElement>('.dashboard-layout-row')!
+    const cardsRow = within(editor).getByText('カード支払い').closest<HTMLElement>('.dashboard-layout-row')!
+    const dataTransfer = { effectAllowed: 'none', setData: vi.fn(), getData: vi.fn() }
+
+    fireEvent.dragStart(trendRow, { dataTransfer })
+    fireEvent.dragOver(cardsRow, { dataTransfer })
+    fireEvent.drop(cardsRow, { dataTransfer })
+
+    await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledWith(expect.objectContaining({ widgetOrder: ['SPENDING', 'RECENT', 'CARDS', 'TREND'] })))
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'TREND')
+    expect(Array.from(document.querySelector('.dashboard-grid')!.children).map((element) => element.className)).toEqual(['dashboard-widget dashboard-widget--spending', expect.stringContaining('dashboard-widget--recent'), 'dashboard-widget dashboard-widget--cards', expect.stringContaining('dashboard-widget--trend')])
+  })
+
+  it('keeps the last eligible dashboard widget visible', async () => {
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: ['TREND', 'RECENT', 'CARDS'], updatedAt: '2026-07-13T00:00:00Z' })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /レイアウト/ }))
+    const editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
+    const trendRow = within(editor).getByText('収支の推移').closest<HTMLElement>('.dashboard-layout-row')!
+    expect(screen.getByRole('heading', { name: '入出金の推移' })).toBeInTheDocument()
+    expect(within(trendRow).getByRole('button', { name: '収支の推移を非表示' })).toBeDisabled()
+    expect(within(editor).getByText('少なくとも1つのウィジェットを表示します。')).toBeInTheDocument()
   })
 
   it('restores an independent dashboard preset when switching households', async () => {
@@ -360,8 +404,8 @@ describe('KakeFlow desktop read models', () => {
       { id: 'parents', name: '両親家', baseCurrency: 'JPY', createdAt: '2026-07-02T00:00:00Z' },
     ])
     desktop.getDashboardPreferences.mockImplementation(async (householdId: string) => householdId === 'parents'
-      ? { householdId, template: 'CARD_RECONCILIATION', theme: 'DARK', density: 'COMPACT', updatedAt: '2026-07-13T00:00:00Z' }
-      : { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'LIGHT', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' })
+      ? { householdId, template: 'CARD_RECONCILIATION', theme: 'DARK', density: 'COMPACT', widgetOrder: ['CARDS', 'RECENT', 'TREND', 'SPENDING'] as const, hiddenWidgets: [] as const, updatedAt: '2026-07-13T00:00:00Z' }
+      : { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'LIGHT', density: 'COMFORTABLE', widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const, hiddenWidgets: [] as const, updatedAt: '2026-07-13T00:00:00Z' })
     render(<App />)
     expect(await screen.findByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW')
 
@@ -375,7 +419,7 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('uses cash basis consistently for the cash-flow Home without double counting card purchases', async () => {
-    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' })
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: [], updatedAt: '2026-07-13T00:00:00Z' })
     render(<App />)
 
     await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CASH_FLOW'))
@@ -398,7 +442,7 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('does not let a delayed cash-flow response overwrite a newer accrual Home', async () => {
-    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' })
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: [], updatedAt: '2026-07-13T00:00:00Z' })
     let resolveCash: ((value: Awaited<ReturnType<typeof desktop.queryDashboard>>) => void) | undefined
     const accrual = {
       month: '2026-07', accountingBasis: 'ACCRUAL' as const, incomeJpy: 500_000, expenseJpy: 120_000, savingsJpy: 380_000, postedTransactionCount: 1,

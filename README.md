@@ -2,7 +2,9 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.45 extends the [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) to full exports containing multiple `保有金融機関` values. Import Inbox renders one explicit Asset/Liability account mapping per normalized institution and keeps staging disabled until every mapping is complete. Candidate rows retain their own source institution, transfer/calculation-target semantics, categories, memo, stable external ID, and immutable evidence; KakeFlow never guesses or auto-creates the destination accounts.
+Version 0.46 adds a household-persisted Home layout editor. Users can reorder eligible widgets by drag-and-drop or accessible move buttons, hide and restore panels, and reset the active template while KakeFlow preserves accounting basis, metric definitions, drill-downs, and the rule that at least one widget remains visible. See [dashboard preferences](docs/DASHBOARD_PREFERENCES.md).
+
+Version 0.45 extended the [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) to full exports containing multiple `保有金融機関` values. Import Inbox renders one explicit Asset/Liability account mapping per normalized institution and keeps staging disabled until every mapping is complete. Candidate rows retain their own source institution, transfer/calculation-target semantics, categories, memo, stable external ID, and immutable evidence; KakeFlow never guesses or auto-creates the destination accounts.
 
 ## Product tour
 
