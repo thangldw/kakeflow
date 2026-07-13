@@ -212,6 +212,7 @@ pub fn export_pending_import(
             "securities-asset-snapshot-v1"
                 | "japanese-brokerage-transactions-v1"
                 | "sbi-securities-trade-history-v1"
+                | "rakuten-securities-domestic-trade-history-v1"
                 | "money-forward-me-asset-trend-v1"
         )
     {
@@ -922,6 +923,7 @@ fn validate_manifest(manifest: &Manifest) -> Result<()> {
             "securities-asset-snapshot-v1"
                 | "japanese-brokerage-transactions-v1"
                 | "sbi-securities-trade-history-v1"
+                | "rakuten-securities-domestic-trade-history-v1"
                 | "money-forward-me-asset-trend-v1"
         )
     {

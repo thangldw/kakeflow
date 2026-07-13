@@ -1166,41 +1166,56 @@ describe('KakeFlow desktop read models', () => {
     }), expect.any(Uint8Array)))
   })
 
-  it('requires an explicit securities account for SBI trades and never posts a household transaction', async () => {
+  it.each([
+    {
+      provider: 'SBI',
+      filename: 'sbi-trades.csv',
+      adapterId: 'sbi-securities-trade-history-v1',
+      title: 'SBI証券 取引履歴CSV',
+      csv: '約定日,銘柄,取引,預り,約定数量,約定単価,受渡日,受渡金額／決済損益\n2026/07/01,7203 トヨタ自動車 東証,株式現物買,特定,100,2500,2026/07/03,250000',
+    },
+    {
+      provider: 'Rakuten Securities',
+      filename: 'rakuten-securities-trades.csv',
+      adapterId: 'rakuten-securities-domestic-trade-history-v1',
+      title: '楽天証券 国内株式 取引履歴CSV',
+      csv: '約定日,銘柄,口座,取引,売買,信用区分,弁済期限,数量,単価,手数料,税金,諸費用,税区分,受渡金額\n2026/07/01,トヨタ自動車 7203 東証,特定,現物,買付,,,100,2500,100,10,0,源徴あり,250110',
+    },
+  ])('requires an explicit securities account for $provider trades and never posts a household transaction', async ({ filename, adapterId, title, csv }) => {
     desktop.listAccounts.mockResolvedValue([
       { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
-      { id: 'sbi-general', name: 'SBI証券 一般口座', accountKind: 'ASSET', accountSubtype: 'SECURITIES', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
-      { id: 'sbi-nisa', name: 'SBI証券 NISA', accountKind: 'ASSET', accountSubtype: 'SECURITIES', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'broker-general', name: '証券 一般口座', accountKind: 'ASSET', accountSubtype: 'SECURITIES', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'broker-nisa', name: '証券 NISA', accountKind: 'ASSET', accountSubtype: 'SECURITIES', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
     ])
-    desktop.startImport.mockResolvedValue({ runId: 'run-sbi', documentId: 'document-sbi', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 0, reusedExisting: false })
-    desktop.commitImport.mockResolvedValue({ runId: 'run-sbi', postedCount: 0 })
+    desktop.startImport.mockResolvedValue({ runId: 'run-investment', documentId: 'document-investment', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 0, reusedExisting: false })
+    desktop.commitImport.mockResolvedValue({ runId: 'run-investment', postedCount: 0 })
     const fallback = nativeInvoke.getMockImplementation()!
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'brokerage_events_import'
-      ? { sourceDocumentId: 'document-sbi', importedEventCount: 1, importedLegCount: 4 }
+      ? { sourceDocumentId: 'document-investment', importedEventCount: 1, importedLegCount: 4 }
       : fallback(command, args))
 
     const { container } = render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
-    const csv = '約定日,銘柄,取引,預り,約定数量,約定単価,受渡日,受渡金額／決済損益\n2026/07/01,7203 トヨタ自動車 東証,株式現物買,特定,100,2500,2026/07/03,250000'
-    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'sbi-trades.csv', { type: 'text/csv' })] } })
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], filename, { type: 'text/csv' })] } })
 
     const save = await screen.findByRole('button', { name: '証券取引に保存' })
+    expect(screen.getByText(title)).toBeInTheDocument()
     expect(save).toBeDisabled()
     expect(desktop.startImport).not.toHaveBeenCalled()
-    const account = screen.getByLabelText('sbi-trades.csvの取込先証券口座')
+    const account = screen.getByLabelText(`${filename}の取込先証券口座`)
     expect(within(account).queryByRole('option', { name: '銀行' })).not.toBeInTheDocument()
-    fireEvent.change(account, { target: { value: 'sbi-nisa' } })
+    fireEvent.change(account, { target: { value: 'broker-nisa' } })
     expect(save).toBeEnabled()
     fireEvent.click(save)
 
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
-      adapterId: 'sbi-securities-trade-history-v1', candidates: [], cardStatements: [],
+      adapterId, candidates: [], cardStatements: [],
     }), expect.any(Uint8Array)))
-    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'sbi-nisa', sourceDocumentId: 'document-sbi' }) }))
-    expect(desktop.commitImport).toHaveBeenCalledWith('run-sbi', [])
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-nisa', sourceDocumentId: 'document-investment' }) }))
+    expect(desktop.commitImport).toHaveBeenCalledWith('run-investment', [])
   })
 
   it('requires and applies one explicit account mapping per Money Forward institution', async () => {

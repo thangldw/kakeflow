@@ -868,9 +868,11 @@ fn pending_review_completion_state(
     }
     let source_ready = match adapter_id {
         Some("securities-asset-snapshot-v1") => has_portfolio,
-        Some("japanese-brokerage-transactions-v1" | "sbi-securities-trade-history-v1") => {
-            has_brokerage
-        }
+        Some(
+            "japanese-brokerage-transactions-v1"
+            | "sbi-securities-trade-history-v1"
+            | "rakuten-securities-domestic-trade-history-v1",
+        ) => has_brokerage,
         Some("money-forward-me-asset-trend-v1") => has_aggregate_assets,
         _ => true,
     };
@@ -2285,6 +2287,12 @@ mod tests {
                 "sbi-securities-trade-history-v1",
             ),
             (
+                "rakuten-brokerage",
+                "rakuten-brokerage-doc",
+                'f',
+                "rakuten-securities-domestic-trade-history-v1",
+            ),
+            (
                 "aggregate",
                 "aggregate-doc",
                 'd',
@@ -2313,6 +2321,13 @@ mod tests {
             .unwrap();
         connection
             .execute(
+                "INSERT INTO brokerage_events(id,household_id,source_document_id) \
+                 VALUES('rakuten-event','household','rakuten-brokerage-doc')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
                 "INSERT INTO aggregate_asset_snapshots(id,household_id,source_document_id) \
                  VALUES('aggregate-snapshot','household','aggregate-doc')",
                 [],
@@ -2333,6 +2348,7 @@ mod tests {
         assert_eq!(state("portfolio"), "SOURCE_RESUME_REQUIRED");
         assert_eq!(state("brokerage"), "SOURCE_READY");
         assert_eq!(state("sbi-brokerage"), "SOURCE_READY");
+        assert_eq!(state("rakuten-brokerage"), "SOURCE_READY");
         assert_eq!(state("aggregate"), "SOURCE_READY");
 
         connection
