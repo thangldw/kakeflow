@@ -1,4 +1,5 @@
 import type { ActionItemDto, ActionKind, ActionPriority, ForecastActionDto } from './forecastActionPlatform'
+import { orderActions } from './actionCenterModel'
 import './forecastActionViews.css'
 
 export interface ForecastActionViewsProps {
@@ -22,10 +23,10 @@ const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toL
 const signedYen = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${yen(Math.abs(value))}`
 const monthLabel = (month: string) => `${month.slice(0, 4)}年${Number(month.slice(5))}月`
 
-export function ActionCenter({ actions, onAction }: { readonly actions: readonly ActionItemDto[]; readonly onAction?: (action: ActionItemDto) => void }) {
-  const ordered = [...actions].sort((left, right) => ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].indexOf(left.priority) - ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].indexOf(right.priority))
+export function ActionCenter({ actions, totalCount = actions.length, onAction }: { readonly actions: readonly ActionItemDto[]; readonly totalCount?: number; readonly onAction?: (action: ActionItemDto) => void }) {
+  const ordered = orderActions(actions)
   return <section className="forecast-panel action-center" aria-labelledby="action-center-title">
-    <header><div><p>Action Center</p><h2 id="action-center-title">対応が必要な項目</h2></div><span className="action-count" aria-label={`${actions.length}件`}>{actions.length}</span></header>
+    <header><div><p>Action Center</p><h2 id="action-center-title">対応が必要な項目</h2></div><span className="action-count" aria-label={`${totalCount}件`}>{totalCount}</span></header>
     {ordered.length === 0 ? <p className="forecast-empty" role="status">現在、対応が必要な項目はありません。</p> : <ol className="action-list">
       {ordered.map((action) => <li key={action.id} className={`action-item action-item--${action.priority.toLowerCase()}`}>
         <div className="action-badges"><span>{kindLabels[action.kind]}</span><strong>{priorityLabels[action.priority]}</strong></div>

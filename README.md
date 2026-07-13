@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.31 requires an explicit, per-file destination account for built-in bank, PayPay, Rakuten Card, and Amazon Mastercard imports. KakeFlow no longer guesses these accounts from household defaults, issuer names, or filenames, so a reviewed import cannot silently enter the wrong balance or liability account.
+Version 0.32 brings the source-backed Action Center onto Home. The three highest-priority import, card, budget, goal, anomaly, or recurring-cost actions are visible before analysis, route to the correct workspace, and share the same deterministic ordering and selected-month baseline as the full Forecast view.
 
 ## Product tour
 
@@ -117,6 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
 - [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard files, with adapter-compatible account filtering, per-preview selection, and no default or name-based inference.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
 - User-confirmed [credit-card statement due dates](docs/CARD_DUE_DATES.md) with set/correct/clear controls, household-scoped validation, explicit no-inference labeling, and immediate coverage/forecast refresh without ledger mutation.
