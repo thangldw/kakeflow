@@ -195,6 +195,7 @@ struct PackagedSmokePageEvidence {
     navigation_label: String,
     page_title: String,
     active_navigation: bool,
+    heading_visible: bool,
     main_width: u32,
     main_height: u32,
     interactive_element_count: u32,
@@ -580,31 +581,44 @@ fn packaged_smoke_progress(stage: String) -> Result<(), String> {
     writeln!(file, "{stage}").map_err(|_| "Packaged smoke progress could not be written".to_owned())
 }
 
+const PACKAGED_SMOKE_REQUIRED_PAGES: [(&str, &str); 10] = [
+    ("ホーム", "Packaged Smoke Householdの家計"),
+    ("取引", "すべての取引"),
+    ("インポート", "インポート Inbox"),
+    ("カード照合", "カード引落・支払余力"),
+    ("資産・投資", "資産・投資"),
+    ("カレンダー・レポート", "カレンダー・レポート"),
+    ("予算・目標", "予算・貯蓄目標"),
+    ("分類ルール", "分類ルール"),
+    ("家族スペース", "家族スペース"),
+    ("設定", "設定"),
+];
+
 fn validate_packaged_smoke_visual_evidence(
     evidence: &PackagedSmokeVisualEvidence,
 ) -> Result<(), String> {
-    const REQUIRED_NAVIGATION: [&str; 4] = ["ホーム", "取引", "インポート", "カレンダー・レポート"];
-    const REQUIRED_PAGES: [(&str, &str); 1] = [("ホーム", "Packaged Smoke Householdの家計")];
-    let navigation_complete = REQUIRED_NAVIGATION.iter().all(|required| {
+    let navigation_complete = PACKAGED_SMOKE_REQUIRED_PAGES.iter().all(|(required, _)| {
         evidence
             .navigation_labels
             .iter()
             .any(|actual| actual == required)
     });
-    let pages_complete = REQUIRED_PAGES.iter().all(|(navigation, title)| {
-        evidence.visited_pages.iter().any(|page| {
-            page.navigation_label == *navigation
-                && page.page_title == *title
-                && page.active_navigation
-                && page.main_width >= 600
-                && page.main_height > 0
-                && page.interactive_element_count > 0
-                && page.rendered_text_length >= 20
-        })
-    });
+    let pages_complete = evidence.visited_pages.len() == PACKAGED_SMOKE_REQUIRED_PAGES.len()
+        && PACKAGED_SMOKE_REQUIRED_PAGES
+            .iter()
+            .zip(&evidence.visited_pages)
+            .all(|((navigation, title), page)| {
+                page.navigation_label == *navigation
+                    && page.page_title == *title
+                    && page.active_navigation
+                    && page.heading_visible
+                    && page.main_width >= 600
+                    && page.main_height > 0
+                    && page.rendered_text_length >= 20
+            });
     if evidence.onboarding_title != "家計簿をはじめましょう"
         || evidence.household_name != "Packaged Smoke Household"
-        || evidence.interaction_count < 1
+        || evidence.interaction_count < PACKAGED_SMOKE_REQUIRED_PAGES.len() as u32 + 1
         || evidence.viewport_width < 800
         || evidence.viewport_height < 600
         || !evidence.device_pixel_ratio.is_finite()
@@ -626,24 +640,34 @@ mod packaged_smoke_visual_evidence_tests {
             onboarding_title: "家計簿をはじめましょう".into(),
             household_name: "Packaged Smoke Household".into(),
             navigation_labels: vec![
-                "ホーム".into(),
-                "取引".into(),
-                "インポート".into(),
-                "カレンダー・レポート".into(),
-            ],
-            visited_pages: [("ホーム", "Packaged Smoke Householdの家計")]
+                "ホーム",
+                "取引",
+                "インポート",
+                "カード照合",
+                "資産・投資",
+                "カレンダー・レポート",
+                "予算・目標",
+                "分類ルール",
+                "家族スペース",
+                "設定",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            visited_pages: PACKAGED_SMOKE_REQUIRED_PAGES
                 .into_iter()
                 .map(|(navigation_label, page_title)| PackagedSmokePageEvidence {
                     navigation_label: navigation_label.into(),
                     page_title: page_title.into(),
                     active_navigation: true,
+                    heading_visible: true,
                     main_width: 1000,
                     main_height: 700,
                     interactive_element_count: 2,
                     rendered_text_length: 100,
                 })
                 .collect(),
-            interaction_count: 1,
+            interaction_count: 11,
             viewport_width: 1280,
             viewport_height: 800,
             device_pixel_ratio: 2.0,

@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.32 brings the source-backed Action Center onto Home. The three highest-priority import, card, budget, goal, anomaly, or recurring-cost actions are visible before analysis, route to the correct workspace, and share the same deterministic ordering and selected-month baseline as the full Forecast view.
+Version 0.33 strengthens packaged-release evidence by launching the real desktop artifact, completing onboarding, and navigating all ten top-level workspaces while verifying their exact headings, active navigation, visible layout, IPC, database migrations, integrity, and persisted household state.
 
 ## Product tour
 
@@ -163,14 +163,14 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Dated market-price history, `assetbalance` price reuse, market value, unrealized P&L, and explicit missing-price disclosure by currency.
 - Annual realized P&L, dividend, fee, tax, and FIFO purchase-to-sale source-row reporting.
 - Locally rendered authenticated PDF pages underneath extraction bounding boxes.
-- Packaged-WebView onboarding and Home-render evidence with database persistence verification.
+- Packaged-WebView onboarding plus ordered navigation evidence for all ten top-level workspaces, with exact headings, active navigation, and database persistence verification.
 - Recursive native filesystem notifications with debouncing, duplicate suppression, and bounded polling fallback.
 - Split, reverse-split, and same-currency share-for-share merger events that preserve FIFO lot provenance and total cost.
 - JPY investment reporting from dated direct/inverse FX observations, including the exact selected rate and source provenance.
 - Authenticated local receipt-image preview with interactive OCR regions, zoom, confidence, and source-row drill-down.
 - Background folder discovery outside Import Inbox with debounced created/modified/removed events.
 - FIFO holdings, open lots, realized P&L, dividends, fees, and taxes with source-event lineage per currency.
-- Packaged application launch smoke using isolated temporary data, real WebView IPC, and migration checks.
+- Packaged application launch/navigation smoke using isolated temporary data, real WebView IPC, migration checks, and machine-readable evidence for every primary workspace shell.
 - Three-month cash/savings forecast with explicit historical assumptions, recurring costs, and known card payments.
 - Prioritized Action Center for imports, card reconciliation, budgets, goals, anomalies, and subscription price changes.
 - Brokerage buys, sells, dividends, fees, taxes, deposits, and withdrawals with balanced investment legs and currency summaries.
