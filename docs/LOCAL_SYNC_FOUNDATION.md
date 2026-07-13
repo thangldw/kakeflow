@@ -42,19 +42,33 @@ two-database replay test that verifies equal debit and credit totals and exact
 metadata/reference reconstruction. This is a contract proof only: there is no
 incoming-envelope application runtime in 0.36.
 
+KakeFlow 0.37 adds seven portable, user-authored planning and configuration
+aggregates: the household monthly-budget plan, savings goals, classification
+rules with sorted labels and tags, account groups with ordered members, explicit
+card-to-bank settlement mappings, saved dashboard preferences, and versioned
+CSV/TSV parser profiles. Writes are captured in the same domain commit and
+coalesced before envelope creation just like the ledger aggregates.
+
+The [planning and configuration contract](REPLICABLE_PLANNING_CONFIG_CAPTURE.md)
+has its own dependency-ordered two-database replay proof. It does not add an
+incoming-envelope application runtime or transmit an outbox record.
+
 ## Restore validation
 
-Schema 33 restore validation checks device, principal, member-binding, local
+Schema 34 restore validation checks device, principal, member-binding, local
 context, envelope, outbox, and transactional-capture relations before activation.
 It also validates the final replayable aggregate shape, journal account scope,
-line uniqueness, positive integer amounts, and debit/credit balance. Device-local
-context is cleared during portable restore, while logical principals and
-historical origin/envelope records remain in the backup.
+line uniqueness, positive integer amounts, debit/credit balance, planning and
+configuration field types, deterministic child arrays, and household/account
+dependencies. Device-local context is cleared during portable restore, while
+logical principals and historical origin/envelope records remain in the backup.
 
 ## Explicit non-goals
 
 This release does not provide a sync server, network transport, incoming apply
-runtime, source-document/blob transport, end-to-end sync protocol, cross-device
-conflict resolution, merge UI, login, remote authentication, access control,
-backend audience enforcement, or mobile receipt capture. Those remain separate
-roadmap milestones.
+runtime, source-document/blob transport, source/import aggregate graph,
+card-statement/payment aggregate graph, investment/portfolio aggregate graph,
+end-to-end sync protocol, cross-device conflict resolution, merge UI, login,
+remote authentication, access control, backend audience enforcement, or mobile
+receipt capture. Device-local watched-folder state also remains local. Those
+remain separate roadmap milestones.
