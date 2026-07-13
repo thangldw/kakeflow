@@ -248,6 +248,8 @@ pub struct CardMatchConfirmation {
     pub reconciliation_status: String,
 }
 
+type CardMatchRow = (String, String, i64, i64, String, String, Option<String>);
+
 type CandidatePostingRow = (
     String,
     Option<String>,
@@ -1086,10 +1088,6 @@ fn reconcile_exact_card_payments(tx: &Transaction<'_>, household_id: &str) -> Re
                  reconciliation_status = 'POSSIBLE_MATCH' WHERE id = ?2",
                 params![statement_id, payment_id],
             )?;
-            tx.execute(
-                "UPDATE card_statements SET reconciliation_status = 'POSSIBLE_MATCH' WHERE id = ?1",
-                [statement_id],
-            )?;
         }
     }
     Ok(())
@@ -1105,10 +1103,11 @@ pub fn confirm_card_match(
     validate_id("statement id", statement_id)?;
     validate_id("payment id", payment_id)?;
     let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
-    let row: Option<(String, String, i64, i64, String, String)> = tx
+    let row: Option<CardMatchRow> = tx
         .query_row(
             "SELECT cs.card_account_id, cp.card_account_id, cs.statement_amount_jpy,
-                    cp.payment_amount_jpy, cs.reconciliation_status, cp.reconciliation_status
+                    cp.payment_amount_jpy, cs.reconciliation_status, cp.reconciliation_status,
+                    cp.confirmed_at
              FROM card_statements cs JOIN card_payments cp ON cp.statement_id = cs.id
              WHERE cs.id = ?1 AND cp.id = ?2 AND cs.household_id = ?3 AND cp.household_id = ?3",
             params![statement_id, payment_id, household_id],
@@ -1120,6 +1119,7 @@ pub fn confirm_card_match(
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )
@@ -1131,38 +1131,54 @@ pub fn confirm_card_match(
         payment_amount,
         statement_status,
         payment_status,
+        confirmed_at,
     ) = row.ok_or_else(|| ImportWorkflowError::Validation("card match was not found".into()))?;
     if statement_account != payment_account || statement_amount != payment_amount {
         return Err(ImportWorkflowError::Validation(
             "card match amount or account changed".into(),
         ));
     }
-    if statement_status == "FULLY_RECONCILED" && payment_status == "FULLY_RECONCILED" {
+    if confirmed_at.is_some() {
         tx.commit()?;
         return Ok(CardMatchConfirmation {
             statement_id: statement_id.into(),
             payment_id: payment_id.into(),
-            reconciliation_status: "FULLY_RECONCILED".into(),
+            reconciliation_status: statement_status,
         });
     }
-    if statement_status != "POSSIBLE_MATCH" || payment_status != "POSSIBLE_MATCH" {
+    if statement_status != "UNMATCHED" || payment_status != "POSSIBLE_MATCH" {
         return Err(ImportWorkflowError::Validation(
             "card match is not confirmable".into(),
         ));
     }
     tx.execute(
-        "UPDATE card_statements SET reconciliation_status = 'FULLY_RECONCILED' WHERE id = ?1",
-        [statement_id],
-    )?;
-    tx.execute(
-        "UPDATE card_payments SET reconciliation_status = 'FULLY_RECONCILED', match_score_bps = 10000 WHERE id = ?1",
+        "UPDATE card_payments SET reconciliation_status = 'FULLY_RECONCILED',
+         match_score_bps = 10000,
+         confirmed_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
         [payment_id],
+    )?;
+    let confirmed_total: i64 = tx.query_row(
+        "SELECT COALESCE(SUM(payment_amount_jpy),0) FROM card_payments
+         WHERE statement_id=?1 AND confirmed_at IS NOT NULL",
+        [statement_id],
+        |row| row.get(0),
+    )?;
+    let reconciliation_status = if confirmed_total < statement_amount {
+        "PARTIALLY_RECONCILED"
+    } else if confirmed_total == statement_amount {
+        "FULLY_RECONCILED"
+    } else {
+        "OVERPAID"
+    };
+    tx.execute(
+        "UPDATE card_statements SET reconciliation_status=?1 WHERE id=?2",
+        params![reconciliation_status, statement_id],
     )?;
     tx.commit()?;
     Ok(CardMatchConfirmation {
         statement_id: statement_id.into(),
         payment_id: payment_id.into(),
-        reconciliation_status: "FULLY_RECONCILED".into(),
+        reconciliation_status: reconciliation_status.into(),
     })
 }
 
@@ -1759,7 +1775,8 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    statement_id TEXT REFERENCES card_statements(id), bank_transaction_id TEXT NOT NULL UNIQUE REFERENCES transactions(id),
                    card_account_id TEXT NOT NULL REFERENCES accounts(id), payment_amount_jpy INTEGER NOT NULL,
-                   payment_on TEXT NOT NULL, match_score_bps INTEGER, reconciliation_status TEXT NOT NULL);
+                   payment_on TEXT NOT NULL, match_score_bps INTEGER, reconciliation_status TEXT NOT NULL,
+                   confirmed_at TEXT);
                  CREATE TABLE staged_card_statements (
                    id TEXT PRIMARY KEY, import_run_id TEXT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
                    household_id TEXT NOT NULL REFERENCES households(id), card_account_id TEXT NOT NULL REFERENCES accounts(id),
@@ -2350,7 +2367,7 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(statement_status, "POSSIBLE_MATCH");
+        assert_eq!(statement_status, "UNMATCHED");
         assert_eq!(payment_status, "POSSIBLE_MATCH");
         assert_eq!(score, 8_000);
         assert_eq!(linked, "statement-1");

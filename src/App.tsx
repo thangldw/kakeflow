@@ -333,16 +333,16 @@ function TransactionRows({ rows = transactions, onSelect, selectedIds, onToggleS
 function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonly CardSettlementDto[]; desktop: boolean; onOpen: () => void }) {
   const cards = desktop ? liveCards.map((card) => ({
     name: card.cardName, mask: card.maskedIdentifier ?? '番号未設定', dueDate: card.paymentDueOn ?? card.periodEnd,
-    statement: card.statementAmountJpy, bankDebit: card.paymentAmountJpy ?? undefined,
-    progress: card.reconciliationStatus === 'FULLY_RECONCILED' ? 100 : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 80 : 0,
-    status: card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' as const : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 'possible' as const : 'pending' as const,
+    statement: card.statementAmountJpy, bankDebit: card.paidAmountJpy || undefined,
+    progress: card.statementAmountJpy === 0 ? 0 : Math.min(Math.round(card.paidAmountJpy / card.statementAmountJpy * 100), 100),
+    status: card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' as const : card.reconciliationStatus === 'PARTIALLY_RECONCILED' || card.eligiblePayments.length > 0 ? 'possible' as const : 'pending' as const,
     color: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a',
   })) : cardSettlements
   return (
     <article className="panel reconciliation">
       <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="text-btn" onClick={onOpen}>照合を開く <ArrowRight size={14} /></button></div>
       <div className="card-stack">{cards.length > 0 ? cards.map((card) => <div className="settlement" key={card.name}>
-        <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{card.status === 'reconciled' ? '照合済み' : '引落待ち'}</b></div>
+        <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{card.status === 'reconciled' ? '全額照合' : card.status === 'possible' ? '一部・候補あり' : '引落待ち'}</b></div>
         <div className="settlement-values"><span>請求額 <strong>{yen(card.statement)}</strong></span><span>口座引落 <strong>{card.bankDebit ? yen(card.bankDebit) : '—'}</strong></span></div>
         <div className="progress"><span style={{ width: `${card.progress}%` }} /></div>
       </div>) : <p className="empty-state">カード明細はまだありません。</p>}</div>
@@ -1147,18 +1147,20 @@ function CardsPage({ cards, householdId, accounts, revision, onChanged, month }:
     }).catch(() => { if (active) setNotice('引落口座と支払余力を読み込めませんでした。') })
     return () => { active = false }
   }, [desktop, householdId, revision])
-  const displayCards = desktop ? cards.filter((card) => (card.periodStart.slice(0, 7) <= month && card.periodEnd.slice(0, 7) >= month) || card.paymentDueOn?.slice(0, 7) === month || card.paymentOn?.slice(0, 7) === month) : cardSettlements.map((card, index) => ({
+  const displayCards = desktop ? cards.filter((card) => (card.periodStart.slice(0, 7) <= month && card.periodEnd.slice(0, 7) >= month) || card.paymentDueOn?.slice(0, 7) === month || card.payments.some((payment) => payment.paymentOn.slice(0, 7) === month) || card.eligiblePayments.some((payment) => payment.paymentOn.slice(0, 7) === month)) : cardSettlements.map((card, index) => ({
     id: `demo-${index}`, cardAccountId: `demo-${index}`, cardName: card.name, maskedIdentifier: card.mask,
     periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: card.dueDate,
     statementAmountJpy: card.statement, detailAmountJpy: card.statement, lineCount: card.name.includes('Rakuten') ? 15 : 14,
     paymentId: card.bankDebit ? `demo-payment-${index}` : null, bankTransactionId: null,
     paymentAmountJpy: card.bankDebit ?? null, paymentOn: null, matchScoreBps: card.bankDebit ? 10000 : null,
     reconciliationStatus: card.status === 'reconciled' ? 'FULLY_RECONCILED' as const : 'UNMATCHED' as const,
+    paidAmountJpy: card.bankDebit ?? 0, outstandingAmountJpy: Math.max(card.statement - (card.bankDebit ?? 0), 0), overpaidAmountJpy: Math.max((card.bankDebit ?? 0) - card.statement, 0),
+    payments: card.bankDebit ? [{ paymentId: `demo-payment-${index}`, bankTransactionId: `demo-bank-${index}`, paymentAmountJpy: card.bankDebit, paymentOn: card.dueDate, matchScoreBps: 10000 }] : [], eligiblePayments: [],
   }))
-  const confirm = async (card: CardSettlementDto) => {
-    if (!householdId || !card.paymentId) return
-    setBusyId(card.id); setNotice('')
-    try { await platformClient.confirmCardMatch(householdId, card.id, card.paymentId); await reloadSettlementPlan(); onChanged(); setNotice('請求と口座引落を照合済みにしました。') }
+  const confirm = async (card: CardSettlementDto, paymentId: string) => {
+    if (!householdId) return
+    setBusyId(paymentId); setNotice('')
+    try { await platformClient.confirmCardPaymentLink(householdId, card.id, paymentId); await reloadSettlementPlan(); onChanged(); setNotice('選択した口座引落を請求に紐付けました。仕訳や支払いは変更していません。') }
     catch { setNotice('照合を確定できませんでした。金額とカード口座を確認してください。') }
     finally { setBusyId(null) }
   }
@@ -1191,9 +1193,11 @@ function CardsPage({ cards, householdId, accounts, revision, onChanged, month }:
     <div className="section-divider"><span>請求・口座引落の照合</span></div>
     <section className="cards-page-grid">{displayCards.map((card) => <article className="panel card-detail" key={card.id}>
       <div className="card-visual" style={{ background: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a' }}><span>KAKEFLOW CARD</span><strong>{card.cardName}</strong><small>{card.maskedIdentifier ?? '番号未設定'}</small></div>
-      <div className="card-detail-head"><div><span>請求額</span><strong>{yen(card.statementAmountJpy)}</strong></div><b className={card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? 'possible' : 'pending'}>{card.reconciliationStatus === 'FULLY_RECONCILED' ? '✓ 照合済み' : card.reconciliationStatus === 'POSSIBLE_MATCH' ? '照合候補' : '引落待ち'}</b></div>
-      <dl><div><dt>期間</dt><dd>{card.periodStart} – {card.periodEnd}</dd></div><div><dt>口座引落</dt><dd>{card.paymentAmountJpy ? yen(card.paymentAmountJpy) : '未検出'}</dd></div><div><dt>利用明細</dt><dd>{card.lineCount}件</dd></div></dl>
-      {card.reconciliationStatus === 'POSSIBLE_MATCH' && <button className="full-btn" disabled={busyId === card.id} onClick={() => void confirm(card)}>{busyId === card.id ? '確定中…' : '金額と口座を確認して照合'} <ArrowRight size={15} /></button>}
+      <div className="card-detail-head"><div><span>請求額</span><strong>{yen(card.statementAmountJpy)}</strong></div><b className={card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' : card.reconciliationStatus === 'PARTIALLY_RECONCILED' ? 'possible' : card.reconciliationStatus === 'OVERPAID' ? 'overpaid' : 'pending'}>{card.reconciliationStatus === 'FULLY_RECONCILED' ? '✓ 全額照合' : card.reconciliationStatus === 'PARTIALLY_RECONCILED' ? '一部支払済み' : card.reconciliationStatus === 'OVERPAID' ? '過払い' : '未照合'}</b></div>
+      <dl className="card-settlement-totals"><div><dt>支払済み</dt><dd>{yen(card.paidAmountJpy)}</dd></div><div><dt>未払い</dt><dd>{yen(card.outstandingAmountJpy)}</dd></div><div><dt>過払い</dt><dd>{yen(card.overpaidAmountJpy)}</dd></div></dl>
+      <div className="card-payment-history"><h3>紐付け済みの口座引落</h3>{card.payments.map((payment) => <div className="card-payment-row confirmed" key={payment.paymentId}><span><strong>{payment.paymentOn}</strong><small>銀行取引 {payment.bankTransactionId}</small></span><b>{yen(payment.paymentAmountJpy)}</b><em>確認済み</em></div>)}{card.payments.length === 0 && <p className="empty-state">紐付け済みの口座引落はありません。</p>}</div>
+      {card.eligiblePayments.length > 0 && <div className="card-payment-candidates"><h3>照合候補</h3><p>候補ごとに金額と日付を確認してください。自動確定や支払い処理は行いません。</p>{card.eligiblePayments.map((payment) => <div className="card-payment-row" key={payment.paymentId}><span><strong>{payment.paymentOn}</strong><small>{payment.matchScoreBps == null ? '一致度未算出' : `一致度 ${Math.round(payment.matchScoreBps / 100)}%`} ・ 銀行取引 {payment.bankTransactionId}</small></span><b>{yen(payment.paymentAmountJpy)}</b><button className="secondary-btn" disabled={busyId === payment.paymentId} onClick={() => void confirm(card, payment.paymentId)}>{busyId === payment.paymentId ? '確定中…' : 'この引落を確認して紐付け'}</button></div>)}</div>}
+      <dl className="card-statement-meta"><div><dt>期間</dt><dd>{card.periodStart} – {card.periodEnd}</dd></div><div><dt>利用明細</dt><dd>{card.lineCount}件</dd></div><div><dt>支払期日</dt><dd>{card.paymentDueOn ?? '未登録'}</dd></div></dl>
     </article>)}{desktop && displayCards.length === 0 && <p className="empty-state">カードCSVを取り込むと、ここに請求と照合状況が表示されます。</p>}</section>
   </>
 }

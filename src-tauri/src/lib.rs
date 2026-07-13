@@ -1612,8 +1612,30 @@ fn card_match_confirm(
     statement_id: String,
     payment_id: String,
 ) -> Result<CardMatchConfirmation, String> {
-    workflow_result(&state, |connection| {
-        import_workflow::confirm_card_match(connection, &household_id, &statement_id, &payment_id)
+    repository_result(&state, |connection| {
+        let settlement = read_model::confirm_card_payment_link(
+            connection,
+            &household_id,
+            &statement_id,
+            &payment_id,
+        )?;
+        Ok(CardMatchConfirmation {
+            statement_id,
+            payment_id,
+            reconciliation_status: settlement.reconciliation_status,
+        })
+    })
+}
+
+#[tauri::command]
+fn card_payment_link_confirm(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    statement_id: String,
+    payment_id: String,
+) -> Result<CardSettlementDto, String> {
+    repository_result(&state, |connection| {
+        read_model::confirm_card_payment_link(connection, &household_id, &statement_id, &payment_id)
     })
 }
 
@@ -2210,6 +2232,7 @@ pub fn run() {
             import_summary,
             cards_list,
             card_match_confirm,
+            card_payment_link_confirm,
             import_start,
             import_preview,
             import_commit,

@@ -23,6 +23,7 @@ const desktop = vi.hoisted(() => ({
   readWatchedFile: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
+  confirmCardPaymentLink: vi.fn(),
   listCardSettlementBankMappings: vi.fn(),
   upsertCardSettlementBankMapping: vi.fn(),
   deleteCardSettlementBankMapping: vi.fn(),
@@ -105,6 +106,7 @@ vi.mock('./platform', async () => {
       rollbackImport: desktop.rollbackImport,
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
+      confirmCardPaymentLink: desktop.confirmCardPaymentLink,
       listCardSettlementBankMappings: desktop.listCardSettlementBankMappings,
       upsertCardSettlementBankMapping: desktop.upsertCardSettlementBankMapping,
       deleteCardSettlementBankMapping: desktop.deleteCardSettlementBankMapping,
@@ -145,6 +147,7 @@ describe('KakeFlow desktop read models', () => {
     ])
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
+    desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
     desktop.listCardSettlementBankMappings.mockReset().mockResolvedValue([])
     desktop.upsertCardSettlementBankMapping.mockReset().mockImplementation(async (input) => ({ ...input, cardAccountName: 'カード', bankAccountName: '銀行', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
     desktop.deleteCardSettlementBankMapping.mockReset().mockResolvedValue(undefined)
@@ -538,23 +541,39 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.readWatchedFile).toHaveBeenCalledWith('family', 'folder', 'PayPay/history.csv'))
   })
 
-  it('renders and confirms a persisted card-payment match', async () => {
-    desktop.listCardSettlements.mockResolvedValue([{
+  it('shows cumulative card payments and explicitly confirms one eligible payment', async () => {
+    const partial = {
       id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: '•••• 8106',
       periodStart: '2026-06-01', periodEnd: '2026-06-30', paymentDueOn: null,
       statementAmountJpy: 204_987, detailAmountJpy: 204_987, lineCount: 15,
-      paymentId: 'payment-1', bankTransactionId: 'bank-payment', paymentAmountJpy: 204_987,
-      paymentOn: '2026-07-27', matchScoreBps: 8000, reconciliationStatus: 'POSSIBLE_MATCH',
-    }])
+      paymentId: 'payment-1', bankTransactionId: 'bank-payment-1', paymentAmountJpy: 100_000,
+      paymentOn: '2026-07-20', matchScoreBps: 9000, reconciliationStatus: 'PARTIALLY_RECONCILED',
+      paidAmountJpy: 100_000, outstandingAmountJpy: 104_987, overpaidAmountJpy: 0,
+      payments: [{ paymentId: 'payment-1', bankTransactionId: 'bank-payment-1', paymentAmountJpy: 100_000, paymentOn: '2026-07-20', matchScoreBps: 9000 }],
+      eligiblePayments: [{ paymentId: 'payment-2', bankTransactionId: 'bank-payment-2', paymentAmountJpy: 104_987, paymentOn: '2026-07-27', matchScoreBps: null }],
+    } as const
+    desktop.listCardSettlements.mockResolvedValue([
+      partial,
+      { ...partial, id: 'statement-full', cardName: 'Full Card', statementAmountJpy: 50_000, detailAmountJpy: 50_000, paymentId: 'full-payment', bankTransactionId: 'full-bank', paymentAmountJpy: 50_000, matchScoreBps: 10000, reconciliationStatus: 'FULLY_RECONCILED', paidAmountJpy: 50_000, outstandingAmountJpy: 0, payments: [{ paymentId: 'full-payment', bankTransactionId: 'full-bank', paymentAmountJpy: 50_000, paymentOn: '2026-07-20', matchScoreBps: 10000 }], eligiblePayments: [] },
+      { ...partial, id: 'statement-overpaid', cardName: 'Overpaid Card', statementAmountJpy: 40_000, detailAmountJpy: 40_000, paymentId: 'over-payment', bankTransactionId: 'over-bank', paymentAmountJpy: 45_000, reconciliationStatus: 'OVERPAID', paidAmountJpy: 45_000, outstandingAmountJpy: 0, overpaidAmountJpy: 5_000, payments: [{ paymentId: 'over-payment', bankTransactionId: 'over-bank', paymentAmountJpy: 45_000, paymentOn: '2026-07-20', matchScoreBps: null }], eligiblePayments: [] },
+    ])
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
 
-    expect(await screen.findByText('照合候補')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /金額と口座を確認して照合/ }))
+    expect(await screen.findByText('一部支払済み')).toBeInTheDocument()
+    expect(screen.getByText('✓ 全額照合')).toBeInTheDocument()
+    expect(screen.getAllByText('過払い').some((element) => element.classList.contains('overpaid'))).toBe(true)
+    expect(screen.getAllByText('¥100,000').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('¥104,987').length).toBeGreaterThan(0)
+    expect(screen.getByText(/一致度未算出/)).toBeInTheDocument()
+    expect(screen.getAllByText('確認済み').length).toBe(3)
+    expect(desktop.confirmCardPaymentLink).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'この引落を確認して紐付け' }))
 
-    await waitFor(() => expect(desktop.confirmCardMatch).toHaveBeenCalledWith('family', 'statement-1', 'payment-1'))
-    expect(await screen.findByText('請求と口座引落を照合済みにしました。')).toBeInTheDocument()
+    await waitFor(() => expect(desktop.confirmCardPaymentLink).toHaveBeenCalledWith('family', 'statement-1', 'payment-2'))
+    expect(desktop.confirmCardMatch).not.toHaveBeenCalled()
+    expect(await screen.findByText('選択した口座引落を請求に紐付けました。仕訳や支払いは変更していません。')).toBeInTheDocument()
   })
 
   it('saves an explicit card-to-bank mapping and shows projected coverage and unmapped warnings', async () => {
