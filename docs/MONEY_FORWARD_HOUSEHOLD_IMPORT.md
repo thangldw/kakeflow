@@ -18,9 +18,21 @@ Every raw row is stored as immutable evidence with both the original ordered fie
 
 ## Explicit institution mapping
 
-Version 0.20 accepts one distinct `保有金融機関` per file. The Import Inbox requires the user to select the corresponding active KakeFlow Asset or Liability account. KakeFlow does not infer this relationship from transaction text or create an account automatically.
+Version 0.45 accepts between one and 50 distinct normalized `保有金融機関`
+values in one file. Names are normalized with NFKC and surrounding whitespace is
+removed, then displayed in deterministic first-appearance order. A blank value
+on any detail row or more than 50 distinct values blocks the file.
 
-A file containing multiple institutions is rejected with an actionable message. Exporting one institution at a time avoids silently assigning rows from different banks, cards, or wallets to the same ledger account.
+Import Inbox renders a separate selector for every source institution. Each one
+must reference an active KakeFlow Asset or Liability account before staging is
+enabled. The mapper rejects missing mappings and keys that are not present in
+the parsed file. KakeFlow does not infer a relationship from transaction text,
+reuse a default account, or create an account automatically.
+
+The mapping belongs to the current file preview and each candidate receives the
+account selected for its own source institution. It is discarded when the
+preview or household changes. Multiple institutions may intentionally point to
+the same canonical account, but that remains an explicit user choice.
 
 ## Review and posting
 

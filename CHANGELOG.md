@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.45.0 — 2026-07-13
+
+- Accept Money Forward ME household-ledger exports containing up to 50 normalized `保有金融機関` values instead of requiring one institution per file.
+- Require a separate explicit active Asset/Liability account mapping for every source institution, disable staging until the mapping is complete, and never infer or auto-create an account.
+- Apply each mapping at the candidate boundary while preserving Money Forward transfer, calculation-target, category, memo, source-row, stable-ID deduplication, and atomic posting semantics.
+- Validate missing and unknown mapping keys before staging, retain deterministic first-appearance institution order, and cover UTF-8, CP932, Unicode-normalized duplicates, and the 50-institution bound.
+
 ## 0.44.0 — 2026-07-13
 
 - Add a strict headerless `smbc-vpass-statement-v1` adapter for the official eleven-position Vpass CSV field order, gated by an SMBC/三井住友 product marker and isolated from Amazon Mastercard.

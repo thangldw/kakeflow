@@ -950,6 +950,55 @@ describe('KakeFlow desktop read models', () => {
     }), expect.any(Uint8Array)))
   })
 
+  it('requires and applies one explicit account mapping per Money Forward institution', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const csv = [
+      '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID',
+      '1,2026/07/12,給与,300000,MUFG,収入,給与,7月分,0,mf-1',
+      '1,2026/07/13,カード利用,-1200,楽天カード,食費,食料品,昼食,0,mf-2',
+    ].join('\n')
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'money-forward.csv', { type: 'text/csv' })] } })
+
+    const start = await screen.findByRole('button', { name: '取込開始' })
+    expect(start).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('money-forward.csvのMUFG取込先口座'), { target: { value: 'family-bank' } })
+    expect(start).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('money-forward.csvの楽天カード取込先口座'), { target: { value: 'family-card' } })
+    expect(start).toBeEnabled()
+    fireEvent.click(start)
+
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'money-forward-me-household-ledger-v1',
+      candidates: [
+        expect.objectContaining({ institutionRaw: 'MUFG', accountId: 'family-bank', direction: 'IN' }),
+        expect.objectContaining({ institutionRaw: '楽天カード', accountId: 'family-card', direction: 'OUT' }),
+      ],
+    }), expect.any(Uint8Array)))
+  })
+
+  it('explains and disables Money Forward mapping when no Asset or Liability account exists', async () => {
+    desktop.listAccounts.mockResolvedValue([
+      { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+    ])
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const csv = '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID\n1,2026/07/12,給与,300000,MUFG,収入,給与,,0,mf-1'
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'money-forward.csv', { type: 'text/csv' })] } })
+
+    const explanation = await screen.findByText('設定ページで先に資産または負債口座を追加してください。追加するまで取込は開始できません。')
+    const selector = screen.getByLabelText('money-forward.csvのMUFG取込先口座')
+    const start = screen.getByRole('button', { name: '取込開始' })
+    expect(selector).toBeDisabled()
+    expect(selector).toHaveAttribute('aria-describedby', explanation.id)
+    expect(start).toBeDisabled()
+    expect(start).toHaveAttribute('aria-describedby', explanation.id)
+    expect(desktop.startImport).not.toHaveBeenCalled()
+  })
+
   it('disables Vpass staging and explains the Settings prerequisite when no card account exists', async () => {
     desktop.listAccounts.mockResolvedValue([
       { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },

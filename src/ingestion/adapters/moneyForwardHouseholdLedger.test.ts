@@ -21,16 +21,51 @@ describe('Money Forward ME household-ledger adapter', () => {
     expect(parsed.records[0]).toMatchObject({ signedAmountJpy: 500, calculationTarget: false, isTransfer: false, externalTransactionId: 'abc' })
   })
 
-  it('rejects malformed flags, zero amounts, dates, and multi-institution files', () => {
+  it('accepts a UTF-8 household export with multiple institutions in first-appearance order', () => {
     const text = [header,
-      'maybe,2026/02/30,A,0,MUFG,食費,食料品,,no,a',
+      '1,2026/07/12,食料品,-1200,MUFG,食費,食料品,週末の買い物,0,mf-1',
+      '0,2026/07/13,給与,300000,楽天銀行,収入,給与,振込,0,mf-2',
+      '1,2026/07/14,振替,-5000,MUFG,振替,口座振替,カード支払,1,mf-3',
+    ].join('\n')
+    const parsed = moneyForwardHouseholdLedgerAdapter.parse({ text })
+    expect(parsed.issues).toEqual([])
+    expect(parsed.records).toHaveLength(3)
+    expect(parsed.metadata).toMatchObject({ institutions: ['MUFG', '楽天銀行'] })
+    expect(parsed.records.map((record) => record.institution)).toEqual(['MUFG', '楽天銀行', 'MUFG'])
+  })
+
+  it('deduplicates institution names after NFKC normalization and trimming', () => {
+    const text = [header,
+      '1,2026/07/12,A,-100,ＭＵＦＧ,食費,食料品,,0,a',
+      '1,2026/07/13,B,-200,  MUFG  ,食費,食料品,,0,b',
+    ].join('\n')
+    const parsed = moneyForwardHouseholdLedgerAdapter.parse({ text })
+    expect(parsed.issues).toEqual([])
+    expect(parsed.metadata).toMatchObject({ institutions: ['MUFG'] })
+    expect(parsed.records.map((record) => record.institution)).toEqual(['MUFG', 'MUFG'])
+  })
+
+  it('rejects more than fifty distinct institutions', () => {
+    const rows = Array.from({ length: 51 }, (_, index) =>
+      `1,2026/07/12,Item ${index},-100,Bank ${index},食費,食料品,,0,id-${index}`)
+    const atLimit = moneyForwardHouseholdLedgerAdapter.parse({ text: [header, ...rows.slice(0, 50)].join('\n') })
+    expect(atLimit.records).toHaveLength(50)
+    expect(atLimit.issues.some((issue) => issue.code === 'MONEY_FORWARD_INSTITUTION_LIMIT_EXCEEDED')).toBe(false)
+    const parsed = moneyForwardHouseholdLedgerAdapter.parse({ text: [header, ...rows].join('\n') })
+    expect(parsed.metadata).toMatchObject({ institutions: Array.from({ length: 51 }, (_, index) => `Bank ${index}`) })
+    expect(parsed.issues).toContainEqual(expect.objectContaining({ code: 'MONEY_FORWARD_INSTITUTION_LIMIT_EXCEEDED', severity: 'error' }))
+  })
+
+  it('rejects malformed flags, zero amounts, dates, and a blank institution per detail row', () => {
+    const text = [header,
+      'maybe,2026/02/30,A,0,,食費,食料品,,no,a',
       '1,2026/07/13,B,-100,SMBC,食費,食料品,,0,b',
       '1,2026/07/13,C,-100,MUFG,食費,食料品,,0,c',
     ].join('\n')
     const parsed = moneyForwardHouseholdLedgerAdapter.parse({ text })
     expect(parsed.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       'MONEY_FORWARD_CALCULATION_TARGET_INVALID', 'MONEY_FORWARD_TRANSFER_INVALID', 'MONEY_FORWARD_DATE_INVALID',
-      'MONEY_FORWARD_AMOUNT_INVALID', 'MONEY_FORWARD_MULTIPLE_INSTITUTIONS',
+      'MONEY_FORWARD_AMOUNT_INVALID', 'MONEY_FORWARD_INSTITUTION_MISSING',
     ]))
   })
 })
