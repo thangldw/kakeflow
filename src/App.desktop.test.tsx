@@ -848,6 +848,27 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
   })
 
+  it('requires and applies an explicit bank account for a Yucho import', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const csv = 'お客さま口座情報\n現在高：,150000,円\n取引日,入出金明細ID,受入金額（円）,払出金額（円）,詳細1,詳細2,現在（貸付）高\n20260701,1,50000,,給与,勤務先,150000'
+    fireEvent.change(input, { target: { files: [new File([csv], 'yucho.csv', { type: 'text/csv' })] } })
+
+    const start = await screen.findByRole('button', { name: '取込開始' })
+    fireEvent.click(start)
+    expect(await screen.findByText('ゆうちょCSVの取込先銀行口座を選択してください。')).toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('yucho.csvのゆうちょ取込先口座'), { target: { value: 'family-bank' } })
+    fireEvent.click(start)
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'yucho-direct-ledger-v1',
+      candidates: [expect.objectContaining({ accountId: 'family-bank' })],
+    }), expect.any(Uint8Array)))
+  })
+
   it('imports a Money Forward asset-history file as one source and one atomic non-ledger batch', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')

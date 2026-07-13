@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.27 adds a dedicated adapter for the official Yucho Direct personal-account transaction CSV. It handles the account-information preamble, compact dates, deposits, withdrawals, signed loan balances, running-balance validation, and the export-only sequence field without misclassifying ATM cash-card rows as credit-card payments.
+Version 0.28 adds bounded manual ZIP import for Yucho Direct bulk exports. Every distinct CSV payload inside a valid archive becomes an ordinary reviewable child preview with archive provenance and explicit bank-account selection; unsafe or malformed archives are rejected atomically, and nothing is posted automatically.
 
 ## Product tour
 
@@ -111,6 +111,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- Bounded [Yucho bulk ZIP import](docs/YUCHO_BULK_ZIP_IMPORT.md) for manual upload and drop, with deterministic per-CSV previews, archive-entry provenance, atomic archive rejection, CRC verification, explicit review, and no automatic ledger posting.
 - Dedicated [Yucho Direct transaction import](docs/YUCHO_DIRECT_IMPORT.md) using the official seven-column personal-account CSV, explicit account mapping, physical-row provenance, running-balance validation, and conservative ATM/card semantics.
 - Persisted [dashboard focus and appearance preferences](docs/DASHBOARD_PREFERENCES.md) with five truthful presets including dedicated Cash Flow, system/light/dark themes, comfortable/compact density, household isolation, responsive layouts, and no change to ledger data.
 - Durable [app-wide Folder Inbox](docs/DURABLE_FOLDER_INBOX.md) with SQLite-backed discovery state, idempotent event/poll/manual reconciliation, bounded leases and retries, restart-safe preview rehydration, explicit retry/ignore controls, and no automatic ledger posting.
