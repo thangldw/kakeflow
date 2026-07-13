@@ -20,6 +20,7 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText('ブラウザプレビュー用のサンプル状態')).toBeInTheDocument()
     expect(screen.getByLabelText('ホームの表示テンプレート')).toBeDisabled()
     expect(screen.getByText('表示設定の保存はデスクトップ版で利用できます。')).toBeInTheDocument()
+    expect(screen.getByText('ブラウザプレビューではデスクトップの対応項目を読み込みません。')).toBeInTheDocument()
   })
 
   it('identifies the non-persistent browser preview runtime', async () => {
