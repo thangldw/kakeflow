@@ -1,4 +1,4 @@
-use crate::{persistence::AppState, watched_folders};
+use crate::{persistence::AppState, watched_file_inbox, watched_folders};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -326,7 +326,14 @@ fn scan_keys(
         }
         let state = app.state::<AppState>();
         let scan = state.with_connection(|connection| {
-            Ok(watched_folders::scan_registered(connection, &key.0, &key.1))
+            let result = watched_folders::scan_registered(connection, &key.0, &key.1);
+            if let Ok(scan) = &result {
+                // A native notification and a periodic poll converge through
+                // the same metadata-keyed upsert, so duplicate signals cannot
+                // create duplicate Inbox generations.
+                let _ = watched_file_inbox::reconcile_scan(connection, &key.0, &key.1, &scan.files);
+            }
+            Ok(result)
         });
         let Ok(Ok(scan)) = scan else {
             // Preserve the last good snapshot. A temporarily unavailable sync

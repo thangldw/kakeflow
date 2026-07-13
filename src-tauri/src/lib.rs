@@ -27,6 +27,7 @@ pub mod restore;
 pub mod source_pdf_preview;
 pub mod source_preview;
 mod source_viewer;
+pub mod watched_file_inbox;
 pub mod watched_folders;
 
 use account_groups_export::{
@@ -1564,7 +1565,144 @@ fn watched_folder_scan(
     watched_folder_id: String,
 ) -> Result<watched_folders::WatchedFolderScanDto, String> {
     watched_folder_result(&state, |connection| {
-        watched_folders::scan_registered(connection, &household_id, &watched_folder_id)
+        let scan = watched_folders::scan_registered(connection, &household_id, &watched_folder_id)?;
+        watched_file_inbox::reconcile_scan(
+            connection,
+            &household_id,
+            &watched_folder_id,
+            &scan.files,
+        )
+        .map_err(|_| watched_folders::WatchedFolderError::Database)?;
+        Ok(scan)
+    })
+}
+
+fn watched_file_inbox_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(
+        &rusqlite::Connection,
+    ) -> Result<T, watched_file_inbox::WatchedFileInboxError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Watched-file Inbox database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
+fn watched_file_inbox_list(
+    app_state: tauri::State<'_, AppState>,
+    household_id: String,
+    state: Option<String>,
+    limit: Option<u16>,
+) -> Result<Vec<watched_file_inbox::WatchedFileInboxItemDto>, String> {
+    watched_file_inbox_result(&app_state, |connection| {
+        watched_file_inbox::list(connection, &household_id, state.as_deref(), limit)
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_counts(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<watched_file_inbox::WatchedFileInboxCountsDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::counts(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_claim(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_ids: Vec<String>,
+) -> Result<watched_file_inbox::WatchedFileInboxClaimDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::claim(connection, &household_id, &item_ids)
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_mark_ready(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    lease_token: String,
+) -> Result<watched_file_inbox::WatchedFileInboxItemDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::mark_ready(connection, &household_id, &item_id, &lease_token)
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_mark_needs_mapping(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    lease_token: String,
+) -> Result<watched_file_inbox::WatchedFileInboxItemDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::mark_needs_mapping(connection, &household_id, &item_id, &lease_token)
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_mark_failed(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    lease_token: String,
+    error_code: String,
+) -> Result<watched_file_inbox::WatchedFileInboxItemDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::mark_failed(
+            connection,
+            &household_id,
+            &item_id,
+            &lease_token,
+            &error_code,
+        )
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_mark_staged(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    lease_token: String,
+    import_run_id: String,
+) -> Result<watched_file_inbox::WatchedFileInboxItemDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::mark_staged(
+            connection,
+            &household_id,
+            &item_id,
+            &lease_token,
+            &import_run_id,
+        )
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_ignore(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+) -> Result<watched_file_inbox::WatchedFileInboxItemDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::ignore(connection, &household_id, &item_id)
+    })
+}
+
+#[tauri::command]
+fn watched_file_inbox_retry(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+) -> Result<watched_file_inbox::WatchedFileInboxItemDto, String> {
+    watched_file_inbox_result(&state, |connection| {
+        watched_file_inbox::retry(connection, &household_id, &item_id)
     })
 }
 
@@ -2229,6 +2367,15 @@ pub fn run() {
             watched_folder_remove,
             watched_folder_scan,
             watched_folder_file_read,
+            watched_file_inbox_list,
+            watched_file_inbox_counts,
+            watched_file_inbox_claim,
+            watched_file_inbox_mark_ready,
+            watched_file_inbox_mark_needs_mapping,
+            watched_file_inbox_mark_failed,
+            watched_file_inbox_mark_staged,
+            watched_file_inbox_ignore,
+            watched_file_inbox_retry,
             import_summary,
             cards_list,
             card_match_confirm,

@@ -73,15 +73,8 @@ import { PdfPasswordPrompt } from './features/source-viewer/PdfPasswordPrompt'
 import { createProtectedPdfPlatform } from './features/source-viewer/protectedPdfPlatform'
 import type { PdfPasswordStatus } from './features/source-viewer/protectedPdfPlatform'
 import type { AggregateAssetSnapshotCandidate, BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
-import {
-  DEFAULT_FOLDER_SCAN_INTERVAL_MS,
-  discoverWatchedFiles,
-  markWatchedFilePreviewed,
-  readWatchedFileCheckpoints,
-  watchedFileKey,
-  writeWatchedFileCheckpoints,
-} from './features/import/folderAutomation'
-import type { WatchedFileCheckpoints } from './features/import/folderAutomation'
+import { DEFAULT_FOLDER_SCAN_INTERVAL_MS } from './features/import/folderAutomation'
+import { attachFolderInboxIdentity, folderInboxFailureCode, folderInboxPreviewOutcome, recordClaimedFolderItems, retainActiveFolderPreviews, selectFolderInboxHydrationBatch } from './features/import/durableFolderInbox'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { FamilyPage } from './features/family/FamilyPage'
 import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
@@ -91,7 +84,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -192,7 +185,7 @@ const navigation: NavigationItem[] = [
 
 function householdInitials(name: string): string { return name.trim().slice(0, 2) || '家計' }
 
-function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void }) {
+function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold, importActionableCount }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; importActionableCount: number }) {
   const activeHouseholdName = households.find((household) => household.id === activeHouseholdId)?.name ?? '家計'
   return (
     <>
@@ -215,11 +208,12 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
             <button
               key={item.id}
               className={`nav-item ${page === item.id ? 'active' : ''}`}
+              aria-label={item.id === 'import' && importActionableCount > 0 ? `${item.label}（${importActionableCount}件の確認対象）` : item.label}
               onClick={() => { setPage(item.id); close() }}
             >
               <item.icon size={19} />
               <span>{item.label}</span>
-              {item.badge && <b>{item.badge}</b>}
+              {item.id === 'import' && importActionableCount > 0 ? <b aria-hidden="true">{importActionableCount > 99 ? '99+' : importActionableCount}</b> : item.badge && <b>{item.badge}</b>}
             </button>
           ))}
         </nav>
@@ -706,7 +700,18 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>既存取引の候補</strong><select aria-label={`${candidate.id}のレシート紐付け候補`} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? '紐付け中…' : '新規支出を作らず証憑として紐付け'}</button><small>金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><span>{approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : '承認済みを台帳へ反映'}</button></div></section>
 }
 
-function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged, backgroundChanges, clearBackgroundChanges }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; backgroundChanges: number; clearBackgroundChanges: () => void }) {
+interface DurableFolderInboxView {
+  readonly items: readonly WatchedFileInboxItemDto[]
+  readonly counts: WatchedFileInboxCountsDto | null
+  readonly autoScan: boolean
+  readonly busy: boolean
+  setAutoScan(enabled: boolean): void
+  refresh(hydrate?: boolean): Promise<void>
+  retry(itemId: string): Promise<void>
+  ignore(itemId: string): Promise<void>
+}
+
+function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged, folderInbox }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; folderInbox: DurableFolderInboxView }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
@@ -715,11 +720,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [receiptStagedIds, setReceiptStagedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [notice, setNotice] = useState('')
   const [watchedFolders, setWatchedFolders] = useState<readonly WatchedFolderDto[]>([])
-  const [watchedFiles, setWatchedFiles] = useState<Record<string, readonly WatchedFileMetadataDto[]>>({})
   const [folderBusy, setFolderBusy] = useState<string | null>(null)
-  const [autoScan, setAutoScan] = useState(() => globalThis.localStorage?.getItem('kakeflow.folder-auto-scan') !== 'off')
-  const [checkpoints, setCheckpoints] = useState<WatchedFileCheckpoints>({})
-  const checkpointsRef = useRef<WatchedFileCheckpoints>({})
   const [portfolioImported, setPortfolioImported] = useState<ReadonlySet<string>>(() => new Set())
   const [aggregateAssetImported, setAggregateAssetImported] = useState<ReadonlySet<string>>(() => new Set())
   const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
@@ -728,6 +729,13 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [customParserAccounts, setCustomParserAccounts] = useState<Record<string, string>>({})
   const [moneyForwardAccounts, setMoneyForwardAccounts] = useState<Record<string, string>>({})
   const [originalParserPreviews, setOriginalParserPreviews] = useState<Record<string, ImportPreview>>({})
+  const hydratedStagedRunsRef = useRef(new Set<string>())
+
+  useEffect(() => {
+    hydratedStagedRunsRef.current.clear()
+    setStaged({})
+    setReceiptStagedIds(new Set())
+  }, [householdId])
 
   const processFiles = async (files: FileList | readonly File[], sourceType: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' = 'MANUAL_UPLOAD') => {
     if (files.length === 0) return
@@ -743,9 +751,6 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
 
   useEffect(() => {
     if (platformClient.runtime !== 'tauri' || !householdId) { setWatchedFolders([]); return }
-    const restored = readWatchedFileCheckpoints(globalThis.localStorage, householdId)
-    checkpointsRef.current = restored
-    setCheckpoints(restored)
     void platformClient.listWatchedFolders(householdId).then(setWatchedFolders).catch(() => setNotice('監視フォルダーを読み込めませんでした。'))
   }, [householdId])
 
@@ -755,6 +760,20 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     void delimitedParserProfilePlatform.list(householdId).then((items) => { if (active) setParserProfiles(items.filter((profile) => profile.isEnabled)) }).catch(() => { if (active) setParserProfiles([]) })
     return () => { active = false }
   }, [householdId])
+
+  useEffect(() => {
+    if (!householdId) return
+    let active = true
+    for (const item of folderInbox.items) {
+      if (item.householdId !== householdId || item.state !== 'STAGED' || !item.importRunId || hydratedStagedRunsRef.current.has(item.importRunId)) continue
+      hydratedStagedRunsRef.current.add(item.importRunId)
+      void platformClient.previewImport(item.importRunId).then((preview) => {
+        if (!active || preview.candidates.length === 0) return
+        setStaged((current) => ({ ...current, [`folder:${item.id}`]: preview }))
+      }).catch(() => { hydratedStagedRunsRef.current.delete(item.importRunId!) })
+    }
+    return () => { active = false }
+  }, [folderInbox.items, householdId])
 
   const applyCustomParserProfile = (item: ImportPreview) => {
     const profile = parserProfiles.find((candidate) => candidate.id === selectedParserProfiles[item.id])
@@ -791,82 +810,56 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     setNotice('プロファイルを変更しました。「適用してプレビュー」をもう一度実行してください。')
   }
 
-  const saveCheckpoints = (next: WatchedFileCheckpoints) => {
-    checkpointsRef.current = next
-    setCheckpoints(next)
-    if (householdId) writeWatchedFileCheckpoints(globalThis.localStorage, householdId, next)
-  }
-
-  const loadWatchedFile = async (folder: WatchedFolderDto, file: WatchedFileMetadataDto) => {
-    if (!householdId) return
-    const loaded = await platformClient.readWatchedFile(householdId, folder.id, file.relativePath)
-    const browserFile = new File([new Uint8Array(loaded.fileBytes)], loaded.fileName, { type: loaded.mediaType, lastModified: loaded.modifiedUnixMs ?? Date.now() })
-    await processFiles([browserFile], 'LOCAL_FOLDER')
-    saveCheckpoints(markWatchedFilePreviewed(checkpointsRef.current, folder.id, file))
-  }
-
-  const scanForNewFiles = async (folders: readonly WatchedFolderDto[], automatic: boolean) => {
+  const scanForNewFiles = async (folders: readonly WatchedFolderDto[]) => {
     if (!householdId || folders.length === 0) return 0
-    let discoveredCount = 0
     for (const folder of folders) {
-      const scan = await platformClient.scanWatchedFolder(householdId, folder.id)
-      setWatchedFiles((current) => ({ ...current, [folder.id]: scan.files }))
-      const discovery = discoverWatchedFiles(checkpointsRef.current, folder.id, scan.files)
-      saveCheckpoints(discovery.checkpoints)
-      discoveredCount += discovery.discovered.length
-      if (automatic) {
-        for (const file of discovery.discovered) await loadWatchedFile(folder, file)
-      }
+      await platformClient.scanWatchedFolder(householdId, folder.id)
     }
-    return discoveredCount
+    await folderInbox.refresh(true)
+    return folderInbox.items.length
   }
-
-  useEffect(() => {
-    if (!autoScan || platformClient.runtime !== 'tauri' || !householdId || watchedFolders.length === 0) return
-    let active = true
-    const scan = async () => {
-      try {
-        const count = await scanForNewFiles(watchedFolders, true)
-        if (active && count > 0) setNotice(`${count}件の新しいファイルを自動プレビューしました。`)
-      } catch {
-        if (active) setNotice('自動スキャンを完了できませんでした。次の周期で再試行します。')
-      }
-    }
-    void scan()
-    const timer = globalThis.setInterval(() => void scan(), DEFAULT_FOLDER_SCAN_INTERVAL_MS)
-    return () => { active = false; globalThis.clearInterval(timer) }
-  }, [autoScan, householdId, watchedFolders]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const addWatchedFolder = async () => {
     if (!householdId) return
     setFolderBusy('select'); setNotice('')
     try {
       const selected = await platformClient.selectWatchedFolder(householdId, '家計簿 Inbox')
-      if (selected) setWatchedFolders((current) => [...current.filter((folder) => folder.id !== selected.id), selected])
+      if (selected) { setWatchedFolders((current) => [...current.filter((folder) => folder.id !== selected.id), selected]); await platformClient.scanWatchedFolder(householdId, selected.id); await folderInbox.refresh(true) }
     } catch { setNotice('フォルダーを登録できませんでした。シンボリックリンクではないローカルフォルダーを選択してください。') }
     finally { setFolderBusy(null) }
   }
   const scanWatchedFolder = async (folder: WatchedFolderDto) => {
     if (!householdId) return
     setFolderBusy(folder.id); setNotice('')
-    try { const count = await scanForNewFiles([folder], false); setNotice(count > 0 ? `${count}件の新しいファイルを検出しました。` : '新しいファイルはありません。') }
+    try { await scanForNewFiles([folder]); setNotice('同期フォルダーを確認し、永続 Inbox を更新しました。') }
     catch { setNotice('フォルダーを安全にスキャンできませんでした。同期状態とアクセス権を確認してください。') }
-    finally { setFolderBusy(null) }
-  }
-  const previewWatchedFile = async (folder: WatchedFolderDto, file: WatchedFileMetadataDto) => {
-    if (!householdId) return
-    setFolderBusy(`${folder.id}:${file.relativePath}`); setNotice('')
-    try {
-      await loadWatchedFile(folder, file); setNotice(`${file.fileName} をローカルフォルダーからプレビューしました。`)
-    } catch { setNotice('ファイルを安全に読み込めませんでした。同期完了後に再試行してください。') }
     finally { setFolderBusy(null) }
   }
   const removeWatchedFolder = async (folder: WatchedFolderDto) => {
     if (!householdId) return
     setFolderBusy(folder.id)
-    try { await platformClient.removeWatchedFolder(householdId, folder.id); setWatchedFolders((current) => current.filter((item) => item.id !== folder.id)); setWatchedFiles((current) => { const next = { ...current }; delete next[folder.id]; return next }) }
+    try { await platformClient.removeWatchedFolder(householdId, folder.id); setWatchedFolders((current) => current.filter((item) => item.id !== folder.id)); await folderInbox.refresh() }
     catch { setNotice('監視フォルダーを解除できませんでした。') }
     finally { setFolderBusy(null) }
+  }
+
+  const startTrackedImport = async (item: ImportPreview, request: Parameters<typeof platformClient.startImport>[0], bytes: Uint8Array) => {
+    if (!householdId || !item.folderInboxItemId) return platformClient.startImport(request, bytes)
+    const claim = await platformClient.claimWatchedFileInboxItems(householdId, [item.folderInboxItemId])
+    if (claim.items.length !== 1 || claim.items[0].id !== item.folderInboxItemId) throw new Error('Folder Inbox item was not claimed')
+    let started: Awaited<ReturnType<typeof platformClient.startImport>>
+    try {
+      started = await platformClient.startImport(request, bytes)
+    } catch (error) {
+      try { await platformClient.markWatchedFileInboxFailed(householdId, item.folderInboxItemId, claim.leaseToken, 'IMPORT_START_FAILED'); await folderInbox.refresh() } catch { /* native lease recovery keeps the item durable */ }
+      throw error
+    }
+    // Once the source import exists it is canonical. If this acknowledgement
+    // fails, leave PROCESSING for lease recovery; never relabel the real run as
+    // a failed parse. Retrying import_start is SHA-idempotent.
+    await platformClient.markWatchedFileInboxStaged(householdId, item.folderInboxItemId, claim.leaseToken, started.runId)
+    await folderInbox.refresh()
+    return started
   }
 
   const stageImport = async (item: ImportPreview) => {
@@ -902,7 +895,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         setNotice('正規化できない行があります。ファイル内容を確認してください。')
         return
       }
-      const summary = await platformClient.startImport(mapping.request, item.fileBytes)
+      const summary = await startTrackedImport(item, mapping.request, item.fileBytes)
       const backendPreview = await platformClient.previewImport(summary.runId)
       setStaged((current) => ({ ...current, [item.id]: backendPreview }))
       onChanged()
@@ -939,7 +932,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         setNotice(normalized.fields.issues.includes('STATEMENT_LIKELY') ? 'この書類は明細書の可能性があるため、1件の支出としては取り込みません。' : '日付または合計金額を読み取れませんでした。内容を確認してください。')
         return
       }
-      const started = await platformClient.startImport(normalized.request, item.fileBytes)
+      const started = await startTrackedImport(item, normalized.request, item.fileBytes)
       const backendPreview = await platformClient.previewImport(started.runId)
       setStaged((current) => ({ ...current, [item.id]: backendPreview })); onChanged()
       setReceiptStagedIds((current) => new Set(current).add(item.id))
@@ -960,7 +953,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     try {
       const runId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const recordId = crypto.randomUUID()
       const payloadJson = JSON.stringify(snapshot)
-      const started = await platformClient.startImport({
+      const started = await startTrackedImport(item, {
         runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename,
         mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id,
         sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1',
@@ -988,7 +981,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     try {
       const runId = crypto.randomUUID(); const documentId = crypto.randomUUID()
       const records = await Promise.all(events.map(async (event) => { const payloadJson = JSON.stringify(event); return { id: crypto.randomUUID(), rowNumber: event.lineage.sourceRow, recordHash: await sha256Text(payloadJson), payloadJson } }))
-      const started = await platformClient.startImport({ runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
+      const started = await startTrackedImport(item, { runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
       if (!started.reusedExisting) {
         await brokeragePlatform.importEvents(mapBrokerageEventsImport(events, { householdId, accountId: securitiesAccount.id, sourceDocumentId: started.documentId, idPrefix: runId }))
       }
@@ -1009,7 +1002,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     try {
       const runId = crypto.randomUUID(); const documentId = crypto.randomUUID()
       const records = await Promise.all(snapshots.map(async (snapshot) => { const payloadJson = JSON.stringify(snapshot); return { id: crypto.randomUUID(), rowNumber: snapshot.lineage.sourceRow, recordHash: await sha256Text(payloadJson), payloadJson } }))
-      const started = await platformClient.startImport({ runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
+      const started = await startTrackedImport(item, { runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
       if (!started.reusedExisting) newRunId = started.runId
       const result = await aggregateAssetHistoryPlatform.importHistory({ householdId, snapshots: snapshots.map((snapshot) => mapAggregateAssetSnapshotImport(snapshot, { id: crypto.randomUUID(), householdId, sourceDocumentId: started.documentId })) })
       batchPersisted = true
@@ -1046,6 +1039,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
       onChanged()
+      const folderInboxItemId = previewId.startsWith('folder:') ? previewId.slice('folder:'.length) : previews.find((preview) => preview.id === previewId)?.folderInboxItemId
+      if (folderInboxItemId) await folderInbox.retry(folderInboxItemId)
       setNotice('未確定のインポートを取り消しました。')
     } catch {
       setNotice('インポートを取り消せませんでした。')
@@ -1069,7 +1064,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       <button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
       <input ref={inputRef} className="visually-hidden" type="file" accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,text/csv,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
-    {backgroundChanges > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>バックグラウンド監視で {backgroundChanges} 件のファイル変更を検出しました。同期フォルダーを確認してください。</span><button className="text-btn" onClick={clearBackgroundChanges}>確認済みにする</button></div>}
+    {folderInbox.counts && folderInbox.counts.actionable > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>永続 Folder Inbox に {folderInbox.counts.actionable} 件の確認対象があります。プレビューだけを自動化し、台帳への反映は必ず明示的な承認後です。</span><button className="text-btn" disabled={folderInbox.busy} onClick={() => void folderInbox.refresh(true)}>更新</button></div>}
     <section className="status-grid">
       {[
         ['取込済み', String(summary?.posted ?? (platformClient.runtime === 'web' ? 79 : 0)), `${summary?.sourceDocuments ?? 0}原本`],
@@ -1078,7 +1073,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         ['ソース行', String(summary?.sourceRecords ?? (platformClient.runtime === 'web' ? 4 : 0)), '監査証跡'],
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
-    {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>Google Drive・iCloud Drive・OneDrive・ローカル/NASを60秒ごとに確認します。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={autoScan} onChange={(event) => { const enabled = event.target.checked; setAutoScan(enabled); globalThis.localStorage?.setItem('kakeflow.folder-auto-scan', enabled ? 'on' : 'off') }} /><span>自動取り込み</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{watchedFiles[folder.id]?.map((file) => { const checkpoint = checkpoints[watchedFileKey(folder.id, file)]; return <div className="watched-file" key={file.relativePath}><FileCheck2 size={15} /><span><strong>{file.fileName}</strong><small>{file.relativePath} ・ {(file.byteSize / 1024).toFixed(1)} KB</small></span><b className={checkpoint?.state === 'PREVIEWED' ? 'ready' : 'review'}>{checkpoint?.state === 'PREVIEWED' ? '確認済み' : '新規'}</b><button className="mini-btn" disabled={folderBusy === `${folder.id}:${file.relativePath}`} onClick={() => void previewWatchedFile(folder, file)}>{folderBusy === `${folder.id}:${file.relativePath}` ? '読込中…' : checkpoint?.state === 'PREVIEWED' ? '再プレビュー' : 'プレビュー'}</button></div> })}</div>)}</section>}
+    {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>変更履歴と処理状態は端末内データベースに保持され、再起動後も復元されます。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={folderInbox.autoScan} onChange={(event) => folderInbox.setAutoScan(event.target.checked)} /><span>自動プレビュー</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{folderInbox.items.filter((item) => item.watchedFolderId === folder.id && item.state !== 'REMOVED').map((item) => { const stateLabel = { DISCOVERED: '検出済み', PROCESSING: '解析中', READY: 'プレビュー完了', NEEDS_MAPPING: '形式の対応付けが必要', STAGED: '取込処理に接続済み', FAILED: '失敗', IGNORED: '無視', REMOVED: '削除済み' }[item.state]; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>{item.relativePath} ・ {(item.byteSize / 1024).toFixed(1)} KB ・ 試行 {item.attemptCount}</small></span><b className={item.state === 'READY' || item.state === 'STAGED' ? 'ready' : 'review'}>{stateLabel}</b><span className="folder-inbox-actions">{(item.state === 'FAILED' || item.state === 'IGNORED') && <button className="mini-btn" onClick={() => void folderInbox.retry(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" onClick={() => void folderInbox.ignore(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div>)}</section>}
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / Excel / PDF / レシート画像をここにドロップ</span><small>PayPay・銀行・カード・PNG / JPEGレシート</small></button>
@@ -1636,7 +1631,84 @@ function App() {
   const [ledgerRevision, setLedgerRevision] = useState(0)
   const [desktopLoaded, setDesktopLoaded] = useState(platformClient.runtime === 'web')
   const [selectedMonth, setSelectedMonth] = useState(() => globalThis.localStorage?.getItem('kakeflow.selectedMonth') ?? currentTokyoPeriod().month)
-  const [backgroundFolderChanges, setBackgroundFolderChanges] = useState(0)
+  const [folderInboxItems, setFolderInboxItems] = useState<readonly WatchedFileInboxItemDto[]>([])
+  const [folderInboxCounts, setFolderInboxCounts] = useState<WatchedFileInboxCountsDto | null>(null)
+  const [folderInboxBusy, setFolderInboxBusy] = useState(false)
+  const [folderAutoScan, setFolderAutoScanState] = useState(() => globalThis.localStorage?.getItem('kakeflow.folder-auto-scan') !== 'off')
+  const folderAutoScanRef = useRef(folderAutoScan)
+  const hydratedFolderItemsRef = useRef(new Set<string>())
+  const folderRefreshBusyRef = useRef(false)
+
+  const refreshFolderInbox = useCallback(async (hydrate = folderAutoScanRef.current) => {
+    const householdId = activeHouseholdId
+    if (!householdId || platformClient.runtime !== 'tauri' || folderRefreshBusyRef.current) return
+    folderRefreshBusyRef.current = true
+    setFolderInboxBusy(true)
+    try {
+      let items = await platformClient.listWatchedFileInbox(householdId, undefined, 200)
+      setFolderInboxItems(items)
+      setImportPreviews((current) => retainActiveFolderPreviews(current, items))
+      setFolderInboxCounts(await platformClient.countWatchedFileInbox(householdId))
+      const batch = hydrate ? selectFolderInboxHydrationBatch(items, hydratedFolderItemsRef.current) : []
+      if (batch.length > 0) {
+        const claim = await platformClient.claimWatchedFileInboxItems(householdId, batch.map((item) => item.id))
+        recordClaimedFolderItems(hydratedFolderItemsRef.current, claim.items)
+        for (const item of claim.items) {
+          try {
+            const loaded = await platformClient.readWatchedFile(householdId, item.watchedFolderId, item.relativePath)
+            if (loaded.relativePath !== item.relativePath || loaded.byteSize !== item.byteSize || loaded.modifiedUnixMs !== item.modifiedUnixMs || loaded.mediaType !== item.mediaType) {
+              await platformClient.markWatchedFileInboxFailed(householdId, item.id, claim.leaseToken, 'FILE_CHANGED_DURING_READ')
+              hydratedFolderItemsRef.current.delete(item.id)
+              continue
+            }
+            const file = new File([new Uint8Array(loaded.fileBytes)], loaded.fileName, { type: loaded.mediaType, lastModified: loaded.modifiedUnixMs ?? Date.now() })
+            const parsed = (await previewImportFiles([file]))[0]
+            if (!parsed) throw new Error('Preview was not produced')
+            const preview = attachFolderInboxIdentity(parsed, item)
+            setImportPreviews((current) => [...current.filter((candidate) => candidate.folderInboxItemId !== item.id), preview])
+            const outcome = folderInboxPreviewOutcome(preview)
+            if (outcome === 'READY') await platformClient.markWatchedFileInboxReady(householdId, item.id, claim.leaseToken)
+            else if (outcome === 'NEEDS_MAPPING') await platformClient.markWatchedFileInboxNeedsMapping(householdId, item.id, claim.leaseToken)
+            else { await platformClient.markWatchedFileInboxFailed(householdId, item.id, claim.leaseToken, folderInboxFailureCode(preview)); hydratedFolderItemsRef.current.delete(item.id) }
+          } catch {
+            try { await platformClient.markWatchedFileInboxFailed(householdId, item.id, claim.leaseToken, 'PREVIEW_FAILED') } catch { /* stale leases are recovered natively */ }
+            hydratedFolderItemsRef.current.delete(item.id)
+          }
+        }
+        items = await platformClient.listWatchedFileInbox(householdId, undefined, 200)
+        setFolderInboxItems(items)
+        setImportPreviews((current) => retainActiveFolderPreviews(current, items))
+        setFolderInboxCounts(await platformClient.countWatchedFileInbox(householdId))
+      }
+    } catch {
+      // Durable native state remains authoritative. A later discovery event,
+      // manual refresh, or scan interval retries without duplicating a post.
+    } finally {
+      folderRefreshBusyRef.current = false
+      setFolderInboxBusy(false)
+    }
+  }, [activeHouseholdId])
+
+  const retryFolderInboxItem = useCallback(async (itemId: string) => {
+    if (!activeHouseholdId) return
+    await platformClient.retryWatchedFileInboxItem(activeHouseholdId, itemId)
+    hydratedFolderItemsRef.current.delete(itemId)
+    await refreshFolderInbox(true)
+  }, [activeHouseholdId, refreshFolderInbox])
+
+  const ignoreFolderInboxItem = useCallback(async (itemId: string) => {
+    if (!activeHouseholdId) return
+    await platformClient.ignoreWatchedFileInboxItem(activeHouseholdId, itemId)
+    hydratedFolderItemsRef.current.add(itemId)
+    setImportPreviews((current) => current.filter((preview) => preview.folderInboxItemId !== itemId))
+    await refreshFolderInbox()
+  }, [activeHouseholdId, refreshFolderInbox])
+
+  const setFolderAutoScan = (enabled: boolean) => {
+    folderAutoScanRef.current = enabled
+    setFolderAutoScanState(enabled)
+    globalThis.localStorage?.setItem('kakeflow.folder-auto-scan', enabled ? 'on' : 'off')
+  }
 
   useEffect(() => {
     let active = true
@@ -1732,14 +1804,39 @@ function App() {
   }, [activeAccountGroupId, activeAttributionScope, activeHouseholdId, ledgerRevision, selectedMonth])
 
   useEffect(() => {
+    hydratedFolderItemsRef.current.clear()
+    setFolderInboxItems([])
+    setFolderInboxCounts(null)
+    setImportPreviews((current) => current.filter((preview) => !preview.folderInboxItemId))
+    if (!activeHouseholdId || platformClient.runtime !== 'tauri') return
+    void refreshFolderInbox()
+  }, [activeHouseholdId, refreshFolderInbox])
+
+  useEffect(() => {
+    const householdId = activeHouseholdId
+    if (!householdId || platformClient.runtime !== 'tauri' || !folderAutoScan) return
+    let disposed = false
+    const scan = async () => {
+      try {
+        const folders = await platformClient.listWatchedFolders(householdId)
+        for (const folder of folders) await platformClient.scanWatchedFolder(householdId, folder.id)
+        if (!disposed) await refreshFolderInbox()
+      } catch { /* the next bounded interval retries discovery without posting data */ }
+    }
+    void scan()
+    const timer = globalThis.setInterval(() => void scan(), DEFAULT_FOLDER_SCAN_INTERVAL_MS)
+    return () => { disposed = true; globalThis.clearInterval(timer) }
+  }, [activeHouseholdId, folderAutoScan, refreshFolderInbox])
+
+  useEffect(() => {
     if (!activeHouseholdId || platformClient.runtime !== 'tauri') return
     let disposed = false
     let unlisten: (() => void) | undefined
     void watchedFolderDiscoveryPlatform.subscribe((event) => {
-      if (!disposed && event.householdId === activeHouseholdId) setBackgroundFolderChanges((current) => current + event.changes.length)
+      if (!disposed && event.householdId === activeHouseholdId) void refreshFolderInbox()
     }).then((stop) => { if (disposed) stop(); else unlisten = stop }).catch(() => undefined)
     return () => { disposed = true; unlisten?.() }
-  }, [activeHouseholdId])
+  }, [activeHouseholdId, refreshFolderInbox])
 
   const selectMonth = (month: string) => {
     const selected = periodFromMonth(month).month
@@ -1785,7 +1882,7 @@ function App() {
   const pageContent = {
     overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} backgroundChanges={backgroundFolderChanges} clearBackgroundChanges={() => setBackgroundFolderChanges(0)} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} openPage={setPage} />,
@@ -1794,7 +1891,7 @@ function App() {
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
+  return <div className="app-shell"><Sidebar page={page} setPage={setPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App

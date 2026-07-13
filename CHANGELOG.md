@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.24.0 — 2026-07-13
+
+- Add a durable, household-scoped Folder Inbox that persists metadata and processing state in SQLite without storing file bytes or absolute watched-folder paths in the queue.
+- Reconcile native filesystem events, polling fallback, and manual scans idempotently by watched folder, relative path, and file generation; mark disappeared generations removed instead of silently forgetting them.
+- Hydrate bounded preview batches from every application page, restore `READY` and `NEEDS_MAPPING` previews after restart without spending retry attempts, and expose an app-wide actionable badge.
+- Require an explicit import start and review decision before posting; the queue becomes `STAGED` only after the canonical import run exists and never commits a transaction automatically.
+- Recover stale leases, cap fresh parsing attempts, support retry/ignore controls, and permit a staged retry only after the linked canonical import run has been rolled back.
+- Reject changed file metadata after reading, stale leases, cross-household links, malformed relative paths, invalid restore state, and contradictory queue-state metadata.
+
 ## 0.23.0 — 2026-07-13
 
 - Reconcile one credit-card statement with multiple explicitly confirmed bank debits and show each payment leg once.

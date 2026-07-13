@@ -21,6 +21,15 @@ const desktop = vi.hoisted(() => ({
   removeWatchedFolder: vi.fn(),
   scanWatchedFolder: vi.fn(),
   readWatchedFile: vi.fn(),
+  listWatchedFileInbox: vi.fn(),
+  countWatchedFileInbox: vi.fn(),
+  ignoreWatchedFileInboxItem: vi.fn(),
+  retryWatchedFileInboxItem: vi.fn(),
+  claimWatchedFileInboxItems: vi.fn(),
+  markWatchedFileInboxReady: vi.fn(),
+  markWatchedFileInboxNeedsMapping: vi.fn(),
+  markWatchedFileInboxFailed: vi.fn(),
+  markWatchedFileInboxStaged: vi.fn(),
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
   confirmCardPaymentLink: vi.fn(),
@@ -99,6 +108,15 @@ vi.mock('./platform', async () => {
       removeWatchedFolder: desktop.removeWatchedFolder,
       scanWatchedFolder: desktop.scanWatchedFolder,
       readWatchedFile: desktop.readWatchedFile,
+      listWatchedFileInbox: desktop.listWatchedFileInbox,
+      countWatchedFileInbox: desktop.countWatchedFileInbox,
+      ignoreWatchedFileInboxItem: desktop.ignoreWatchedFileInboxItem,
+      retryWatchedFileInboxItem: desktop.retryWatchedFileInboxItem,
+      claimWatchedFileInboxItems: desktop.claimWatchedFileInboxItems,
+      markWatchedFileInboxReady: desktop.markWatchedFileInboxReady,
+      markWatchedFileInboxNeedsMapping: desktop.markWatchedFileInboxNeedsMapping,
+      markWatchedFileInboxFailed: desktop.markWatchedFileInboxFailed,
+      markWatchedFileInboxStaged: desktop.markWatchedFileInboxStaged,
       importSummary: vi.fn(),
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
@@ -192,6 +210,15 @@ describe('KakeFlow desktop read models', () => {
     desktop.removeWatchedFolder.mockReset().mockResolvedValue(undefined)
     desktop.scanWatchedFolder.mockReset().mockResolvedValue({ watchedFolderId: 'folder', files: [] })
     desktop.readWatchedFile.mockReset()
+    desktop.listWatchedFileInbox.mockReset().mockResolvedValue([])
+    desktop.countWatchedFileInbox.mockReset().mockResolvedValue({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 0 })
+    desktop.ignoreWatchedFileInboxItem.mockReset()
+    desktop.retryWatchedFileInboxItem.mockReset()
+    desktop.claimWatchedFileInboxItems.mockReset().mockResolvedValue({ leaseToken: 'lease', leaseExpiresAt: '2026-07-13T00:05:00Z', items: [] })
+    desktop.markWatchedFileInboxReady.mockReset()
+    desktop.markWatchedFileInboxNeedsMapping.mockReset()
+    desktop.markWatchedFileInboxFailed.mockReset()
+    desktop.markWatchedFileInboxStaged.mockReset()
     dialog.open.mockReset().mockResolvedValue('/tmp/family.kakeflow-backup')
     dialog.save.mockReset().mockResolvedValue(null)
     nativeInvoke.mockReset().mockImplementation(async (command: string, args?: Record<string, unknown>) => {
@@ -524,21 +551,73 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('取引と仕訳を更新しました。')).toBeInTheDocument()
   })
 
-  it('scans a registered sync folder and previews a file without exposing its absolute path', async () => {
+  it('hydrates a durable folder item in the background without exposing its absolute path or posting it', async () => {
     desktop.listWatchedFolders.mockResolvedValue([{ id: 'folder', householdId: 'family', label: '家計簿 Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }])
     desktop.scanWatchedFolder.mockResolvedValue({ watchedFolderId: 'folder', files: [{ relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000 }] })
     desktop.readWatchedFile.mockResolvedValue({ relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fileBytes: [97, 44, 98] })
+    const discovered = { id: 'inbox-1', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }
+    desktop.listWatchedFileInbox.mockResolvedValue([discovered])
+    desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 1, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
+    desktop.claimWatchedFileInboxItems.mockResolvedValue({ leaseToken: 'lease', leaseExpiresAt: '2026-07-12T00:05:00Z', items: [{ ...discovered, state: 'PROCESSING', attemptCount: 1 }] })
+    desktop.markWatchedFileInboxNeedsMapping.mockResolvedValue({ ...discovered, state: 'NEEDS_MAPPING', attemptCount: 1 })
+    render(<App />)
+    await screen.findByText('生協')
+    await waitFor(() => expect(desktop.readWatchedFile).toHaveBeenCalledWith('family', 'folder', 'PayPay/history.csv'))
+    await waitFor(() => expect(desktop.markWatchedFileInboxNeedsMapping).toHaveBeenCalledWith('family', 'inbox-1', 'lease'))
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: /^インポート/ }))
+    expect(await screen.findByText('history.csv')).toBeInTheDocument()
+    expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
+  })
+
+  it('rehydrates a staged folder review whenever Import Inbox remounts and never auto-posts it', async () => {
+    const stagedItem = { id: 'inbox-staged', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' }
+    desktop.listWatchedFileInbox.mockResolvedValue([stagedItem])
+    desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 1, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 1 })
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'ホーム' }))
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    await waitFor(() => expect(desktop.previewImport.mock.calls.filter(([runId]) => runId === 'run-1').length).toBeGreaterThanOrEqual(2))
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
 
-    expect(await screen.findByText('KakeFlow')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '新しいファイルを確認' }))
-    expect(await screen.findByText('history.csv')).toBeInTheDocument()
-    expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /プレビュー$/ }))
+  it('keeps auto-preview off while still exposing an app-wide actionable Inbox badge', async () => {
+    localStorage.setItem('kakeflow.folder-auto-scan', 'off')
+    const discovered = { id: 'inbox-off', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }
+    desktop.listWatchedFileInbox.mockResolvedValue([discovered])
+    desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 1, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
+    render(<App />)
+    await screen.findByText('生協')
+    expect(await screen.findByRole('button', { name: 'インポート（1件の確認対象）' })).toBeInTheDocument()
+    expect(desktop.claimWatchedFileInboxItems).not.toHaveBeenCalled()
+    expect(desktop.readWatchedFile).not.toHaveBeenCalled()
+  })
 
-    await waitFor(() => expect(desktop.readWatchedFile).toHaveBeenCalledWith('family', 'folder', 'PayPay/history.csv'))
+  it('never marks a canonical import failed when only the STAGED acknowledgement fails', async () => {
+    localStorage.setItem('kakeflow.folder-auto-scan', 'off')
+    const csv = '日付,摘要,支払い金額,預かり金額,差引残高\n2026/07/12,STORE,1200,,10000'
+    const bytes = [...new TextEncoder().encode(csv)]
+    const ready = { id: 'inbox-ready', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: bytes.length, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }
+    desktop.listWatchedFileInbox.mockResolvedValue([ready])
+    desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 0, processing: 0, ready: 1, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
+    desktop.claimWatchedFileInboxItems.mockImplementation(async () => ({ leaseToken: 'lease', leaseExpiresAt: '2026-07-12T00:05:00Z', items: [{ ...ready, state: 'PROCESSING', attemptCount: 2 }] }))
+    desktop.readWatchedFile.mockResolvedValue({ relativePath: ready.relativePath, fileName: ready.fileName, mediaType: ready.mediaType, byteSize: ready.byteSize, modifiedUnixMs: ready.modifiedUnixMs, fileBytes: bytes })
+    desktop.markWatchedFileInboxReady.mockResolvedValue(ready)
+    desktop.markWatchedFileInboxStaged.mockRejectedValue(new Error('ack failed'))
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(await screen.findByRole('button', { name: 'インポート（1件の確認対象）' }))
+    fireEvent.click(await screen.findByRole('button', { name: '更新' }))
+    fireEvent.click(await screen.findByRole('button', { name: '取込開始' }))
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
+    await waitFor(() => expect(desktop.markWatchedFileInboxStaged).toHaveBeenCalledWith('family', 'inbox-ready', 'lease', 'run-1'))
+    expect(desktop.markWatchedFileInboxFailed).not.toHaveBeenCalled()
   })
 
   it('shows cumulative card payments and explicitly confirms one eligible payment', async () => {
