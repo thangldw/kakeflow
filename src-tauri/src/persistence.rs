@@ -86,6 +86,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0037_portable_confirmed_evidence.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0038_replicable_investment_graph.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1740,6 +1743,146 @@ mod tests {
             0
         );
         assert!(integrity_check(&connection).unwrap());
+    }
+
+    #[test]
+    fn migration_thirty_eight_guards_v3_and_captures_portfolio_aggregates() {
+        const DIGEST: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(&format!(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO sync_devices(id,display_name,platform)
+                     VALUES('device-b','Device B','MACOS');
+                     INSERT INTO sync_principals(id,display_name)
+                     VALUES('principal-b','Principal B');
+                     INSERT INTO household_principal_bindings(household_id,principal_id)
+                     VALUES('family','principal-b');
+                     INSERT INTO local_sync_contexts(household_id,device_id,principal_id)
+                     VALUES('family','device-b','principal-b');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('broker','family','Broker','ASSET','SECURITIES');
+                     INSERT INTO import_runs(id,household_id,status)
+                     VALUES('run','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES('local-document','family','run','MANUAL_UPLOAD','assets.csv',
+                            'text/csv',1,'{DIGEST}','documents/assets.csv');
+                     INSERT INTO source_records(
+                       id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES('row-1','local-document',1,'{DIGEST}','{{}}');
+                     INSERT INTO investment_portable_source_refs(
+                       entity_kind,entity_id,household_id,origin_installation_id,
+                       source_document_id,source_row)
+                     VALUES('PORTFOLIO_SNAPSHOT','snapshot','family','device-a',
+                            'origin-document',NULL);
+                     INSERT INTO portfolio_snapshots(
+                       id,household_id,account_id,source_document_id,as_of,
+                       market_value_jpy,cash_value_jpy)
+                     VALUES('snapshot','family','broker','local-document','2026-07-13',1000,100);
+                     INSERT INTO portfolio_asset_classes(
+                       id,portfolio_snapshot_id,name,market_value_jpy,source_row)
+                     VALUES('class','snapshot','Listed stocks',900,1);
+                     INSERT INTO investment_fx_rates(
+                       id,household_id,rate_date,base_currency,quote_currency,rate,
+                       source_kind,provider,source_document_id,source_row,observed_at)
+                     VALUES('manual-fx','family','2026-07-13','USD','JPY',150,
+                            'MANUAL','User',NULL,NULL,'2026-07-13T00:00:00Z');"
+                ))?;
+
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT json_extract(payload_json,'$.sourceDocumentId')
+                         FROM sync_portfolio_snapshot_payloads WHERE snapshot_id='snapshot'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "origin-document"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT json_extract(payload_json,'$.sourceOriginInstallationId')
+                         FROM sync_portfolio_snapshot_payloads WHERE snapshot_id='snapshot'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "device-a"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT json_extract(payload_json,'$.sourceOriginInstallationId')
+                         FROM sync_investment_fx_rate_payloads WHERE rate_id='manual-fx'",
+                        [],
+                        |row| row.get::<_, Option<String>>(0),
+                    )?,
+                    None
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT json_extract(payload_json,'$.assetClasses[0].marketValueJpy')
+                         FROM sync_local_change_capture
+                         WHERE entity_kind='PORTFOLIO_SNAPSHOT' AND entity_id='snapshot'
+                         ORDER BY capture_sequence DESC LIMIT 1",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    900
+                );
+                assert!(connection
+                    .execute(
+                        "UPDATE investment_portable_source_refs
+                         SET source_document_id='different'
+                         WHERE entity_kind='PORTFOLIO_SNAPSHOT' AND entity_id='snapshot'",
+                        [],
+                    )
+                    .is_err());
+
+                connection.execute(
+                    "INSERT INTO change_packages(
+                       package_id,schema_version,target_household_id,source_installation_id,
+                       source_principal_id,source_revision,snapshot_sha256,manifest_json,
+                       package_sha256,state,record_count,create_count,source_created_at)
+                     VALUES('v2-package',2,'family','device','principal',1,?1,'{}',?1,
+                            'STAGED',1,1,'2026-07-13T00:00:00Z')",
+                    [DIGEST],
+                )?;
+                assert!(connection
+                    .execute(
+                        "INSERT INTO change_package_records(
+                           package_id,record_order,entity_kind,entity_id,operation,
+                           canonical_payload_json,payload_sha256,review_state,resolution)
+                         VALUES('v2-package',0,'PORTFOLIO_SNAPSHOT','snapshot','UPSERT',
+                                '{\"recordKind\":\"PORTFOLIO_SNAPSHOT\",\"id\":\"snapshot\"}',?1,
+                                'CREATE','APPLY_INCOMING')",
+                        [DIGEST],
+                    )
+                    .is_err());
+                connection.execute(
+                    "UPDATE change_packages SET schema_version=3 WHERE package_id='v2-package'",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO change_package_records(
+                       package_id,record_order,entity_kind,entity_id,operation,
+                       canonical_payload_json,payload_sha256,review_state,resolution)
+                     VALUES('v2-package',0,'PORTFOLIO_SNAPSHOT','snapshot','UPSERT',
+                            '{\"recordKind\":\"PORTFOLIO_SNAPSHOT\",\"id\":\"snapshot\"}',?1,
+                            'CREATE','APPLY_INCOMING')",
+                    [DIGEST],
+                )?;
+                assert!(connection
+                    .execute(
+                        "UPDATE change_packages SET schema_version=2
+                         WHERE package_id='v2-package'",
+                        [],
+                    )
+                    .is_err());
+                assert!(integrity_check(connection)?);
+                Ok(())
+            })
+            .expect("schema 38 investment fixture should remain valid");
     }
 
     #[test]

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.41.0 — 2026-07-13
+
+- Extend local change-package schema v3 to exactly 18 aggregate kinds with portfolio snapshots/positions/snapshot FX, brokerage events/legs, dated investment FX, market prices, and Money Forward aggregate asset history while retaining schema-v1/v2 compatibility.
+- Keep derived FIFO holdings, realized performance, valuation, and chart marts out of the package and recompute them from the transferred confirmed facts.
+- Add evidence-capsule schema v2 with evidence-first source hydration for the five investment aggregates, exact document/row dependencies, idempotent pending portable references, and atomic conflict rollback.
+- Preserve the original evidence installation across A → B → C forwarding, so a package created on B still resolves source facts originally hydrated from A.
+- Reconstruct whole investment aggregates with deterministic child order, validate brokerage semantics and account scope, require explicit review for conflicts/deletions, and verify exact canonical hashes after atomic apply.
+- Guide the desktop workflow as 原本カプセル first and 変更パッケージ second, with distinct Japanese labels for 資産残高, 証券取引, 投資用為替レート, 市場価格, and 総資産履歴.
+
 ## 0.40.0 — 2026-07-13
 
 - Add a separate passphrase-protected confirmed-evidence capsule carrying original CSV, PDF, and receipt-image bytes plus every immutable source row behind posted transactions and card statements.

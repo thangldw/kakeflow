@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::sync_foundation::{canonical_json, get_local_status, sha256_hex};
 
-pub const PACKAGE_SCHEMA_VERSION: u32 = 2;
+pub const PACKAGE_SCHEMA_VERSION: u32 = 3;
 pub const PACKAGE_MODE: &str = "FULL_CURRENT_STATE";
 pub const LEGACY_COVERED_KINDS: [&str; 11] = [
     "HOUSEHOLD",
@@ -22,13 +22,33 @@ pub const LEGACY_COVERED_KINDS: [&str; 11] = [
     "DASHBOARD_PREFERENCES",
     "DELIMITED_PARSER_PROFILE",
 ];
-pub const COVERED_KINDS: [&str; 13] = [
+pub const V2_COVERED_KINDS: [&str; 13] = [
     "HOUSEHOLD",
     "HOUSEHOLD_MEMBER",
     "ACCOUNT",
     "TRANSACTION",
     "CARD_STATEMENT",
     "CARD_PAYMENT",
+    "MONTHLY_BUDGET_PLAN",
+    "SAVINGS_GOAL",
+    "CLASSIFICATION_RULE",
+    "ACCOUNT_GROUP",
+    "CARD_SETTLEMENT_MAPPING",
+    "DASHBOARD_PREFERENCES",
+    "DELIMITED_PARSER_PROFILE",
+];
+pub const COVERED_KINDS: [&str; 18] = [
+    "HOUSEHOLD",
+    "HOUSEHOLD_MEMBER",
+    "ACCOUNT",
+    "TRANSACTION",
+    "CARD_STATEMENT",
+    "CARD_PAYMENT",
+    "PORTFOLIO_SNAPSHOT",
+    "BROKERAGE_EVENT",
+    "INVESTMENT_FX_RATE",
+    "INVESTMENT_MARKET_PRICE",
+    "AGGREGATE_ASSET_SNAPSHOT",
     "MONTHLY_BUDGET_PLAN",
     "SAVINGS_GOAL",
     "CLASSIFICATION_RULE",
@@ -264,6 +284,46 @@ fn build_current_state(
     push_query_records(
         &transaction,
         &mut records,
+        "PORTFOLIO_SNAPSHOT",
+        "SELECT snapshot_id,payload_json FROM sync_portfolio_snapshot_payloads
+         WHERE household_id=?1 ORDER BY snapshot_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
+        "BROKERAGE_EVENT",
+        "SELECT event_id,payload_json FROM sync_brokerage_event_payloads
+         WHERE household_id=?1 ORDER BY event_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
+        "INVESTMENT_FX_RATE",
+        "SELECT rate_id,payload_json FROM sync_investment_fx_rate_payloads
+         WHERE household_id=?1 ORDER BY rate_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
+        "INVESTMENT_MARKET_PRICE",
+        "SELECT price_id,payload_json FROM sync_investment_market_price_payloads
+         WHERE household_id=?1 ORDER BY price_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
+        "AGGREGATE_ASSET_SNAPSHOT",
+        "SELECT snapshot_id,payload_json FROM sync_aggregate_asset_snapshot_payloads
+         WHERE household_id=?1 ORDER BY snapshot_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
         "MONTHLY_BUDGET_PLAN",
         "SELECT household_id,payload_json FROM sync_monthly_budget_plan_payloads
          WHERE household_id=?1",
@@ -424,7 +484,7 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<LocalChangePackageDto> {
 }
 
 pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
-    if !matches!(package.schema_version, 1 | PACKAGE_SCHEMA_VERSION)
+    if !matches!(package.schema_version, 1 | 2 | PACKAGE_SCHEMA_VERSION)
         || package.mode != PACKAGE_MODE
         || package.source_installation_id.is_empty()
         || package.source_installation_id.len() > 128
@@ -437,10 +497,11 @@ pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
     {
         return Err(ChangePackageError::InvalidInput);
     }
-    let expected_kind_slice: &[&str] = if package.schema_version == 1 {
-        &LEGACY_COVERED_KINDS
-    } else {
-        &COVERED_KINDS
+    let expected_kind_slice: &[&str] = match package.schema_version {
+        1 => &LEGACY_COVERED_KINDS,
+        2 => &V2_COVERED_KINDS,
+        3 => &COVERED_KINDS,
+        _ => return Err(ChangePackageError::InvalidInput),
     };
     let expected_kinds = expected_kind_slice
         .iter()
@@ -966,6 +1027,7 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
     }
 
     validate_card_reconciliation_graph(&transaction, &review.target_household_id)?;
+    validate_investment_graph(&transaction, &review.target_household_id)?;
 
     for record in review
         .records
@@ -1103,6 +1165,11 @@ fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Res
         "TRANSACTION" => materialize_transaction(connection, payload)?,
         "CARD_STATEMENT" => materialize_card_statement(connection, payload)?,
         "CARD_PAYMENT" => materialize_card_payment(connection, payload)?,
+        "PORTFOLIO_SNAPSHOT" => materialize_portfolio_snapshot(connection, payload)?,
+        "BROKERAGE_EVENT" => materialize_brokerage_event(connection, payload)?,
+        "INVESTMENT_FX_RATE" => materialize_investment_fx_rate(connection, payload)?,
+        "INVESTMENT_MARKET_PRICE" => materialize_investment_market_price(connection, payload)?,
+        "AGGREGATE_ASSET_SNAPSHOT" => materialize_aggregate_asset_snapshot(connection, payload)?,
         "MONTHLY_BUDGET_PLAN" => {
             connection.execute(
                 "DELETE FROM monthly_category_budgets WHERE household_id=json_extract(?1,'$.householdId')",
@@ -1329,6 +1396,363 @@ fn materialize_card_payment(connection: &Connection, payload: &str) -> Result<()
     Ok(())
 }
 
+fn resolve_investment_source(
+    connection: &Connection,
+    payload: &str,
+    require_row: bool,
+) -> Result<(Option<String>, Option<i64>)> {
+    let (
+        household_id,
+        entity_kind,
+        entity_id,
+        portable_document_id,
+        origin_installation_id,
+        source_row,
+    ): (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+    ) = connection.query_row(
+        "SELECT json_extract(?1,'$.householdId'),json_extract(?1,'$.recordKind'),
+                    json_extract(?1,'$.id'),json_extract(?1,'$.sourceDocumentId'),
+                    json_extract(?1,'$.sourceOriginInstallationId'),
+                    json_extract(?1,'$.sourceRow')",
+        [payload],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        },
+    )?;
+    let Some(portable_document_id) = portable_document_id else {
+        if source_row.is_some() || require_row {
+            return Err(ChangePackageError::Conflict);
+        }
+        return Ok((None, None));
+    };
+    if require_row && source_row.is_none() {
+        return Err(ChangePackageError::Conflict);
+    }
+    let origin_installation_id = origin_installation_id.ok_or(ChangePackageError::Conflict)?;
+    let exact_ref: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM investment_portable_source_refs
+         WHERE household_id=?1 AND entity_kind=?2 AND entity_id=?3
+           AND origin_installation_id=?4 AND source_document_id=?5 AND source_row IS ?6)",
+        params![
+            household_id,
+            entity_kind,
+            entity_id,
+            origin_installation_id,
+            portable_document_id,
+            source_row
+        ],
+        |row| row.get(0),
+    )?;
+    if !exact_ref {
+        return Err(ChangePackageError::Conflict);
+    }
+    let local_document_id: String = connection
+        .query_row(
+            "SELECT alias.local_document_id
+             FROM sync_apply_guard guard
+             JOIN change_packages package ON package.package_id=guard.package_id
+             JOIN evidence_source_document_aliases alias
+              ON alias.household_id=guard.household_id
+              AND alias.origin_installation_id=?3
+              AND alias.portable_document_id=?2
+             WHERE guard.household_id=?1",
+            params![household_id, portable_document_id, origin_installation_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or(ChangePackageError::Conflict)?;
+    if let Some(row_number) = source_row {
+        let row_exists: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM source_records
+             WHERE source_document_id=?1 AND row_number=?2)",
+            params![local_document_id, row_number],
+            |row| row.get(0),
+        )?;
+        if !row_exists {
+            return Err(ChangePackageError::Conflict);
+        }
+    }
+    Ok((Some(local_document_id), source_row))
+}
+
+fn replace_investment_portable_ref(connection: &Connection, payload: &str) -> Result<()> {
+    let valid: bool = connection.query_row(
+        "SELECT CASE WHEN json_extract(?1,'$.sourceDocumentId') IS NULL THEN
+           NOT EXISTS(SELECT 1 FROM investment_portable_source_refs
+             WHERE household_id=json_extract(?1,'$.householdId')
+               AND entity_kind=json_extract(?1,'$.recordKind')
+               AND entity_id=json_extract(?1,'$.id'))
+         ELSE EXISTS(SELECT 1 FROM investment_portable_source_refs
+             WHERE household_id=json_extract(?1,'$.householdId')
+               AND entity_kind=json_extract(?1,'$.recordKind')
+               AND entity_id=json_extract(?1,'$.id')
+               AND origin_installation_id=json_extract(?1,'$.sourceOriginInstallationId')
+               AND source_document_id=json_extract(?1,'$.sourceDocumentId')
+               AND source_row IS json_extract(?1,'$.sourceRow')) END",
+        [payload],
+        |row| row.get(0),
+    )?;
+    if !valid {
+        return Err(ChangePackageError::Conflict);
+    }
+    Ok(())
+}
+
+fn materialize_portfolio_snapshot(connection: &Connection, payload: &str) -> Result<()> {
+    let (local_document_id, _) = resolve_investment_source(connection, payload, false)?;
+    let local_document_id = local_document_id.ok_or(ChangePackageError::Conflict)?;
+    validate_portfolio_source_rows(connection, payload, &local_document_id)?;
+    connection.execute(
+        "INSERT INTO portfolio_snapshots(
+           id,household_id,account_id,source_document_id,as_of,market_value_jpy,
+           cash_value_jpy,unrealized_pnl_jpy,realized_pnl_jpy,created_at)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),
+           json_extract(?1,'$.accountId'),?2,json_extract(?1,'$.asOf'),
+           json_extract(?1,'$.marketValueJpy'),json_extract(?1,'$.cashValueJpy'),
+           json_extract(?1,'$.unrealizedPnlJpy'),json_extract(?1,'$.realizedPnlJpy'),
+           json_extract(?1,'$.createdAt'))
+         ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,
+           source_document_id=excluded.source_document_id,as_of=excluded.as_of,
+           market_value_jpy=excluded.market_value_jpy,cash_value_jpy=excluded.cash_value_jpy,
+           unrealized_pnl_jpy=excluded.unrealized_pnl_jpy,
+           realized_pnl_jpy=excluded.realized_pnl_jpy,created_at=excluded.created_at",
+        params![payload, local_document_id],
+    )?;
+    for table in [
+        "portfolio_asset_classes",
+        "position_snapshots",
+        "portfolio_fx_rates",
+    ] {
+        connection.execute(
+            &format!("DELETE FROM {table} WHERE portfolio_snapshot_id=json_extract(?1,'$.id')"),
+            [payload],
+        )?;
+    }
+    connection.execute(
+        "INSERT INTO portfolio_asset_classes(
+           id,portfolio_snapshot_id,name,market_value_jpy,unrealized_pnl_jpy,source_row)
+         SELECT json_extract(value,'$.id'),json_extract(value,'$.portfolioSnapshotId'),
+           json_extract(value,'$.name'),json_extract(value,'$.marketValueJpy'),
+           json_extract(value,'$.unrealizedPnlJpy'),json_extract(value,'$.sourceRow')
+         FROM json_each(?1,'$.assetClasses')",
+        [payload],
+    )?;
+    connection.execute(
+        "INSERT INTO position_snapshots(
+           id,portfolio_snapshot_id,product_type,account_type,instrument_code,instrument_name,
+           quantity,average_cost,market_price,market_value_jpy,unrealized_pnl_jpy,
+           realized_pnl_jpy,currency,source_row)
+         SELECT json_extract(value,'$.id'),json_extract(value,'$.portfolioSnapshotId'),
+           json_extract(value,'$.productType'),json_extract(value,'$.accountType'),
+           json_extract(value,'$.instrumentCode'),json_extract(value,'$.instrumentName'),
+           json_extract(value,'$.quantity'),json_extract(value,'$.averageCost'),
+           json_extract(value,'$.marketPrice'),json_extract(value,'$.marketValueJpy'),
+           json_extract(value,'$.unrealizedPnlJpy'),json_extract(value,'$.realizedPnlJpy'),
+           json_extract(value,'$.currency'),json_extract(value,'$.sourceRow')
+         FROM json_each(?1,'$.positions')",
+        [payload],
+    )?;
+    connection.execute(
+        "INSERT INTO portfolio_fx_rates(
+           id,portfolio_snapshot_id,base_currency,quote_currency,rate,source_row)
+         SELECT json_extract(value,'$.id'),json_extract(value,'$.portfolioSnapshotId'),
+           json_extract(value,'$.baseCurrency'),json_extract(value,'$.quoteCurrency'),
+           json_extract(value,'$.rate'),json_extract(value,'$.sourceRow')
+         FROM json_each(?1,'$.fxRates')",
+        [payload],
+    )?;
+    replace_investment_portable_ref(connection, payload)
+}
+
+fn validate_portfolio_source_rows(
+    connection: &Connection,
+    payload: &str,
+    local_document_id: &str,
+) -> Result<()> {
+    let missing_source_row: bool = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM (
+             SELECT json_extract(value,'$.sourceRow') AS source_row
+             FROM json_each(?1,'$.assetClasses')
+             UNION ALL
+             SELECT json_extract(value,'$.sourceRow') FROM json_each(?1,'$.positions')
+             UNION ALL
+             SELECT json_extract(value,'$.sourceRow') FROM json_each(?1,'$.fxRates')
+           ) child
+           WHERE child.source_row IS NULL OR child.source_row<=0 OR NOT EXISTS(
+             SELECT 1 FROM source_records record
+             WHERE record.source_document_id=?2 AND record.row_number=child.source_row)
+           LIMIT 1)",
+        params![payload, local_document_id],
+        |row| row.get(0),
+    )?;
+    if missing_source_row {
+        Err(ChangePackageError::Conflict)
+    } else {
+        Ok(())
+    }
+}
+
+fn materialize_brokerage_event(connection: &Connection, payload: &str) -> Result<()> {
+    let (local_document_id, _) = resolve_investment_source(connection, payload, true)?;
+    let local_document_id = local_document_id.ok_or(ChangePackageError::Conflict)?;
+    connection.execute(
+        "INSERT INTO brokerage_events(
+           id,household_id,account_id,source_document_id,source_row,event_type,trade_date,
+           settlement_date,instrument_code,instrument_name,brokerage_account_type,currency,
+           quantity,unit_price,gross_amount,fee_amount,tax_amount,settlement_amount,
+           reconciliation_status,reconciliation_difference,affects_household_expense,
+           raw_transaction_type,corporate_action_ratio,target_instrument_code,
+           target_instrument_name,target_currency,cost_basis_allocation_ratio,
+           subscription_amount,cash_in_lieu_amount,cash_in_lieu_quantity,merger_cash_amount,
+           merger_cash_currency,merger_stock_cost_basis_ratio,source_to_target_fx_rate,
+           source_to_cash_fx_rate,created_at)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),
+           json_extract(?1,'$.accountId'),?2,json_extract(?1,'$.sourceRow'),
+           json_extract(?1,'$.eventType'),json_extract(?1,'$.tradeDate'),
+           json_extract(?1,'$.settlementDate'),json_extract(?1,'$.instrumentCode'),
+           json_extract(?1,'$.instrumentName'),json_extract(?1,'$.brokerageAccountType'),
+           json_extract(?1,'$.currency'),json_extract(?1,'$.quantity'),
+           json_extract(?1,'$.unitPrice'),json_extract(?1,'$.grossAmount'),
+           json_extract(?1,'$.feeAmount'),json_extract(?1,'$.taxAmount'),
+           json_extract(?1,'$.settlementAmount'),json_extract(?1,'$.reconciliationStatus'),
+           json_extract(?1,'$.reconciliationDifference'),json_extract(?1,'$.affectsHouseholdExpense'),
+           json_extract(?1,'$.rawTransactionType'),json_extract(?1,'$.corporateActionRatio'),
+           json_extract(?1,'$.targetInstrumentCode'),json_extract(?1,'$.targetInstrumentName'),
+           json_extract(?1,'$.targetCurrency'),json_extract(?1,'$.costBasisAllocationRatio'),
+           json_extract(?1,'$.subscriptionAmount'),json_extract(?1,'$.cashInLieuAmount'),
+           json_extract(?1,'$.cashInLieuQuantity'),json_extract(?1,'$.mergerCashAmount'),
+           json_extract(?1,'$.mergerCashCurrency'),json_extract(?1,'$.mergerStockCostBasisRatio'),
+           json_extract(?1,'$.sourceToTargetFxRate'),json_extract(?1,'$.sourceToCashFxRate'),
+           json_extract(?1,'$.createdAt'))
+         ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id,
+           source_document_id=excluded.source_document_id,source_row=excluded.source_row,
+           event_type=excluded.event_type,trade_date=excluded.trade_date,
+           settlement_date=excluded.settlement_date,instrument_code=excluded.instrument_code,
+           instrument_name=excluded.instrument_name,brokerage_account_type=excluded.brokerage_account_type,
+           currency=excluded.currency,quantity=excluded.quantity,unit_price=excluded.unit_price,
+           gross_amount=excluded.gross_amount,fee_amount=excluded.fee_amount,tax_amount=excluded.tax_amount,
+           settlement_amount=excluded.settlement_amount,reconciliation_status=excluded.reconciliation_status,
+           reconciliation_difference=excluded.reconciliation_difference,
+           affects_household_expense=excluded.affects_household_expense,
+           raw_transaction_type=excluded.raw_transaction_type,
+           corporate_action_ratio=excluded.corporate_action_ratio,
+           target_instrument_code=excluded.target_instrument_code,
+           target_instrument_name=excluded.target_instrument_name,target_currency=excluded.target_currency,
+           cost_basis_allocation_ratio=excluded.cost_basis_allocation_ratio,
+           subscription_amount=excluded.subscription_amount,cash_in_lieu_amount=excluded.cash_in_lieu_amount,
+           cash_in_lieu_quantity=excluded.cash_in_lieu_quantity,merger_cash_amount=excluded.merger_cash_amount,
+           merger_cash_currency=excluded.merger_cash_currency,
+           merger_stock_cost_basis_ratio=excluded.merger_stock_cost_basis_ratio,
+           source_to_target_fx_rate=excluded.source_to_target_fx_rate,
+           source_to_cash_fx_rate=excluded.source_to_cash_fx_rate,created_at=excluded.created_at",
+        params![payload, local_document_id],
+    )?;
+    connection.execute(
+        "DELETE FROM brokerage_event_legs WHERE brokerage_event_id=json_extract(?1,'$.id')",
+        [payload],
+    )?;
+    connection.execute(
+        "INSERT INTO brokerage_event_legs(
+           id,brokerage_event_id,line_number,leg_kind,signed_amount,currency,
+           instrument_code,instrument_name,signed_quantity,description)
+         SELECT json_extract(value,'$.id'),json_extract(value,'$.brokerageEventId'),
+           json_extract(value,'$.lineNumber'),json_extract(value,'$.legKind'),
+           json_extract(value,'$.signedAmount'),json_extract(value,'$.currency'),
+           json_extract(value,'$.instrumentCode'),json_extract(value,'$.instrumentName'),
+           json_extract(value,'$.signedQuantity'),json_extract(value,'$.description')
+         FROM json_each(?1,'$.legs')",
+        [payload],
+    )?;
+    replace_investment_portable_ref(connection, payload)
+}
+
+fn materialize_investment_fx_rate(connection: &Connection, payload: &str) -> Result<()> {
+    let (local_document_id, source_row) = resolve_investment_source(connection, payload, false)?;
+    connection.execute(
+        "INSERT INTO investment_fx_rates(
+           id,household_id,rate_date,base_currency,quote_currency,rate,source_kind,
+           provider,source_document_id,source_row,observed_at,created_at)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),
+           json_extract(?1,'$.rateDate'),json_extract(?1,'$.baseCurrency'),
+           json_extract(?1,'$.quoteCurrency'),json_extract(?1,'$.rate'),
+           json_extract(?1,'$.sourceKind'),json_extract(?1,'$.provider'),?2,?3,
+           json_extract(?1,'$.observedAt'),json_extract(?1,'$.createdAt'))
+         ON CONFLICT(id) DO UPDATE SET rate_date=excluded.rate_date,
+           base_currency=excluded.base_currency,quote_currency=excluded.quote_currency,
+           rate=excluded.rate,source_kind=excluded.source_kind,provider=excluded.provider,
+           source_document_id=excluded.source_document_id,source_row=excluded.source_row,
+           observed_at=excluded.observed_at,created_at=excluded.created_at",
+        params![payload, local_document_id, source_row],
+    )?;
+    replace_investment_portable_ref(connection, payload)
+}
+
+fn materialize_investment_market_price(connection: &Connection, payload: &str) -> Result<()> {
+    let (local_document_id, source_row) = resolve_investment_source(connection, payload, false)?;
+    connection.execute(
+        "INSERT INTO investment_market_prices(
+           id,household_id,price_date,instrument_code,instrument_name,currency,unit_price,
+           source_kind,provider,source_document_id,source_row,observed_at,created_at)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),
+           json_extract(?1,'$.priceDate'),json_extract(?1,'$.instrumentCode'),
+           json_extract(?1,'$.instrumentName'),json_extract(?1,'$.currency'),
+           json_extract(?1,'$.unitPrice'),json_extract(?1,'$.sourceKind'),
+           json_extract(?1,'$.provider'),?2,?3,json_extract(?1,'$.observedAt'),
+           json_extract(?1,'$.createdAt'))
+         ON CONFLICT(id) DO UPDATE SET price_date=excluded.price_date,
+           instrument_code=excluded.instrument_code,instrument_name=excluded.instrument_name,
+           currency=excluded.currency,unit_price=excluded.unit_price,
+           source_kind=excluded.source_kind,provider=excluded.provider,
+           source_document_id=excluded.source_document_id,source_row=excluded.source_row,
+           observed_at=excluded.observed_at,created_at=excluded.created_at",
+        params![payload, local_document_id, source_row],
+    )?;
+    replace_investment_portable_ref(connection, payload)
+}
+
+fn materialize_aggregate_asset_snapshot(connection: &Connection, payload: &str) -> Result<()> {
+    let (local_document_id, source_row) = resolve_investment_source(connection, payload, true)?;
+    connection.execute(
+        "INSERT INTO aggregate_asset_snapshots(
+           id,household_id,source_document_id,source_row,as_of,total_assets_jpy,created_at)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),?2,?3,
+           json_extract(?1,'$.asOf'),json_extract(?1,'$.totalAssetsJpy'),
+           json_extract(?1,'$.createdAt'))
+         ON CONFLICT(id) DO UPDATE SET source_document_id=excluded.source_document_id,
+           source_row=excluded.source_row,as_of=excluded.as_of,
+           total_assets_jpy=excluded.total_assets_jpy,created_at=excluded.created_at",
+        params![payload, local_document_id, source_row],
+    )?;
+    connection.execute(
+        "DELETE FROM aggregate_asset_components
+         WHERE aggregate_asset_snapshot_id=json_extract(?1,'$.id')",
+        [payload],
+    )?;
+    connection.execute(
+        "INSERT INTO aggregate_asset_components(
+           aggregate_asset_snapshot_id,asset_class,official_header,value_jpy)
+         SELECT json_extract(value,'$.aggregateAssetSnapshotId'),
+           json_extract(value,'$.assetClass'),json_extract(value,'$.officialHeader'),
+           json_extract(value,'$.valueJpy') FROM json_each(?1,'$.components')",
+        [payload],
+    )?;
+    replace_investment_portable_ref(connection, payload)
+}
+
 fn validate_card_reconciliation_graph(connection: &Connection, household_id: &str) -> Result<()> {
     let invalid: bool = connection.query_row(
         "SELECT EXISTS(
@@ -1388,6 +1812,79 @@ fn validate_card_reconciliation_graph(connection: &Connection, household_id: &st
     } else {
         Ok(())
     }
+}
+
+fn validate_investment_graph(connection: &Connection, household_id: &str) -> Result<()> {
+    let invalid_scope: bool = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM portfolio_snapshots snapshot
+           LEFT JOIN accounts account ON account.id=snapshot.account_id
+           WHERE snapshot.household_id=?1 AND (
+             account.id IS NULL OR account.household_id!=snapshot.household_id
+             OR account.account_kind!='ASSET' OR account.account_subtype!='SECURITIES'
+           )
+           UNION ALL
+           SELECT 1 FROM brokerage_events event
+           LEFT JOIN accounts account ON account.id=event.account_id
+           WHERE event.household_id=?1 AND (
+             account.id IS NULL OR account.household_id!=event.household_id
+             OR account.account_subtype!='SECURITIES')
+           LIMIT 1)",
+        [household_id],
+        |row| row.get(0),
+    )?;
+    if invalid_scope {
+        return Err(ChangePackageError::Conflict);
+    }
+
+    let mut statement = connection
+        .prepare("SELECT payload_json FROM sync_brokerage_event_payloads WHERE household_id=?1")?;
+    let rows = statement.query_map([household_id], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        let mut value: Value =
+            serde_json::from_str(&row?).map_err(|_| ChangePackageError::Encoding)?;
+        let object = value.as_object_mut().ok_or(ChangePackageError::Encoding)?;
+        for key in [
+            "recordKind",
+            "householdId",
+            "accountId",
+            "sourceDocumentId",
+            "sourceOriginInstallationId",
+            "createdAt",
+        ] {
+            object.remove(key);
+        }
+        if let Some(account_type) = object.remove("brokerageAccountType") {
+            object.insert("accountType".to_owned(), account_type);
+        }
+        if let Some(integer) = object
+            .get("affectsHouseholdExpense")
+            .and_then(Value::as_i64)
+        {
+            object.insert(
+                "affectsHouseholdExpense".to_owned(),
+                Value::Bool(integer != 0),
+            );
+        }
+        let legs = object
+            .get_mut("legs")
+            .and_then(Value::as_array_mut)
+            .ok_or(ChangePackageError::Encoding)?;
+        for leg in legs {
+            let leg = leg.as_object_mut().ok_or(ChangePackageError::Encoding)?;
+            leg.remove("brokerageEventId");
+            leg.remove("lineNumber");
+            if let Some(kind) = leg.remove("legKind") {
+                leg.insert("kind".to_owned(), kind);
+            }
+        }
+        let event: crate::brokerage::ImportBrokerageEventInput =
+            serde_json::from_value(value).map_err(|_| ChangePackageError::Conflict)?;
+        if !crate::brokerage::validate_event(&event) {
+            return Err(ChangePackageError::Conflict);
+        }
+    }
+    Ok(())
 }
 
 fn materialize_rule(connection: &Connection, payload: &str) -> Result<()> {
@@ -1494,6 +1991,11 @@ fn materialize_delete(
         "TRANSACTION" => ("transactions", "id"),
         "CARD_STATEMENT" => ("card_statements", "id"),
         "CARD_PAYMENT" => ("card_payments", "id"),
+        "PORTFOLIO_SNAPSHOT" => ("portfolio_snapshots", "id"),
+        "BROKERAGE_EVENT" => ("brokerage_events", "id"),
+        "INVESTMENT_FX_RATE" => ("investment_fx_rates", "id"),
+        "INVESTMENT_MARKET_PRICE" => ("investment_market_prices", "id"),
+        "AGGREGATE_ASSET_SNAPSHOT" => ("aggregate_asset_snapshots", "id"),
         "SAVINGS_GOAL" => ("savings_goals", "id"),
         "CLASSIFICATION_RULE" => ("classification_rules", "id"),
         "ACCOUNT_GROUP" => ("account_groups", "id"),
@@ -1524,6 +2026,11 @@ fn entity_belongs_to_other_household(
         "TRANSACTION" => "transactions",
         "CARD_STATEMENT" => "card_statements",
         "CARD_PAYMENT" => "card_payments",
+        "PORTFOLIO_SNAPSHOT" => "portfolio_snapshots",
+        "BROKERAGE_EVENT" => "brokerage_events",
+        "INVESTMENT_FX_RATE" => "investment_fx_rates",
+        "INVESTMENT_MARKET_PRICE" => "investment_market_prices",
+        "AGGREGATE_ASSET_SNAPSHOT" => "aggregate_asset_snapshots",
         "SAVINGS_GOAL" => "savings_goals",
         "CLASSIFICATION_RULE" => "classification_rules",
         "ACCOUNT_GROUP" => "account_groups",
@@ -1581,6 +2088,26 @@ fn load_entity_payload(
         "CARD_PAYMENT" => {
             "SELECT payload_json FROM sync_card_payment_payloads
           WHERE household_id=?1 AND payment_id=?2"
+        }
+        "PORTFOLIO_SNAPSHOT" => {
+            "SELECT payload_json FROM sync_portfolio_snapshot_payloads
+          WHERE household_id=?1 AND snapshot_id=?2"
+        }
+        "BROKERAGE_EVENT" => {
+            "SELECT payload_json FROM sync_brokerage_event_payloads
+          WHERE household_id=?1 AND event_id=?2"
+        }
+        "INVESTMENT_FX_RATE" => {
+            "SELECT payload_json FROM sync_investment_fx_rate_payloads
+          WHERE household_id=?1 AND rate_id=?2"
+        }
+        "INVESTMENT_MARKET_PRICE" => {
+            "SELECT payload_json FROM sync_investment_market_price_payloads
+          WHERE household_id=?1 AND price_id=?2"
+        }
+        "AGGREGATE_ASSET_SNAPSHOT" => {
+            "SELECT payload_json FROM sync_aggregate_asset_snapshot_payloads
+          WHERE household_id=?1 AND snapshot_id=?2"
         }
         "MONTHLY_BUDGET_PLAN" => {
             "SELECT payload_json FROM sync_monthly_budget_plan_payloads
@@ -1785,6 +2312,11 @@ fn kind_supports_absence_delete(kind: &str) -> bool {
             | "TRANSACTION"
             | "CARD_STATEMENT"
             | "CARD_PAYMENT"
+            | "PORTFOLIO_SNAPSHOT"
+            | "BROKERAGE_EVENT"
+            | "INVESTMENT_FX_RATE"
+            | "INVESTMENT_MARKET_PRICE"
+            | "AGGREGATE_ASSET_SNAPSHOT"
             | "SAVINGS_GOAL"
             | "CLASSIFICATION_RULE"
             | "ACCOUNT_GROUP"
@@ -1799,7 +2331,12 @@ fn dependency_rank(kind: &str) -> u8 {
         "HOUSEHOLD" => 0,
         "HOUSEHOLD_MEMBER" => 1,
         "ACCOUNT" => 2,
-        "TRANSACTION" => 3,
+        "TRANSACTION"
+        | "PORTFOLIO_SNAPSHOT"
+        | "BROKERAGE_EVENT"
+        | "INVESTMENT_FX_RATE"
+        | "INVESTMENT_MARKET_PRICE"
+        | "AGGREGATE_ASSET_SNAPSHOT" => 3,
         "CARD_STATEMENT" => 4,
         "CARD_PAYMENT" => 5,
         "SAVINGS_GOAL" | "DASHBOARD_PREFERENCES" | "DELIMITED_PARSER_PROFILE" => 6,
@@ -1977,6 +2514,79 @@ mod tests {
                    'Description','SIGNED','OUT','Amount',1,10,1);",
             )
             .unwrap();
+    }
+
+    fn seed_investment_graph(connection: &Connection) {
+        connection.execute_batch(
+            "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency)
+             VALUES('broker','family','Brokerage','ASSET','SECURITIES','JPY');
+             INSERT INTO import_runs(id,household_id,status) VALUES('investment-run','family','POSTED');
+             INSERT INTO source_documents(
+               id,household_id,import_run_id,source_type,original_filename,media_type,
+               byte_size,sha256,storage_path)
+             VALUES('investment-doc','family','investment-run','OTHER','assetbalance.csv','text/csv',5,
+               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','documents/aa');
+             INSERT INTO source_records(
+               id,source_document_id,row_number,record_hash,raw_payload_json)
+             VALUES
+               ('investment-row-1','investment-doc',1,
+                '1111111111111111111111111111111111111111111111111111111111111111','{\"row\":1}'),
+               ('investment-row-2','investment-doc',2,
+                '2222222222222222222222222222222222222222222222222222222222222222','{\"row\":2}'),
+               ('investment-row-3','investment-doc',3,
+                '3333333333333333333333333333333333333333333333333333333333333333','{\"row\":3}'),
+               ('investment-row-4','investment-doc',4,
+                '4444444444444444444444444444444444444444444444444444444444444444','{\"row\":4}'),
+               ('investment-row-5','investment-doc',5,
+                '5555555555555555555555555555555555555555555555555555555555555555','{\"row\":5}');
+             INSERT INTO portfolio_snapshots(
+               id,household_id,account_id,source_document_id,as_of,market_value_jpy,
+               cash_value_jpy,unrealized_pnl_jpy,realized_pnl_jpy)
+             VALUES('portfolio','family','broker','investment-doc','2026-07-12T14:47:56+09:00',
+                    120000,20000,10000,2000);
+             INSERT INTO portfolio_asset_classes(
+               id,portfolio_snapshot_id,name,market_value_jpy,unrealized_pnl_jpy,source_row)
+             VALUES('asset-class','portfolio','国内株式',100000,10000,1);
+             INSERT INTO position_snapshots(
+               id,portfolio_snapshot_id,product_type,account_type,instrument_code,instrument_name,
+               quantity,average_cost,market_price,market_value_jpy,unrealized_pnl_jpy,
+               realized_pnl_jpy,currency,source_row)
+             VALUES('position','portfolio','株式','特定','7203','トヨタ',10,9000,10000,
+                    100000,10000,2000,'JPY',2);
+             INSERT INTO portfolio_fx_rates(
+               id,portfolio_snapshot_id,base_currency,quote_currency,rate,source_row)
+             VALUES('snapshot-fx','portfolio','USD','JPY',150,3);
+             INSERT INTO brokerage_events(
+               id,household_id,account_id,source_document_id,source_row,event_type,trade_date,
+               instrument_code,instrument_name,brokerage_account_type,currency,quantity,unit_price,
+               gross_amount,fee_amount,tax_amount,settlement_amount,reconciliation_status,
+               reconciliation_difference,raw_transaction_type)
+             VALUES('buy','family','broker','investment-doc',2,'BUY','2026-07-01','7203','トヨタ',
+                    '特定','JPY',1,1000,1000,0,0,1000,'BALANCED',0,'買付');
+             INSERT INTO brokerage_event_legs(
+               id,brokerage_event_id,line_number,leg_kind,signed_amount,currency,
+               instrument_code,instrument_name,signed_quantity,description)
+             VALUES('buy-security','buy',1,'SECURITY',1000,'JPY','7203','トヨタ',1,'買付'),
+                   ('buy-cash','buy',2,'CASH',-1000,'JPY',NULL,NULL,NULL,'受渡');
+             INSERT INTO investment_fx_rates(
+               id,household_id,rate_date,base_currency,quote_currency,rate,source_kind,provider,
+               source_document_id,source_row,observed_at)
+             VALUES('fx-rate','family','2026-07-12','USD','JPY',150,'PORTFOLIO_SNAPSHOT',
+                    'Money Forward','investment-doc',3,'2026-07-12T14:47:56+09:00');
+             INSERT INTO investment_market_prices(
+               id,household_id,price_date,instrument_code,instrument_name,currency,unit_price,
+               source_kind,provider,source_document_id,source_row,observed_at)
+             VALUES('market-price','family','2026-07-12','7203','トヨタ','JPY',10000,
+                    'PORTFOLIO_SNAPSHOT','Money Forward','investment-doc',4,
+                    '2026-07-12T14:47:56+09:00');
+             INSERT INTO aggregate_asset_snapshots(
+               id,household_id,source_document_id,source_row,as_of,total_assets_jpy)
+             VALUES('aggregate-assets','family','investment-doc',5,'2026-07-12',120000);
+             INSERT INTO aggregate_asset_components(
+               aggregate_asset_snapshot_id,asset_class,official_header,value_jpy)
+             VALUES('aggregate-assets','DEPOSITS_CASH_CRYPTO','預金・現金・暗号資産(円)',20000),
+                   ('aggregate-assets','LISTED_STOCKS','株式(現物)(円)',100000);",
+        ).unwrap();
     }
 
     #[test]
@@ -2170,6 +2780,74 @@ mod tests {
                     connection.query_row("SELECT count(*) FROM card_payments", [], |row| row
                         .get::<_, i64>(0))?,
                     2
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_two_packages_remain_valid_and_do_not_delete_investment_graphs() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let mut package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        package.schema_version = 2;
+        package.covered_kinds = V2_COVERED_KINDS
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect();
+        package
+            .records
+            .retain(|record| package.covered_kinds.contains(&record.entity_kind));
+        package.counts_by_kind = package
+            .covered_kinds
+            .iter()
+            .map(|kind| {
+                (
+                    kind.clone(),
+                    package
+                        .records
+                        .iter()
+                        .filter(|record| &record.entity_kind == kind)
+                        .count() as u64,
+                )
+            })
+            .collect();
+        resign_package(&mut package);
+        validate_package(&package).unwrap();
+
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                seed_investment_graph(connection);
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                assert!(review.records.iter().all(|record| !matches!(
+                    record.entity_kind.as_str(),
+                    "PORTFOLIO_SNAPSHOT"
+                        | "BROKERAGE_EVENT"
+                        | "INVESTMENT_FX_RATE"
+                        | "INVESTMENT_MARKET_PRICE"
+                        | "AGGREGATE_ASSET_SNAPSHOT"
+                )));
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM portfolio_snapshots",
+                        [],
+                        |row| { row.get::<_, i64>(0) }
+                    )?,
+                    1
+                );
+                assert_eq!(
+                    connection.query_row("SELECT count(*) FROM brokerage_events", [], |row| {
+                        row.get::<_, i64>(0)
+                    })?,
+                    1
                 );
                 Ok(())
             })
@@ -2504,5 +3182,187 @@ mod tests {
             assert_eq!(connection.query_row("SELECT state FROM change_packages WHERE package_id=?1", [&ready.package_id], |row| row.get::<_, String>(0))?, "READY");
             Ok(())
         }).unwrap();
+    }
+
+    #[test]
+    fn schema_three_round_trips_confirmed_investment_graph_after_evidence_hydration() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                seed_investment_graph(connection);
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        for kind in [
+            "PORTFOLIO_SNAPSHOT",
+            "BROKERAGE_EVENT",
+            "INVESTMENT_FX_RATE",
+            "INVESTMENT_MARKET_PRICE",
+            "AGGREGATE_ASSET_SNAPSHOT",
+        ] {
+            assert_eq!(package.counts_by_kind.get(kind), Some(&1));
+        }
+        let expected = package
+            .records
+            .iter()
+            .filter(|record| {
+                dependency_rank(&record.entity_kind) == 3 && record.entity_kind != "TRANSACTION"
+            })
+            .map(|record| {
+                (
+                    (record.entity_kind.clone(), record.entity_id.clone()),
+                    record.payload_sha256.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let bytes = encode_pretty(&package).unwrap();
+
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Destination')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO import_runs(id,household_id,status)
+                     VALUES('hydrated-run','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES('hydrated-doc','family','hydrated-run','OTHER','assetbalance.csv',
+                       'text/csv',5,
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                       'documents/hydrated');
+                     INSERT INTO source_records(
+                       id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES
+                       ('hydrated-row-1','hydrated-doc',1,
+                        '1111111111111111111111111111111111111111111111111111111111111111','{\"row\":1}'),
+                       ('hydrated-row-2','hydrated-doc',2,
+                        '2222222222222222222222222222222222222222222222222222222222222222','{\"row\":2}'),
+                       ('hydrated-row-3','hydrated-doc',3,
+                        '3333333333333333333333333333333333333333333333333333333333333333','{\"row\":3}'),
+                       ('hydrated-row-4','hydrated-doc',4,
+                        '4444444444444444444444444444444444444444444444444444444444444444','{\"row\":4}'),
+                       ('hydrated-row-5','hydrated-doc',5,
+                        '5555555555555555555555555555555555555555555555555555555555555555','{\"row\":5}');",
+                )?;
+                connection.execute(
+                    "INSERT INTO evidence_import_run_aliases(
+                       household_id,origin_installation_id,portable_import_run_id,local_import_run_id)
+                     VALUES('family',?1,'investment-run','hydrated-run')",
+                    [&package.source_installation_id],
+                )?;
+                connection.execute(
+                    "INSERT INTO evidence_source_document_aliases(
+                       household_id,origin_installation_id,portable_document_id,
+                       portable_import_run_id,local_document_id,content_sha256)
+                     VALUES('family',?1,'investment-doc','investment-run','hydrated-doc',
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')",
+                    [&package.source_installation_id],
+                )?;
+                for (kind, id, row) in [
+                    ("PORTFOLIO_SNAPSHOT", "portfolio", None),
+                    ("BROKERAGE_EVENT", "buy", Some(2_i64)),
+                    ("INVESTMENT_FX_RATE", "fx-rate", Some(3_i64)),
+                    ("INVESTMENT_MARKET_PRICE", "market-price", Some(4_i64)),
+                    ("AGGREGATE_ASSET_SNAPSHOT", "aggregate-assets", Some(5_i64)),
+                ] {
+                    connection.execute(
+                        "INSERT INTO investment_portable_source_refs(
+                           household_id,entity_kind,entity_id,origin_installation_id,
+                           source_document_id,source_row)
+                         VALUES('family',?1,?2,?3,'investment-doc',?4)",
+                        params![kind, id, package.source_installation_id, row],
+                    )?;
+                }
+                let mut review = stage_package(connection, "family", &bytes).unwrap();
+                let resolutions = review
+                    .records
+                    .iter()
+                    .filter(|record| record.resolution == "PENDING")
+                    .map(|record| ChangePackageResolutionInput {
+                        entity_kind: record.entity_kind.clone(),
+                        entity_id: record.entity_id.clone(),
+                        resolution: "APPLY_INCOMING".to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                if !resolutions.is_empty() {
+                    review = resolve_package(connection, &review.package_id, &resolutions).unwrap();
+                }
+                assert_eq!(apply_package(connection, &review.package_id).unwrap().state, "APPLIED");
+                let actual = export_current_state(connection, "family")
+                    .unwrap()
+                    .records
+                    .into_iter()
+                    .filter(|record| dependency_rank(&record.entity_kind) == 3
+                        && record.entity_kind != "TRANSACTION")
+                    .map(|record| {
+                        ((record.entity_kind, record.entity_id), record.payload_sha256)
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                assert_eq!(actual, expected);
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT source_document_id FROM portfolio_snapshots WHERE id='portfolio'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "hydrated-doc"
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM brokerage_event_legs WHERE brokerage_event_id='buy'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    2
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn investment_graph_validator_rejects_unbalanced_portable_brokerage_facts() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        state
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                seed_investment_graph(connection);
+                connection.execute("UPDATE accounts SET is_archived=1 WHERE id='broker'", [])?;
+                validate_investment_graph(connection, "family").unwrap();
+                let portfolio_payload: String = connection.query_row(
+                    "SELECT payload_json FROM sync_portfolio_snapshot_payloads
+                     WHERE snapshot_id='portfolio'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                connection.execute(
+                    "DELETE FROM source_records
+                     WHERE source_document_id='investment-doc' AND row_number=1",
+                    [],
+                )?;
+                assert!(matches!(
+                    validate_portfolio_source_rows(
+                        connection,
+                        &portfolio_payload,
+                        "investment-doc"
+                    ),
+                    Err(ChangePackageError::Conflict)
+                ));
+                connection.execute(
+                    "UPDATE brokerage_event_legs SET signed_amount=-900 WHERE id='buy-cash'",
+                    [],
+                )?;
+                assert!(matches!(
+                    validate_investment_graph(connection, "family"),
+                    Err(ChangePackageError::Conflict)
+                ));
+                Ok(())
+            })
+            .unwrap();
     }
 }

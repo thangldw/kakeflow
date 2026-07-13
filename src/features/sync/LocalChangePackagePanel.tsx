@@ -9,6 +9,9 @@ type Choice = ChangePackageResolutionInputDto['resolution']
 const kindLabels: Readonly<Record<string, string>> = {
   HOUSEHOLD: '世帯', HOUSEHOLD_MEMBER: 'メンバー', ACCOUNT: '口座', TRANSACTION: '取引',
   CARD_STATEMENT: 'カード請求', CARD_PAYMENT: 'カード引落照合',
+  PORTFOLIO_SNAPSHOT: '資産残高', BROKERAGE_EVENT: '証券取引',
+  INVESTMENT_FX_RATE: '投資用為替レート', INVESTMENT_MARKET_PRICE: '市場価格',
+  AGGREGATE_ASSET_SNAPSHOT: '総資産履歴',
   MONTHLY_BUDGET_PLAN: '月間予算', SAVINGS_GOAL: '貯蓄目標', CLASSIFICATION_RULE: '分類ルール',
   ACCOUNT_GROUP: '口座グループ', CARD_SETTLEMENT_MAPPING: 'カード引落口座',
   DASHBOARD_PREFERENCES: 'ダッシュボード設定', DELIMITED_PARSER_PROFILE: 'CSV読込設定',
@@ -95,7 +98,8 @@ export function LocalChangePackagePanel({ householdId }: Props) {
   }
 
   return <section className="panel local-change-package" aria-busy={busy}>
-    <div className="panel-head"><div><h2 ref={heading} tabIndex={-1}>変更パッケージ</h2><p>取引・計画設定に加え、カード請求と銀行引落の照合状態も確認してこの端末へ反映します。ネットワーク送受信は行いません。</p></div><span className="local-only-badge">端末内のみ</span></div>
+    <div className="panel-head"><div><h2 ref={heading} tabIndex={-1}>変更パッケージ</h2><p>取引・計画・カード照合・投資データを確認して、この端末へまとめて反映します。投資データを含む場合は、先に原本カプセルを読み込んでください。</p></div><span className="local-only-badge">手順 2 / 2</span></div>
+    <p className="evidence-bundle-scope">ネットワーク送受信は行いません。パッケージを選択しただけでは台帳を変更せず、原本との対応を確認できない投資データは反映されません。</p>
     {platformClient.runtime !== 'tauri' ? <p className="empty-state">変更パッケージはデスクトップ版で利用できます。</p> : <>
       <div className="change-package-actions">
         <button className="primary-btn" disabled={busy || !householdId || Boolean(review && review.state !== 'APPLIED')} onClick={() => void pick()}>ローカルパッケージを選択</button>

@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.40 adds a separate, passphrase-protected [portable confirmed-evidence capsule](docs/PORTABLE_EVIDENCE_BUNDLES.md). After a schema-v2 local change package moves the household ledger and card graph, the capsule carries the original CSV/PDF/image bytes and immutable raw rows behind posted transactions and card statements. Content-addressed aliases restore source viewers without changing canonical transaction/card hashes. Pending Inbox candidates and automatic multi-device delivery remain outside this release.
+Version 0.41 completes the portable confirmed investment graph. A schema-v3 [local change package](docs/LOCAL_CHANGE_PACKAGES.md) now carries portfolio snapshots and positions, brokerage events and legs, dated FX observations, market prices, and Money Forward aggregate asset history. Its schema-v2 [confirmed-evidence capsule](docs/PORTABLE_EVIDENCE_BUNDLES.md) is imported first and hydrates the exact source documents/rows required by those facts. Derived holdings, FIFO performance, valuation, and asset-history views are recomputed on the receiving desktop; pending Inbox candidates and automatic multi-device delivery remain outside this release.
 
 ## Product tour
 
@@ -117,8 +117,8 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
-- [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with authenticated original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, exact dependency checks, idempotent content reuse, atomic database publication, and transaction source-viewer hydration without change-package hash drift. Pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
-- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v2 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 13-kind household snapshot, preserve ledger and card-reconciliation references, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
+- [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, evidence-first investment dependencies, idempotent content reuse, atomic database publication, and source-viewer hydration without change-package hash drift. Schema-v1 capsules remain compatible; pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
+- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v3 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 18-kind household snapshot spanning ledger, card reconciliation, and confirmed investment facts, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind and schema-v2 13-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
 - [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard files, with adapter-compatible account filtering, per-preview selection, and no default or name-based inference.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
@@ -189,6 +189,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Define the remaining portable investment/portfolio aggregate graph and pending-import handoff semantics, then add optional end-to-end encrypted remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
-2. Add more institution-specific brokerage and statement adapters.
+1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
+2. Define pending-import handoff semantics, then add optional remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

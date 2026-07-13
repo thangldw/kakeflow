@@ -1,18 +1,18 @@
 # Local change packages
 
-KakeFlow 0.39 provides a user-driven file workflow for moving the current
+KakeFlow 0.41 provides a user-driven file workflow for moving the current
 household state between KakeFlow desktop installations. It does not connect to a
 server, poll another device, or transmit a file over a network.
 
-KakeFlow 0.40 keeps original source bytes outside this bounded JSON graph. After
-applying a change package, use the separate
-[portable confirmed-evidence bundle](PORTABLE_EVIDENCE_BUNDLES.md) to hydrate
-the immutable CSV/PDF/image and raw-row provenance referenced by its portable
-transaction and card identifiers.
+Original source bytes remain outside this bounded JSON graph. For schema-v3
+investment data, import the matching [portable confirmed-evidence
+bundle](PORTABLE_EVIDENCE_BUNDLES.md) first, then stage/apply the change package.
+The package refuses to publish an investment fact unless its portable document,
+origin installation, and source row resolve to the already hydrated evidence.
 
 ## Covered current state
 
-Package schema v2 declares exactly these thirteen aggregate kinds:
+Package schema v3 declares exactly these eighteen aggregate kinds:
 
 1. household;
 2. household members;
@@ -23,20 +23,27 @@ Package schema v2 declares exactly these thirteen aggregate kinds:
    and a portable source-document identifier;
 6. card payments, including unconfirmed suggestions and confirmed bank-payment
    links;
-7. the complete monthly budget plan, including an empty plan;
-8. savings goals;
-9. classification rules with labels and tags;
-10. account groups with ordered members;
-11. card-to-bank settlement mappings;
-12. dashboard preferences; and
-13. delimited parser profiles.
+7. portfolio snapshots with asset classes, positions, and snapshot FX rates;
+8. brokerage events with ordered balanced legs and explicit corporate-action terms;
+9. dated investment FX observations;
+10. dated investment market-price observations;
+11. Money Forward aggregate asset snapshots with category components;
+12. the complete monthly budget plan, including an empty plan;
+13. savings goals;
+14. classification rules with labels and tags;
+15. account groups with ordered members;
+16. card-to-bank settlement mappings;
+17. dashboard preferences; and
+18. delimited parser profiles.
 
-Schema-v1 packages with the original eleven kinds remain valid. Their omission
-of card statements and payments never creates deletion candidates for those
-aggregates on the receiver.
+Schema-v1 packages with the original eleven kinds and schema-v2 packages with
+thirteen kinds remain valid. Their omissions never create deletion candidates
+for the card or investment aggregates they do not cover.
 
-Source documents and their bytes, import runs/candidates, investment
-snapshots/events, watched-folder grants, and derived analytics are not included.
+Source bytes, mutable import runs/candidates, watched-folder grants, and derived
+analytics are not included. Holdings, FIFO lots, realized-performance reports,
+market valuation, and charts are recomputed from the five confirmed investment
+aggregate kinds after apply.
 Transaction source identifiers are retained as
 portable references; they do not pretend that the missing source document is
 present on the receiving installation. The same rule applies to a statement's
@@ -73,9 +80,10 @@ choose one whole-aggregate outcome:
 - use the package aggregate (or delete it when omitted).
 
 Households and household members are never inferred as omission deletes.
-KakeFlow 0.39 does not perform field-level merges. Accepted mixed choices are
-also checked against the derived card status and confirmed-payment invariants;
-an inconsistent graph rolls back as one transaction.
+KakeFlow does not perform field-level merges. Accepted mixed choices are checked
+against derived card status, confirmed-payment invariants, investment account
+scope, exact evidence dependencies, and balanced brokerage semantics; an
+inconsistent graph rolls back as one transaction.
 
 ## Atomic apply and lineage
 
@@ -93,7 +101,7 @@ its existing receipt.
 
 ## Product boundary
 
-The UI uses `変更パッケージ` and `端末内のみ`. It never labels a package as
-cloud-synchronized. Moving the saved file with iCloud Drive, Google Drive,
+The UI presents the evidence capsule as step 1 and `変更パッケージ` as step 2.
+It never labels a package as cloud-synchronized. Moving the saved file with iCloud Drive, Google Drive,
 OneDrive, removable media, or another tool is outside KakeFlow and remains an
 explicit user action.
