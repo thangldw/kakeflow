@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.26.0 — 2026-07-13
+
+- Add a fifth persisted `CASH_FLOW` Home preset with cash-specific inflow, outflow, net-flow, and month-end asset labels.
+- Add a dedicated six-month cash-flow trend derived from posted asset-account deltas under the same household, account-group, member-attribution, date, and calculation-target scopes as the headline totals.
+- Count a credit-card purchase on the accrual timeline and its later bank settlement once on the cash timeline, including when purchase and settlement fall in different months.
+- Keep the existing accrual trend and expense-category composition unchanged; the Cash Flow preset does not present either as cash movement or invent cash categories.
+- Query Home KPIs, trend, and recent activity consistently in cash basis for the Cash Flow preset, refetch in accrual basis when leaving it, and prevent delayed responses from an old basis or household from replacing the active view.
+- Preserve existing dashboard preferences while extending their constrained domain through a versioned SQLite migration and restore validation.
+
 ## 0.25.0 — 2026-07-13
 
 - Add four household-scoped Home focus presets: Financial Overview, Household Ledger, Assets & Liabilities, and Card Reconciliation.

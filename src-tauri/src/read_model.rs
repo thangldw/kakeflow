@@ -2095,6 +2095,15 @@ pub struct DashboardAccrualTrendPointDto {
     pub expense_jpy: i64,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardCashFlowTrendPointDto {
+    pub month: String,
+    pub inflow_jpy: i64,
+    pub outflow_jpy: i64,
+    pub net_cash_flow_jpy: i64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardExpenseCategoryDto {
@@ -2117,6 +2126,7 @@ pub struct DashboardMonthlyTotalsDto {
     pub liabilities_jpy: i64,
     pub net_worth_jpy: i64,
     pub accrual_trend: Vec<DashboardAccrualTrendPointDto>,
+    pub cash_flow_trend: Vec<DashboardCashFlowTrendPointDto>,
     pub expense_categories: Vec<DashboardExpenseCategoryDto>,
 }
 
@@ -2192,7 +2202,7 @@ pub fn dashboard_monthly_totals(
                  SELECT
                    COALESCE(SUM(CASE WHEN asset_delta > 0 THEN asset_delta ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN asset_delta < 0 THEN -asset_delta ELSE 0 END), 0),
-                   count(*)
+                   COALESCE(SUM(CASE WHEN asset_delta != 0 THEN 1 ELSE 0 END), 0)
                  FROM cash_by_transaction",
                 params![household_id, start, account_group_id,
                     attribution_scope.sql_kind(), attribution_scope.member_id()],
@@ -2281,6 +2291,71 @@ pub fn dashboard_monthly_totals(
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_database_error)?;
 
+    let mut cash_flow_trend_statement = connection
+        .prepare(
+            "WITH RECURSIVE months(month_start) AS (
+               SELECT date(?2, '-5 months')
+               UNION ALL
+               SELECT date(month_start, '+1 month') FROM months
+                 WHERE month_start < date(?2)
+             ), cash_by_transaction AS (
+               SELECT months.month_start, t.id,
+                 COALESCE(SUM(CASE
+                   WHEN a.account_kind='ASSET' AND je.entry_side='DEBIT' THEN je.amount_jpy
+                   WHEN a.account_kind='ASSET' AND je.entry_side='CREDIT' THEN -je.amount_jpy
+                   ELSE 0 END),0) AS asset_delta
+               FROM months
+               LEFT JOIN transactions t
+                 ON t.household_id=?1 AND t.status='POSTED'
+                AND t.calculation_target=1
+                AND t.occurred_on>=months.month_start
+                AND t.occurred_on<date(months.month_start,'+1 month')
+                AND t.transaction_type NOT IN ('CARD_PURCHASE','TRANSFER')
+                AND (?3 IS NULL OR EXISTS (
+                  SELECT 1 FROM journal_entries scope_je JOIN account_group_members scope_gm
+                    ON scope_gm.account_id=scope_je.account_id
+                   AND scope_gm.household_id=t.household_id
+                  WHERE scope_je.transaction_id=t.id AND scope_gm.account_group_id=?3))
+                AND (?4='ALL'
+                  OR (?4='HOUSEHOLD_COMMON' AND t.attribution_kind='HOUSEHOLD')
+                  OR (?4='MEMBER' AND t.attribution_kind='MEMBER'
+                    AND t.attributed_member_id=?5))
+               LEFT JOIN journal_entries je ON je.transaction_id=t.id
+               LEFT JOIN accounts a ON a.id=je.account_id
+               GROUP BY months.month_start,t.id
+             )
+             SELECT strftime('%Y-%m',month_start),
+               COALESCE(SUM(CASE WHEN asset_delta>0 THEN asset_delta ELSE 0 END),0),
+               COALESCE(SUM(CASE WHEN asset_delta<0 THEN -asset_delta ELSE 0 END),0)
+             FROM cash_by_transaction
+             GROUP BY month_start
+             ORDER BY month_start",
+        )
+        .map_err(map_database_error)?;
+    let cash_flow_trend = cash_flow_trend_statement
+        .query_map(
+            params![
+                household_id,
+                start,
+                account_group_id,
+                attribution_scope.sql_kind(),
+                attribution_scope.member_id()
+            ],
+            |row| {
+                let inflow_jpy: i64 = row.get(1)?;
+                let outflow_jpy: i64 = row.get(2)?;
+                Ok(DashboardCashFlowTrendPointDto {
+                    month: row.get(0)?,
+                    inflow_jpy,
+                    outflow_jpy,
+                    net_cash_flow_jpy: inflow_jpy - outflow_jpy,
+                })
+            },
+        )
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+
     let mut categories_statement = connection
         .prepare(
             "SELECT a.id, a.name,
@@ -2338,6 +2413,7 @@ pub fn dashboard_monthly_totals(
         liabilities_jpy,
         net_worth_jpy: assets_jpy - liabilities_jpy,
         accrual_trend,
+        cash_flow_trend,
         expense_categories,
     })
 }
@@ -4644,6 +4720,11 @@ mod tests {
         assert_eq!(july.month, "2026-07");
         assert_eq!(july.income_jpy, 3000);
         assert_eq!(july.expense_jpy, 1500);
+        assert_eq!(accrual_totals.cash_flow_trend.len(), 6);
+        let july_cash = accrual_totals.cash_flow_trend.last().unwrap();
+        assert_eq!(july_cash.inflow_jpy, 3000);
+        assert_eq!(july_cash.outflow_jpy, 1500);
+        assert_eq!(july_cash.net_cash_flow_jpy, 1500);
         assert_eq!(accrual_totals.expense_categories.len(), 2);
         assert_eq!(
             accrual_totals.expense_categories[0].account_id,
@@ -4714,6 +4795,76 @@ mod tests {
             ),
             Err(RepositoryError::NotFound)
         ));
+    }
+
+    #[test]
+    fn cash_flow_trend_uses_settlement_month_without_counting_card_purchase_twice() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".to_owned(),
+                name: "Family".to_owned(),
+            },
+        )
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency)
+                 VALUES ('family-other-liability','family','Other liability','LIABILITY','OTHER','JPY'),
+                        ('family-equity','family','Equity','EQUITY','OTHER','JPY');
+                 INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES ('purchase','family','2026-06-20','CARD_PURCHASE','POSTED'),
+                        ('payment','family','2026-07-27','CARD_PAYMENT','POSTED'),
+                        ('rent','family','2026-07-03','EXPENSE','POSTED'),
+                        ('noncash','family','2026-07-15','ADJUSTMENT','POSTED');
+                 INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES ('purchase-expense','purchase','family-groceries','DEBIT',1000,1),
+                        ('purchase-card','purchase','family-card','CREDIT',1000,2),
+                        ('payment-card','payment','family-card','DEBIT',1000,1),
+                        ('payment-bank','payment','family-bank','CREDIT',1000,2),
+                        ('rent-expense','rent','family-housing','DEBIT',500,1),
+                        ('rent-bank','rent','family-bank','CREDIT',500,2),
+                        ('noncash-liability','noncash','family-other-liability','DEBIT',50,1),
+                        ('noncash-equity','noncash','family-equity','CREDIT',50,2);",
+            )
+            .unwrap();
+
+        let accrual = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Accrual,
+            None,
+            &AttributionScope::All,
+        )
+        .unwrap();
+        let cash = dashboard_monthly_totals(
+            &connection,
+            "family",
+            "2026-07",
+            AccountingBasis::Cash,
+            None,
+            &AttributionScope::All,
+        )
+        .unwrap();
+
+        assert_eq!(accrual.expense_jpy, 500);
+        assert_eq!(cash.expense_jpy, 1500);
+        assert_eq!(cash.posted_transaction_count, 2);
+        assert_eq!(accrual.accrual_trend[4].month, "2026-06");
+        assert_eq!(accrual.accrual_trend[4].expense_jpy, 1000);
+        assert_eq!(accrual.accrual_trend[5].expense_jpy, 500);
+        assert_eq!(cash.cash_flow_trend[4].month, "2026-06");
+        assert_eq!(cash.cash_flow_trend[4].outflow_jpy, 0);
+        assert_eq!(cash.cash_flow_trend[5].month, "2026-07");
+        assert_eq!(cash.cash_flow_trend[5].outflow_jpy, 1500);
+        assert_eq!(cash.cash_flow_trend[5].net_cash_flow_jpy, -1500);
+        assert!(cash
+            .cash_flow_trend
+            .iter()
+            .all(|point| { point.net_cash_flow_jpy == point.inflow_jpy - point.outflow_jpy }));
+        assert_eq!(cash.cash_flow_trend, accrual.cash_flow_trend);
     }
 
     #[test]
@@ -5483,6 +5634,17 @@ mod tests {
             .accrual_trend
             .iter()
             .all(|point| point.income_jpy == 0 && point.expense_jpy == 0));
+        assert_eq!(
+            totals
+                .cash_flow_trend
+                .iter()
+                .map(|point| point.month.as_str())
+                .collect::<Vec<_>>(),
+            months
+        );
+        assert!(totals.cash_flow_trend.iter().all(|point| {
+            point.inflow_jpy == 0 && point.outflow_jpy == 0 && point.net_cash_flow_jpy == 0
+        }));
     }
 
     #[test]

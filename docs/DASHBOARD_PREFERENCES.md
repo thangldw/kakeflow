@@ -10,8 +10,11 @@ KakeFlow 0.25 lets each household choose how the existing confirmed-ledger metri
 | Household Ledger | Monthly income, expense, savings, category composition, and recent confirmed transactions |
 | Assets & Liabilities | Existing asset, liability, net-worth, and savings facts plus direct access to Investments |
 | Card Reconciliation | Existing liabilities, expense, assets, net worth, and confirmed card-settlement status plus direct access to Cards |
+| Cash Flow | Actual asset-account inflow, outflow, net movement, month-end assets, recent cash movements, and card-settlement status |
 
-All presets use the same dashboard read model. The income/expense trend and category composition remain explicitly accrual-based. KakeFlow does not relabel them as cash flow merely because the visual focus changes.
+The first four presets use accrual Home facts. The Cash Flow preset explicitly requests cash basis and uses its own six-month `cashFlowTrend`. The existing income/expense trend and category composition remain accrual-only and are hidden from Cash Flow; KakeFlow never relabels them as cash movement.
+
+For credit cards, the purchase is recognized as an expense on its purchase date. It is excluded from cash outflow because no asset account moved. The later bank debit reduces an asset account and appears once as cash outflow, including when the purchase and settlement occur in different months.
 
 ## Appearance
 

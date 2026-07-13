@@ -144,7 +144,8 @@ main { max-width: 1560px; padding: 34px 38px 26px; margin: 0 auto; }
 .dashboard-widget > .panel { height: 100%; }
 .overview--household-ledger .dashboard-widget--spending,
 .overview--card-reconciliation .dashboard-widget--cards { grid-column: 1 / -1; }
-.overview--assets-liabilities .dashboard-widget--trend { grid-column: 1 / -1; }
+.overview--assets-liabilities .dashboard-widget--trend,
+.overview--cash-flow .dashboard-widget--trend { grid-column: 1 / -1; }
 .panel { min-width: 0; padding: 20px; }
 .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 17px; }
 .panel-head h2 { margin: 0 0 4px; font-size: 14px; letter-spacing: -.02em; }
@@ -332,5 +333,6 @@ html[data-theme='dark'] .goal-editor { border-color: var(--line); }
 @media (max-width: 560px) {
   .overview--household-ledger .dashboard-widget--spending,
   .overview--card-reconciliation .dashboard-widget--cards,
-  .overview--assets-liabilities .dashboard-widget--trend { grid-column: auto; }
+  .overview--assets-liabilities .dashboard-widget--trend,
+  .overview--cash-flow .dashboard-widget--trend { grid-column: auto; }
 }
