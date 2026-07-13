@@ -61,6 +61,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0024_money_forward_household_import.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0025_receipt_evidence_linking.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -351,6 +354,62 @@ fn validate_restored_semantics(
              WHERE (external_source IS NULL AND external_fact_hash IS NOT NULL)
                 OR (external_source IS NOT NULL AND (external_transaction_id IS NULL OR external_fact_hash IS NULL))
                 OR (suggested_transaction_type='TRANSFER' AND calculation_target!=0) LIMIT 1",
+        )?;
+    }
+    if schema_version >= 25 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM receipt_candidate_links rcl
+             LEFT JOIN transaction_candidates c ON c.id=rcl.candidate_id
+             LEFT JOIN transactions t ON t.id=rcl.transaction_id
+             WHERE c.id IS NULL OR t.id IS NULL
+                OR c.household_id!=rcl.household_id
+                OR t.household_id!=rcl.household_id
+                OR t.status!='POSTED'
+                OR t.transaction_type NOT IN ('EXPENSE','CARD_PURCHASE')
+                OR c.receipt_resolution_status!='LINKED'
+                OR c.receipt_resolved_at IS NULL
+                OR c.review_status!='EXCLUDED'
+                OR abs(julianday(t.occurred_on)-julianday(c.occurred_on))>3
+                OR (
+                    SELECT COALESCE(SUM(CASE WHEN a.account_kind='EXPENSE' AND je.entry_side='DEBIT'
+                                        THEN je.amount_jpy ELSE 0 END),0)
+                    FROM journal_entries je JOIN accounts a ON a.id=je.account_id
+                    WHERE je.transaction_id=t.id
+                )!=c.amount_jpy
+                OR NOT EXISTS (
+                    SELECT 1 FROM candidate_sources cs
+                    JOIN source_records sr ON sr.id=cs.source_record_id
+                    JOIN source_documents sd ON sd.id=sr.source_document_id
+                    JOIN import_runs ir ON ir.id=sd.import_run_id
+                    WHERE cs.candidate_id=c.id AND ir.adapter_id='receipt-text-v2'
+                ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM transaction_candidates c
+             WHERE c.receipt_resolution_status='LINKED'
+               AND NOT EXISTS (
+                 SELECT 1 FROM receipt_candidate_links rcl WHERE rcl.candidate_id=c.id
+               ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM receipt_candidate_links rcl
+             WHERE NOT EXISTS (
+               SELECT 1 FROM transaction_sources ts
+               WHERE ts.transaction_id=rcl.transaction_id
+                 AND ts.candidate_id=rcl.candidate_id
+             ) OR EXISTS (
+               SELECT 1 FROM candidate_sources cs
+               WHERE cs.candidate_id=rcl.candidate_id
+                 AND NOT EXISTS (
+                   SELECT 1 FROM transaction_sources ts
+                   WHERE ts.transaction_id=rcl.transaction_id
+                     AND ts.candidate_id=rcl.candidate_id
+                     AND ts.source_record_id=cs.source_record_id
+                 )
+             ) LIMIT 1",
         )?;
     }
     if schema_version >= 2 {

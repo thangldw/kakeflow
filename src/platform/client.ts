@@ -38,6 +38,8 @@ import type {
   AudienceVisibilityDto,
   ClassificationPreviewDto,
   ClassificationRuleDto,
+  ReceiptMatchSuggestionDto,
+  ReceiptMatchConfirmationDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -157,6 +159,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       upsertCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_upsert') },
       deleteCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_delete') },
       queryCardSettlementBalanceCoverage: async () => ({ asOf: '1970-01-01', historyFrom: '1970-01-01', horizonThrough: '1970-02-15', horizonDays: 45, banks: [], unmappedStatements: [], missingDueStatements: [] }),
+      suggestReceiptMatches: async () => [],
+      confirmReceiptMatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'receipt_match_confirm') },
     }
   }
 
@@ -218,6 +222,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     upsertCardSettlementBankMapping: (input) => invokeValidated(invoke, 'card_settlement_bank_mapping_upsert', parseCardSettlementBankMapping, { input }),
     deleteCardSettlementBankMapping: async (input) => { await invokeValidated(invoke, 'card_settlement_bank_mapping_delete', parseVoid, { input }) },
     queryCardSettlementBalanceCoverage: (request) => invokeValidated(invoke, 'card_settlement_balance_coverage_query', parseCardSettlementBalanceCoverage, { request }),
+    suggestReceiptMatches: (householdId, candidateId) => invokeValidated(invoke, 'receipt_match_suggestions', parseReceiptMatchSuggestions, { request: { householdId, candidateId } }),
+    confirmReceiptMatch: (householdId, candidateId, transactionId) => invokeValidated(invoke, 'receipt_match_confirm', parseReceiptMatchConfirmation, { request: { householdId, candidateId, transactionId } }),
   }
 }
 
@@ -503,6 +509,34 @@ function parseCardSettlementBalanceCoverage(value: unknown): CardSettlementBalan
 
 function parseVoid(value: unknown): void {
   if (value !== null) throw new TypeError('void')
+}
+
+function parseReceiptMatchSuggestion(value: unknown): ReceiptMatchSuggestionDto {
+  const record = asRecord(value)
+  if (record.transactionType !== 'EXPENSE' && record.transactionType !== 'CARD_PURCHASE') throw new TypeError('receipt match type')
+  if (!Array.isArray(record.reasons) || !record.reasons.every((reason) => typeof reason === 'string')) throw new TypeError('receipt match reasons')
+  const dayDifference = asSafeInteger(record.dayDifference); const merchantSimilarityBps = asSafeInteger(record.merchantSimilarityBps); const scoreBps = asSafeInteger(record.scoreBps)
+  if (dayDifference < 0 || dayDifference > 3 || merchantSimilarityBps < 0 || merchantSimilarityBps > 10000 || scoreBps < 0 || scoreBps > 10000) throw new TypeError('receipt match score')
+  return {
+    candidateId: asRequiredString(record.candidateId), transactionId: asRequiredString(record.transactionId), occurredOn: asIsoDate(record.occurredOn),
+    payee: asNullableString(record.payee), description: asNullableString(record.description), transactionType: record.transactionType,
+    amountJpy: asSafeInteger(record.amountJpy), dayDifference, merchantSimilarityBps, scoreBps, reasons: record.reasons,
+  }
+}
+
+function parseReceiptMatchSuggestions(value: unknown): readonly ReceiptMatchSuggestionDto[] {
+  if (!Array.isArray(value) || value.length > 10) throw new TypeError('receipt matches')
+  const suggestions = value.map(parseReceiptMatchSuggestion)
+  if (new Set(suggestions.map((item) => item.transactionId)).size !== suggestions.length) throw new TypeError('receipt match duplicate')
+  if (suggestions.some((item, index) => index > 0 && suggestions[index - 1].scoreBps < item.scoreBps)) throw new TypeError('receipt match order')
+  return suggestions
+}
+
+function parseReceiptMatchConfirmation(value: unknown): ReceiptMatchConfirmationDto {
+  const record = asRecord(value)
+  const evidenceCount = asSafeInteger(record.evidenceCount)
+  if (record.resolutionStatus !== 'LINKED' || evidenceCount < 1 || (record.runStatus !== 'POSTED' && record.runStatus !== 'REVIEW_REQUIRED')) throw new TypeError('receipt match confirmation')
+  return { runId: asRequiredString(record.runId), candidateId: asRequiredString(record.candidateId), transactionId: asRequiredString(record.transactionId), resolutionStatus: 'LINKED', evidenceCount, runStatus: record.runStatus }
 }
 
 function parseBudget(value: unknown): MonthlyCategoryBudgetDto {

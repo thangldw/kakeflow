@@ -124,6 +124,16 @@ export interface PostingDecisionDto {
   readonly calculationTarget: boolean
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
+export interface ReceiptMatchSuggestionDto {
+  readonly candidateId: string; readonly transactionId: string; readonly occurredOn: string
+  readonly payee: string | null; readonly description: string | null; readonly transactionType: 'EXPENSE' | 'CARD_PURCHASE'
+  readonly amountJpy: number; readonly dayDifference: number; readonly merchantSimilarityBps: number
+  readonly scoreBps: number; readonly reasons: readonly string[]
+}
+export interface ReceiptMatchConfirmationDto {
+  readonly runId: string; readonly candidateId: string; readonly transactionId: string
+  readonly resolutionStatus: 'LINKED'; readonly evidenceCount: number; readonly runStatus: string
+}
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
 export interface ExtractedRegionDto {
   readonly pageNumber: number
@@ -408,6 +418,8 @@ export type AppCommand =
   | 'card_settlement_bank_mapping_upsert'
   | 'card_settlement_bank_mapping_delete'
   | 'card_settlement_balance_coverage_query'
+  | 'receipt_match_suggestions'
+  | 'receipt_match_confirm'
 
 export type Invoke = <T>(command: AppCommand, args?: Record<string, unknown>) => Promise<T>
 
@@ -469,4 +481,6 @@ export interface PlatformClient {
   upsertCardSettlementBankMapping(input: UpsertCardSettlementBankMappingInputDto): Promise<CardSettlementBankMappingDto>
   deleteCardSettlementBankMapping(input: DeleteCardSettlementBankMappingInputDto): Promise<void>
   queryCardSettlementBalanceCoverage(request: CardSettlementBalanceCoverageRequestDto): Promise<CardSettlementBalanceCoverageDto>
+  suggestReceiptMatches(householdId: string, candidateId: string): Promise<readonly ReceiptMatchSuggestionDto[]>
+  confirmReceiptMatch(householdId: string, candidateId: string, transactionId: string): Promise<ReceiptMatchConfirmationDto>
 }

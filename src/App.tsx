@@ -91,7 +91,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -619,13 +619,33 @@ function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly Acc
   }
 }
 
-function ImportReviewSection({ stagedImport, accounts, householdId, busy, onRollback, onCommit }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void }) {
+function ImportReviewSection({ stagedImport, accounts, householdId, busy, isReceipt, onRollback, onCommit, onReceiptLinked }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; isReceipt: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void; onReceiptLinked: () => Promise<void> }) {
   const [drafts, setDrafts] = useState(() => Object.fromEntries(stagedImport.candidates.map((candidate) => [candidate.id, { approved: false, decision: suggestedPosting(candidate, accounts, householdId) }])))
+  const [receiptMatches, setReceiptMatches] = useState<Record<string, readonly ReceiptMatchSuggestionDto[]>>({})
+  const [receiptSelections, setReceiptSelections] = useState<Record<string, string>>({})
+  const [matchingCandidate, setMatchingCandidate] = useState<string | null>(null)
+  useEffect(() => {
+    let active = true
+    if (!isReceipt) return
+    void Promise.all(stagedImport.candidates.map(async (candidate) => [candidate.id, await platformClient.suggestReceiptMatches(householdId, candidate.id)] as const)).then((items) => {
+      if (!active) return
+      const matches = Object.fromEntries(items); setReceiptMatches(matches)
+      setReceiptSelections(Object.fromEntries(items.filter(([, suggestions]) => suggestions[0]).map(([candidateId, suggestions]) => [candidateId, suggestions[0].transactionId])))
+    }).catch(() => { if (active) setReceiptMatches({}) })
+    return () => { active = false }
+  }, [householdId, isReceipt, stagedImport])
+  const linkReceipt = async (candidateId: string) => {
+    const transactionId = receiptSelections[candidateId]; if (!transactionId) return
+    setMatchingCandidate(candidateId)
+    try { await platformClient.confirmReceiptMatch(householdId, candidateId, transactionId); await onReceiptLinked() }
+    catch { /* The native command revalidates atomically; keep the candidate reviewable on failure. */ }
+    finally { setMatchingCandidate(null) }
+  }
   const updateDecision = (candidateId: string, change: (decision: PostingDecisionDto) => PostingDecisionDto) => setDrafts((current) => ({ ...current, [candidateId]: { ...current[candidateId], decision: change(current[candidateId].decision) } }))
   const approved = stagedImport.candidates.every((candidate) => drafts[candidate.id]?.approved)
   const decisions = stagedImport.candidates.map((candidate) => drafts[candidate.id]?.decision).filter((decision): decision is PostingDecisionDto => Boolean(decision))
 
-  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><span>{approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : '承認済みを台帳へ反映'}</button></div></section>
+  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>既存取引の候補</strong><select aria-label={`${candidate.id}のレシート紐付け候補`} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? '紐付け中…' : '新規支出を作らず証憑として紐付け'}</button><small>金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><span>{approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : '承認済みを台帳へ反映'}</button></div></section>
 }
 
 function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged, backgroundChanges, clearBackgroundChanges }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; backgroundChanges: number; clearBackgroundChanges: () => void }) {
@@ -634,6 +654,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [activeRun, setActiveRun] = useState<string | null>(null)
   const [protectedPdf, setProtectedPdf] = useState<{ itemId: string; status: Exclude<PdfPasswordStatus, 'SUCCESS'> } | null>(null)
   const [staged, setStaged] = useState<Record<string, ImportPreviewDto>>({})
+  const [receiptStagedIds, setReceiptStagedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [notice, setNotice] = useState('')
   const [watchedFolders, setWatchedFolders] = useState<readonly WatchedFolderDto[]>([])
   const [watchedFiles, setWatchedFiles] = useState<Record<string, readonly WatchedFileMetadataDto[]>>({})
@@ -863,6 +884,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       const started = await platformClient.startImport(normalized.request, item.fileBytes)
       const backendPreview = await platformClient.previewImport(started.runId)
       setStaged((current) => ({ ...current, [item.id]: backendPreview })); onChanged()
+      setReceiptStagedIds((current) => new Set(current).add(item.id))
       const confidence = Math.min(extracted.confidenceBps, normalized.fields.confidenceBps)
       setNotice(`${isImage ? 'レシート画像のOCR' : 'PDFの埋め込みテキスト'}から支出候補を抽出しました（信頼度 ${Math.round(confidence / 100)}%）。${confidence < 7500 ? '確認待ちとして保持します。' : ''}`)
     } catch {
@@ -949,6 +971,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     try {
       const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
       onChanged()
       setNotice(`${result.postedCount}件の取引を台帳へ反映しました。`)
     } catch {
@@ -963,6 +986,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     try {
       await platformClient.rollbackImport(runId)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
       onChanged()
       setNotice('未確定のインポートを取り消しました。')
     } catch {
@@ -970,6 +994,15 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     } finally {
       setActiveRun(null)
     }
+  }
+
+  const refreshAfterReceiptLink = async (previewId: string, runId: string) => {
+    const nextPreview = await platformClient.previewImport(runId)
+    if (nextPreview.candidates.length === 0) {
+      setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
+      setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
+    } else setStaged((current) => ({ ...current, [previewId]: nextPreview }))
+    onChanged(); setNotice('既存取引にレシート証憑を紐付けました。新しい支出は作成していません。')
   }
 
   return <>
@@ -1020,7 +1053,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       {protectedPdf && (() => { const item = previews.find((preview) => preview.id === protectedPdf.itemId); return item ? <PdfPasswordPrompt filename={item.filename} status={protectedPdf.status} onSubmit={(ephemeralPassword) => extractDocument(item, ephemeralPassword)} onCancel={() => setProtectedPdf(null)} /> : null })()}
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}
-    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} />)}
+    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} isReceipt={receiptStagedIds.has(previewId)} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} onReceiptLinked={() => refreshAfterReceiptLink(previewId, stagedImport.summary.runId)} />)}
   </>
 }
 

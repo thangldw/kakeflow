@@ -48,6 +48,9 @@ const desktop = vi.hoisted(() => ({
   deleteClassificationRule: vi.fn(),
   previewClassificationRules: vi.fn(),
   applyClassificationRule: vi.fn(),
+  ocrDocument: vi.fn(),
+  suggestReceiptMatches: vi.fn(),
+  confirmReceiptMatch: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -108,7 +111,9 @@ vi.mock('./platform', async () => {
       stageBackupRestore: desktop.stageBackupRestore,
       restartForRestore: desktop.restartForRestore,
       extractDocument: vi.fn(),
-      ocrDocument: vi.fn(),
+      ocrDocument: desktop.ocrDocument,
+      suggestReceiptMatches: desktop.suggestReceiptMatches,
+      confirmReceiptMatch: desktop.confirmReceiptMatch,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -173,6 +178,9 @@ describe('KakeFlow desktop read models', () => {
     desktop.deleteClassificationRule.mockReset().mockResolvedValue(undefined)
     desktop.previewClassificationRules.mockReset().mockResolvedValue({ winningRuleId: null, matches: [] })
     desktop.applyClassificationRule.mockReset()
+    desktop.ocrDocument.mockReset().mockResolvedValue({ method: 'OCR', text: 'STORE\n2026/07/12\n合計 ¥1,200', confidenceBps: 9000, issues: [] })
+    desktop.suggestReceiptMatches.mockReset().mockResolvedValue([{ candidateId: 'candidate-1', transactionId: 'purchase', occurredOn: '2026-07-12', payee: 'STORE', description: null, transactionType: 'EXPENSE', amountJpy: 1200, dayDifference: 0, merchantSimilarityBps: 10000, scoreBps: 10000, reasons: ['Exact receipt and posted-expense amount'] }])
+    desktop.confirmReceiptMatch.mockReset().mockResolvedValue({ runId: 'run-1', candidateId: 'candidate-1', transactionId: 'purchase', resolutionStatus: 'LINKED', evidenceCount: 1, runStatus: 'POSTED' })
     desktop.listWatchedFolders.mockReset().mockResolvedValue([])
     desktop.selectWatchedFolder.mockReset().mockResolvedValue(null)
     desktop.removeWatchedFolder.mockReset().mockResolvedValue(undefined)
@@ -777,6 +785,35 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
     expect(desktop.startImport.mock.calls.at(-1)?.[0]).not.toHaveProperty('password')
     expect(screen.queryByLabelText('PDFパスワード')).not.toBeInTheDocument()
+  })
+
+  it('requires an explicit receipt match confirmation and does not post a duplicate expense', async () => {
+    desktop.previewImport
+      .mockResolvedValueOnce({
+        summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 3, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+        candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 9000, normalizationConfidenceBps: 9000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+      })
+      .mockResolvedValueOnce({
+        summary: { runId: 'run-1', documentId: 'document-1', status: 'POSTED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 3, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+        candidates: [],
+      })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File([new Uint8Array([1, 2, 3])], 'receipt.png', { type: 'image/png' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: '画像OCR' }))
+
+    const matchButton = await screen.findByRole('button', { name: '新規支出を作らず証憑として紐付け' })
+    expect(desktop.confirmReceiptMatch).not.toHaveBeenCalled()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(matchButton)
+
+    await waitFor(() => expect(desktop.confirmReceiptMatch).toHaveBeenCalledWith('family', 'candidate-1', 'purchase'))
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    expect(await screen.findByText('既存取引にレシート証憑を紐付けました。新しい支出は作成していません。')).toBeInTheDocument()
   })
 
   it('creates a household-owned account from settings', async () => {

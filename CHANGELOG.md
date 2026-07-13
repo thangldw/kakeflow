@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0 — 2026-07-13
+
+- Add receipt-match suggestions for offline OCR candidates against existing posted expenses and card purchases, requiring an exact expense amount and a transaction date within three days.
+- Rank up to ten eligible suggestions by date proximity and explainable merchant-name similarity while showing the amount, date difference, similarity, and reasons in the Import Inbox.
+- Require the user to select and confirm a suggested transaction; KakeFlow never links a receipt automatically.
+- Attach every receipt source row to the selected transaction as supporting evidence and resolve the receipt candidate without creating another transaction or journal entry.
+- Keep confirmation household-scoped, atomic, idempotent, and revalidated against the current posted transaction so stale, cross-household, or changed targets are rejected.
+- Preserve the original posting, account balances, dashboard totals, and card reconciliation when evidence is linked, preventing the receipt and imported card/bank record from becoming duplicate expenses.
+
 ## 0.20.0 — 2026-07-13
 
 - Add a dedicated adapter for Money Forward ME's documented ten-column household-ledger CSV export, including reordered columns, quoted fields, UTF-8/CP932 decoding, strict calendar dates, and signed integer JPY amounts.

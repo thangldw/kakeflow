@@ -564,7 +564,8 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
          JOIN candidate_sources cs ON cs.candidate_id = tc.id \
          JOIN source_records sr ON sr.id = cs.source_record_id \
          JOIN source_documents sd ON sd.id = sr.source_document_id \
-         WHERE sd.import_run_id = ?1 ORDER BY tc.occurred_on, tc.id",
+         WHERE sd.import_run_id = ?1 AND tc.review_status IN ('PENDING','READY')
+         ORDER BY tc.occurred_on, tc.id",
     )?;
     let rows = statement.query_map([run_id], |row| {
         Ok((

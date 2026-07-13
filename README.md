@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.20 adds a faithful Money Forward ME household-ledger migration path. Its official ten-column CSV can enter KakeFlow without losing calculation-target, transfer, institution, category, memo, source-ID, or evidence semantics.
+Version 0.21 adds explicit receipt-to-transaction evidence matching. KakeFlow can suggest an existing posted expense with the same amount and a nearby date, rank the result with explainable merchant similarity, and attach the receipt only after the user confirms—without creating a duplicate expense or changing the journal.
 
 ## Product tour
 
@@ -109,8 +109,10 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
 - The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
 
-## Current v0.20 capabilities
+## Current v0.21 capabilities
 
+- Explicit [receipt-to-transaction evidence matching](docs/RECEIPT_EVIDENCE_MATCHING.md) for offline OCR candidates, with exact-amount and three-day date-window eligibility, explainable merchant-based ranking, and up to ten suggestions.
+- User-confirmed evidence linking that attaches the receipt's immutable source rows to an existing posted expense/card purchase as supporting evidence without creating a transaction, journal entry, balance movement, or duplicate expense.
 - Dedicated [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) with strict official-column parsing, explicit institution-to-account selection, transfer-safe posting, named source provenance, and stable external-ID deduplication.
 - Calculation-target and transfer semantics carried through preview and posting; a Money Forward transfer can never silently become household income or expense.
 - Explicit [card settlement coverage](docs/CARD_SETTLEMENT_COVERAGE.md) with user-selected card-to-bank mappings, cumulative multi-card projections, covered/shortfall/overdue states, and Action Center warnings.

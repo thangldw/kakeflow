@@ -1352,7 +1352,10 @@ pub fn get_transaction_detail(
         .prepare(
             "SELECT sr.id, sd.id, sd.source_type, sd.original_filename,
                     sd.media_type, sr.row_number, sd.imported_at,
-                    COALESCE(cs.evidence_role, 'PRIMARY'),
+                    CASE WHEN rcl.candidate_id IS NOT NULL
+                         THEN 'SUPPORTING'
+                         ELSE COALESCE(cs.evidence_role, 'PRIMARY')
+                    END,
                     sd.audience_visibility, sd.audience_member_id, audience.display_name
              FROM transaction_sources ts
              JOIN source_records sr ON sr.id = ts.source_record_id
@@ -1360,6 +1363,9 @@ pub fn get_transaction_detail(
              LEFT JOIN candidate_sources cs
                ON cs.candidate_id = ts.candidate_id
               AND cs.source_record_id = ts.source_record_id
+             LEFT JOIN receipt_candidate_links rcl
+               ON rcl.candidate_id = ts.candidate_id
+              AND rcl.transaction_id = ts.transaction_id
              LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
              WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
              ORDER BY sd.imported_at, sd.id, sr.row_number, sr.id
@@ -3419,6 +3425,9 @@ mod tests {
                  CREATE TABLE transaction_sources (
                    transaction_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
                    candidate_id TEXT, PRIMARY KEY(transaction_id, source_record_id));
+                 CREATE TABLE receipt_candidate_links (
+                   candidate_id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
+                   transaction_id TEXT NOT NULL);
                  CREATE TABLE card_statements (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL, card_account_id TEXT NOT NULL,
                    period_start TEXT NOT NULL, period_end TEXT NOT NULL, payment_due_on TEXT,
@@ -4669,9 +4678,11 @@ mod tests {
                  INSERT INTO transaction_candidates (id, household_id, review_status)
                    VALUES ('candidate', 'family', 'POSTED');
                  INSERT INTO candidate_sources (candidate_id, source_record_id, evidence_role)
-                   VALUES ('candidate', 'record', 'SUPPORTING');
+                   VALUES ('candidate', 'record', 'PRIMARY');
                  INSERT INTO transaction_sources (transaction_id, source_record_id, candidate_id)
-                   VALUES ('imported', 'record', 'candidate');",
+                   VALUES ('imported', 'record', 'candidate');
+                 INSERT INTO receipt_candidate_links (candidate_id, household_id, transaction_id)
+                   VALUES ('candidate', 'family', 'imported');",
             )
             .unwrap();
 
