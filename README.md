@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.28 adds bounded manual ZIP import for Yucho Direct bulk exports. Every distinct CSV payload inside a valid archive becomes an ordinary reviewable child preview with archive provenance and explicit bank-account selection; unsafe or malformed archives are rejected atomically, and nothing is posted automatically.
+Version 0.29 closes the credit-card forecast loop with editable statement payment due dates. Users can set, correct, or clear a verified date without changing statement lines, journal entries, reconciliation links, or payment totals; coverage and Action Center projections refresh from the saved value.
 
 ## Product tour
 
@@ -68,6 +68,12 @@ the app, opens a user database, creates an installer, or accesses signing keys.
 GitHub Actions runs it independently on macOS and Windows. Signing, Apple
 notarization, and production update credentials remain external release steps.
 
+When GitHub-hosted runners are unavailable, follow the checked [manual GitHub
+release procedure](docs/MANUAL_GITHUB_RELEASE.md): run every local desktop gate,
+create the verified tag, and upload the locally built artifact with `gh release
+create`. The release workflow is dispatch-only so pushing a tag does not create a
+known-failing quota job.
+
 ## Product principles
 
 - Source files are immutable evidence, not transactions by themselves.
@@ -111,6 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- User-confirmed [credit-card statement due dates](docs/CARD_DUE_DATES.md) with set/correct/clear controls, household-scoped validation, explicit no-inference labeling, and immediate coverage/forecast refresh without ledger mutation.
 - Bounded [Yucho bulk ZIP import](docs/YUCHO_BULK_ZIP_IMPORT.md) for manual upload and drop, with deterministic per-CSV previews, archive-entry provenance, atomic archive rejection, CRC verification, explicit review, and no automatic ledger posting.
 - Dedicated [Yucho Direct transaction import](docs/YUCHO_DIRECT_IMPORT.md) using the official seven-column personal-account CSV, explicit account mapping, physical-row provenance, running-balance validation, and conservative ATM/card semantics.
 - Persisted [dashboard focus and appearance preferences](docs/DASHBOARD_PREFERENCES.md) with five truthful presets including dedicated Cash Flow, system/light/dark themes, comfortable/compact density, household isolation, responsive layouts, and no change to ledger data.

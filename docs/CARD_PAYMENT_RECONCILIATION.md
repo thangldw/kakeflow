@@ -40,3 +40,8 @@ expense totals, and budget actuals remain unchanged.
 Coverage projections count only confirmed payments effective on or before the
 requested as-of date. Possible matches and future payments are disclosed but do
 not silently reduce an obligation.
+
+The statement payment due date is editable metadata, independent from payment
+matching. Setting, correcting, or clearing it changes forecast timing only. It
+does not create a payment, confirm a candidate, change the reconciliation status,
+or modify any transaction or journal entry.

@@ -81,8 +81,8 @@ use read_model::{
     DashboardMonthlyTotalsDto, HouseholdDto, HouseholdMemberDto, ImportRunCountsDto,
     MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto, TransactionDetailDto,
     TransactionPageDto, TransactionPageRequest, TransactionRowDto, UpdateAccountOwnershipInput,
-    UpdateClassificationRuleInput, UpdateHouseholdMemberInput, UpdatePostedTransactionInput,
-    UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
+    UpdateCardStatementDueDateInput, UpdateClassificationRuleInput, UpdateHouseholdMemberInput,
+    UpdatePostedTransactionInput, UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
 };
 use record_scope::AttributionScope;
 use recurring_analytics::{FinancialIntelligenceDto, FinancialIntelligenceRequest};
@@ -1811,6 +1811,16 @@ fn card_payment_link_confirm(
     })
 }
 
+#[tauri::command]
+fn card_statement_due_date_update(
+    state: tauri::State<'_, AppState>,
+    input: UpdateCardStatementDueDateInput,
+) -> Result<CardSettlementDto, String> {
+    repository_result(&state, |connection| {
+        read_model::update_card_statement_due_date(connection, &input)
+    })
+}
+
 fn workflow_result<T>(
     state: &AppState,
     operation: impl FnOnce(&rusqlite::Connection) -> import_workflow::Result<T>,
@@ -2416,6 +2426,7 @@ pub fn run() {
             cards_list,
             card_match_confirm,
             card_payment_link_confirm,
+            card_statement_due_date_update,
             import_start,
             import_preview,
             import_commit,

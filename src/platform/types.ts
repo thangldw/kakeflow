@@ -165,6 +165,9 @@ export interface CardSettlementDto {
   readonly paidAmountJpy: number; readonly outstandingAmountJpy: number; readonly overpaidAmountJpy: number
   readonly payments: readonly CardSettlementPaymentDto[]; readonly eligiblePayments: readonly CardSettlementPaymentDto[]
 }
+export interface UpdateCardStatementDueDateInputDto {
+  readonly householdId: string; readonly statementId: string; readonly paymentDueOn: string | null
+}
 export interface CardMatchConfirmationDto { readonly statementId: string; readonly paymentId: string; readonly reconciliationStatus: 'FULLY_RECONCILED' }
 export interface CardSettlementBankMappingDto {
   readonly householdId: string; readonly cardAccountId: string; readonly cardAccountName: string
@@ -498,6 +501,7 @@ export type AppCommand =
   | 'cards_list'
   | 'card_match_confirm'
   | 'card_payment_link_confirm'
+  | 'card_statement_due_date_update'
   | 'card_settlement_bank_mappings_list'
   | 'card_settlement_bank_mapping_upsert'
   | 'card_settlement_bank_mapping_delete'
@@ -574,6 +578,7 @@ export interface PlatformClient {
   listCardSettlements(householdId: string): Promise<readonly CardSettlementDto[]>
   confirmCardMatch(householdId: string, statementId: string, paymentId: string): Promise<CardMatchConfirmationDto>
   confirmCardPaymentLink(householdId: string, statementId: string, paymentId: string): Promise<CardSettlementDto>
+  updateCardStatementDueDate(input: UpdateCardStatementDueDateInputDto): Promise<CardSettlementDto>
   listCardSettlementBankMappings(householdId: string): Promise<readonly CardSettlementBankMappingDto[]>
   upsertCardSettlementBankMapping(input: UpsertCardSettlementBankMappingInputDto): Promise<CardSettlementBankMappingDto>
   deleteCardSettlementBankMapping(input: DeleteCardSettlementBankMappingInputDto): Promise<void>

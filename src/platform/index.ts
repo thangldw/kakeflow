@@ -28,6 +28,7 @@ export type {
   CardReconciliationStatusDto,
   CardSettlementPaymentDto,
   CardSettlementDto,
+  UpdateCardStatementDueDateInputDto,
   CardSettlementBankMappingDto,
   UpsertCardSettlementBankMappingInputDto,
   DeleteCardSettlementBankMappingInputDto,

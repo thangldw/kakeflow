@@ -61,6 +61,7 @@ describe('platform client', () => {
     await expect(client.listCardSettlements('family')).resolves.toEqual([])
     await expect(client.confirmCardMatch('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_match_confirm' })
     await expect(client.confirmCardPaymentLink('family', 'statement', 'payment')).rejects.toMatchObject({ command: 'card_payment_link_confirm' })
+    await expect(client.updateCardStatementDueDate({ householdId: 'family', statementId: 'statement', paymentDueOn: null })).rejects.toMatchObject({ command: 'card_statement_due_date_update' })
     await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual([])
     await expect(client.upsertCardSettlementBankMapping({} as never)).rejects.toMatchObject({ command: 'card_settlement_bank_mapping_upsert' })
     await expect(client.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13' })).resolves.toMatchObject({ horizonDays: 45, banks: [] })
@@ -177,6 +178,15 @@ describe('platform client', () => {
         paidAmountJpy: 1000, outstandingAmountJpy: 0, overpaidAmountJpy: 0,
         payments: [{ paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000, paymentOn: '2026-08-10', matchScoreBps: 8000 }], eligiblePayments: [],
       },
+      card_statement_due_date_update: {
+        id: 'statement-1', cardAccountId: 'family-rakuten-card', cardName: 'Rakuten Card', maskedIdentifier: null,
+        periodStart: '2026-07-01', periodEnd: '2026-07-31', paymentDueOn: '2026-08-27',
+        statementAmountJpy: 1000, detailAmountJpy: 1000, lineCount: 1,
+        paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000,
+        paymentOn: '2026-08-10', matchScoreBps: 8000, reconciliationStatus: 'FULLY_RECONCILED',
+        paidAmountJpy: 1000, outstandingAmountJpy: 0, overpaidAmountJpy: 0,
+        payments: [{ paymentId: 'payment-1', bankTransactionId: 'transaction-1', paymentAmountJpy: 1000, paymentOn: '2026-08-10', matchScoreBps: 8000 }], eligiblePayments: [],
+      },
       card_settlement_bank_mappings_list: [{ householdId: 'family', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', bankAccountId: 'family-bank', bankAccountName: 'Bank', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }],
       card_settlement_bank_mapping_upsert: { householdId: 'family', cardAccountId: 'family-rakuten-card', cardAccountName: 'Rakuten Card', bankAccountId: 'family-bank', bankAccountName: 'Bank', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' },
       card_settlement_bank_mapping_delete: null,
@@ -273,6 +283,8 @@ describe('platform client', () => {
     await expect(client.listCardSettlements('family')).resolves.toEqual(responses.cards_list)
     await expect(client.confirmCardMatch('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_match_confirm)
     await expect(client.confirmCardPaymentLink('family', 'statement-1', 'payment-1')).resolves.toEqual(responses.card_payment_link_confirm)
+    const dueDateInput = { householdId: 'family', statementId: 'statement-1', paymentDueOn: '2026-08-27' }
+    await expect(client.updateCardStatementDueDate(dueDateInput)).resolves.toEqual(responses.card_statement_due_date_update)
     const mappingInput = { householdId: 'family', cardAccountId: 'family-rakuten-card', bankAccountId: 'family-bank' }
     await expect(client.listCardSettlementBankMappings('family')).resolves.toEqual(responses.card_settlement_bank_mappings_list)
     await expect(client.upsertCardSettlementBankMapping(mappingInput)).resolves.toEqual(responses.card_settlement_bank_mapping_upsert)
@@ -320,12 +332,13 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('cards_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_match_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
     expect(invokeSpy).toHaveBeenCalledWith('card_payment_link_confirm', { householdId: 'family', statementId: 'statement-1', paymentId: 'payment-1' })
+    expect(invokeSpy).toHaveBeenCalledWith('card_statement_due_date_update', { input: dueDateInput })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mappings_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_upsert', { input: mappingInput })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(53)
+    expect(invokeSpy).toHaveBeenCalledTimes(54)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {
@@ -349,6 +362,8 @@ describe('platform client', () => {
       { ...valid, payments: [{ ...payment, paymentOn: '2026-02-30' }] },
       { ...valid, eligiblePayments: [{ ...payment, paymentId: 'candidate', bankTransactionId: 'candidate-bank', matchScoreBps: 10001 }] },
       { ...valid, periodEnd: 'not-a-date' },
+      { ...valid, periodStart: '2026-07-01', periodEnd: '2026-06-30' },
+      { ...valid, paymentDueOn: '2026-06-29' },
     ]
     for (const response of invalidRows) {
       const client = createPlatformClient({ tauri: true, invoke: async <T>() => [response] as T })
