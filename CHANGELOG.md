@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.29.0 — 2026-07-13
+
+- Add household-scoped set, correction, and explicit clearing of a credit-card statement's payment due date from the Cards workspace.
+- Require a canonical real `YYYY-MM-DD` date on or after the statement period end; never infer the date from issuer names, transaction descriptions, or other statements.
+- Add a direct due-date action to missing-date coverage warnings and label every displayed value as user-confirmed.
+- Refresh statement cards, bank coverage, forecast, and Action Center data after a successful change while retaining the entered draft and showing a clear validation message after failure.
+- Preserve statement amounts and lines, confirmed payment links, reconciliation status, source evidence, transactions, and balanced journal entries across date edits.
+
 ## 0.28.0 — 2026-07-13
 
 - Add bounded manual ZIP upload and drop for official Yucho Direct bulk exports while leaving watched-folder ZIP behavior unchanged.

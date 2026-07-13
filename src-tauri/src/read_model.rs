@@ -3412,6 +3412,15 @@ pub struct CardSettlementDto {
     pub eligible_payments: Vec<CardSettlementPaymentDto>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateCardStatementDueDateInput {
+    pub household_id: String,
+    pub statement_id: String,
+    /// `None` explicitly clears a previously stored due date.
+    pub payment_due_on: Option<String>,
+}
+
 pub fn list_card_settlements(
     connection: &Connection,
     household_id: &str,
@@ -3516,6 +3525,51 @@ pub fn list_card_settlements(
             },
         )
         .collect()
+}
+
+pub fn update_card_statement_due_date(
+    connection: &Connection,
+    input: &UpdateCardStatementDueDateInput,
+) -> Result<CardSettlementDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    validate_id(&input.statement_id, MAX_LOOKUP_ID_LEN)?;
+    validate_optional_date(connection, input.payment_due_on.as_deref())?;
+
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let period_end: String = tx
+        .query_row(
+            "SELECT period_end FROM card_statements
+             WHERE id = ?1 AND household_id = ?2",
+            params![input.statement_id, input.household_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+
+    if input
+        .payment_due_on
+        .as_deref()
+        .is_some_and(|payment_due_on| payment_due_on < period_end.as_str())
+    {
+        return Err(RepositoryError::InvalidInput(
+            "Payment due date cannot be before the statement period end",
+        ));
+    }
+
+    tx.execute(
+        "UPDATE card_statements SET payment_due_on = ?1
+         WHERE id = ?2 AND household_id = ?3",
+        params![input.payment_due_on, input.statement_id, input.household_id],
+    )
+    .map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+
+    list_card_settlements(connection, &input.household_id)?
+        .into_iter()
+        .find(|settlement| settlement.id == input.statement_id)
+        .ok_or(RepositoryError::NotFound)
 }
 
 fn list_statement_payments(
@@ -5942,6 +5996,336 @@ mod tests {
         assert_eq!(rows[0].detail_amount_jpy, 3000);
         assert_eq!(rows[0].payment_amount_jpy, Some(3000));
         assert_eq!(rows[0].reconciliation_status, "UNMATCHED");
+    }
+
+    fn insert_due_date_test_statement(connection: &Connection) {
+        connection
+            .execute_batch(
+                "INSERT INTO transactions (id, household_id, occurred_on, transaction_type, status)
+               VALUES ('due-purchase','family','2026-06-15','CARD_PURCHASE','POSTED'),
+                      ('due-bank-payment','family','2026-07-27','CARD_PAYMENT','POSTED');
+             INSERT INTO journal_entries
+               (id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+               VALUES ('due-bank-debit','due-bank-payment','family-rakuten-card','DEBIT',3000,1),
+                      ('due-bank-credit','due-bank-payment','family-bank','CREDIT',3000,2);
+             INSERT INTO card_statements
+               (id,household_id,card_account_id,period_start,period_end,payment_due_on,
+                statement_amount_jpy,reconciliation_status)
+               VALUES ('due-statement','family','family-rakuten-card','2026-06-01','2026-06-30',
+                       '2026-07-27',3000,'FULLY_RECONCILED');
+             INSERT INTO card_statement_transactions
+               (statement_id,transaction_id,statement_line_number,billed_amount_jpy)
+               VALUES ('due-statement','due-purchase',7,3000);
+             INSERT INTO card_payments
+               (id,household_id,statement_id,bank_transaction_id,card_account_id,
+                payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
+               VALUES ('due-payment','family','due-statement','due-bank-payment',
+                       'family-rakuten-card',3000,'2026-07-27',10000,
+                       'FULLY_RECONCILED','2026-07-27T00:00:00Z');",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn card_statement_due_date_update_is_idempotent_and_preserves_financial_data() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        insert_due_date_test_statement(&connection);
+
+        let input = UpdateCardStatementDueDateInput {
+            household_id: "family".into(),
+            statement_id: "due-statement".into(),
+            payment_due_on: Some("2026-08-03".into()),
+        };
+        let updated = update_card_statement_due_date(&connection, &input).unwrap();
+        let repeated = update_card_statement_due_date(&connection, &input).unwrap();
+        assert_eq!(updated.payment_due_on.as_deref(), Some("2026-08-03"));
+        assert_eq!(repeated.payment_due_on, updated.payment_due_on);
+        assert_eq!(repeated.statement_amount_jpy, 3000);
+        assert_eq!(repeated.detail_amount_jpy, 3000);
+        assert_eq!(repeated.line_count, 1);
+        assert_eq!(repeated.reconciliation_status, "FULLY_RECONCILED");
+        assert_eq!(repeated.paid_amount_jpy, 3000);
+        assert_eq!(repeated.payments.len(), 1);
+
+        let statement_shape: (String, String, String, i64, String) = connection
+            .query_row(
+                "SELECT card_account_id,period_start,period_end,statement_amount_jpy,reconciliation_status
+                 FROM card_statements WHERE id='due-statement'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            statement_shape,
+            (
+                "family-rakuten-card".into(),
+                "2026-06-01".into(),
+                "2026-06-30".into(),
+                3000,
+                "FULLY_RECONCILED".into()
+            )
+        );
+        let line_shape: (String, i64, i64) = connection
+            .query_row(
+                "SELECT transaction_id,statement_line_number,billed_amount_jpy
+                 FROM card_statement_transactions WHERE statement_id='due-statement'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(line_shape, ("due-purchase".into(), 7, 3000));
+        let payment_shape: (String, String, i64, String, i64, String, String) = connection
+            .query_row(
+                "SELECT statement_id,bank_transaction_id,payment_amount_jpy,payment_on,
+                        match_score_bps,reconciliation_status,confirmed_at
+                 FROM card_payments WHERE id='due-payment'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            payment_shape,
+            (
+                "due-statement".into(),
+                "due-bank-payment".into(),
+                3000,
+                "2026-07-27".into(),
+                10000,
+                "FULLY_RECONCILED".into(),
+                "2026-07-27T00:00:00Z".into()
+            )
+        );
+        let journal_shape: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT count(*),
+                        sum(CASE WHEN entry_side='DEBIT' THEN amount_jpy ELSE 0 END),
+                        sum(CASE WHEN entry_side='CREDIT' THEN amount_jpy ELSE 0 END)
+                 FROM journal_entries WHERE transaction_id='due-bank-payment'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(journal_shape, (2, 3000, 3000));
+
+        let cleared = update_card_statement_due_date(
+            &connection,
+            &UpdateCardStatementDueDateInput {
+                payment_due_on: None,
+                ..input
+            },
+        )
+        .unwrap();
+        assert_eq!(cleared.payment_due_on, None);
+        assert_eq!(cleared.paid_amount_jpy, 3000);
+    }
+
+    #[test]
+    fn card_statement_due_date_update_is_household_scoped() {
+        let connection = database();
+        for (id, name) in [("family", "Family"), ("other", "Other")] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: name.into(),
+                },
+            )
+            .unwrap();
+        }
+        insert_due_date_test_statement(&connection);
+
+        assert!(matches!(
+            update_card_statement_due_date(
+                &connection,
+                &UpdateCardStatementDueDateInput {
+                    household_id: "other".into(),
+                    statement_id: "due-statement".into(),
+                    payment_due_on: Some("2026-08-03".into()),
+                },
+            ),
+            Err(RepositoryError::NotFound)
+        ));
+        let due: Option<String> = connection
+            .query_row(
+                "SELECT payment_due_on FROM card_statements WHERE id='due-statement'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(due.as_deref(), Some("2026-07-27"));
+    }
+
+    #[test]
+    fn card_statement_due_date_update_rejects_malformed_or_before_period_end() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        insert_due_date_test_statement(&connection);
+
+        for invalid_due in ["2026-02-30", "2026/07/27", "2026-06-29"] {
+            assert!(matches!(
+                update_card_statement_due_date(
+                    &connection,
+                    &UpdateCardStatementDueDateInput {
+                        household_id: "family".into(),
+                        statement_id: "due-statement".into(),
+                        payment_due_on: Some(invalid_due.into()),
+                    },
+                ),
+                Err(RepositoryError::InvalidInput(_))
+            ));
+        }
+        let due: Option<String> = connection
+            .query_row(
+                "SELECT payment_due_on FROM card_statements WHERE id='due-statement'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(due.as_deref(), Some("2026-07-27"));
+    }
+
+    #[test]
+    fn card_statement_due_date_drives_coverage_forecast_and_missing_date_actions() {
+        use crate::card_settlement_mapping::{
+            balance_coverage, CardSettlementBalanceCoverageRequest, CardSettlementCoverageStatus,
+        };
+        use crate::forecast_action::{query_forecast_action, ActionKind, ForecastActionRequest};
+
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO transactions
+                   (id,household_id,occurred_on,transaction_type,status)
+                   VALUES ('opening-cash','family','2026-07-01','INCOME','POSTED');
+                 INSERT INTO journal_entries
+                   (id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                   VALUES ('opening-bank','opening-cash','family-bank','DEBIT',5000,1),
+                          ('opening-income','opening-cash','family-income','CREDIT',5000,2);
+                 INSERT INTO card_statements
+                   (id,household_id,card_account_id,period_start,period_end,payment_due_on,
+                    statement_amount_jpy,reconciliation_status)
+                   VALUES ('open-undated','family','family-rakuten-card',
+                           '2026-07-01','2026-07-31',NULL,3000,'UNMATCHED');
+                 INSERT INTO card_settlement_bank_mappings
+                   (household_id,card_account_id,bank_account_id)
+                   VALUES ('family','family-rakuten-card','family-bank');",
+            )
+            .unwrap();
+        let coverage_request = CardSettlementBalanceCoverageRequest {
+            household_id: "family".into(),
+            as_of: "2026-07-13".into(),
+            horizon_days: Some(45),
+        };
+        let forecast_request = ForecastActionRequest {
+            household_id: "family".into(),
+            as_of: "2026-07-13".into(),
+            account_group_id: None,
+            attribution_scope: AttributionScope::All,
+        };
+
+        let undated_coverage = balance_coverage(&connection, &coverage_request).unwrap();
+        assert!(undated_coverage.banks.is_empty());
+        assert_eq!(undated_coverage.missing_due_statements.len(), 1);
+        assert_eq!(
+            undated_coverage.missing_due_statements[0].statement_id,
+            "open-undated"
+        );
+        assert!(undated_coverage.missing_due_statements[0].mapping_configured);
+        let undated_forecast = query_forecast_action(&connection, &forecast_request).unwrap();
+        assert_eq!(undated_forecast.months[0].known_card_payments_jpy, 0);
+        assert!(undated_forecast.actions.iter().any(|action| {
+            action.kind == ActionKind::CardMappingRequired
+                && action.id == "card-due-date-required:open-undated"
+                && action.due_on.is_none()
+        }));
+
+        let dated = update_card_statement_due_date(
+            &connection,
+            &UpdateCardStatementDueDateInput {
+                household_id: "family".into(),
+                statement_id: "open-undated".into(),
+                payment_due_on: Some("2026-08-27".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(dated.payment_due_on.as_deref(), Some("2026-08-27"));
+        let dated_coverage = balance_coverage(&connection, &coverage_request).unwrap();
+        assert!(dated_coverage.missing_due_statements.is_empty());
+        assert_eq!(dated_coverage.banks.len(), 1);
+        assert_eq!(dated_coverage.banks[0].balance_as_of_jpy, 5000);
+        assert_eq!(dated_coverage.banks[0].projected_ending_balance_jpy, 2000);
+        assert_eq!(dated_coverage.banks[0].statements.len(), 1);
+        assert_eq!(
+            dated_coverage.banks[0].statements[0].status,
+            CardSettlementCoverageStatus::Covered
+        );
+        assert_eq!(
+            dated_coverage.banks[0].statements[0].statement_id,
+            "open-undated"
+        );
+        let dated_forecast = query_forecast_action(&connection, &forecast_request).unwrap();
+        assert_eq!(dated_forecast.months[0].known_card_payments_jpy, 3000);
+        assert!(!dated_forecast
+            .actions
+            .iter()
+            .any(|action| action.id == "card-due-date-required:open-undated"));
+
+        let cleared = update_card_statement_due_date(
+            &connection,
+            &UpdateCardStatementDueDateInput {
+                household_id: "family".into(),
+                statement_id: "open-undated".into(),
+                payment_due_on: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(cleared.payment_due_on, None);
+        let cleared_coverage = balance_coverage(&connection, &coverage_request).unwrap();
+        assert!(cleared_coverage.banks.is_empty());
+        assert_eq!(cleared_coverage.missing_due_statements.len(), 1);
+        assert_eq!(
+            cleared_coverage.missing_due_statements[0].statement_id,
+            "open-undated"
+        );
+        let cleared_forecast = query_forecast_action(&connection, &forecast_request).unwrap();
+        assert_eq!(cleared_forecast.months[0].known_card_payments_jpy, 0);
+        assert!(cleared_forecast
+            .actions
+            .iter()
+            .any(|action| action.id == "card-due-date-required:open-undated"));
     }
 
     #[allow(clippy::too_many_arguments)]

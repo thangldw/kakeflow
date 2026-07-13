@@ -1,9 +1,10 @@
 name: Release desktop apps
 
+# Hosted runners are currently unavailable under the repository's monthly
+# Actions quota. Tags are released from locally verified artifacts with
+# `gh release create`; keep this workflow opt-in for when hosted CI returns.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write

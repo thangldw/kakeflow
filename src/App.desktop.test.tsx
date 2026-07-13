@@ -35,6 +35,7 @@ const desktop = vi.hoisted(() => ({
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
   confirmCardPaymentLink: vi.fn(),
+  updateCardStatementDueDate: vi.fn(),
   listCardSettlementBankMappings: vi.fn(),
   upsertCardSettlementBankMapping: vi.fn(),
   deleteCardSettlementBankMapping: vi.fn(),
@@ -129,6 +130,7 @@ vi.mock('./platform', async () => {
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
       confirmCardPaymentLink: desktop.confirmCardPaymentLink,
+      updateCardStatementDueDate: desktop.updateCardStatementDueDate,
       listCardSettlementBankMappings: desktop.listCardSettlementBankMappings,
       upsertCardSettlementBankMapping: desktop.upsertCardSettlementBankMapping,
       deleteCardSettlementBankMapping: desktop.deleteCardSettlementBankMapping,
@@ -175,6 +177,14 @@ describe('KakeFlow desktop read models', () => {
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
+    desktop.updateCardStatementDueDate.mockReset().mockImplementation(async (input) => ({
+      id: input.statementId, cardAccountId: 'family-card', cardName: '期日未登録カード', maskedIdentifier: null,
+      periodStart: '2026-06-01', periodEnd: '2026-06-30', paymentDueOn: input.paymentDueOn,
+      statementAmountJpy: 20_000, detailAmountJpy: 20_000, lineCount: 1,
+      paymentId: null, bankTransactionId: null, paymentAmountJpy: null, paymentOn: null, matchScoreBps: null,
+      reconciliationStatus: 'UNMATCHED', paidAmountJpy: 0, outstandingAmountJpy: 20_000, overpaidAmountJpy: 0,
+      payments: [], eligiblePayments: [],
+    }))
     desktop.listCardSettlementBankMappings.mockReset().mockResolvedValue([])
     desktop.upsertCardSettlementBankMapping.mockReset().mockImplementation(async (input) => ({ ...input, cardAccountName: 'カード', bankAccountName: '銀行', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
     desktop.deleteCardSettlementBankMapping.mockReset().mockResolvedValue(undefined)
@@ -782,6 +792,20 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.upsertCardSettlementBankMapping).toHaveBeenCalledWith({ householdId: 'family', cardAccountId: 'family-card', bankAccountId: 'family-bank' }))
     expect(await screen.findByText('明示したカード引落口座を保存しました。')).toBeInTheDocument()
     expect(desktop.queryCardSettlementBalanceCoverage).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', horizonDays: 45 }))
+
+    const dueDate = screen.getByLabelText('期日未登録カードの未登録支払期日')
+    fireEvent.change(dueDate, { target: { value: '2026-07-28' } })
+    desktop.updateCardStatementDueDate.mockRejectedValueOnce(new Error('invalid'))
+    fireEvent.click(within(dueDate.closest('label')!).getByRole('button', { name: '保存' }))
+    expect(await screen.findByText(/明細期間以降の正しい日付/)).toBeInTheDocument()
+    expect(dueDate).toHaveValue('2026-07-28')
+
+    const retryDueDate = screen.getByLabelText('期日未登録カードの未登録支払期日')
+    const retry = within(retryDueDate.closest('label')!).getByRole('button', { name: '保存' })
+    await waitFor(() => expect(retry).toBeEnabled())
+    fireEvent.click(retry)
+    await waitFor(() => expect(desktop.updateCardStatementDueDate).toHaveBeenLastCalledWith({ householdId: 'family', statementId: 'missing-date-1', paymentDueOn: '2026-07-28' }))
+    expect(await screen.findByText(/ユーザー確認済みの支払期日を保存/)).toBeInTheDocument()
   })
 
   it('shows Money Forward total-assets history without treating it as net worth', async () => {

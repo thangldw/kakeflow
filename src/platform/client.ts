@@ -173,6 +173,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listCardSettlements: async () => [],
       confirmCardMatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_match_confirm') },
       confirmCardPaymentLink: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_payment_link_confirm') },
+      updateCardStatementDueDate: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_statement_due_date_update') },
       listCardSettlementBankMappings: async () => [],
       upsertCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_upsert') },
       deleteCardSettlementBankMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'card_settlement_bank_mapping_delete') },
@@ -249,6 +250,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     listCardSettlements: (householdId) => invokeValidated(invoke, 'cards_list', parseCardSettlements, { householdId }),
     confirmCardMatch: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_match_confirm', parseCardMatchConfirmation, { householdId, statementId, paymentId }),
     confirmCardPaymentLink: (householdId, statementId, paymentId) => invokeValidated(invoke, 'card_payment_link_confirm', parseCardSettlement, { householdId, statementId, paymentId }),
+    updateCardStatementDueDate: (input) => invokeValidated(invoke, 'card_statement_due_date_update', parseCardSettlement, { input }),
     listCardSettlementBankMappings: (householdId) => invokeValidated(invoke, 'card_settlement_bank_mappings_list', parseCardSettlementBankMappings, { householdId }),
     upsertCardSettlementBankMapping: (input) => invokeValidated(invoke, 'card_settlement_bank_mapping_upsert', parseCardSettlementBankMapping, { input }),
     deleteCardSettlementBankMapping: async (input) => { await invokeValidated(invoke, 'card_settlement_bank_mapping_delete', parseVoid, { input }) },
@@ -433,6 +435,10 @@ function parseCardSettlement(value: unknown): CardSettlementDto {
       }
     })
     const statementAmountJpy = asSafeInteger(record.statementAmountJpy)
+    const periodStart = asIsoDate(record.periodStart)
+    const periodEnd = asIsoDate(record.periodEnd)
+    const paymentDueOn = asNullableIsoDate(record.paymentDueOn)
+    if (periodStart > periodEnd || paymentDueOn != null && paymentDueOn < periodEnd) throw new TypeError('card statement dates')
     const paidAmountJpy = asSafeInteger(record.paidAmountJpy)
     const outstandingAmountJpy = asSafeInteger(record.outstandingAmountJpy)
     const overpaidAmountJpy = asSafeInteger(record.overpaidAmountJpy)
@@ -442,8 +448,8 @@ function parseCardSettlement(value: unknown): CardSettlementDto {
     if (record.reconciliationStatus !== expectedStatus) throw new TypeError('card settlement status')
     return {
       id: asRequiredString(record.id), cardAccountId: asRequiredString(record.cardAccountId), cardName: asRequiredString(record.cardName),
-      maskedIdentifier: asNullableString(record.maskedIdentifier), periodStart: asIsoDate(record.periodStart), periodEnd: asIsoDate(record.periodEnd),
-      paymentDueOn: asNullableIsoDate(record.paymentDueOn), statementAmountJpy,
+      maskedIdentifier: asNullableString(record.maskedIdentifier), periodStart, periodEnd,
+      paymentDueOn, statementAmountJpy,
       detailAmountJpy: asSafeSignedInteger(record.detailAmountJpy), lineCount: asSafeInteger(record.lineCount),
       paymentId: asNullableString(record.paymentId), bankTransactionId: asNullableString(record.bankTransactionId),
       paymentAmountJpy: asNullableSafeInteger(record.paymentAmountJpy), paymentOn: asNullableIsoDate(record.paymentOn),
