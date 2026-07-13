@@ -518,6 +518,10 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('persists and forwards the global attribution scope while disclosing household-wide metrics', async () => {
+    const tokyoDateParts = Object.fromEntries(new Intl.DateTimeFormat('en', {
+      timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date()).map((part) => [part.type, part.value]))
+    const reportAsOf = `${tokyoDateParts.year}-${tokyoDateParts.month}-${tokyoDateParts.day}`
     const view = render(<App />)
     await screen.findByText('生協')
     const selector = await screen.findByLabelText('家族集計範囲') as HTMLSelectElement
@@ -542,9 +546,9 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('fixed_cost_review_query', { request: expect.objectContaining({ householdId: 'family', attributionScope: memberScope, asOf: '2026-07-31' }) }))
     fireEvent.click(screen.getByRole('tab', { name: /年次レビュー/ }))
     expect(await screen.findByText(/集計対象外・現在の未完了月・将来月は年間KPIから除外/)).toBeInTheDocument()
-    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_report_yearly_query', { request: expect.objectContaining({ householdId: 'family', accountGroupId: null, attributionScope: memberScope, year: '2026', asOf: '2026-07-13' }) }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_report_yearly_query', { request: expect.objectContaining({ householdId: 'family', accountGroupId: null, attributionScope: memberScope, year: '2026', asOf: reportAsOf }) }))
     fireEvent.click(screen.getByRole('button', { name: '年次CSVを保存' }))
-    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('annual_household_review_csv_save', { request: expect.objectContaining({ attributionScope: memberScope, year: '2026', asOf: '2026-07-13' }) }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('annual_household_review_csv_save', { request: expect.objectContaining({ attributionScope: memberScope, year: '2026', asOf: reportAsOf }) }))
     fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
     fireEvent.click(await screen.findByRole('button', { name: '保存先を選んでCSV出力' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('export_csv_save', { request: expect.objectContaining({ attributionScope: memberScope }) }))

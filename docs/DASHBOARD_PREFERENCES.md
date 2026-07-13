@@ -41,4 +41,8 @@ Preferences are stored in SQLite under the active household and contain the acti
 
 Loads and saves are household-scoped. If the user switches household while a request is in flight, a stale response cannot overwrite the new household's preferences. Database restore validation rejects unknown enum values, duplicate/unknown/missing widget IDs, hiding all widgets, malformed timestamps, and invalid household relations.
 
-Widget order and visibility remain device-local in v0.48. Existing local change-package schemas continue to carry template, theme, and density only, preserving their canonical hashes and never erasing a destination device's custom layouts. A future package-schema version can add explicit layout transport without changing legacy lineage.
+Version 0.50 makes the complete preference aggregate portable through local change-package schema v4. Export carries the active template, theme, density, and the exhaustive order and hidden-widget set for each of the five templates. Applying that aggregate replaces all five destination layouts atomically; it never merges individual panels or changes ledger facts.
+
+Schema-v1, schema-v2, and schema-v3 change packages remain readable. Their legacy dashboard payloads contain only template, theme, and density, so applying one preserves every destination per-template layout. This compatibility rule prevents an older package from silently resetting a layout created by v0.48 or later.
+
+Layout portability remains a user-driven local-file workflow. It does not provide cloud synchronization, remote identity, or concurrent editing, and it does not include machine-specific window size or operating-system appearance settings.

@@ -98,6 +98,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0041_pending_import_handoff.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0042_replicable_dashboard_layouts.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1158,6 +1161,24 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 42 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM dashboard_template_layouts l
+             LEFT JOIN dashboard_preferences p ON p.household_id=l.household_id
+             WHERE p.household_id IS NULL LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM dashboard_preferences p
+             WHERE (SELECT count(*) FROM dashboard_template_layouts l
+                    WHERE l.household_id=p.household_id)!=5
+                OR (SELECT count(DISTINCT l.dashboard_template)
+                    FROM dashboard_template_layouts l
+                    WHERE l.household_id=p.household_id)!=5
+             LIMIT 1",
+        )?;
+    }
     if schema_version >= 2 {
         reject_if_exists(
             connection,
@@ -2153,6 +2174,159 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn restored_semantics_require_complete_dashboard_layout_graph_at_schema_42() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES ('family','Family')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO dashboard_preferences(
+                       household_id,dashboard_template,theme,density)
+                     VALUES('family','FINANCIAL_OVERVIEW','SYSTEM','COMFORTABLE')",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 42).is_err());
+                connection.execute_batch(
+                    "INSERT INTO dashboard_template_layouts(
+                       household_id,dashboard_template,widget_order,hidden_widgets)
+                     VALUES
+                      ('family','FINANCIAL_OVERVIEW','[\"TREND\",\"SPENDING\",\"RECENT\",\"CARDS\"]','[]'),
+                      ('family','HOUSEHOLD_LEDGER','[\"SPENDING\",\"RECENT\",\"TREND\",\"CARDS\"]','[]'),
+                      ('family','ASSETS_LIABILITIES','[\"TREND\",\"SPENDING\",\"CARDS\",\"RECENT\"]','[]'),
+                      ('family','CARD_RECONCILIATION','[\"CARDS\",\"RECENT\",\"TREND\",\"SPENDING\"]','[]'),
+                      ('family','CASH_FLOW','[\"TREND\",\"RECENT\",\"CARDS\",\"SPENDING\"]','[]');",
+                )?;
+                assert!(validate_restored_semantics(connection, 42).is_ok());
+                connection.execute(
+                    "DELETE FROM dashboard_preferences WHERE household_id='family'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 42).is_err());
+                Ok(())
+            })
+            .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_42_preserves_legacy_package_rows_and_accepts_schema_four() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 41)
+            .expect("schema forty one");
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('f1','One'),('f2','Two'),('f3','Three');
+                 INSERT INTO change_packages(
+                   package_id,schema_version,target_household_id,source_installation_id,
+                   source_principal_id,source_revision,snapshot_sha256,manifest_json,
+                   package_sha256,state,record_count,unchanged_count,source_created_at,
+                   staged_at,reviewed_at,applied_at,updated_at)
+                 VALUES
+                  ('p1',1,'f1','device', 'principal',1,
+                   '0000000000000000000000000000000000000000000000000000000000000000','{}',
+                   '1111111111111111111111111111111111111111111111111111111111111111',
+                   'REJECTED',1,1,'2026-07-01T00:00:00.000Z','2026-07-01T00:00:00.000Z','2026-07-01T00:00:00.000Z',NULL,'2026-07-01T00:00:00.000Z'),
+                  ('p2',2,'f2','device', 'principal',2,
+                   '2222222222222222222222222222222222222222222222222222222222222222','{}',
+                   '3333333333333333333333333333333333333333333333333333333333333333',
+                   'APPLIED',1,1,'2026-07-02T00:00:00.000Z','2026-07-02T00:00:00.000Z','2026-07-02T00:00:00.000Z','2026-07-02T00:00:00.000Z','2026-07-02T00:00:00.000Z'),
+                  ('p3',3,'f3','device', 'principal',3,
+                   '4444444444444444444444444444444444444444444444444444444444444444','{}',
+                   '5555555555555555555555555555555555555555555555555555555555555555',
+                   'REJECTED',1,1,'2026-07-03T00:00:00.000Z','2026-07-03T00:00:00.000Z','2026-07-03T00:00:00.000Z',NULL,'2026-07-03T00:00:00.000Z');
+                 INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution,
+                   current_payload_sha256)
+                 VALUES
+                  ('p1',0,'DASHBOARD_PREFERENCES','f1','UPSERT',
+                   '{\"recordKind\":\"DASHBOARD_PREFERENCES\",\"householdId\":\"f1\"}',
+                   '6666666666666666666666666666666666666666666666666666666666666666','UNCHANGED','SKIP',
+                   '6666666666666666666666666666666666666666666666666666666666666666'),
+                  ('p2',0,'DASHBOARD_PREFERENCES','f2','UPSERT',
+                   '{\"recordKind\":\"DASHBOARD_PREFERENCES\",\"householdId\":\"f2\"}',
+                   '7777777777777777777777777777777777777777777777777777777777777777','UNCHANGED','SKIP',
+                   '7777777777777777777777777777777777777777777777777777777777777777'),
+                  ('p3',0,'DASHBOARD_PREFERENCES','f3','UPSERT',
+                   '{\"recordKind\":\"DASHBOARD_PREFERENCES\",\"householdId\":\"f3\"}',
+                   '8888888888888888888888888888888888888888888888888888888888888888','UNCHANGED','SKIP',
+                   '8888888888888888888888888888888888888888888888888888888888888888');
+                 INSERT INTO applied_change_packages(
+                   package_id,source_installation_id,household_id,source_revision,
+                   snapshot_sha256,applied_at)
+                 VALUES('p2','device','f2',2,
+                   '2222222222222222222222222222222222222222222222222222222222222222',
+                   '2026-07-02T00:00:00.000Z');
+                 INSERT INTO sync_replica_entity_heads(
+                   household_id,entity_kind,entity_id,source_installation_id,package_id,
+                   source_revision,operation,payload_sha256)
+                 VALUES
+                  ('f1','DASHBOARD_PREFERENCES','f1','device','p1',1,'UPSERT','6666666666666666666666666666666666666666666666666666666666666666'),
+                  ('f2','DASHBOARD_PREFERENCES','f2','device','p2',2,'UPSERT','7777777777777777777777777777777777777777777777777777777777777777'),
+                  ('f3','DASHBOARD_PREFERENCES','f3','device','p3',3,'UPSERT','8888888888888888888888888888888888888888888888888888888888888888');",
+            )
+            .expect("legacy lineage");
+        migrations
+            .to_latest(&mut connection)
+            .expect("schema forty two");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT group_concat(schema_version,'') FROM
+                     (SELECT schema_version FROM change_packages ORDER BY package_id)",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "123"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM change_package_records", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM applied_change_packages", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_replica_entity_heads",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            3
+        );
+        connection
+            .execute(
+                "INSERT INTO change_packages(
+                   package_id,schema_version,target_household_id,source_installation_id,
+                   source_principal_id,source_revision,snapshot_sha256,manifest_json,
+                   package_sha256,state,record_count,source_created_at,staged_at,reviewed_at)
+                 VALUES('p4',4,'f1','other','principal',4,
+                   '9999999999999999999999999999999999999999999999999999999999999999','{}',
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                   'REJECTED',0,'2026-07-04T00:00:00.000Z','2026-07-04T00:00:00.000Z','2026-07-04T00:00:00.000Z')",
+                [],
+            )
+            .expect("schema four accepted");
     }
 
     #[test]

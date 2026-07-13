@@ -375,6 +375,8 @@ html[data-theme='dark'] .goal-editor { border-color: var(--line); }
 .sync-technical-details dl > div { display: flex; gap: 8px; flex-wrap: wrap; }
 .sync-technical-details dd { margin: 0; overflow-wrap: anywhere; }
 .local-change-package { display: grid; gap: 16px; margin-top: 15px; }
+.change-package-layout-scope { margin: -5px 0 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
+.change-package-layout-scope strong { color: var(--ink); }
 .change-package-actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .change-package-review { display: grid; gap: 14px; }
 .change-package-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
