@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.36.0 — 2026-07-13
+
+- Capture a canonical transaction as one complete deterministic aggregate containing its full scope-aware header, ordered journal entries, sorted labels/tags, source references, and provider external keys.
+- Coalesce intermediate same-transaction captures into the final pending state before creating one immutable envelope, avoiding header-only or one-sided journal replay states.
+- Prove the aggregate contract by reconstructing a posted transaction in a second SQLite database and verifying balanced debit/credit totals plus unchanged metadata and references.
+- Complete household, member, and account scalar payloads, add household capture and explicit account/transaction delete semantics, and preserve schema-32 capture lineage during migration.
+- Strengthen schema-33 restore checks for canonical processed payloads, replay-candidate shape, journal types, line uniqueness, account household scope, and balance.
+- Replace principal/envelope-first UI copy with household-friendly device-history language, preserve archived current bindings visibly, and add semantic member creation and archive confirmation.
+- Keep source documents/blobs, incoming apply, conflict handling, and remote transport outside this release's explicit boundary.
+
 ## 0.35.0 — 2026-07-13
 
 - Capture household-member, account, and canonical transaction writes in the same SQLite commit as each domain mutation.
