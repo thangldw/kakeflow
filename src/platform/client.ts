@@ -15,6 +15,7 @@ import type {
   CardSettlementBalanceCoverageDto,
   DashboardMonthlyTotalsDto,
   DashboardPreferencesDto,
+  DashboardWidgetIdDto,
   DatabaseStatusDto,
   ExtractedDocumentDto,
   HouseholdDto,
@@ -159,7 +160,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       markWatchedFileInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_failed') },
       markWatchedFileInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_staged') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
-      getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: new Date(0).toISOString() }),
+      getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [], updatedAt: new Date(0).toISOString() }),
       upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
@@ -833,9 +834,14 @@ function parseDashboardPreferences(value: unknown): DashboardPreferencesDto {
   const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION', 'CASH_FLOW'] as const
   const themes = ['SYSTEM', 'LIGHT', 'DARK'] as const
   const densities = ['COMFORTABLE', 'COMPACT'] as const
+  const widgets = ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const satisfies readonly DashboardWidgetIdDto[]
+  const widgetOrder = parseDashboardWidgetIds(record.widgetOrder, widgets.length)
+  const hiddenWidgets = parseDashboardWidgetIds(record.hiddenWidgets, 3)
   if (!templates.includes(record.template as typeof templates[number])
     || !themes.includes(record.theme as typeof themes[number])
-    || !densities.includes(record.density as typeof densities[number])) {
+    || !densities.includes(record.density as typeof densities[number])
+    || widgetOrder.length !== widgets.length
+    || widgets.some((widget) => !widgetOrder.includes(widget))) {
     throw new TypeError('dashboard preferences')
   }
   return {
@@ -843,8 +849,21 @@ function parseDashboardPreferences(value: unknown): DashboardPreferencesDto {
     template: record.template as DashboardPreferencesDto['template'],
     theme: record.theme as DashboardPreferencesDto['theme'],
     density: record.density as DashboardPreferencesDto['density'],
+    widgetOrder,
+    hiddenWidgets,
     updatedAt: asIsoTimestamp(record.updatedAt),
   }
+}
+
+function parseDashboardWidgetIds(value: unknown, maximumLength: number): DashboardWidgetIdDto[] {
+  const widgets = ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const
+  if (!Array.isArray(value) || value.length > maximumLength) throw new TypeError('dashboard widgets')
+  const parsed = value.map((item) => {
+    if (typeof item !== 'string' || !widgets.includes(item as typeof widgets[number])) throw new TypeError('dashboard widget')
+    return item as DashboardWidgetIdDto
+  })
+  if (new Set(parsed).size !== parsed.length) throw new TypeError('dashboard widgets')
+  return parsed
 }
 
 function parseTransactionPage(value: unknown): TransactionPageDto {

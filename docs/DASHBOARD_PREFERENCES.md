@@ -1,6 +1,6 @@
 # Dashboard preferences
 
-KakeFlow 0.25 lets each household choose how the existing confirmed-ledger metrics are presented on Home. Preferences affect presentation only; they never change journal entries, accounting basis, transaction inclusion, budgets, balances, or reconciliation.
+KakeFlow lets each household choose how the existing confirmed-ledger metrics are presented on Home. Preferences affect presentation only; they never change journal entries, accounting basis, transaction inclusion, budgets, balances, or reconciliation.
 
 ## Focus presets
 
@@ -25,8 +25,18 @@ For credit cards, the purchase is recognized as an expense on its purchase date.
 
 The resolved values are applied to the document root as theme and density attributes so every page shares one consistent appearance.
 
+## Widget layout
+
+Version 0.46 adds a compact layout editor to Home. Users can drag eligible widgets, use the equivalent named up/down buttons from a keyboard, hide or restore a widget, and reset the active template. The rendered DOM follows the visual order so focus and screen-reader reading order stay coherent. A polite announcement reports completed moves.
+
+Every saved order is exhaustive and contains each known widget exactly once. Templates filter that order to their eligible widgets; Cash Flow never exposes the accrual-only category panel. Hidden IDs remain available in the editor, and KakeFlow refuses to hide the last visible eligible widget. The renderer also falls back to the first eligible widget if migrated or template-filtered data would otherwise produce an empty Home.
+
+Layout changes do not alter KPI cards, Data Quality, chart facts, accounting basis, or transaction inclusion. They only control the four main Home panels: trend, category spending, recent transactions, and card settlement.
+
 ## Persistence
 
-Preferences are stored in SQLite under the active household and contain only the template, theme, density, and update timestamp. A household without a stored record receives deterministic defaults (`FINANCIAL_OVERVIEW`, `SYSTEM`, `COMFORTABLE`) without creating a database row.
+Preferences are stored in SQLite under the active household and contain the template, theme, density, exhaustive widget order, hidden-widget subset, and update timestamp. A household without a stored record receives deterministic defaults (`FINANCIAL_OVERVIEW`, `SYSTEM`, `COMFORTABLE`, canonical order, no hidden widgets) without creating a database row.
 
-Loads and saves are household-scoped. If the user switches household while a request is in flight, a stale response cannot overwrite the new household's preferences. Database restore validation rejects unknown enum values, malformed timestamps, and invalid household relations.
+Loads and saves are household-scoped. If the user switches household while a request is in flight, a stale response cannot overwrite the new household's preferences. Database restore validation rejects unknown enum values, duplicate/unknown/missing widget IDs, hiding all widgets, malformed timestamps, and invalid household relations.
+
+Widget order and visibility stay device-local in v0.46. Existing local change-package schemas continue to carry template, theme, and density only, preserving their canonical hashes and never erasing a destination device's custom layout. A future package-schema version can add explicit layout transport without changing legacy lineage.

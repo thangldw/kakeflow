@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.46.0 — 2026-07-13
+
+- Add a compact Home layout editor with mouse drag-and-drop plus explicit keyboard move controls; DOM order always follows the saved visual order.
+- Let each household hide and restore eligible Home widgets while enforcing that at least one remains visible, including runtime fallback for a malformed or template-filtered state.
+- Preserve the existing accounting basis, KPI definitions, drill-downs, template eligibility, and full-width panel semantics while users personalize presentation.
+- Persist exhaustive widget order and hidden-widget state in SQLite with strict API and database constraints, deterministic legacy defaults, and rollback on save failure; v0.46 keeps layout device-local so older change-package hashes remain stable.
+- Cover platform validation, migration/round-trip constraints, household restoration, widget ordering, hidden panels, accessible announcements, and the last-visible guard.
+
 ## 0.45.0 — 2026-07-13
 
 - Accept Money Forward ME household-ledger exports containing up to 50 normalized `保有金融機関` values instead of requiring one institution per file.

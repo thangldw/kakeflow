@@ -1,8 +1,41 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 const MAX_HOUSEHOLD_ID_LEN: usize = 48;
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DashboardWidgetId {
+    Trend,
+    Spending,
+    Recent,
+    Cards,
+}
+
+const CANONICAL_WIDGET_ORDER: [DashboardWidgetId; 4] = [
+    DashboardWidgetId::Trend,
+    DashboardWidgetId::Spending,
+    DashboardWidgetId::Recent,
+    DashboardWidgetId::Cards,
+];
+
+fn default_widget_order() -> Vec<DashboardWidgetId> {
+    CANONICAL_WIDGET_ORDER.to_vec()
+}
+
+fn valid_widget_layout(order: &[DashboardWidgetId], hidden: &[DashboardWidgetId]) -> bool {
+    let order_set = order.iter().copied().collect::<HashSet<_>>();
+    let hidden_set = hidden.iter().copied().collect::<HashSet<_>>();
+    order.len() == CANONICAL_WIDGET_ORDER.len()
+        && order_set.len() == CANONICAL_WIDGET_ORDER.len()
+        && CANONICAL_WIDGET_ORDER
+            .iter()
+            .all(|widget| order_set.contains(widget))
+        && hidden.len() < CANONICAL_WIDGET_ORDER.len()
+        && hidden_set.len() == hidden.len()
+        && hidden_set.iter().all(|widget| order_set.contains(widget))
+}
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -95,6 +128,10 @@ pub struct UpsertDashboardPreferencesInput {
     pub template: DashboardTemplate,
     pub theme: DashboardTheme,
     pub density: DashboardDensity,
+    #[serde(default = "default_widget_order")]
+    pub widget_order: Vec<DashboardWidgetId>,
+    #[serde(default)]
+    pub hidden_widgets: Vec<DashboardWidgetId>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -104,6 +141,8 @@ pub struct DashboardPreferencesDto {
     pub template: DashboardTemplate,
     pub theme: DashboardTheme,
     pub density: DashboardDensity,
+    pub widget_order: Vec<DashboardWidgetId>,
+    pub hidden_widgets: Vec<DashboardWidgetId>,
     pub updated_at: String,
 }
 
@@ -159,8 +198,17 @@ fn parse_row(
     template: String,
     theme: String,
     density: String,
+    widget_order: String,
+    hidden_widgets: String,
     updated_at: String,
 ) -> Result<DashboardPreferencesDto, DashboardPreferencesError> {
+    let widget_order = serde_json::from_str::<Vec<DashboardWidgetId>>(&widget_order)
+        .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    let hidden_widgets = serde_json::from_str::<Vec<DashboardWidgetId>>(&hidden_widgets)
+        .map_err(|_| DashboardPreferencesError::Unavailable)?;
+    if !valid_widget_layout(&widget_order, &hidden_widgets) {
+        return Err(DashboardPreferencesError::Unavailable);
+    }
     Ok(DashboardPreferencesDto {
         household_id,
         template: DashboardTemplate::from_database(&template)
@@ -169,6 +217,8 @@ fn parse_row(
             .ok_or(DashboardPreferencesError::Unavailable)?,
         density: DashboardDensity::from_database(&density)
             .ok_or(DashboardPreferencesError::Unavailable)?,
+        widget_order,
+        hidden_widgets,
         updated_at,
     })
 }
@@ -183,7 +233,7 @@ pub fn get(
     ensure_household(connection, household_id)?;
     let persisted = connection
         .query_row(
-            "SELECT household_id,dashboard_template,theme,density,updated_at
+            "SELECT household_id,dashboard_template,theme,density,widget_order,hidden_widgets,updated_at
              FROM dashboard_preferences WHERE household_id=?1",
             [household_id],
             |row| {
@@ -193,6 +243,8 @@ pub fn get(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )
@@ -200,14 +252,30 @@ pub fn get(
         .map_err(|_| DashboardPreferencesError::Unavailable)?;
 
     match persisted {
-        Some((household_id, template, theme, density, updated_at)) => {
-            parse_row(household_id, template, theme, density, updated_at)
-        }
+        Some((
+            household_id,
+            template,
+            theme,
+            density,
+            widget_order,
+            hidden_widgets,
+            updated_at,
+        )) => parse_row(
+            household_id,
+            template,
+            theme,
+            density,
+            widget_order,
+            hidden_widgets,
+            updated_at,
+        ),
         None => Ok(DashboardPreferencesDto {
             household_id: household_id.to_owned(),
             template: DashboardTemplate::FinancialOverview,
             theme: DashboardTheme::System,
             density: DashboardDensity::Comfortable,
+            widget_order: default_widget_order(),
+            hidden_widgets: Vec::new(),
             // A stable sentinel keeps default reads deterministic and does not
             // pretend the user has saved a preference.
             updated_at: "1970-01-01T00:00:00.000Z".to_owned(),
@@ -222,22 +290,31 @@ pub fn upsert(
     if !valid_identifier(&input.household_id) {
         return Err(DashboardPreferencesError::InvalidInput);
     }
+    if !valid_widget_layout(&input.widget_order, &input.hidden_widgets) {
+        return Err(DashboardPreferencesError::InvalidInput);
+    }
     ensure_household(connection, &input.household_id)?;
     connection
         .execute(
             "INSERT INTO dashboard_preferences
-               (household_id,dashboard_template,theme,density)
-             VALUES (?1,?2,?3,?4)
+               (household_id,dashboard_template,theme,density,widget_order,hidden_widgets)
+             VALUES (?1,?2,?3,?4,?5,?6)
              ON CONFLICT(household_id) DO UPDATE SET
                dashboard_template=excluded.dashboard_template,
                theme=excluded.theme,
                density=excluded.density,
+               widget_order=excluded.widget_order,
+               hidden_widgets=excluded.hidden_widgets,
                updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
             params![
                 input.household_id,
                 input.template.as_str(),
                 input.theme.as_str(),
                 input.density.as_str(),
+                serde_json::to_string(&input.widget_order)
+                    .map_err(|_| DashboardPreferencesError::InvalidInput)?,
+                serde_json::to_string(&input.hidden_widgets)
+                    .map_err(|_| DashboardPreferencesError::InvalidInput)?,
             ],
         )
         .map_err(|_| DashboardPreferencesError::Unavailable)?;
@@ -264,6 +341,11 @@ mod tests {
             .execute_batch(include_str!("../migrations/0030_cash_flow_dashboard.sql"))
             .expect("cash-flow migration");
         connection
+            .execute_batch(include_str!(
+                "../migrations/0039_dashboard_widget_layout.sql"
+            ))
+            .expect("widget-layout migration");
+        connection
     }
 
     #[test]
@@ -273,6 +355,8 @@ mod tests {
         assert_eq!(preferences.template, DashboardTemplate::FinancialOverview);
         assert_eq!(preferences.theme, DashboardTheme::System);
         assert_eq!(preferences.density, DashboardDensity::Comfortable);
+        assert_eq!(preferences.widget_order, CANONICAL_WIDGET_ORDER);
+        assert!(preferences.hidden_widgets.is_empty());
         assert_eq!(preferences.updated_at, "1970-01-01T00:00:00.000Z");
         let count: u64 = connection
             .query_row("SELECT count(*) FROM dashboard_preferences", [], |row| {
@@ -292,12 +376,24 @@ mod tests {
                 template: DashboardTemplate::AssetsLiabilities,
                 theme: DashboardTheme::Dark,
                 density: DashboardDensity::Compact,
+                widget_order: vec![
+                    DashboardWidgetId::Cards,
+                    DashboardWidgetId::Recent,
+                    DashboardWidgetId::Spending,
+                    DashboardWidgetId::Trend,
+                ],
+                hidden_widgets: vec![DashboardWidgetId::Recent, DashboardWidgetId::Cards],
             },
         )
         .expect("save");
         assert_eq!(saved.template, DashboardTemplate::AssetsLiabilities);
         assert_eq!(saved.theme, DashboardTheme::Dark);
         assert_eq!(saved.density, DashboardDensity::Compact);
+        assert_eq!(saved.widget_order[0], DashboardWidgetId::Cards);
+        assert_eq!(
+            saved.hidden_widgets,
+            vec![DashboardWidgetId::Recent, DashboardWidgetId::Cards]
+        );
         assert_ne!(saved.updated_at, "1970-01-01T00:00:00.000Z");
         assert_eq!(get(&connection, "family").expect("read"), saved);
     }
@@ -312,6 +408,8 @@ mod tests {
                 template: DashboardTemplate::CashFlow,
                 theme: DashboardTheme::System,
                 density: DashboardDensity::Compact,
+                widget_order: default_widget_order(),
+                hidden_widgets: Vec::new(),
             },
         )
         .expect("save cash flow");
@@ -333,6 +431,87 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_incomplete_or_fully_hidden_widget_layouts() {
+        let connection = database();
+        for (widget_order, hidden_widgets) in [
+            (
+                vec![
+                    DashboardWidgetId::Trend,
+                    DashboardWidgetId::Trend,
+                    DashboardWidgetId::Recent,
+                    DashboardWidgetId::Cards,
+                ],
+                Vec::new(),
+            ),
+            (
+                vec![
+                    DashboardWidgetId::Trend,
+                    DashboardWidgetId::Spending,
+                    DashboardWidgetId::Recent,
+                ],
+                Vec::new(),
+            ),
+            (default_widget_order(), default_widget_order()),
+            (
+                default_widget_order(),
+                vec![DashboardWidgetId::Cards, DashboardWidgetId::Cards],
+            ),
+        ] {
+            assert_eq!(
+                upsert(
+                    &connection,
+                    &UpsertDashboardPreferencesInput {
+                        household_id: "family".to_owned(),
+                        template: DashboardTemplate::FinancialOverview,
+                        theme: DashboardTheme::System,
+                        density: DashboardDensity::Comfortable,
+                        widget_order,
+                        hidden_widgets,
+                    },
+                ),
+                Err(DashboardPreferencesError::InvalidInput)
+            );
+        }
+    }
+
+    #[test]
+    fn migration_preserves_legacy_rows_with_canonical_layout_defaults() {
+        let connection = Connection::open_in_memory().expect("database");
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=ON;
+                 CREATE TABLE households(id TEXT PRIMARY KEY NOT NULL) STRICT;
+                 INSERT INTO households(id) VALUES ('family');",
+            )
+            .expect("households");
+        connection
+            .execute_batch(include_str!("../migrations/0029_dashboard_preferences.sql"))
+            .expect("preferences");
+        connection
+            .execute_batch(include_str!("../migrations/0030_cash_flow_dashboard.sql"))
+            .expect("cash flow");
+        connection
+            .execute(
+                "INSERT INTO dashboard_preferences(household_id,dashboard_template,theme,density)
+                 VALUES ('family','CASH_FLOW','DARK','COMPACT')",
+                [],
+            )
+            .expect("legacy row");
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0039_dashboard_widget_layout.sql"
+            ))
+            .expect("widget layout");
+
+        let saved = get(&connection, "family").expect("read migrated row");
+        assert_eq!(saved.template, DashboardTemplate::CashFlow);
+        assert_eq!(saved.theme, DashboardTheme::Dark);
+        assert_eq!(saved.density, DashboardDensity::Compact);
+        assert_eq!(saved.widget_order, CANONICAL_WIDGET_ORDER);
+        assert!(saved.hidden_widgets.is_empty());
+    }
+
+    #[test]
     fn database_constraints_reject_invalid_domains_and_delete_with_household() {
         let connection = database();
         assert!(connection
@@ -349,9 +528,30 @@ mod tests {
                 template: DashboardTemplate::HouseholdLedger,
                 theme: DashboardTheme::Light,
                 density: DashboardDensity::Comfortable,
+                widget_order: default_widget_order(),
+                hidden_widgets: Vec::new(),
             },
         )
         .expect("save");
+
+        for (column, value) in [
+            ("widget_order", "[\"TREND\",\"TREND\",\"RECENT\",\"CARDS\"]"),
+            ("widget_order", "[\"TREND\",\"SPENDING\",\"RECENT\"]"),
+            (
+                "hidden_widgets",
+                "[\"TREND\",\"SPENDING\",\"RECENT\",\"CARDS\"]",
+            ),
+            ("hidden_widgets", "[\"TREND\",\"TREND\"]"),
+        ] {
+            assert!(connection
+                .execute(
+                    &format!(
+                        "UPDATE dashboard_preferences SET {column}=?1 WHERE household_id='family'"
+                    ),
+                    [value],
+                )
+                .is_err());
+        }
         connection
             .execute("DELETE FROM households WHERE id='family'", [])
             .expect("delete household");

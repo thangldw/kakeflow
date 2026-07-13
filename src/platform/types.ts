@@ -293,12 +293,15 @@ export type DashboardTemplateDto =
 
 export type DashboardThemeDto = 'SYSTEM' | 'LIGHT' | 'DARK'
 export type DashboardDensityDto = 'COMFORTABLE' | 'COMPACT'
+export type DashboardWidgetIdDto = 'TREND' | 'SPENDING' | 'RECENT' | 'CARDS'
 
 export interface DashboardPreferencesDto {
   readonly householdId: string
   readonly template: DashboardTemplateDto
   readonly theme: DashboardThemeDto
   readonly density: DashboardDensityDto
+  readonly widgetOrder: readonly DashboardWidgetIdDto[]
+  readonly hiddenWidgets: readonly DashboardWidgetIdDto[]
   readonly updatedAt: string
 }
 
@@ -314,6 +317,8 @@ export interface UpsertDashboardPreferencesInputDto {
   readonly template: DashboardTemplateDto
   readonly theme: DashboardThemeDto
   readonly density: DashboardDensityDto
+  readonly widgetOrder: readonly DashboardWidgetIdDto[]
+  readonly hiddenWidgets: readonly DashboardWidgetIdDto[]
 }
 
 export interface TransactionPageRequestDto {

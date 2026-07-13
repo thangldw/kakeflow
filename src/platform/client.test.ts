@@ -27,6 +27,9 @@ describe('platform client', () => {
       database: { healthy: false, schemaVersion: 0 },
     })
     await expect(client.status()).resolves.toEqual({ schemaVersion: 0, integrity: 'failed' })
+    await expect(client.getDashboardPreferences('family')).resolves.toMatchObject({
+      householdId: 'family', widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [],
+    })
     await expect(client.getLocalSyncFoundationStatus('family')).rejects.toMatchObject({ command: 'local_sync_foundation_status' })
     await expect(client.listHouseholds()).resolves.toEqual([])
     await expect(client.listHouseholdMembers('family')).resolves.toEqual([])
@@ -396,6 +399,7 @@ describe('platform client', () => {
   it('loads and persists strictly validated household dashboard preferences', async () => {
     const saved = {
       householdId: 'family', template: 'CASH_FLOW', theme: 'DARK', density: 'COMPACT',
+      widgetOrder: ['CARDS', 'TREND', 'SPENDING', 'RECENT'], hiddenWidgets: ['RECENT'],
       updatedAt: '2026-07-13T08:30:00.000Z',
     }
     const invokeSpy = vi.fn()
@@ -406,7 +410,10 @@ describe('platform client', () => {
         return saved as T
       },
     })
-    const input = { householdId: 'family', template: 'CASH_FLOW' as const, theme: 'DARK' as const, density: 'COMPACT' as const }
+    const input = {
+      householdId: 'family', template: 'CASH_FLOW' as const, theme: 'DARK' as const, density: 'COMPACT' as const,
+      widgetOrder: ['CARDS', 'TREND', 'SPENDING', 'RECENT'] as const, hiddenWidgets: ['RECENT'] as const,
+    }
 
     await expect(client.getDashboardPreferences('family')).resolves.toEqual(saved)
     await expect(client.upsertDashboardPreferences(input)).resolves.toEqual(saved)
@@ -417,6 +424,15 @@ describe('platform client', () => {
       { ...saved, template: 'CUSTOM' },
       { ...saved, theme: 'AMOLED' },
       { ...saved, density: 'TINY' },
+      { ...saved, widgetOrder: undefined },
+      { ...saved, widgetOrder: ['TREND', 'SPENDING', 'RECENT'] },
+      { ...saved, widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'RECENT'] },
+      { ...saved, widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'UNKNOWN'] },
+      { ...saved, hiddenWidgets: ['TREND', 'TREND'] },
+      { ...saved, hiddenWidgets: ['TREND', 'SPENDING', 'RECENT', 'CARDS'] },
+      { ...saved, hiddenWidgets: ['UNKNOWN'] },
+      { ...saved, hiddenWidgets: undefined },
+      { ...saved, hiddenWidgets: 'RECENT' },
       { ...saved, householdId: '' },
       { ...saved, updatedAt: 'yesterday' },
     ]

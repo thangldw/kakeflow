@@ -10,12 +10,14 @@ import {
   CreditCard,
   FileCheck2,
   FileText,
+  GripVertical,
   Download,
   Goal,
   Home,
   Import,
   Leaf,
   Layers,
+  LayoutDashboard,
   Menu,
   MoreHorizontal,
   Search,
@@ -24,6 +26,8 @@ import {
   Repeat2,
   TrainFront,
   TrendingUp,
+  ChevronDown,
+  ChevronUp,
   Utensils,
   Users,
   WalletCards,
@@ -90,7 +94,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -422,15 +426,90 @@ const dashboardTemplateLabels: Record<DashboardPreferencesDto['template'], strin
   CASH_FLOW: 'キャッシュフロー',
 }
 
-function DashboardControls({ preferences, disabled, onChange }: { preferences: DashboardPreferencesDto; disabled: boolean; onChange: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
-  return <div className="dashboard-controls" aria-label="ダッシュボード表示設定">
-    <label><span>表示</span><select aria-label="ホームの表示テンプレート" disabled={disabled} value={preferences.template} onChange={(event) => onChange({ template: event.target.value as DashboardPreferencesDto['template'] })}>{Object.entries(dashboardTemplateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    <label><span>テーマ</span><select aria-label="アプリのテーマ" disabled={disabled} value={preferences.theme} onChange={(event) => onChange({ theme: event.target.value as DashboardPreferencesDto['theme'] })}><option value="SYSTEM">システム</option><option value="LIGHT">ライト</option><option value="DARK">ダーク</option></select></label>
-    <label><span>密度</span><select aria-label="画面の表示密度" disabled={disabled} value={preferences.density} onChange={(event) => onChange({ density: event.target.value as DashboardPreferencesDto['density'] })}><option value="COMFORTABLE">標準</option><option value="COMPACT">コンパクト</option></select></label>
+const dashboardWidgetLabels: Record<DashboardWidgetIdDto, string> = {
+  TREND: '収支の推移',
+  SPENDING: 'カテゴリ別支出',
+  RECENT: '最近の取引',
+  CARDS: 'カード支払い',
+}
+
+const dashboardTemplateWidgetOrder: Record<DashboardPreferencesDto['template'], readonly DashboardWidgetIdDto[]> = {
+  FINANCIAL_OVERVIEW: ['TREND', 'SPENDING', 'RECENT', 'CARDS'],
+  HOUSEHOLD_LEDGER: ['SPENDING', 'RECENT', 'TREND', 'CARDS'],
+  ASSETS_LIABILITIES: ['TREND', 'SPENDING', 'CARDS', 'RECENT'],
+  CARD_RECONCILIATION: ['CARDS', 'RECENT', 'TREND', 'SPENDING'],
+  CASH_FLOW: ['TREND', 'RECENT', 'CARDS'],
+}
+
+type DashboardPreferenceChange = Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density' | 'widgetOrder' | 'hiddenWidgets'>>
+
+function exhaustiveWidgetOrder(template: DashboardPreferencesDto['template']): DashboardWidgetIdDto[] {
+  const preferred = dashboardTemplateWidgetOrder[template]
+  return [...preferred, ...(['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const).filter((widget) => !preferred.includes(widget))]
+}
+
+function effectiveHiddenWidgets(preferences: DashboardPreferencesDto): DashboardWidgetIdDto[] {
+  const available = preferences.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
+  return available.some((widget) => !preferences.hiddenWidgets.includes(widget))
+    ? [...preferences.hiddenWidgets]
+    : preferences.hiddenWidgets.filter((widget) => widget !== available[0])
+}
+
+function DashboardControls({ preferences, disabled, onChange }: { preferences: DashboardPreferencesDto; disabled: boolean; onChange: (change: DashboardPreferenceChange) => void }) {
+  const [editorOpen, setEditorOpen] = useState(false)
+  const [dragging, setDragging] = useState<DashboardWidgetIdDto | null>(null)
+  const [announcement, setAnnouncement] = useState('')
+  const available = preferences.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
+  const effectiveHidden = effectiveHiddenWidgets(preferences)
+  const visibleCount = available.filter((widget) => !effectiveHidden.includes(widget)).length
+  const move = (widget: DashboardWidgetIdDto, target: DashboardWidgetIdDto) => {
+    if (widget === target) return
+    const next = [...preferences.widgetOrder]
+    const from = next.indexOf(widget)
+    const to = next.indexOf(target)
+    next.splice(from, 1)
+    next.splice(to, 0, widget)
+    onChange({ widgetOrder: next })
+    const position = next.filter((item) => available.includes(item)).indexOf(widget) + 1
+    setAnnouncement(`${dashboardWidgetLabels[widget]}を${position}/${available.length}へ移動しました`)
+  }
+  const moveBy = (widget: DashboardWidgetIdDto, offset: -1 | 1) => {
+    const index = available.indexOf(widget)
+    const target = available[index + offset]
+    if (target) move(widget, target)
+  }
+  const toggleVisible = (widget: DashboardWidgetIdDto) => {
+    const hidden = effectiveHidden.includes(widget)
+    if (!hidden && visibleCount <= 1) return
+    onChange({ hiddenWidgets: hidden ? effectiveHidden.filter((item) => item !== widget) : [...effectiveHidden, widget] })
+    setAnnouncement(`${dashboardWidgetLabels[widget]}を${hidden ? '表示' : '非表示に'}しました`)
+  }
+  return <div className="dashboard-controls-shell">
+    <div className="dashboard-controls" aria-label="ダッシュボード表示設定">
+      <label><span>表示</span><select aria-label="ホームの表示テンプレート" disabled={disabled} value={preferences.template} onChange={(event) => { const template = event.target.value as DashboardPreferencesDto['template']; const widgetOrder = exhaustiveWidgetOrder(template); const eligible = dashboardTemplateWidgetOrder[template]; const hiddenWidgets = eligible.some((widget) => !effectiveHidden.includes(widget)) ? effectiveHidden : effectiveHidden.filter((widget) => widget !== eligible[0]); onChange({ template, widgetOrder, hiddenWidgets }) }}>{Object.entries(dashboardTemplateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label><span>テーマ</span><select aria-label="アプリのテーマ" disabled={disabled} value={preferences.theme} onChange={(event) => onChange({ theme: event.target.value as DashboardPreferencesDto['theme'] })}><option value="SYSTEM">システム</option><option value="LIGHT">ライト</option><option value="DARK">ダーク</option></select></label>
+      <label><span>密度</span><select aria-label="画面の表示密度" disabled={disabled} value={preferences.density} onChange={(event) => onChange({ density: event.target.value as DashboardPreferencesDto['density'] })}><option value="COMFORTABLE">標準</option><option value="COMPACT">コンパクト</option></select></label>
+      <button className="secondary-btn dashboard-layout-toggle" type="button" disabled={disabled} aria-expanded={editorOpen} onClick={() => setEditorOpen((open) => !open)}><LayoutDashboard size={15} /> レイアウト</button>
+    </div>
+    {editorOpen && <section className="dashboard-layout-editor" aria-labelledby="dashboard-layout-title">
+      <div className="dashboard-layout-head"><div><strong id="dashboard-layout-title">ウィジェットの並びと表示</strong><span>{dashboardTemplateLabels[preferences.template]}に適用</span></div><button type="button" disabled={disabled} onClick={() => onChange({ widgetOrder: exhaustiveWidgetOrder(preferences.template), hiddenWidgets: [] })}>初期状態に戻す</button></div>
+      <div className="dashboard-layout-list">{available.map((widget, index) => {
+        const hidden = effectiveHidden.includes(widget)
+        const lastVisible = !hidden && visibleCount <= 1
+        return <div className={`dashboard-layout-row${dragging === widget ? ' is-dragging' : ''}`} key={widget} draggable={!disabled} onDragStart={(event) => { setDragging(widget); event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', widget) }} onDragEnd={() => setDragging(null)} onDragOver={(event) => { if (dragging) event.preventDefault() }} onDrop={(event) => { event.preventDefault(); if (dragging) move(dragging, widget); setDragging(null) }}>
+          <GripVertical size={15} aria-hidden="true" /><strong>{dashboardWidgetLabels[widget]}</strong>
+          <button type="button" className="layout-visibility" aria-label={`${dashboardWidgetLabels[widget]}を${hidden ? '表示' : '非表示'}`} aria-pressed={!hidden} aria-describedby={lastVisible ? 'last-widget-note' : undefined} disabled={disabled || lastVisible} onClick={() => toggleVisible(widget)}>{hidden ? '表示する' : '表示中'}</button>
+          <button type="button" aria-label={`${dashboardWidgetLabels[widget]}を上へ移動`} disabled={disabled || index === 0} onClick={() => moveBy(widget, -1)}><ChevronUp size={15} /></button>
+          <button type="button" aria-label={`${dashboardWidgetLabels[widget]}を下へ移動`} disabled={disabled || index === available.length - 1} onClick={() => moveBy(widget, 1)}><ChevronDown size={15} /></button>
+        </div>
+      })}</div>
+      <small id="last-widget-note">少なくとも1つのウィジェットを表示します。</small>
+      <span className="sr-only" aria-live="polite">{announcement}</span>
+    </section>}
   </div>
 }
 
-function Overview({ setPage, openAllActions, householdId, accountGroupId, attributionScope, revision, liveDashboard, liveTransactions, liveCards, importCounts, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; openAllActions: () => void; householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; revision: number; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; importCounts: ImportRunCountsDto | null; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
+function Overview({ setPage, openAllActions, householdId, accountGroupId, attributionScope, revision, liveDashboard, liveTransactions, liveCards, importCounts, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; openAllActions: () => void; householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; revision: number; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; importCounts: ImportRunCountsDto | null; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: DashboardPreferenceChange) => void }) {
   const cashFlow = preferences.template === 'CASH_FLOW'
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
@@ -452,13 +531,15 @@ function Overview({ setPage, openAllActions, householdId, accountGroupId, attrib
       : preferences.template === 'CARD_RECONCILIATION'
         ? [<KpiCard key="liabilities" label="カードを含む負債" value={yen(liabilities)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={CreditCard} accent="#f7e3d9" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta="カード購入は利用日に計上" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="assets" label="支払原資を含む資産" value={yen(assets)} meta="台帳上の資産残高" icon={WalletCards} accent="#dce9e6" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta="支払い後も二重計上しません" icon={TrendingUp} accent="#e4edda" />]
         : [<KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta={desktop ? `${liveDashboard?.netWorthAsOf ?? '月末'} 現在` : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />, <KpiCard key="income" label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="savings" label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />]
-  const panels = {
-    trend: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>{cashFlow ? '入出金の推移' : '収支の推移'}</h2><p>{cashFlow ? '資金移動ベース' : '発生ベース'}・直近6か月</p></div><div className="chart-legend"><span className="income">{cashFlow ? '入金' : '収入'}</span><span className="expense">{cashFlow ? '出金' : '支出'}</span></div></div><TrendChart data={trend} incomeLabel={cashFlow ? '入金' : '収入'} expenseLabel={cashFlow ? '出金' : '支出'} /></article>,
-    spending: <div key="spending" className="dashboard-widget dashboard-widget--spending"><SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} /></div>,
-    recent: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>{cashFlow ? '最近の資金移動' : '最近の取引'}</h2><p>{cashFlow ? 'カード購入を除く実際の入出金' : '確認済みの最新データ'}</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
-    cards: <div key="cards" className="dashboard-widget dashboard-widget--cards"><ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} /></div>,
+  const panels: Record<DashboardWidgetIdDto, React.ReactNode> = {
+    TREND: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>{cashFlow ? '入出金の推移' : '収支の推移'}</h2><p>{cashFlow ? '資金移動ベース' : '発生ベース'}・直近6か月</p></div><div className="chart-legend"><span className="income">{cashFlow ? '入金' : '収入'}</span><span className="expense">{cashFlow ? '出金' : '支出'}</span></div></div><TrendChart data={trend} incomeLabel={cashFlow ? '入金' : '収入'} expenseLabel={cashFlow ? '出金' : '支出'} /></article>,
+    SPENDING: <div key="spending" className="dashboard-widget dashboard-widget--spending"><SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} /></div>,
+    RECENT: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>{cashFlow ? '最近の資金移動' : '最近の取引'}</h2><p>{cashFlow ? 'カード購入を除く実際の入出金' : '確認済みの最新データ'}</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
+    CARDS: <div key="cards" className="dashboard-widget dashboard-widget--cards"><ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} /></div>,
   }
-  const panelOrder = cashFlow ? [panels.trend, panels.recent, panels.cards] : preferences.template === 'HOUSEHOLD_LEDGER' ? [panels.spending, panels.recent, panels.trend, panels.cards] : preferences.template === 'ASSETS_LIABILITIES' ? [panels.trend, panels.spending, panels.cards, panels.recent] : preferences.template === 'CARD_RECONCILIATION' ? [panels.cards, panels.recent, panels.trend, panels.spending] : [panels.trend, panels.spending, panels.recent, panels.cards]
+  const availablePanels = preferences.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
+  const visiblePanels = availablePanels.filter((widget) => !effectiveHiddenWidgets(preferences).includes(widget))
+  const panelOrder = visiblePanels.map((widget) => panels[widget])
   return <div className={`overview overview--${preferences.template.toLowerCase().replaceAll('_', '-')}`}>
     <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を${cashFlow ? '資金移動' : '発生'}ベースで集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <DashboardControls preferences={preferences} disabled={preferencesBusy || !desktop} onChange={updatePreferences} />
@@ -1761,7 +1842,7 @@ function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => voi
 }
 
 function defaultDashboardPreferences(householdId = ''): DashboardPreferencesDto {
-  return { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: new Date(0).toISOString() }
+  return { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', widgetOrder: exhaustiveWidgetOrder('FINANCIAL_OVERVIEW'), hiddenWidgets: [], updatedAt: new Date(0).toISOString() }
 }
 
 function App() {
@@ -2068,14 +2149,14 @@ function App() {
     setActiveAttributionScope(ALL_ATTRIBUTION_SCOPE)
     setActiveHouseholdId(id)
   }
-  const updateDashboardPreferences = (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => {
+  const updateDashboardPreferences = (change: DashboardPreferenceChange) => {
     const householdId = activeHouseholdId
     if (!householdId || dashboardPreferencesBusy) return
     const previous = dashboardPreferences
     const next = { ...dashboardPreferences, ...change, householdId }
     setDashboardPreferences(next)
     setDashboardPreferencesBusy(true)
-    void platformClient.upsertDashboardPreferences({ householdId, template: next.template, theme: next.theme, density: next.density }).then((saved) => {
+    void platformClient.upsertDashboardPreferences({ householdId, template: next.template, theme: next.theme, density: next.density, widgetOrder: next.widgetOrder, hiddenWidgets: next.hiddenWidgets }).then((saved) => {
       setDashboardPreferences((current) => current.householdId === saved.householdId ? saved : current)
     }).catch(() => {
       setDashboardPreferences((current) => current.householdId === previous.householdId ? previous : current)
