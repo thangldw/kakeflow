@@ -83,6 +83,7 @@ import { LocalSyncFoundationPanel } from './features/sync/LocalSyncFoundationPan
 import { LocalChangePackagePanel } from './features/sync/LocalChangePackagePanel'
 import { PortableEvidenceBundlePanel } from './features/sync/PortableEvidenceBundlePanel'
 import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
+import { CustomParserRescueDialog } from './features/parser-profiles/CustomParserRescueDialog'
 import { delimitedParserProfilePlatform } from './features/parser-profiles/delimitedParserProfilePlatform'
 import type { DelimitedParserProfileDto } from './features/parser-profiles/delimitedParserProfilePlatform'
 import { parseCustomDelimitedBytes } from './ingestion'
@@ -775,6 +776,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [yuchoAccounts, setYuchoAccounts] = useState<Record<string, string>>({})
   const [standardImportAccounts, setStandardImportAccounts] = useState<Record<string, string>>({})
   const [originalParserPreviews, setOriginalParserPreviews] = useState<Record<string, ImportPreview>>({})
+  const [rescuePreviewId, setRescuePreviewId] = useState<string | null>(null)
+  const rescueTriggerRef = useRef<HTMLButtonElement | null>(null)
   const hydratedStagedRunsRef = useRef(new Set<string>())
 
   useEffect(() => {
@@ -782,6 +785,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     setStaged({})
     setReceiptStagedIds(new Set())
     setStandardImportAccounts({})
+    setRescuePreviewId(null)
   }, [householdId])
 
   useEffect(() => {
@@ -830,8 +834,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     return () => { active = false }
   }, [folderInbox.items, householdId])
 
-  const applyCustomParserProfile = (item: ImportPreview) => {
-    const profile = parserProfiles.find((candidate) => candidate.id === selectedParserProfiles[item.id])
+  const applyCustomParserProfile = (item: ImportPreview, explicitProfile?: DelimitedParserProfileDto, explicitAccountId?: string) => {
+    const profile = explicitProfile ?? parserProfiles.find((candidate) => candidate.id === selectedParserProfiles[item.id])
     if (!profile || !item.fileBytes) return
     setOriginalParserPreviews((current) => current[item.id] ? current : { ...current, [item.id]: item })
     const result = parseCustomDelimitedBytes(item.fileBytes, profile, { filename: item.filename })
@@ -839,7 +843,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     const balanceAccounts = accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY')
     const hintedAccount = hints.length === 1 ? balanceAccounts.find((account) => account.id === hints[0] || account.name === hints[0]) : undefined
     const fallbackAccount = accounts.find((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK')
-    setCustomParserAccounts((current) => ({ ...current, [item.id]: hintedAccount?.id ?? fallbackAccount?.id ?? '' }))
+    setCustomParserAccounts((current) => ({ ...current, [item.id]: explicitAccountId ?? hintedAccount?.id ?? fallbackAccount?.id ?? '' }))
     setCustomParserPreviews((current) => ({ ...current, [item.id]: result.preview }))
     const hasErrors = result.preview.issues.some((issue) => issue.severity === 'error')
     setPreviews((current) => current.map((preview) => preview.id === item.id ? {
@@ -919,7 +923,10 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
 
   const stageImport = async (item: ImportPreview) => {
     if (!householdId || !item.fileBytes || !item.parsed || !item.detectedAdapterId) return
-    if (item.detectedAdapterId === 'custom-delimited-v1' && !customParserAccounts[item.id]) { setNotice('カスタム形式の取込先口座を選択してください。'); return }
+    if (item.detectedAdapterId === 'custom-delimited-v1') {
+      const selected = accounts.find((account) => account.id === customParserAccounts[item.id])
+      if (!selected || (selected.accountKind !== 'ASSET' && selected.accountKind !== 'LIABILITY')) { setNotice('カスタム形式の有効な取込先口座を選択してください。'); return }
+    }
     if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !moneyForwardAccounts[item.id]) { setNotice('Money Forwardの「保有金融機関」に対応する取込先口座を選択してください。'); return }
     if (item.detectedAdapterId === 'yucho-direct-ledger-v1' && !yuchoAccounts[item.id]) { setNotice('ゆうちょCSVの取込先銀行口座を選択してください。'); return }
     const standardAccountRequirements = {
@@ -1128,7 +1135,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
       {platformClient.runtime === 'tauri' && <button className="secondary-btn" disabled={folderBusy === 'select'} onClick={() => void addWatchedFolder()}>{folderBusy === 'select' ? '選択中…' : '同期フォルダーを追加'}</button>}
       <button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
-      <input ref={inputRef} aria-label="CSV、Excel、PDF、レシート画像、ゆうちょ公式ZIPを選択" className="visually-hidden" type="file" accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,.zip,text/csv,application/zip,application/x-zip-compressed,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
+      <input ref={inputRef} aria-label="CSV、TSV、Excel、PDF、レシート画像、ゆうちょ公式ZIPを選択" className="visually-hidden" type="file" accept=".csv,.tsv,.xlsx,.pdf,.png,.jpg,.jpeg,.zip,text/csv,text/tab-separated-values,application/zip,application/x-zip-compressed,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
     {folderInbox.counts && folderInbox.counts.actionable > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>永続 Folder Inbox に {folderInbox.counts.actionable} 件の確認対象があります。プレビューだけを自動化し、台帳への反映は必ず明示的な承認後です。</span><button className="text-btn" disabled={folderInbox.busy} onClick={() => void folderInbox.refresh(true)}>更新</button></div>}
     <section className="status-grid">
@@ -1173,11 +1180,12 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         return <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{item.adapterId} ・ {kindLabel}のみ選択できます。</small></span><select aria-label={`${item.filename}の取込先${kindLabel}`} value={standardImportAccounts[item.id] ?? ''} onChange={(event) => setStandardImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{kindLabel}を選択</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       })}</div>}
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => issue.message).join(' / ')}</small>}</div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => issue.message).join(' / ')}</small>}</div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'japanese-brokerage-transactions-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : item.status === 'unsupported' && item.fileBytes && /\.(?:csv|tsv)$/i.test(item.filename) ? <button className="mini-btn" onClick={(event) => { rescueTriggerRef.current = event.currentTarget; setRescuePreviewId(item.id) }}>このファイルを読み取る</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
       {protectedPdf && (() => { const item = previews.find((preview) => preview.id === protectedPdf.itemId); return item ? <PdfPasswordPrompt filename={item.filename} status={protectedPdf.status} onSubmit={(ephemeralPassword) => extractDocument(item, ephemeralPassword)} onCancel={() => setProtectedPdf(null)} /> : null })()}
+      {rescuePreviewId && householdId && (() => { const item = previews.find((preview) => preview.id === rescuePreviewId); return item?.fileBytes ? <CustomParserRescueDialog householdId={householdId} filename={item.filename} bytes={item.fileBytes} accounts={accounts} returnFocus={rescueTriggerRef.current} onCancel={() => setRescuePreviewId(null)} onSaved={(profile, accountId) => { setParserProfiles((current) => [...current.filter((candidate) => candidate.id !== profile.id), profile]); setSelectedParserProfiles((current) => ({ ...current, [item.id]: profile.id })); applyCustomParserProfile(item, profile, accountId); setRescuePreviewId(null) }} /> : null })()}
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} isReceipt={receiptStagedIds.has(previewId)} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} onReceiptLinked={() => refreshAfterReceiptLink(previewId, stagedImport.summary.runId)} />)}

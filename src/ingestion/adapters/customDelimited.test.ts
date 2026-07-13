@@ -89,6 +89,15 @@ describe('custom delimited adapter', () => {
     expect(result.parsed.records[0]).toMatchObject({ transactionDate: '2026-07-01', outgoingAmount: 500, description: 'Shop' })
   })
 
+  it('fails closed when AUTO encoding is invalid for both UTF-8 and CP932', () => {
+    const bytes = new Uint8Array([0x80, ...new TextEncoder().encode(',Payee,Amount\n2026-07-01,Shop,-500')])
+    const result = parseCustomDelimitedBytes(bytes, profile({ encoding: 'AUTO' }))
+
+    expect(result.parsed.records).toEqual([])
+    expect(result.preview.candidateCount).toBe(0)
+    expect(result.preview.issues).toContainEqual(expect.objectContaining({ code: 'CUSTOM_ENCODING_INVALID', severity: 'error' }))
+  })
+
   it('rejects invalid or disabled saved profiles before emitting candidates', () => {
     const result = createCustomDelimitedAdapter(profile({ isEnabled: false, descriptionColumn: null, payeeColumn: null }))
       .parse({ text: 'Date,Amount\n2026-07-01,-500' })

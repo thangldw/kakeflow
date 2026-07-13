@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.43.0 — 2026-07-13
+
+- Add a visible `このファイルを読み取る` recovery action for unsupported CSV/TSV files even when the household has no saved parser profile.
+- Build mappings from the selected file's actual first-twelve-row header candidates, clear stale mappings when the header changes, and support signed or separate debit/credit JPY amount modes.
+- Show a bounded local sample plus live candidate, excluded-row, and error counts before saving; duplicate/missing mappings, invalid rows, and decoding errors block continuation.
+- Require an explicit active Asset/Liability destination account, save the household parser profile, apply it to the existing in-memory source, and return to a ready-to-stage preview without creating an import early; `取込開始` remains an explicit boundary before pending review.
+- Preserve cancel and save-failure state, support Escape dismissal, keep built-in adapters preferred, and retain the existing explicit posting boundary.
+
 ## 0.42.0 — 2026-07-13
 
 - Add a dedicated, strict `jcb-myjcb-statement-v1` adapter for an explicit v1 header contract, including reordered columns and CP932/UTF-8 decoding through the existing import boundary.

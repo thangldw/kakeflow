@@ -92,7 +92,7 @@ export function decodeCsvBytes(bytes: Uint8Array): { text: string; encoding: str
   const replacements = (utf8.match(/\uFFFD/g) ?? []).length
   if (replacements === 0) return { text: utf8, encoding: 'utf-8' }
   try {
-    return { text: new TextDecoder('shift_jis').decode(bytes), encoding: 'shift_jis' }
+    return { text: new TextDecoder('shift_jis', { fatal: true }).decode(bytes), encoding: 'shift_jis' }
   } catch {
     return { text: utf8, encoding: 'utf-8-invalid' }
   }
