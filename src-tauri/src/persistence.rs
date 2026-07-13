@@ -68,6 +68,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0027_cumulative_card_payments.sql"
     )),
+    M::up(include_str!("../migrations/0028_watched_file_inbox.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -466,6 +467,33 @@ fn validate_restored_semantics(
                ELSE 'OVERPAID' END LIMIT 1",
         )?;
     }
+    if schema_version >= 28 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM watched_file_inbox i
+             LEFT JOIN watched_folders wf ON wf.id=i.watched_folder_id
+             LEFT JOIN import_runs ir ON ir.id=i.import_run_id
+             WHERE wf.id IS NULL OR wf.household_id!=i.household_id
+                OR wf.is_enabled!=1
+                OR (i.state='STAGED' AND (
+                    ir.id IS NULL OR ir.household_id!=i.household_id))
+                OR (i.state!='STAGED' AND i.import_run_id IS NOT NULL)
+                OR (i.state='PROCESSING') != (
+                    i.lease_token IS NOT NULL AND i.lease_expires_at IS NOT NULL
+                    AND i.processing_origin_state IS NOT NULL)
+                OR (i.state='FAILED') != (i.last_error_code IS NOT NULL)
+                OR length(i.id)!=64 OR i.id GLOB '*[^0-9a-f]*'
+                OR length(i.fingerprint)!=64 OR i.fingerprint GLOB '*[^0-9a-f]*'
+                OR i.relative_path IN ('.','..')
+                OR i.relative_path LIKE '/%' OR i.relative_path LIKE '%/'
+                OR instr(i.relative_path,'\\')>0
+                OR i.relative_path LIKE './%' OR i.relative_path LIKE '../%'
+                OR i.relative_path LIKE '%/./%' OR i.relative_path LIKE '%/../%'
+                OR i.relative_path LIKE '%/.' OR i.relative_path LIKE '%/..'
+                OR i.relative_path LIKE '%//%'
+             LIMIT 1",
+        )?;
+    }
     if schema_version >= 2 {
         reject_if_exists(
             connection,
@@ -845,6 +873,46 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_watched_file_inbox_scope_and_paths() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let id = "a".repeat(64);
+                let fingerprint = "b".repeat(64);
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES ('one','One'),('two','Two');
+                     INSERT INTO watched_folders(id,household_id,label,canonical_path) VALUES
+                       ('folder-one','one','Inbox','/one'),
+                       ('folder-two','two','Inbox','/two');",
+                )?;
+                connection.execute(
+                    "INSERT INTO watched_file_inbox(
+                       id,household_id,watched_folder_id,relative_path,file_name,
+                       media_type,byte_size,modified_unix_ms,fingerprint,state)
+                     VALUES(?1,'one','folder-one','bank.csv','bank.csv','text/csv',1,1,?2,'DISCOVERED')",
+                    rusqlite::params![id, fingerprint],
+                )?;
+                assert!(validate_restored_semantics(connection, 28).is_ok());
+
+                connection.execute_batch(
+                    "DROP TRIGGER watched_file_inbox_scope_update;
+                     UPDATE watched_file_inbox SET household_id='two';",
+                )?;
+                assert!(validate_restored_semantics(connection, 28).is_err());
+                connection.execute("UPDATE watched_file_inbox SET household_id='one'", [])?;
+
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     UPDATE watched_file_inbox SET relative_path='../outside.csv';
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 28).is_err());
+                Ok(())
+            })
+            .expect("restore semantic audit should execute");
     }
 
     #[test]

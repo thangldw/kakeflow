@@ -17,6 +17,9 @@ export interface ImportPreview {
   mediaType?: string
   sourceModifiedAt?: string
   sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER'
+  folderInboxItemId?: string
+  watchedFolderId?: string
+  relativePath?: string
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024

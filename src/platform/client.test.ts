@@ -44,6 +44,9 @@ describe('platform client', () => {
     await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
     await expect(client.scanWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_scan' })
     await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).rejects.toMatchObject({ command: 'watched_folder_file_read' })
+    await expect(client.listWatchedFileInbox('family')).resolves.toEqual([])
+    await expect(client.countWatchedFileInbox('family')).resolves.toEqual({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 0 })
+    await expect(client.claimWatchedFileInboxItems('family', ['item'])).rejects.toMatchObject({ command: 'watched_file_inbox_claim' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
     await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
@@ -116,6 +119,15 @@ describe('platform client', () => {
       watched_folder_remove: null,
       watched_folder_scan: { watchedFolderId: 'folder', files: [{ relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000 }] },
       watched_folder_file_read: { relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fileBytes: [1, 2, 3] },
+      watched_file_inbox_list: [{ id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }],
+      watched_file_inbox_counts: { discovered: 0, processing: 0, ready: 1, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 },
+      watched_file_inbox_claim: { leaseToken: 'c'.repeat(64), leaseExpiresAt: '2026-07-12T00:06:00Z', items: [{ id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'PROCESSING', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }] },
+      watched_file_inbox_mark_ready: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_mark_needs_mapping: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'NEEDS_MAPPING', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_mark_failed: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'FAILED', attemptCount: 2, importRunId: null, lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_mark_staged: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_ignore: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'IGNORED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_retry: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'DISCOVERED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0 },
       import_start: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       import_preview: {
@@ -231,6 +243,15 @@ describe('platform client', () => {
     await expect(client.removeWatchedFolder('family', 'folder')).resolves.toBeUndefined()
     await expect(client.scanWatchedFolder('family', 'folder')).resolves.toEqual(responses.watched_folder_scan)
     await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).resolves.toEqual(responses.watched_folder_file_read)
+    await expect(client.listWatchedFileInbox('family', 'READY', 25)).resolves.toEqual(responses.watched_file_inbox_list)
+    await expect(client.countWatchedFileInbox('family')).resolves.toEqual(responses.watched_file_inbox_counts)
+    await expect(client.ignoreWatchedFileInboxItem('family', 'a'.repeat(64))).resolves.toEqual(responses.watched_file_inbox_ignore)
+    await expect(client.retryWatchedFileInboxItem('family', 'a'.repeat(64))).resolves.toEqual(responses.watched_file_inbox_retry)
+    await expect(client.claimWatchedFileInboxItems('family', ['a'.repeat(64)])).resolves.toEqual(responses.watched_file_inbox_claim)
+    await expect(client.markWatchedFileInboxReady('family', 'a'.repeat(64), 'c'.repeat(64))).resolves.toEqual(responses.watched_file_inbox_mark_ready)
+    await expect(client.markWatchedFileInboxNeedsMapping('family', 'a'.repeat(64), 'c'.repeat(64))).resolves.toEqual(responses.watched_file_inbox_mark_needs_mapping)
+    await expect(client.markWatchedFileInboxFailed('family', 'a'.repeat(64), 'c'.repeat(64), 'PREVIEW_FAILED')).resolves.toEqual(responses.watched_file_inbox_mark_failed)
+    await expect(client.markWatchedFileInboxStaged('family', 'a'.repeat(64), 'c'.repeat(64), 'run-1')).resolves.toEqual(responses.watched_file_inbox_mark_staged)
     await expect(client.importSummary('family')).resolves.toEqual(responses.import_summary)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
@@ -271,6 +292,15 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_remove', { householdId: 'family', watchedFolderId: 'folder' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_scan', { householdId: 'family', watchedFolderId: 'folder' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_file_read', { householdId: 'family', watchedFolderId: 'folder', relativePath: 'bank.csv' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_list', { householdId: 'family', state: 'READY', limit: 25 })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_counts', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_ignore', { householdId: 'family', itemId: 'a'.repeat(64) })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_retry', { householdId: 'family', itemId: 'a'.repeat(64) })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_claim', { householdId: 'family', itemIds: ['a'.repeat(64)] })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_ready', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64) })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_needs_mapping', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64) })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_failed', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64), errorCode: 'PREVIEW_FAILED' })
+    expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_staged', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64), importRunId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
@@ -289,7 +319,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(44)
+    expect(invokeSpy).toHaveBeenCalledTimes(53)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {

@@ -331,6 +331,22 @@ export interface WatchedFolderDto { readonly id: string; readonly householdId: s
 export interface WatchedFileMetadataDto { readonly relativePath: string; readonly fileName: string; readonly mediaType: string; readonly byteSize: number; readonly modifiedUnixMs: number | null }
 export interface WatchedFolderScanDto { readonly watchedFolderId: string; readonly files: readonly WatchedFileMetadataDto[] }
 export interface WatchedFileDto extends WatchedFileMetadataDto { readonly fileBytes: readonly number[] }
+export type WatchedFileInboxStateDto = 'DISCOVERED' | 'PROCESSING' | 'READY' | 'NEEDS_MAPPING' | 'STAGED' | 'FAILED' | 'IGNORED' | 'REMOVED'
+export interface WatchedFileInboxItemDto {
+  readonly id: string; readonly householdId: string; readonly watchedFolderId: string; readonly watchedFolderLabel: string
+  readonly relativePath: string; readonly fileName: string; readonly mediaType: string; readonly byteSize: number
+  readonly modifiedUnixMs: number | null; readonly fingerprint: string; readonly state: WatchedFileInboxStateDto
+  readonly attemptCount: number; readonly importRunId: string | null; readonly lastErrorCode: string | null
+  readonly discoveredAt: string; readonly updatedAt: string
+}
+export interface WatchedFileInboxCountsDto {
+  readonly discovered: number; readonly processing: number; readonly ready: number; readonly needsMapping: number
+  readonly staged: number; readonly failed: number; readonly ignored: number; readonly removed: number
+  readonly actionable: number; readonly total: number
+}
+export interface WatchedFileInboxClaimDto {
+  readonly leaseToken: string; readonly leaseExpiresAt: string; readonly items: readonly WatchedFileInboxItemDto[]
+}
 
 export interface TransactionPageDto {
   readonly items: readonly TransactionRowDto[]
@@ -412,6 +428,15 @@ export type AppCommand =
   | 'watched_folder_remove'
   | 'watched_folder_scan'
   | 'watched_folder_file_read'
+  | 'watched_file_inbox_list'
+  | 'watched_file_inbox_counts'
+  | 'watched_file_inbox_ignore'
+  | 'watched_file_inbox_retry'
+  | 'watched_file_inbox_claim'
+  | 'watched_file_inbox_mark_ready'
+  | 'watched_file_inbox_mark_needs_mapping'
+  | 'watched_file_inbox_mark_failed'
+  | 'watched_file_inbox_mark_staged'
   | 'dashboard_query'
   | 'budgets_query'
   | 'budget_upsert'
@@ -477,6 +502,15 @@ export interface PlatformClient {
   removeWatchedFolder(householdId: string, watchedFolderId: string): Promise<void>
   scanWatchedFolder(householdId: string, watchedFolderId: string): Promise<WatchedFolderScanDto>
   readWatchedFile(householdId: string, watchedFolderId: string, relativePath: string): Promise<WatchedFileDto>
+  listWatchedFileInbox(householdId: string, state?: WatchedFileInboxStateDto, limit?: number): Promise<readonly WatchedFileInboxItemDto[]>
+  countWatchedFileInbox(householdId: string): Promise<WatchedFileInboxCountsDto>
+  ignoreWatchedFileInboxItem(householdId: string, itemId: string): Promise<WatchedFileInboxItemDto>
+  retryWatchedFileInboxItem(householdId: string, itemId: string): Promise<WatchedFileInboxItemDto>
+  claimWatchedFileInboxItems(householdId: string, itemIds: readonly string[]): Promise<WatchedFileInboxClaimDto>
+  markWatchedFileInboxReady(householdId: string, itemId: string, leaseToken: string): Promise<WatchedFileInboxItemDto>
+  markWatchedFileInboxNeedsMapping(householdId: string, itemId: string, leaseToken: string): Promise<WatchedFileInboxItemDto>
+  markWatchedFileInboxFailed(householdId: string, itemId: string, leaseToken: string, errorCode: string): Promise<WatchedFileInboxItemDto>
+  markWatchedFileInboxStaged(householdId: string, itemId: string, leaseToken: string, importRunId: string): Promise<WatchedFileInboxItemDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>

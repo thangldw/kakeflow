@@ -97,4 +97,8 @@ export type {
   WatchedFileMetadataDto,
   WatchedFolderScanDto,
   WatchedFileDto,
+  WatchedFileInboxStateDto,
+  WatchedFileInboxItemDto,
+  WatchedFileInboxCountsDto,
+  WatchedFileInboxClaimDto,
 } from './types'

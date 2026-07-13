@@ -32,6 +32,9 @@ import type {
   SourceRecordViewDto,
   WatchedFolderDto,
   WatchedFileMetadataDto,
+  WatchedFileInboxStateDto,
+  WatchedFileInboxItemDto,
+  WatchedFileInboxClaimDto,
   SavingsGoalDto,
   AppliedClassificationDto,
   AttributionKindDto,
@@ -132,6 +135,15 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       removeWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_remove') },
       scanWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_scan') },
       readWatchedFile: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_file_read') },
+      listWatchedFileInbox: async () => [],
+      countWatchedFileInbox: async () => ({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 0 }),
+      ignoreWatchedFileInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_ignore') },
+      retryWatchedFileInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_retry') },
+      claimWatchedFileInboxItems: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_claim') },
+      markWatchedFileInboxReady: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_ready') },
+      markWatchedFileInboxNeedsMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_needs_mapping') },
+      markWatchedFileInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_failed') },
+      markWatchedFileInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_staged') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
@@ -197,6 +209,15 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     removeWatchedFolder: async (householdId, watchedFolderId) => { await invokeValidated(invoke, 'watched_folder_remove', parseVoid, { householdId, watchedFolderId }) },
     scanWatchedFolder: (householdId, watchedFolderId) => invokeValidated(invoke, 'watched_folder_scan', parseWatchedFolderScan, { householdId, watchedFolderId }),
     readWatchedFile: (householdId, watchedFolderId, relativePath) => invokeValidated(invoke, 'watched_folder_file_read', parseWatchedFile, { householdId, watchedFolderId, relativePath }),
+    listWatchedFileInbox: (householdId, state, limit) => invokeValidated(invoke, 'watched_file_inbox_list', parseWatchedFileInboxItems, { householdId, state: state ?? null, limit: limit ?? null }),
+    countWatchedFileInbox: (householdId) => invokeValidated(invoke, 'watched_file_inbox_counts', parseWatchedFileInboxCounts, { householdId }),
+    ignoreWatchedFileInboxItem: (householdId, itemId) => invokeValidated(invoke, 'watched_file_inbox_ignore', parseWatchedFileInboxItem, { householdId, itemId }),
+    retryWatchedFileInboxItem: (householdId, itemId) => invokeValidated(invoke, 'watched_file_inbox_retry', parseWatchedFileInboxItem, { householdId, itemId }),
+    claimWatchedFileInboxItems: (householdId, itemIds) => invokeValidated(invoke, 'watched_file_inbox_claim', parseWatchedFileInboxClaim, { householdId, itemIds }),
+    markWatchedFileInboxReady: (householdId, itemId, leaseToken) => invokeValidated(invoke, 'watched_file_inbox_mark_ready', parseWatchedFileInboxItem, { householdId, itemId, leaseToken }),
+    markWatchedFileInboxNeedsMapping: (householdId, itemId, leaseToken) => invokeValidated(invoke, 'watched_file_inbox_mark_needs_mapping', parseWatchedFileInboxItem, { householdId, itemId, leaseToken }),
+    markWatchedFileInboxFailed: (householdId, itemId, leaseToken, errorCode) => invokeValidated(invoke, 'watched_file_inbox_mark_failed', parseWatchedFileInboxItem, { householdId, itemId, leaseToken, errorCode }),
+    markWatchedFileInboxStaged: (householdId, itemId, leaseToken, importRunId) => invokeValidated(invoke, 'watched_file_inbox_mark_staged', parseWatchedFileInboxItem, { householdId, itemId, leaseToken, importRunId }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
     upsertBudget: (input) => invokeValidated(invoke, 'budget_upsert', parseBudget, { input }),
@@ -818,6 +839,45 @@ function parseWatchedFileMetadata(value: unknown): WatchedFileMetadataDto { cons
 function parseWatchedFolderScan(value: unknown) { const record = asRecord(value); if (!Array.isArray(record.files)) throw new TypeError('watched folder scan'); return { watchedFolderId: asRequiredString(record.watchedFolderId), files: record.files.map(parseWatchedFileMetadata) } }
 function parseWatchedFile(value: unknown) { const record = asRecord(value); if (!Array.isArray(record.fileBytes) || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('watched file'); return { ...parseWatchedFileMetadata(record), fileBytes: record.fileBytes as number[] } }
 
+const WATCHED_FILE_INBOX_STATES = new Set<WatchedFileInboxStateDto>(['DISCOVERED', 'PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'FAILED', 'IGNORED', 'REMOVED'])
+function parseWatchedFileInboxItem(value: unknown): WatchedFileInboxItemDto {
+  const record = asRecord(value)
+  if (!WATCHED_FILE_INBOX_STATES.has(record.state as WatchedFileInboxStateDto)) throw new TypeError('watched inbox state')
+  const state = record.state as WatchedFileInboxStateDto
+  const importRunId = asNullableString(record.importRunId)
+  const lastErrorCode = asNullableString(record.lastErrorCode)
+  const attemptCount = asSafeInteger(record.attemptCount)
+  if (attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('watched inbox invariant')
+  if (lastErrorCode !== null && !/^[A-Z][A-Z0-9_]{1,63}$/.test(lastErrorCode)) throw new TypeError('watched inbox error code')
+  return {
+    id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), watchedFolderId: asRequiredString(record.watchedFolderId),
+    watchedFolderLabel: asRequiredString(record.watchedFolderLabel), relativePath: asRequiredString(record.relativePath), fileName: asRequiredString(record.fileName),
+    mediaType: asRequiredString(record.mediaType), byteSize: asSafeInteger(record.byteSize), modifiedUnixMs: asNullableSafeInteger(record.modifiedUnixMs),
+    fingerprint: asCanonicalHash(record.fingerprint), state, attemptCount, importRunId, lastErrorCode,
+    discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+function parseWatchedFileInboxItems(value: unknown): readonly WatchedFileInboxItemDto[] {
+  if (!Array.isArray(value)) throw new TypeError('watched inbox items')
+  const items = value.map(parseWatchedFileInboxItem)
+  if (new Set(items.map((item) => item.id)).size !== items.length) throw new TypeError('duplicate watched inbox item')
+  return items
+}
+function parseWatchedFileInboxCounts(value: unknown) {
+  const record = asRecord(value)
+  const keys = ['discovered', 'processing', 'ready', 'needsMapping', 'staged', 'failed', 'ignored', 'removed', 'actionable', 'total'] as const
+  const counts = Object.fromEntries(keys.map((key) => [key, asSafeInteger(record[key])])) as unknown as import('./types').WatchedFileInboxCountsDto
+  const sum = counts.discovered + counts.processing + counts.ready + counts.needsMapping + counts.staged + counts.failed + counts.ignored + counts.removed
+  if (!Number.isSafeInteger(sum) || counts.total !== sum || counts.actionable !== counts.discovered + counts.ready + counts.needsMapping + counts.failed) throw new TypeError('watched inbox counts')
+  return counts
+}
+function parseWatchedFileInboxClaim(value: unknown): WatchedFileInboxClaimDto {
+  const record = asRecord(value)
+  const items = parseWatchedFileInboxItems(record.items)
+  if (items.length < 1 || items.length > 25 || items.some((item) => item.state !== 'PROCESSING')) throw new TypeError('watched inbox claim')
+  return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
+}
+
 function parseImportSummary(value: unknown): ImportRunCountsDto {
   const record = asRecord(value)
   const keys = ['totalRuns', 'discovered', 'extracting', 'reviewRequired', 'posted', 'failed', 'rolledBack', 'sourceDocuments', 'sourceRecords', 'pendingCandidates', 'readyCandidates'] as const
@@ -888,6 +948,18 @@ function asNullableString(value: unknown): string | null {
 function asRequiredString(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) throw new TypeError('string')
   return value
+}
+
+function asCanonicalHash(value: unknown): string {
+  const hash = asRequiredString(value)
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new TypeError('hash')
+  return hash
+}
+
+function asIsoTimestamp(value: unknown): string {
+  const timestamp = asRequiredString(value)
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(timestamp) || Number.isNaN(Date.parse(timestamp))) throw new TypeError('timestamp')
+  return timestamp
 }
 
 function asNullableSafeInteger(value: unknown): number | null {
