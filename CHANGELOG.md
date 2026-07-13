@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.35.0 — 2026-07-13
+
+- Capture household-member, account, and canonical transaction writes in the same SQLite commit as each domain mutation.
+- Drain durable captures in monotonic order into the existing canonical envelope and local outbox contract.
+- Preserve capture-to-envelope lineage and validate household, entity, and envelope relations during schema 32 restore activation.
+- Keep planning, import workflow, investment snapshots, documents, derived analytics, and all remote transport outside this milestone's explicit coverage.
+- Continue to label the outbox as device-only; this release does not send or synchronize data.
+
 ## 0.34.0 — 2026-07-13
 
 - Add stable local device origins and logical principals without treating either as a login or authorization identity.
