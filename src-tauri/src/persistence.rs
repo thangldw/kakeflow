@@ -71,6 +71,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0028_watched_file_inbox.sql")),
     M::up(include_str!("../migrations/0029_dashboard_preferences.sql")),
     M::up(include_str!("../migrations/0030_cash_flow_dashboard.sql")),
+    M::up(include_str!("../migrations/0031_sync_foundation.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -261,6 +262,9 @@ pub fn clear_restored_device_local_state(
     if version >= 8 {
         let transaction = connection.transaction()?;
         transaction.execute("DELETE FROM watched_folders", [])?;
+        if version >= 31 {
+            transaction.execute("DELETE FROM local_sync_contexts", [])?;
+        }
         transaction.commit()?;
         connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
     }
@@ -327,6 +331,41 @@ fn validate_restored_semantics(
     connection: &Connection,
     schema_version: i64,
 ) -> Result<(), PersistenceError> {
+    if schema_version >= 31 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM household_principal_bindings b
+             LEFT JOIN household_members m ON m.id=b.member_id AND m.household_id=b.household_id
+             LEFT JOIN sync_principals p ON p.id=b.principal_id
+             WHERE p.id IS NULL OR (b.member_id IS NOT NULL AND m.id IS NULL) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM local_sync_contexts c
+             LEFT JOIN sync_devices d ON d.id=c.device_id
+             LEFT JOIN household_principal_bindings b
+               ON b.household_id=c.household_id AND b.principal_id=c.principal_id
+             LEFT JOIN sync_principals p ON p.id=c.principal_id
+             WHERE d.id IS NULL OR d.status!='ACTIVE' OR b.status!='ACTIVE'
+                OR p.id IS NULL OR p.status!='ACTIVE' LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_change_envelopes e
+             LEFT JOIN sync_devices d ON d.id=e.origin_device_id
+             LEFT JOIN sync_principals p ON p.id=e.origin_principal_id
+             LEFT JOIN household_principal_bindings b
+               ON b.household_id=e.household_id AND b.principal_id=e.origin_principal_id
+             WHERE d.id IS NULL OR p.id IS NULL OR b.principal_id IS NULL
+                OR e.canonical_payload_json!=json(e.canonical_payload_json) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_outbox o
+             LEFT JOIN sync_change_envelopes e ON e.envelope_id=o.envelope_id
+             WHERE e.envelope_id IS NULL LIMIT 1",
+        )?;
+    }
     if schema_version >= 22 {
         reject_if_exists(
             connection,

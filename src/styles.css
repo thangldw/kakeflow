@@ -340,3 +340,22 @@ html[data-theme='dark'] .goal-editor { border-color: var(--line); }
   .overview--assets-liabilities .dashboard-widget--trend,
   .overview--cash-flow .dashboard-widget--trend { grid-column: auto; }
 }
+.local-sync-foundation { display: grid; gap: 18px; }
+.local-only-badge { align-self: flex-start; border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.local-sync-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.local-sync-grid > div { padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-muted); min-width: 0; }
+.local-sync-grid dt { color: var(--muted); font-size: .76rem; }
+.local-sync-grid dd { margin: 6px 0 3px; font-weight: 700; overflow-wrap: anywhere; }
+.local-sync-grid small { color: var(--muted); overflow-wrap: anywhere; }
+.principal-binding-row { display: flex; align-items: end; gap: 12px; }
+.principal-binding-row label { display: grid; gap: 7px; flex: 1; }
+.principal-binding-row select { width: 100%; }
+
+@media (max-width: 1150px) {
+  .local-sync-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .local-sync-grid { grid-template-columns: 1fr; }
+  .principal-binding-row { align-items: stretch; flex-direction: column; }
+}

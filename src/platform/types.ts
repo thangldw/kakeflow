@@ -135,6 +135,20 @@ export interface ReceiptMatchConfirmationDto {
   readonly resolutionStatus: 'LINKED'; readonly evidenceCount: number; readonly runStatus: string
 }
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
+export interface LocalSyncIdentityDto { readonly id: string; readonly displayName: string; readonly createdAt: string }
+export interface PrincipalMemberBindingDto {
+  readonly householdId: string; readonly principalId: string
+  readonly memberId: string | null; readonly memberName: string | null; readonly updatedAt: string
+}
+export interface LocalSyncFoundationStatusDto {
+  readonly device: LocalSyncIdentityDto; readonly platform: 'MACOS' | 'WINDOWS' | 'OTHER'
+  readonly principal: LocalSyncIdentityDto; readonly binding: PrincipalMemberBindingDto
+  readonly outbox: { readonly envelopeCount: number; readonly latestSequence: number; readonly latestRecordedAt: string | null }
+  readonly remoteTransport: 'NOT_CONFIGURED'; readonly restoreValidation: 'ENABLED'
+}
+export interface UpdatePrincipalMemberBindingInputDto {
+  readonly householdId: string; readonly principalId: string; readonly memberId: string | null; readonly mutationId: string
+}
 export interface ExtractedRegionDto {
   readonly pageNumber: number
   readonly coordinateSpace: 'PIXELS' | 'PDF_POINTS' | 'UNLOCATED'
@@ -443,6 +457,8 @@ export type AppCommand =
   | 'app_bootstrap'
   | 'app_health'
   | 'app_status'
+  | 'local_sync_foundation_status'
+  | 'principal_member_binding_update'
   | 'households_list'
   | 'household_create'
   | 'household_members_list'
@@ -520,6 +536,8 @@ export interface PlatformClient {
   bootstrap(): Promise<AppBootstrapDto>
   health(): Promise<AppHealthDto>
   status(): Promise<AppStatusDto>
+  getLocalSyncFoundationStatus(householdId: string): Promise<LocalSyncFoundationStatusDto>
+  updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   listHouseholds(): Promise<readonly HouseholdDto[]>
   createHousehold(input: CreateHouseholdInputDto): Promise<HouseholdDto>
   listHouseholdMembers(householdId: string): Promise<readonly HouseholdMemberDto[]>

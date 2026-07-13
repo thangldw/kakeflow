@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.33 strengthens packaged-release evidence by launching the real desktop artifact, completing onboarding, and navigating all ten top-level workspaces while verifying their exact headings, active navigation, visible layout, IPC, database migrations, integrity, and persisted household state.
+Version 0.34 adds a truthful [local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md): stable device origins, local principals, explicit principal-to-member mapping, deterministic immutable change envelopes, a transport-free outbox, and restore validation. It does not claim cloud or multi-device synchronization.
 
 ## Product tour
 
@@ -117,6 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, explicit family-member mapping, deterministic immutable change envelopes, transport-free outbox status, and restore validation; no server, login, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
 - [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard files, with adapter-compatible account filtering, per-preview selection, and no default or name-based inference.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
@@ -187,6 +188,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Add optional end-to-end encrypted multi-device household synchronization, principal-to-member mapping, backend-derived audience enforcement, and mobile receipt capture.
+1. Add optional end-to-end encrypted remote transport, authenticated remote-principal mapping, conflict/merge semantics, backend-derived audience enforcement, and mobile receipt capture.
 2. Add more institution-specific brokerage and statement adapters.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

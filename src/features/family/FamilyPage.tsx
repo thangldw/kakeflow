@@ -3,6 +3,7 @@ import { Users } from 'lucide-react'
 
 import { platformClient } from '../../platform'
 import type { AccountDto, HouseholdMemberDto } from '../../platform'
+import { LocalSyncFoundationPanel } from '../sync/LocalSyncFoundationPanel'
 
 interface FamilyPageProps {
   readonly householdId: string | null
@@ -53,6 +54,7 @@ export function FamilyPage({ householdId, members, accounts, onMembersChanged }:
         {notice && <p role="status" className="family-notice">{notice}</p>}
       </> : <p className="empty-state">家族メンバーの管理はデスクトップ版で利用できます。</p>}
     </section>
+    <LocalSyncFoundationPanel householdId={householdId} members={members} allowBinding />
   </>
 }
 

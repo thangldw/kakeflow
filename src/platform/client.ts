@@ -19,6 +19,7 @@ import type {
   ExtractedDocumentDto,
   HouseholdDto,
   HouseholdMemberDto,
+  LocalSyncFoundationStatusDto,
   ImportPreviewDto,
   ImportRunCountsDto,
   ImportSummaryDto,
@@ -111,6 +112,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       bootstrap: async () => WEB_BOOTSTRAP,
       health: async () => WEB_HEALTH,
       status: async () => WEB_STATUS,
+      getLocalSyncFoundationStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'local_sync_foundation_status') },
+      updatePrincipalMemberBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'principal_member_binding_update') },
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listHouseholdMembers: async () => [],
@@ -188,6 +191,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     bootstrap: () => invokeValidated(invoke, 'app_bootstrap', parseBootstrap),
     health: () => invokeValidated(invoke, 'app_health', parseHealth),
     status: () => invokeValidated(invoke, 'app_status', parseStatus),
+    getLocalSyncFoundationStatus: (householdId) => invokeValidated(invoke, 'local_sync_foundation_status', parseLocalSyncFoundationStatus, { householdId }),
+    updatePrincipalMemberBinding: (input) => invokeValidated(invoke, 'principal_member_binding_update', parseLocalSyncFoundationStatus, { input }),
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
     listHouseholdMembers: (householdId) => invokeValidated(invoke, 'household_members_list', parseHouseholdMembers, { householdId }),
@@ -307,6 +312,30 @@ function parseHouseholdMember(value: unknown): HouseholdMemberDto {
     id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), displayName: asRequiredString(record.displayName),
     relationshipLabel: record.relationshipLabel, status: record.status, sortOrder: asSafeInteger(record.sortOrder),
     createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStatusDto {
+  const record = asRecord(value)
+  const device = asRecord(record.device); const principal = asRecord(record.principal)
+  const binding = asRecord(record.binding); const outbox = asRecord(record.outbox)
+  if (!['MACOS', 'WINDOWS', 'OTHER'].includes(String(record.platform))
+      || record.remoteTransport !== 'NOT_CONFIGURED' || record.restoreValidation !== 'ENABLED') throw new TypeError('local sync status')
+  const parseIdentity = (identity: Record<string, unknown>) => ({
+    id: asRequiredString(identity.id), displayName: asRequiredString(identity.displayName), createdAt: asRequiredString(identity.createdAt),
+  })
+  const memberId = asNullableString(binding.memberId); const memberName = asNullableString(binding.memberName)
+  if ((memberId === null) !== (memberName === null)) throw new TypeError('principal binding')
+  const latestRecordedAt = asNullableString(outbox.latestRecordedAt)
+  return {
+    device: parseIdentity(device), platform: record.platform as LocalSyncFoundationStatusDto['platform'],
+    principal: parseIdentity(principal),
+    binding: {
+      householdId: asRequiredString(binding.householdId), principalId: asRequiredString(binding.principalId),
+      memberId, memberName, updatedAt: asRequiredString(binding.updatedAt),
+    },
+    outbox: { envelopeCount: asSafeInteger(outbox.envelopeCount), latestSequence: asSafeInteger(outbox.latestSequence), latestRecordedAt },
+    remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED',
   }
 }
 

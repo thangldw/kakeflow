@@ -27,6 +27,7 @@ describe('platform client', () => {
       database: { healthy: false, schemaVersion: 0 },
     })
     await expect(client.status()).resolves.toEqual({ schemaVersion: 0, integrity: 'failed' })
+    await expect(client.getLocalSyncFoundationStatus('family')).rejects.toMatchObject({ command: 'local_sync_foundation_status' })
     await expect(client.listHouseholds()).resolves.toEqual([])
     await expect(client.listHouseholdMembers('family')).resolves.toEqual([])
     await expect(client.createHouseholdMember({} as never)).rejects.toMatchObject({ command: 'household_member_create' })
@@ -74,6 +75,8 @@ describe('platform client', () => {
       app_bootstrap: { application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } },
       app_health: { status: 'ok', database: { healthy: true, schemaVersion: 5 } },
       app_status: { schemaVersion: 5, integrity: 'ok' },
+      local_sync_foundation_status: { device: { id: 'device-1', displayName: 'Desktop', createdAt: '2026-07-13T00:00:00Z' }, platform: 'MACOS', principal: { id: 'principal-1', displayName: 'Local principal', createdAt: '2026-07-13T00:00:00Z' }, binding: { householdId: 'family', principalId: 'principal-1', memberId: 'member-1', memberName: 'Taro', updatedAt: '2026-07-13T00:00:00Z' }, outbox: { envelopeCount: 0, latestSequence: 0, latestRecordedAt: null }, remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED' },
+      principal_member_binding_update: { device: { id: 'device-1', displayName: 'Desktop', createdAt: '2026-07-13T00:00:00Z' }, platform: 'MACOS', principal: { id: 'principal-1', displayName: 'Local principal', createdAt: '2026-07-13T00:00:00Z' }, binding: { householdId: 'family', principalId: 'principal-1', memberId: null, memberName: null, updatedAt: '2026-07-13T00:00:00Z' }, outbox: { envelopeCount: 1, latestSequence: 1, latestRecordedAt: '2026-07-13T00:00:00Z' }, remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED' },
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
       household_create: { id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' },
       household_members_list: [{ id: 'member-1', householdId: 'family', displayName: 'Taro', relationshipLabel: 'Father', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }],
@@ -229,6 +232,9 @@ describe('platform client', () => {
     await expect(client.bootstrap()).resolves.toEqual(responses.app_bootstrap)
     await expect(client.health()).resolves.toEqual(responses.app_health)
     await expect(client.status()).resolves.toEqual(responses.app_status)
+    await expect(client.getLocalSyncFoundationStatus('family')).resolves.toEqual(responses.local_sync_foundation_status)
+    const bindingInput = { householdId: 'family', principalId: 'principal-1', memberId: null, mutationId: 'binding-1' }
+    await expect(client.updatePrincipalMemberBinding(bindingInput)).resolves.toEqual(responses.principal_member_binding_update)
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
     await expect(client.createHousehold({ id: 'family', name: 'Family' })).resolves.toEqual(responses.household_create)
     await expect(client.listHouseholdMembers('family')).resolves.toEqual(responses.household_members_list)
@@ -292,6 +298,8 @@ describe('platform client', () => {
     const coverageRequest = { householdId: 'family', asOf: '2026-07-13', horizonDays: 45 }
     await expect(client.queryCardSettlementBalanceCoverage(coverageRequest)).resolves.toEqual(responses.card_settlement_balance_coverage_query)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
+    expect(invokeSpy).toHaveBeenCalledWith('local_sync_foundation_status', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('principal_member_binding_update', { input: bindingInput })
     expect(invokeSpy).toHaveBeenCalledWith('household_members_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('household_member_create', { input: memberCreate })
     expect(invokeSpy).toHaveBeenCalledWith('household_member_update', { input: memberUpdate })
@@ -338,7 +346,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(54)
+    expect(invokeSpy).toHaveBeenCalledTimes(56)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {
