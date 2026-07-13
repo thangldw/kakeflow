@@ -364,6 +364,41 @@ describe('platform client', () => {
     })
   })
 
+  it('loads and persists strictly validated household dashboard preferences', async () => {
+    const saved = {
+      householdId: 'family', template: 'ASSETS_LIABILITIES', theme: 'DARK', density: 'COMPACT',
+      updatedAt: '2026-07-13T08:30:00.000Z',
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({
+      tauri: true,
+      invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+        invokeSpy(command, args)
+        return saved as T
+      },
+    })
+    const input = { householdId: 'family', template: 'ASSETS_LIABILITIES' as const, theme: 'DARK' as const, density: 'COMPACT' as const }
+
+    await expect(client.getDashboardPreferences('family')).resolves.toEqual(saved)
+    await expect(client.upsertDashboardPreferences(input)).resolves.toEqual(saved)
+    expect(invokeSpy).toHaveBeenCalledWith('dashboard_preferences_get', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('dashboard_preferences_upsert', { input })
+
+    const invalidResponses = [
+      { ...saved, template: 'CUSTOM' },
+      { ...saved, theme: 'AMOLED' },
+      { ...saved, density: 'TINY' },
+      { ...saved, householdId: '' },
+      { ...saved, updatedAt: 'yesterday' },
+    ]
+    for (const response of invalidResponses) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(invalidClient.getDashboardPreferences('family')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'dashboard_preferences_get',
+      })
+    }
+  })
+
   it('rejects malformed receipt match scores and confirmations', async () => {
     const invoke: Invoke = async <T>(command: AppCommand) => (command === 'receipt_match_suggestions'
       ? [{ candidateId: 'candidate-1', transactionId: 'transaction-1', occurredOn: '2026-07-12', payee: null, description: null, transactionType: 'EXPENSE', amountJpy: 1200, dayDifference: 4, merchantSimilarityBps: 10000, scoreBps: 10000, reasons: [] }]

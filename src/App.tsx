@@ -84,7 +84,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -344,37 +344,54 @@ function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonl
   )
 }
 
-function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName, month }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string; month: string }) {
+const dashboardTemplateLabels: Record<DashboardPreferencesDto['template'], string> = {
+  FINANCIAL_OVERVIEW: '財務概要',
+  HOUSEHOLD_LEDGER: '家計簿',
+  ASSETS_LIABILITIES: '資産・負債',
+  CARD_RECONCILIATION: 'カード照合',
+}
+
+function DashboardControls({ preferences, disabled, onChange }: { preferences: DashboardPreferencesDto; disabled: boolean; onChange: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
+  return <div className="dashboard-controls" aria-label="ダッシュボード表示設定">
+    <label><span>表示</span><select aria-label="ホームの表示テンプレート" disabled={disabled} value={preferences.template} onChange={(event) => onChange({ template: event.target.value as DashboardPreferencesDto['template'] })}>{Object.entries(dashboardTemplateLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+    <label><span>テーマ</span><select aria-label="アプリのテーマ" disabled={disabled} value={preferences.theme} onChange={(event) => onChange({ theme: event.target.value as DashboardPreferencesDto['theme'] })}><option value="SYSTEM">システム</option><option value="LIGHT">ライト</option><option value="DARK">ダーク</option></select></label>
+    <label><span>密度</span><select aria-label="画面の表示密度" disabled={disabled} value={preferences.density} onChange={(event) => onChange({ density: event.target.value as DashboardPreferencesDto['density'] })}><option value="COMFORTABLE">標準</option><option value="COMPACT">コンパクト</option></select></label>
+  </div>
+}
+
+function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
   const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
   const displayTransactions = desktop ? liveTransactions.map(toTransactionViewModel) : transactions.slice(0, 4)
   const trend = desktop ? (liveDashboard?.accrualTrend ?? []).map((point) => ({ month: point.month, income: point.incomeJpy, expense: point.expenseJpy })) : undefined
   const categories = desktop ? (liveDashboard?.expenseCategories ?? []).map((item) => ({ name: item.name, amount: item.amountJpy })) : undefined
-  return <>
+  const assets = desktop ? liveDashboard?.assetsJpy ?? 0 : currentMonthMetrics.netWorth
+  const liabilities = desktop ? liveDashboard?.liabilitiesJpy ?? 0 : 0
+  const netWorth = desktop ? liveDashboard?.netWorthJpy ?? 0 : currentMonthMetrics.netWorth
+  const kpis = preferences.template === 'HOUSEHOLD_LEDGER'
+    ? [<KpiCard key="income" label="今月の収入" value={yen(income)} meta="発生ベース" icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta="カード引落は二重計上しません" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="savings" label="貯蓄見込み" value={yen(projectedSavings)} meta="収入 − 支出" icon={CircleDollarSign} accent="#eee5cf" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={TrendingUp} accent="#e4edda" />]
+    : preferences.template === 'ASSETS_LIABILITIES'
+      ? [<KpiCard key="assets" label="資産" value={yen(assets)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={WalletCards} accent="#dce9e6" />, <KpiCard key="liabilities" label="負債" value={yen(liabilities)} meta="カードを含む台帳残高" icon={CreditCard} accent="#f7e3d9" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta="資産 − 負債" icon={TrendingUp} accent="#e4edda" />, <KpiCard key="savings" label="今月の貯蓄" value={yen(projectedSavings)} meta="収入 − 支出" icon={CircleDollarSign} accent="#eee5cf" />]
+      : preferences.template === 'CARD_RECONCILIATION'
+        ? [<KpiCard key="liabilities" label="カードを含む負債" value={yen(liabilities)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={CreditCard} accent="#f7e3d9" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta="カード購入は利用日に計上" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="assets" label="支払原資を含む資産" value={yen(assets)} meta="台帳上の資産残高" icon={WalletCards} accent="#dce9e6" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta="支払い後も二重計上しません" icon={TrendingUp} accent="#e4edda" />]
+        : [<KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta={desktop ? `${liveDashboard?.netWorthAsOf ?? '月末'} 現在` : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />, <KpiCard key="income" label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="savings" label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />]
+  const panels = {
+    trend: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>収支の推移</h2><p>発生ベース・直近6か月</p></div><div className="chart-legend"><span className="income">収入</span><span className="expense">支出</span></div></div><TrendChart data={trend} /></article>,
+    spending: <div key="spending" className="dashboard-widget dashboard-widget--spending"><SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} /></div>,
+    recent: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
+    cards: <div key="cards" className="dashboard-widget dashboard-widget--cards"><ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} /></div>,
+  }
+  const panelOrder = preferences.template === 'HOUSEHOLD_LEDGER' ? [panels.spending, panels.recent, panels.trend, panels.cards] : preferences.template === 'ASSETS_LIABILITIES' ? [panels.trend, panels.spending, panels.cards, panels.recent] : preferences.template === 'CARD_RECONCILIATION' ? [panels.cards, panels.recent, panels.trend, panels.spending] : [panels.trend, panels.spending, panels.recent, panels.cards]
+  return <div className={`overview overview--${preferences.template.toLowerCase().replaceAll('_', '-')}`}>
     <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
-      <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>
+      <DashboardControls preferences={preferences} disabled={preferencesBusy} onChange={updatePreferences} />
+      {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> 資産・投資を見る</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> カード照合を開く</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>}
     </PageHeader>
-    <section className="kpi-grid">
-      <KpiCard label="純資産" value={yen(desktop ? liveDashboard?.netWorthJpy ?? 0 : currentMonthMetrics.netWorth)} meta={desktop ? `${liveDashboard?.netWorthAsOf ?? '月末'} 現在` : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />
-      <KpiCard label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />
-      <KpiCard label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />
-      <KpiCard label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />
-    </section>
-    <section className="dashboard-grid">
-      <article className="panel trend-panel">
-        <div className="panel-head"><div><h2>収支の推移</h2><p>発生ベース・直近6か月</p></div><div className="chart-legend"><span className="income">収入</span><span className="expense">支出</span></div></div>
-        <TrendChart data={trend} />
-      </article>
-      <SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} />
-      <article className="panel recent-panel">
-        <div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>
-        {displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}
-      </article>
-      <ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} />
-    </section>
+    <section className="kpi-grid">{kpis}</section>
+    <section className="dashboard-grid">{panelOrder}</section>
     <div className="data-footnote"><FileCheck2 size={15} /> 確定済み台帳から集計 ・ 未確認の候補は含みません</div>
-  </>
+  </div>
 }
 
 function TransactionDetailPanel({ detail, accounts, members, onClose, onSave, onChanged }: { detail: TransactionDetailDto; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; onClose: () => void; onSave: (input: UpdatePostedTransactionInputDto) => Promise<void>; onChanged: () => void }) {
@@ -1612,6 +1629,10 @@ function Onboarding({ onCreated }: { onCreated: (household: HouseholdDto) => voi
   return <div className="onboarding-backdrop"><section className="onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><div className="brand-mark"><Leaf size={22} /></div><p>KakeFlowへようこそ</p><h1 id="onboarding-title">家計簿をはじめましょう</h1><span>データはこの端末で暗号化して保存されます。</span><form onSubmit={(event) => void submit(event)}><label htmlFor="household-name">世帯名</label><input id="household-name" autoFocus maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="例：田中家" />{error && <small role="alert">{error}</small>}<button className="primary-btn" disabled={busy}>{busy ? '作成中…' : '安全な家計簿を作成'}</button></form></section></div>
 }
 
+function defaultDashboardPreferences(householdId = ''): DashboardPreferencesDto {
+  return { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: new Date(0).toISOString() }
+}
+
 function App() {
   const [page, setPage] = useState<PageId>('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -1635,6 +1656,10 @@ function App() {
   const [folderInboxCounts, setFolderInboxCounts] = useState<WatchedFileInboxCountsDto | null>(null)
   const [folderInboxBusy, setFolderInboxBusy] = useState(false)
   const [folderAutoScan, setFolderAutoScanState] = useState(() => globalThis.localStorage?.getItem('kakeflow.folder-auto-scan') !== 'off')
+  const [dashboardPreferences, setDashboardPreferences] = useState<DashboardPreferencesDto>(() => defaultDashboardPreferences())
+  const [dashboardPreferencesBusy, setDashboardPreferencesBusy] = useState(false)
+  const dashboardPreferencesHouseholdRef = useRef(activeHouseholdId)
+  dashboardPreferencesHouseholdRef.current = activeHouseholdId
   const folderAutoScanRef = useRef(folderAutoScan)
   const hydratedFolderItemsRef = useRef(new Set<string>())
   const folderRefreshBusyRef = useRef(false)
@@ -1758,6 +1783,36 @@ function App() {
 
   useEffect(() => {
     const householdId = activeHouseholdId
+    let active = true
+    setDashboardPreferences(defaultDashboardPreferences(householdId ?? ''))
+    if (!householdId) return () => { active = false }
+    setDashboardPreferencesBusy(true)
+    void platformClient.getDashboardPreferences(householdId).then((preferences) => {
+      if (active && preferences.householdId === householdId) setDashboardPreferences(preferences)
+    }).catch(() => {
+      if (active) setDashboardPreferences(defaultDashboardPreferences(householdId))
+    }).finally(() => {
+      if (active) setDashboardPreferencesBusy(false)
+    })
+    return () => { active = false }
+  }, [activeHouseholdId])
+
+  useEffect(() => {
+    const root = document.documentElement
+    const media = globalThis.matchMedia?.('(prefers-color-scheme: dark)')
+    const apply = () => {
+      const resolvedTheme = dashboardPreferences.theme === 'SYSTEM' ? media?.matches ? 'dark' : 'light' : dashboardPreferences.theme.toLowerCase()
+      root.dataset.theme = resolvedTheme
+      root.dataset.themePreference = dashboardPreferences.theme.toLowerCase()
+      root.dataset.density = dashboardPreferences.density.toLowerCase()
+    }
+    apply()
+    if (dashboardPreferences.theme === 'SYSTEM') media?.addEventListener?.('change', apply)
+    return () => media?.removeEventListener?.('change', apply)
+  }, [dashboardPreferences.density, dashboardPreferences.theme])
+
+  useEffect(() => {
+    const householdId = activeHouseholdId
     setAccountGroups([])
     setActiveAccountGroupId(null)
     if (!householdId || platformClient.runtime !== 'tauri') return
@@ -1878,9 +1933,24 @@ function App() {
     setActiveAttributionScope(ALL_ATTRIBUTION_SCOPE)
     setActiveHouseholdId(id)
   }
+  const updateDashboardPreferences = (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => {
+    const householdId = activeHouseholdId
+    if (!householdId || dashboardPreferencesBusy) return
+    const previous = dashboardPreferences
+    const next = { ...dashboardPreferences, ...change, householdId }
+    setDashboardPreferences(next)
+    setDashboardPreferencesBusy(true)
+    void platformClient.upsertDashboardPreferences({ householdId, template: next.template, theme: next.theme, density: next.density }).then((saved) => {
+      setDashboardPreferences((current) => current.householdId === saved.householdId ? saved : current)
+    }).catch(() => {
+      setDashboardPreferences((current) => current.householdId === previous.householdId ? previous : current)
+    }).finally(() => {
+      if (dashboardPreferencesHouseholdRef.current === householdId) setDashboardPreferencesBusy(false)
+    })
+  }
 
   const pageContent = {
-    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} />,
+    overview: <Overview setPage={setPage} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,

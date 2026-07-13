@@ -69,6 +69,7 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0027_cumulative_card_payments.sql"
     )),
     M::up(include_str!("../migrations/0028_watched_file_inbox.sql")),
+    M::up(include_str!("../migrations/0029_dashboard_preferences.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -494,6 +495,22 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 29 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM dashboard_preferences p
+             LEFT JOIN households h ON h.id=p.household_id
+             WHERE h.id IS NULL
+                OR p.dashboard_template NOT IN (
+                    'FINANCIAL_OVERVIEW','HOUSEHOLD_LEDGER',
+                    'ASSETS_LIABILITIES','CARD_RECONCILIATION')
+                OR p.theme NOT IN ('SYSTEM','LIGHT','DARK')
+                OR p.density NOT IN ('COMFORTABLE','COMPACT')
+                OR p.created_at NOT GLOB '????-??-??T??:??:??*Z'
+                OR p.updated_at NOT GLOB '????-??-??T??:??:??*Z'
+             LIMIT 1",
+        )?;
+    }
     if schema_version >= 2 {
         reject_if_exists(
             connection,
@@ -870,6 +887,39 @@ mod tests {
             .with_connection(|connection| {
                 assert_eq!(schema_version(connection)?, MIGRATIONS.len() as i64);
                 assert!(integrity_check(connection)?);
+                Ok(())
+            })
+            .expect("database should remain readable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_dashboard_preferences() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES ('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO dashboard_preferences(
+                       household_id,dashboard_template,theme,density,created_at,updated_at)
+                     VALUES('family','UNKNOWN','SYSTEM','COMFORTABLE',
+                       '2026-07-13T00:00:00.000Z','2026-07-13T00:00:00.000Z');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 29).is_err());
+                connection.execute("DELETE FROM dashboard_preferences", [])?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO dashboard_preferences(
+                       household_id,dashboard_template,theme,density,created_at,updated_at)
+                     VALUES('family','FINANCIAL_OVERVIEW','SYSTEM','COMFORTABLE',
+                       'not-a-time','2026-07-13T00:00:00.000Z');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 29).is_err());
                 Ok(())
             })
             .expect("database should remain readable");

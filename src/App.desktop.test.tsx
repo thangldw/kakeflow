@@ -9,6 +9,8 @@ const desktop = vi.hoisted(() => ({
   archiveHouseholdMember: vi.fn(),
   listAccounts: vi.fn(),
   queryDashboard: vi.fn(),
+  getDashboardPreferences: vi.fn(),
+  upsertDashboardPreferences: vi.fn(),
   queryTransactions: vi.fn(),
   createManualTransaction: vi.fn(),
   getTransactionDetail: vi.fn(),
@@ -90,6 +92,8 @@ vi.mock('./platform', async () => {
       archiveAccount: desktop.archiveAccount,
       updateAccountOwnership: desktop.updateAccountOwnership,
       queryDashboard: desktop.queryDashboard,
+      getDashboardPreferences: desktop.getDashboardPreferences,
+      upsertDashboardPreferences: desktop.upsertDashboardPreferences,
       listBudgets: desktop.listBudgets,
       upsertBudget: desktop.upsertBudget,
       listSavingsGoals: desktop.listSavingsGoals,
@@ -151,6 +155,9 @@ import App from './App'
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     localStorage.clear()
+    delete document.documentElement.dataset.theme
+    delete document.documentElement.dataset.themePreference
+    delete document.documentElement.dataset.density
     accountGroupState.groups = []
     desktop.listHouseholds.mockReset().mockResolvedValue([{ id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }])
     desktop.listHouseholdMembers.mockReset().mockResolvedValue([{ id: 'taro', householdId: 'family', displayName: '太郎', relationshipLabel: '父', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-01T00:00:00Z' }])
@@ -163,6 +170,8 @@ describe('KakeFlow desktop read models', () => {
       { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
     ])
+    desktop.getDashboardPreferences.mockReset().mockImplementation(async (householdId: string) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' }))
+    desktop.upsertDashboardPreferences.mockReset().mockImplementation(async (input) => ({ ...input, updatedAt: '2026-07-13T00:01:00Z' }))
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
@@ -286,6 +295,46 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getAllByText('表示: 共有').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
+  })
+
+  it('loads and persists household dashboard appearance and focus presets', async () => {
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'HOUSEHOLD_LEDGER', theme: 'DARK', density: 'COMPACT', updatedAt: '2026-07-13T00:00:00Z' })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('HOUSEHOLD_LEDGER'))
+    expect(screen.getByLabelText('アプリのテーマ')).toHaveValue('DARK')
+    expect(screen.getByLabelText('画面の表示密度')).toHaveValue('COMPACT')
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
+    expect(document.documentElement).toHaveAttribute('data-density', 'compact')
+
+    fireEvent.change(screen.getByLabelText('ホームの表示テンプレート'), { target: { value: 'ASSETS_LIABILITIES' } })
+    await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledWith({ householdId: 'family', template: 'ASSETS_LIABILITIES', theme: 'DARK', density: 'COMPACT' }))
+    expect(await screen.findByRole('button', { name: /資産・投資を見る/ })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('アプリのテーマ'), { target: { value: 'LIGHT' } })
+    await waitFor(() => expect(document.documentElement).toHaveAttribute('data-theme', 'light'))
+    fireEvent.change(screen.getByLabelText('画面の表示密度'), { target: { value: 'COMFORTABLE' } })
+    await waitFor(() => expect(document.documentElement).toHaveAttribute('data-density', 'comfortable'))
+  })
+
+  it('restores an independent dashboard preset when switching households', async () => {
+    desktop.listHouseholds.mockResolvedValue([
+      { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+      { id: 'parents', name: '両親家', baseCurrency: 'JPY', createdAt: '2026-07-02T00:00:00Z' },
+    ])
+    desktop.getDashboardPreferences.mockImplementation(async (householdId: string) => householdId === 'parents'
+      ? { householdId, template: 'CARD_RECONCILIATION', theme: 'DARK', density: 'COMPACT', updatedAt: '2026-07-13T00:00:00Z' }
+      : { householdId, template: 'FINANCIAL_OVERVIEW', theme: 'LIGHT', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' })
+    render(<App />)
+    expect(await screen.findByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW')
+
+    fireEvent.change(screen.getByLabelText('世帯を切り替える'), { target: { value: 'parents' } })
+
+    await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CARD_RECONCILIATION'))
+    expect(screen.getByRole('button', { name: /カード照合を開く/ })).toBeInTheDocument()
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
+    expect(document.documentElement).toHaveAttribute('data-density', 'compact')
+    expect(desktop.getDashboardPreferences).toHaveBeenCalledWith('parents')
   })
 
   it('bulk adds transaction labels and tags without category edits', async () => {

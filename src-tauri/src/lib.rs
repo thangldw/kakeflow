@@ -3,6 +3,7 @@ pub mod aggregate_asset_history;
 pub mod backup;
 pub mod brokerage;
 pub mod card_settlement_mapping;
+pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_vault;
 pub mod financial_calendar;
@@ -43,6 +44,7 @@ use brokerage::{
     BrokerageHistoryDto, BrokerageHistoryRequest, BrokerageImportSummaryDto,
     ImportBrokerageEventsInput,
 };
+use dashboard_preferences::{DashboardPreferencesDto, UpsertDashboardPreferencesInput};
 use document_vault::DocumentVault;
 use import_workflow::{
     CardMatchConfirmation, CommitSummary, ImportPreview, ImportSummary, PostingDecision,
@@ -671,6 +673,18 @@ fn repository_result<T>(
         .map_err(|error| error.public_message().to_owned())
 }
 
+fn dashboard_preferences_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(
+        &rusqlite::Connection,
+    ) -> Result<T, dashboard_preferences::DashboardPreferencesError>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| Ok(operation(connection)))
+        .map_err(|_| "Dashboard preference database access failed".to_owned())?
+        .map_err(|error| error.public_message().to_owned())
+}
+
 fn portfolio_result<T>(
     state: &AppState,
     operation: impl FnOnce(&rusqlite::Connection) -> Result<T, portfolio::PortfolioError>,
@@ -1077,6 +1091,26 @@ fn dashboard_query(
             request.account_group_id.as_deref(),
             &request.attribution_scope,
         )
+    })
+}
+
+#[tauri::command]
+fn dashboard_preferences_get(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<DashboardPreferencesDto, String> {
+    dashboard_preferences_result(&state, |connection| {
+        dashboard_preferences::get(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn dashboard_preferences_upsert(
+    state: tauri::State<'_, AppState>,
+    input: UpsertDashboardPreferencesInput,
+) -> Result<DashboardPreferencesDto, String> {
+    dashboard_preferences_result(&state, |connection| {
+        dashboard_preferences::upsert(connection, &input)
     })
 }
 
@@ -2325,6 +2359,8 @@ pub fn run() {
             fixed_cost_review::fixed_cost_review_query,
             forecast_action::forecast_action_query,
             dashboard_query,
+            dashboard_preferences_get,
+            dashboard_preferences_upsert,
             financial_intelligence_query,
             budgets_query,
             budget_upsert,
