@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.44.0 — 2026-07-13
+
+- Add a strict headerless `smbc-vpass-statement-v1` adapter for the official eleven-position Vpass CSV field order, gated by an SMBC/三井住友 product marker and isolated from Amazon Mastercard.
+- Use the current billed amount rather than original usage amount, preserve explicit FX evidence and physical source rows, and treat negative billed rows as refunds.
+- Require an explicit statement total and block total mismatches, ambiguous refund signs, invalid detail fields, and installment/revolving/deferred-payment rows that the current ledger cannot represent safely.
+- Reuse one centralized adapter-to-account contract for validation and selector rendering; Vpass requires an explicit active `LIABILITY / CREDIT_CARD` account and never infers it from issuer, filename, or account name.
+
 ## 0.43.0 — 2026-07-13
 
 - Add a visible `このファイルを読み取る` recovery action for unsupported CSV/TSV files even when the household has no saved parser profile.

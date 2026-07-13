@@ -923,6 +923,10 @@ describe('KakeFlow desktop read models', () => {
       name: 'JCB', filename: 'myjcb.csv', accountLabel: 'myjcb.csvの取込先カード口座', accountId: 'family-card', missing: 'JCB明細の取込先カード口座を選択してください。', adapterId: 'jcb-myjcb-statement-v1',
       csv: 'JCBカードご利用代金明細\nご利用日,ご利用先など,お支払い金額(円),支払区分\n2026/06/12,架空ストア,1200,ショッピング\n,お支払い合計,1200,',
     },
+    {
+      name: 'SMBC Vpass', filename: 'vpass.csv', accountLabel: 'vpass.csvの取込先カード口座', accountId: 'family-card', missing: '三井住友カード（Vpass）明細の取込先カード口座を選択してください。', adapterId: 'smbc-vpass-statement-v1',
+      csv: 'VPASSガイド 様,****1234,三井住友カード NL\n2026/06/12,架空ストア,1200,1,1,1200,,,,,\n,,,,,1200,,,,,',
+    },
   ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv }) => {
     const { container } = render(<App />)
     await screen.findByText('生協')
@@ -946,12 +950,44 @@ describe('KakeFlow desktop read models', () => {
     }), expect.any(Uint8Array)))
   })
 
+  it('disables Vpass staging and explains the Settings prerequisite when no card account exists', async () => {
+    desktop.listAccounts.mockResolvedValue([
+      { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+    ])
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const csv = '架空 太郎 様,4980-****-****-1234,三井住友カード(NL)\n2026/06/12,架空ストア,1200,1,1,1200,,,,,\n,,,,,1200,,,,,'
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'vpass.csv', { type: 'text/csv' })] } })
+
+    expect(await screen.findByText('設定ページで先にカード口座を追加してください。追加するまで取込は開始できません。')).toBeInTheDocument()
+    expect(screen.getByLabelText('vpass.csvの取込先カード口座')).toBeDisabled()
+    const start = screen.getByRole('button', { name: '取込開始' })
+    expect(start).toBeDisabled()
+    expect(start).toHaveAttribute('aria-describedby', expect.stringMatching(/^standard-account-empty-/))
+    expect(desktop.startImport).not.toHaveBeenCalled()
+  })
+
   it('shows a blocking JCB total mismatch before staging', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
     const csv = 'JCBカードご利用代金明細\nご利用日,ご利用先など,お支払い金額(円)\n2026/06/12,架空ストア,1200\n,お支払い合計,999'
     fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'myjcb.csv', { type: 'text/csv' })] } })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Detail sum (1200) does not match statement total (999).')
+    expect(screen.getByText('確認が必要')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '取込開始' })).not.toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+  })
+
+  it('shows a blocking Vpass total mismatch before staging', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const csv = 'VPASSガイド 様,****1234,三井住友カード NL\n2026/06/12,架空ストア,1200,1,1,1200,,,,,\n,,,,,999,,,,,'
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'vpass.csv', { type: 'text/csv' })] } })
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Detail sum (1200) does not match statement total (999).')
     expect(screen.getByText('確認が必要')).toBeInTheDocument()
@@ -1010,8 +1046,8 @@ describe('KakeFlow desktop read models', () => {
 
     fireEvent.change(await screen.findByLabelText('bank-a.csvの取込先銀行口座'), { target: { value: 'bank-a' } })
     fireEvent.change(screen.getByLabelText('bank-b.csvの取込先銀行口座'), { target: { value: 'bank-b' } })
-    const starts = screen.getAllByRole('button', { name: '取込開始' })
-    fireEvent.click(starts[0]); fireEvent.click(starts[1])
+    fireEvent.click(screen.getByRole('button', { name: 'bank-a.csvの取込開始' }))
+    fireEvent.click(screen.getByRole('button', { name: 'bank-b.csvの取込開始' }))
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledTimes(2))
     const mappedAccounts = desktop.startImport.mock.calls.map(([request]) => request.candidates[0].accountId)
     expect(mappedAccounts).toEqual(expect.arrayContaining(['bank-a', 'bank-b']))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { jcbMyJcbAdapter } from '../../ingestion'
+import { jcbMyJcbAdapter, smbcVpassAdapter } from '../../ingestion'
 import type { ParsedImport } from '../../ingestion/types'
 import { mapParsedImportToStartImport, type HashFn, type IdFactory, type ImportMapperInput } from './importMapper'
 
@@ -136,6 +136,29 @@ describe('import mapper', () => {
     expect(result.request.candidates[1]).toMatchObject({ direction: 'IN', amountJpy: 200, reviewStatus: 'PENDING', merchantRaw: '架空返金', descriptionRaw: 'REFUND / ショッピング' })
     expect(result.request.cardStatements[0]).toMatchObject({
       cardAccountId: 'account-1', issuer: 'JCB', statementAmountJpy: 1000,
+      periodStart: '2026-06-01', periodEnd: '2026-06-03',
+      lines: [{ statementLineNumber: 1, billedAmountJpy: 1200 }, { statementLineNumber: 2, billedAmountJpy: -200 }],
+    })
+  })
+
+  it('maps a Vpass statement using billed amounts, refunds, and the selected card liability', async () => {
+    const text = [
+      '架空 太郎 様,4980-****-****-1234,三井住友カード(NL)',
+      '2026/06/01,架空ストア,1200,一括,,1200,,,,,日用品',
+      '2026/06/03,架空ストア 返品,-200,1,1,-200,,,,,返品',
+      'お支払い合計,,,,,1000,,,,,',
+    ].join('\n')
+    const parsed = smbcVpassAdapter.parse({ text, filename: 'vpass.csv' }) as ParsedImport<unknown>
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+
+    expect(result.issues).toEqual([])
+    expect(result.request.records.map((record) => record.rowNumber)).toEqual([2, 3])
+    expect(result.request.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountId: 'account-1', direction: 'OUT', amountJpy: 1200, reviewStatus: 'PENDING', merchantRaw: '架空ストア' }),
+      expect.objectContaining({ accountId: 'account-1', direction: 'IN', amountJpy: 200, reviewStatus: 'PENDING', merchantRaw: '架空ストア 返品', descriptionRaw: 'REFUND / 1 / 1' }),
+    ]))
+    expect(result.request.cardStatements[0]).toMatchObject({
+      cardAccountId: 'account-1', issuer: 'SMBC_CARD', statementAmountJpy: 1000,
       periodStart: '2026-06-01', periodEnd: '2026-06-03',
       lines: [{ statementLineNumber: 1, billedAmountJpy: 1200 }, { statementLineNumber: 2, billedAmountJpy: -200 }],
     })
