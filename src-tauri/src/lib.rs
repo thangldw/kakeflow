@@ -71,8 +71,9 @@ use portfolio::{
 };
 use read_model::{
     AccountDto, AccountingBasis, AppliedClassificationDto, ApplyClassificationRuleInput,
-    ArchiveAccountInput, CardSettlementDto, ClassificationPreviewDto, ClassificationPreviewInput,
-    ClassificationRuleDto, CreateAccountInput, CreateClassificationRuleInput, CreateHouseholdInput,
+    ArchiveAccountInput, BulkUpdateTransactionMetadataDto, BulkUpdateTransactionMetadataInput,
+    CardSettlementDto, ClassificationPreviewDto, ClassificationPreviewInput, ClassificationRuleDto,
+    CreateAccountInput, CreateClassificationRuleInput, CreateHouseholdInput,
     CreateHouseholdMemberInput, CreateManualTransactionInput, CreateSavingsGoalInput,
     DashboardMonthlyTotalsDto, HouseholdDto, HouseholdMemberDto, ImportRunCountsDto,
     MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto, TransactionDetailDto,
@@ -908,6 +909,16 @@ fn transactions_query(
 ) -> Result<TransactionPageDto, String> {
     repository_result(&state, |connection| {
         read_model::list_transactions(connection, &request)
+    })
+}
+
+#[tauri::command]
+fn transaction_metadata_bulk_update(
+    state: tauri::State<'_, AppState>,
+    input: BulkUpdateTransactionMetadataInput,
+) -> Result<BulkUpdateTransactionMetadataDto, String> {
+    repository_result(&state, |connection| {
+        read_model::bulk_update_transaction_metadata(connection, &input)
     })
 }
 
@@ -2130,6 +2141,7 @@ pub fn run() {
             account_rename,
             account_archive,
             transactions_query,
+            transaction_metadata_bulk_update,
             transaction_manual_create,
             transaction_detail_get,
             transaction_update,

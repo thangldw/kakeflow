@@ -844,6 +844,53 @@ impl CalculationTargetFilter {
     }
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TransactionLabel {
+    Subscription,
+    Recurring,
+    TaxDeductible,
+    Reimbursable,
+    Unusual,
+    SharedExpense,
+    PrivateExpense,
+}
+
+impl TransactionLabel {
+    fn as_sql_value(self) -> &'static str {
+        match self {
+            Self::Subscription => "SUBSCRIPTION",
+            Self::Recurring => "RECURRING",
+            Self::TaxDeductible => "TAX_DEDUCTIBLE",
+            Self::Reimbursable => "REIMBURSABLE",
+            Self::Unusual => "UNUSUAL",
+            Self::SharedExpense => "SHARED_EXPENSE",
+            Self::PrivateExpense => "PRIVATE_EXPENSE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkUpdateTransactionMetadataInput {
+    pub household_id: String,
+    pub transaction_ids: Vec<String>,
+    #[serde(default)]
+    pub add_labels: Vec<TransactionLabel>,
+    #[serde(default)]
+    pub remove_labels: Vec<TransactionLabel>,
+    #[serde(default)]
+    pub add_tags: Vec<String>,
+    #[serde(default)]
+    pub remove_tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkUpdateTransactionMetadataDto {
+    pub updated_count: u32,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransactionPageRequest {
@@ -856,6 +903,10 @@ pub struct TransactionPageRequest {
     pub to_date: Option<String>,
     pub search: Option<String>,
     pub calculation_target_filter: Option<CalculationTargetFilter>,
+    #[serde(default)]
+    pub label: Option<TransactionLabel>,
+    #[serde(default)]
+    pub tag: Option<String>,
     pub page: u32,
     pub page_size: u32,
 }
@@ -884,6 +935,8 @@ pub struct TransactionRowDto {
     pub audience_visibility: String,
     pub audience_member_id: Option<String>,
     pub audience_member_name: Option<String>,
+    pub labels: Vec<String>,
+    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -934,6 +987,8 @@ pub fn list_transactions(
         .calculation_target_filter
         .unwrap_or(CalculationTargetFilter::All)
         .as_sql_value();
+    let label = request.label.map(TransactionLabel::as_sql_value);
+    let tag = normalize_optional_metadata_tag(request.tag.as_deref())?;
     let total_items: u64 = connection
         .query_row(
             "SELECT count(*)
@@ -968,7 +1023,13 @@ pub fn list_transactions(
                         AND t.attributed_member_id = ?8))
                AND (?9 = 'ALL'
                     OR (?9 = 'INCLUDED' AND t.calculation_target = 1)
-                    OR (?9 = 'EXCLUDED' AND t.calculation_target = 0))",
+                    OR (?9 = 'EXCLUDED' AND t.calculation_target = 0))
+               AND (?10 IS NULL OR EXISTS (
+                    SELECT 1 FROM transaction_labels filter_label
+                    WHERE filter_label.transaction_id = t.id AND filter_label.label = ?10))
+               AND (?11 IS NULL OR EXISTS (
+                    SELECT 1 FROM transaction_tags filter_tag
+                    WHERE filter_tag.transaction_id = t.id AND filter_tag.tag = ?11))",
             params![
                 request.household_id,
                 request.from_date,
@@ -978,7 +1039,9 @@ pub fn list_transactions(
                 request.account_group_id,
                 request.attribution_scope.sql_kind(),
                 request.attribution_scope.member_id(),
-                calculation_target_filter
+                calculation_target_filter,
+                label,
+                tag
             ],
             |row| row.get(0),
         )
@@ -1047,8 +1110,14 @@ pub fn list_transactions(
                AND (?9 = 'ALL'
                     OR (?9 = 'INCLUDED' AND t.calculation_target = 1)
                     OR (?9 = 'EXCLUDED' AND t.calculation_target = 0))
+               AND (?10 IS NULL OR EXISTS (
+                    SELECT 1 FROM transaction_labels filter_label
+                    WHERE filter_label.transaction_id = t.id AND filter_label.label = ?10))
+               AND (?11 IS NULL OR EXISTS (
+                    SELECT 1 FROM transaction_tags filter_tag
+                    WHERE filter_tag.transaction_id = t.id AND filter_tag.tag = ?11))
              ORDER BY t.occurred_on DESC, t.created_at DESC, t.id DESC
-             LIMIT ?10 OFFSET ?11",
+             LIMIT ?12 OFFSET ?13",
         )
         .map_err(map_database_error)?;
     let rows = statement
@@ -1063,6 +1132,8 @@ pub fn list_transactions(
                 request.attribution_scope.sql_kind(),
                 request.attribution_scope.member_id(),
                 calculation_target_filter,
+                label,
+                tag,
                 i64::from(request.page_size),
                 offset as i64
             ],
@@ -1089,13 +1160,20 @@ pub fn list_transactions(
                     audience_visibility: row.get(18)?,
                     audience_member_id: row.get(19)?,
                     audience_member_name: row.get(20)?,
+                    labels: Vec::new(),
+                    tags: Vec::new(),
                 })
             },
         )
         .map_err(map_database_error)?;
-    let items = rows
+    let mut items = rows
         .collect::<Result<Vec<_>, _>>()
         .map_err(map_database_error)?;
+    for item in &mut items {
+        item.labels =
+            transaction_metadata_values(connection, "transaction_labels", "label", &item.id)?;
+        item.tags = transaction_metadata_values(connection, "transaction_tags", "tag", &item.id)?;
+    }
     let total_pages = if total_items == 0 {
         0
     } else {
@@ -1108,6 +1186,207 @@ pub fn list_transactions(
         total_items,
         total_pages,
     })
+}
+
+const MAX_BULK_METADATA_TRANSACTIONS: usize = 200;
+const MAX_TRANSACTION_TAGS: usize = 64;
+
+pub fn bulk_update_transaction_metadata(
+    connection: &Connection,
+    input: &BulkUpdateTransactionMetadataInput,
+) -> Result<BulkUpdateTransactionMetadataDto, RepositoryError> {
+    validate_id(&input.household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    if input.transaction_ids.is_empty()
+        || input.transaction_ids.len() > MAX_BULK_METADATA_TRANSACTIONS
+    {
+        return Err(RepositoryError::InvalidInput(
+            "Select between 1 and 200 transactions",
+        ));
+    }
+    let mut transaction_ids = HashSet::with_capacity(input.transaction_ids.len());
+    for transaction_id in &input.transaction_ids {
+        validate_id(transaction_id, MAX_LOOKUP_ID_LEN)?;
+        if !transaction_ids.insert(transaction_id.as_str()) {
+            return Err(RepositoryError::InvalidInput(
+                "Transaction identifiers must be unique",
+            ));
+        }
+    }
+
+    let add_labels = normalize_metadata_labels(&input.add_labels)?;
+    let remove_labels = normalize_metadata_labels(&input.remove_labels)?;
+    if add_labels.iter().any(|label| remove_labels.contains(label)) {
+        return Err(RepositoryError::InvalidInput(
+            "A label cannot be added and removed together",
+        ));
+    }
+    let add_tags = normalize_metadata_tags(&input.add_tags)?;
+    let remove_tags = normalize_metadata_tags(&input.remove_tags)?;
+    if add_tags.iter().any(|tag| remove_tags.contains(tag)) {
+        return Err(RepositoryError::InvalidInput(
+            "A tag cannot be added and removed together",
+        ));
+    }
+    if add_labels.is_empty()
+        && remove_labels.is_empty()
+        && add_tags.is_empty()
+        && remove_tags.is_empty()
+    {
+        return Err(RepositoryError::InvalidInput(
+            "At least one metadata change is required",
+        ));
+    }
+
+    ensure_household_exists(connection, &input.household_id)?;
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    let mut updated_count = 0_u32;
+    for transaction_id in &input.transaction_ids {
+        let exists = transaction
+            .query_row(
+                "SELECT 1 FROM transactions
+                 WHERE id = ?1 AND household_id = ?2 AND status = 'POSTED'",
+                params![transaction_id, input.household_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(map_database_error)?;
+        if exists.is_none() {
+            return Err(RepositoryError::NotFound);
+        }
+
+        let mut changed = false;
+        for label in &add_labels {
+            changed |= transaction
+                .execute(
+                    "INSERT OR IGNORE INTO transaction_labels (transaction_id, label)
+                     VALUES (?1, ?2)",
+                    params![transaction_id, label],
+                )
+                .map_err(map_database_error)?
+                > 0;
+        }
+        for label in &remove_labels {
+            changed |= transaction
+                .execute(
+                    "DELETE FROM transaction_labels WHERE transaction_id = ?1 AND label = ?2",
+                    params![transaction_id, label],
+                )
+                .map_err(map_database_error)?
+                > 0;
+        }
+        for tag in &add_tags {
+            changed |= transaction
+                .execute(
+                    "INSERT OR IGNORE INTO transaction_tags (transaction_id, tag)
+                     VALUES (?1, ?2)",
+                    params![transaction_id, tag],
+                )
+                .map_err(map_database_error)?
+                > 0;
+        }
+        for tag in &remove_tags {
+            changed |= transaction
+                .execute(
+                    "DELETE FROM transaction_tags WHERE transaction_id = ?1 AND tag = ?2",
+                    params![transaction_id, tag],
+                )
+                .map_err(map_database_error)?
+                > 0;
+        }
+        let tag_count: u64 = transaction
+            .query_row(
+                "SELECT count(*) FROM transaction_tags WHERE transaction_id = ?1",
+                [transaction_id],
+                |row| row.get(0),
+            )
+            .map_err(map_database_error)?;
+        if tag_count > MAX_TRANSACTION_TAGS as u64 {
+            return Err(RepositoryError::InvalidInput(
+                "A transaction can have at most 64 tags",
+            ));
+        }
+        if changed {
+            transaction
+                .execute(
+                    "UPDATE transactions
+                     SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                     WHERE id = ?1 AND household_id = ?2",
+                    params![transaction_id, input.household_id],
+                )
+                .map_err(map_database_error)?;
+            updated_count += 1;
+        }
+    }
+    transaction.commit().map_err(map_database_error)?;
+    Ok(BulkUpdateTransactionMetadataDto { updated_count })
+}
+
+fn normalize_metadata_labels(
+    labels: &[TransactionLabel],
+) -> Result<Vec<&'static str>, RepositoryError> {
+    if labels.len() > 7 {
+        return Err(RepositoryError::InvalidInput("Too many transaction labels"));
+    }
+    let mut values = labels
+        .iter()
+        .copied()
+        .map(TransactionLabel::as_sql_value)
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    Ok(values)
+}
+
+fn normalize_metadata_tags(tags: &[String]) -> Result<Vec<String>, RepositoryError> {
+    if tags.len() > MAX_TRANSACTION_TAGS {
+        return Err(RepositoryError::InvalidInput("Too many transaction tags"));
+    }
+    let mut values = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() || tag.chars().count() > MAX_NAME_LEN || tag.chars().any(char::is_control)
+        {
+            return Err(RepositoryError::InvalidInput("Invalid transaction tag"));
+        }
+        if !values.iter().any(|value| value == tag) {
+            values.push(tag.to_owned());
+        }
+    }
+    values.sort();
+    Ok(values)
+}
+
+fn normalize_optional_metadata_tag(value: Option<&str>) -> Result<Option<String>, RepositoryError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    normalize_metadata_tags(&[value.to_owned()]).map(|mut values| values.pop())
+}
+
+fn transaction_metadata_values(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    transaction_id: &str,
+) -> Result<Vec<String>, RepositoryError> {
+    let sql = match (table, column) {
+        ("transaction_labels", "label") => {
+            "SELECT label FROM transaction_labels WHERE transaction_id = ?1 ORDER BY label"
+        }
+        ("transaction_tags", "tag") => {
+            "SELECT tag FROM transaction_tags WHERE transaction_id = ?1 ORDER BY tag"
+        }
+        _ => return Err(RepositoryError::Unavailable),
+    };
+    let mut statement = connection.prepare(sql).map_err(map_database_error)?;
+    let values = statement
+        .query_map([transaction_id], |row| row.get(0))
+        .map_err(map_database_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_database_error)?;
+    Ok(values)
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -1259,6 +1538,8 @@ pub struct TransactionDetailDto {
     pub audience_member_name: Option<String>,
     pub entries: Vec<TransactionJournalEntryDto>,
     pub source_evidence: Vec<TransactionSourceEvidenceDto>,
+    pub labels: Vec<String>,
+    pub tags: Vec<String>,
 }
 
 pub fn get_transaction_detail(
@@ -1304,12 +1585,19 @@ pub fn get_transaction_detail(
                     audience_member_name: row.get(17)?,
                     entries: Vec::new(),
                     source_evidence: Vec::new(),
+                    labels: Vec::new(),
+                    tags: Vec::new(),
                 })
             },
         )
         .optional()
         .map_err(map_database_error)?
         .ok_or(RepositoryError::NotFound)?;
+
+    detail.labels =
+        transaction_metadata_values(connection, "transaction_labels", "label", transaction_id)?;
+    detail.tags =
+        transaction_metadata_values(connection, "transaction_tags", "tag", transaction_id)?;
 
     let mut entries = connection
         .prepare(
@@ -1523,6 +1811,8 @@ pub fn create_manual_transaction(
             to_date: Some(input.occurred_on.clone()),
             search: Some(input.id.clone()),
             calculation_target_filter: None,
+            label: None,
+            tag: None,
             page: 1,
             page_size: 1,
         },
@@ -3976,6 +4266,8 @@ mod tests {
                 to_date: None,
                 search: None,
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 20,
             },
@@ -3994,6 +4286,8 @@ mod tests {
                     to_date: None,
                     search: None,
                     calculation_target_filter: None,
+                    label: None,
+                    tag: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -4080,6 +4374,8 @@ mod tests {
                 to_date: None,
                 search: None,
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4137,6 +4433,8 @@ mod tests {
                 to_date: None,
                 search: None,
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 2,
             },
@@ -4155,6 +4453,8 @@ mod tests {
                     to_date: None,
                     search: None,
                     calculation_target_filter: None,
+                    label: None,
+                    tag: None,
                     page: 1,
                     page_size: 2,
                 }
@@ -4177,6 +4477,8 @@ mod tests {
                 to_date: None,
                 search: Some("Groceries".into()),
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4205,6 +4507,8 @@ mod tests {
                     to_date: None,
                     search: None,
                     calculation_target_filter: None,
+                    label: None,
+                    tag: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -4268,6 +4572,8 @@ mod tests {
                 to_date: None,
                 search: None,
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4287,6 +4593,8 @@ mod tests {
                     to_date: None,
                     search: None,
                     calculation_target_filter: None,
+                    label: None,
+                    tag: None,
                     page: 1,
                     page_size: 20,
                 }
@@ -4305,6 +4613,8 @@ mod tests {
                 to_date: None,
                 search: None,
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 20,
             },
@@ -4344,6 +4654,8 @@ mod tests {
                         to_date: None,
                         search: None,
                         calculation_target_filter: None,
+                        label: None,
+                        tag: None,
                         page: 1,
                         page_size: 20,
                     }
@@ -5179,6 +5491,8 @@ mod tests {
                 to_date: None,
                 search: None,
                 calculation_target_filter: None,
+                label: None,
+                tag: None,
                 page: 1,
                 page_size: 101,
             },
@@ -5309,6 +5623,127 @@ mod tests {
     }
 
     #[test]
+    fn transaction_metadata_bulk_update_is_atomic_idempotent_and_filterable() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        for id in ["first", "second"] {
+            create_manual_transaction(&connection, &manual_expense(id, "family", 1_000)).unwrap();
+        }
+        let journal_before: i64 = connection
+            .query_row("SELECT count(*) FROM journal_entries", [], |row| row.get(0))
+            .unwrap();
+        let input = BulkUpdateTransactionMetadataInput {
+            household_id: "family".into(),
+            transaction_ids: vec!["first".into(), "second".into()],
+            add_labels: vec![TransactionLabel::Subscription, TransactionLabel::Recurring],
+            remove_labels: vec![],
+            add_tags: vec![" summer-2026 ".into(), "children".into()],
+            remove_tags: vec![],
+        };
+        assert_eq!(
+            bulk_update_transaction_metadata(&connection, &input)
+                .unwrap()
+                .updated_count,
+            2
+        );
+        assert_eq!(
+            bulk_update_transaction_metadata(&connection, &input)
+                .unwrap()
+                .updated_count,
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM journal_entries", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            journal_before
+        );
+
+        let detail = get_transaction_detail(&connection, "family", "first").unwrap();
+        assert_eq!(detail.labels, vec!["RECURRING", "SUBSCRIPTION"]);
+        assert_eq!(detail.tags, vec!["children", "summer-2026"]);
+        let page = list_transactions(
+            &connection,
+            &TransactionPageRequest {
+                household_id: "family".into(),
+                account_group_id: None,
+                attribution_scope: AttributionScope::All,
+                accounting_basis: AccountingBasis::Accrual,
+                from_date: None,
+                to_date: None,
+                search: None,
+                calculation_target_filter: None,
+                label: Some(TransactionLabel::Subscription),
+                tag: Some("summer-2026".into()),
+                page: 1,
+                page_size: 20,
+            },
+        )
+        .unwrap();
+        assert_eq!(page.total_items, 2);
+        assert!(page.items.iter().all(|row| {
+            row.labels == ["RECURRING", "SUBSCRIPTION"] && row.tags == ["children", "summer-2026"]
+        }));
+    }
+
+    #[test]
+    fn transaction_metadata_rejects_cross_household_batch_without_partial_changes() {
+        let connection = database();
+        for id in ["family", "other"] {
+            create_household(
+                &connection,
+                &CreateHouseholdInput {
+                    id: id.into(),
+                    name: id.into(),
+                },
+            )
+            .unwrap();
+        }
+        create_manual_transaction(&connection, &manual_expense("family-tx", "family", 100))
+            .unwrap();
+        create_manual_transaction(&connection, &manual_expense("other-tx", "other", 100)).unwrap();
+        let result = bulk_update_transaction_metadata(
+            &connection,
+            &BulkUpdateTransactionMetadataInput {
+                household_id: "family".into(),
+                transaction_ids: vec!["family-tx".into(), "other-tx".into()],
+                add_labels: vec![TransactionLabel::TaxDeductible],
+                remove_labels: vec![],
+                add_tags: vec!["tax-2026".into()],
+                remove_tags: vec![],
+            },
+        );
+        assert!(matches!(result, Err(RepositoryError::NotFound)));
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM transaction_labels", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        let invalid = BulkUpdateTransactionMetadataInput {
+            household_id: "family".into(),
+            transaction_ids: vec!["family-tx".into()],
+            add_labels: vec![],
+            remove_labels: vec![],
+            add_tags: vec!["bad\ntag".into()],
+            remove_tags: vec![],
+        };
+        assert!(matches!(
+            bulk_update_transaction_metadata(&connection, &invalid),
+            Err(RepositoryError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
     fn calculation_target_filters_household_analytics_but_preserves_ledger_and_balances() {
         let connection = database();
         create_household(
@@ -5368,6 +5803,8 @@ mod tests {
             to_date: None,
             search: None,
             calculation_target_filter: Some(filter),
+            label: None,
+            tag: None,
             page: 1,
             page_size: 20,
         };

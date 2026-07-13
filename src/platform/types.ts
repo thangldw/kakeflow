@@ -239,6 +239,8 @@ export interface TransactionPageRequestDto {
   readonly toDate?: string | null
   readonly search?: string | null
   readonly calculationTargetFilter?: 'ALL' | 'INCLUDED' | 'EXCLUDED'
+  readonly label?: TransactionLabelDto | null
+  readonly tag?: string | null
   readonly page: number
   readonly pageSize: number
 }
@@ -265,7 +267,20 @@ export interface TransactionRowDto {
   readonly audienceVisibility: AudienceVisibilityDto
   readonly audienceMemberId: string | null
   readonly audienceMemberName: string | null
+  readonly labels: readonly TransactionLabelDto[]
+  readonly tags: readonly string[]
 }
+
+export type TransactionLabelDto = 'SUBSCRIPTION' | 'RECURRING' | 'TAX_DEDUCTIBLE' | 'REIMBURSABLE' | 'UNUSUAL' | 'SHARED_EXPENSE' | 'PRIVATE_EXPENSE'
+export interface BulkUpdateTransactionMetadataInputDto {
+  readonly householdId: string
+  readonly transactionIds: readonly string[]
+  readonly addLabels: readonly TransactionLabelDto[]
+  readonly removeLabels: readonly TransactionLabelDto[]
+  readonly addTags: readonly string[]
+  readonly removeTags: readonly string[]
+}
+export interface BulkUpdateTransactionMetadataResultDto { readonly updatedCount: number }
 
 export type ManualTransactionTypeDto = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'CARD_PURCHASE' | 'CARD_PAYMENT' | 'REFUND' | 'FEE' | 'INTEREST' | 'ADJUSTMENT'
 export interface ManualJournalEntryInputDto { readonly id: string; readonly accountId: string; readonly side: 'DEBIT' | 'CREDIT'; readonly amountJpy: number }
@@ -285,6 +300,7 @@ export interface TransactionDetailDto {
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName: string | null
   readonly status: string; readonly createdAt: string; readonly updatedAt: string; readonly editable: boolean
   readonly calculationTarget: boolean
+  readonly labels: readonly TransactionLabelDto[]; readonly tags: readonly string[]
   readonly entries: readonly TransactionJournalEntryDto[]; readonly sourceEvidence: readonly TransactionSourceEvidenceDto[]
 }
 export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string; readonly calculationTarget: boolean }
@@ -380,6 +396,7 @@ export type AppCommand =
   | 'transaction_manual_create'
   | 'transaction_detail_get'
   | 'transaction_update'
+  | 'transaction_metadata_bulk_update'
   | 'source_document_get'
   | 'source_document_audience_update'
   | 'source_document_records_query'
@@ -443,6 +460,7 @@ export interface PlatformClient {
   createManualTransaction(input: CreateManualTransactionInputDto): Promise<TransactionRowDto>
   getTransactionDetail(householdId: string, transactionId: string): Promise<TransactionDetailDto>
   updateTransaction(input: UpdatePostedTransactionInputDto): Promise<TransactionDetailDto>
+  bulkUpdateTransactionMetadata(input: BulkUpdateTransactionMetadataInputDto): Promise<BulkUpdateTransactionMetadataResultDto>
   getSourceDocument(householdId: string, sourceDocumentId: string): Promise<SourceDocumentViewDto>
   updateSourceDocumentAudience(input: UpdateSourceDocumentAudienceInputDto): Promise<SourceDocumentViewDto>
   querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>

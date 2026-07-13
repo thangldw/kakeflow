@@ -25,6 +25,8 @@ function row(overrides: Partial<TransactionRowDto> = {}): TransactionRowDto {
     audienceVisibility: 'SHARED',
     audienceMemberId: null,
     audienceMemberName: null,
+    labels: [],
+    tags: [],
     ...overrides,
   }
 }
@@ -43,6 +45,8 @@ describe('toTransactionViewModel', () => {
       icon: 'subscription',
       accountingEffect: 'ACCRUAL_AND_CASH',
       calculationTarget: true,
+      labels: [],
+      tags: [],
       attributionLabel: '世帯共通',
       audienceLabel: '共有',
     })

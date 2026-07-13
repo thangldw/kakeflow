@@ -40,6 +40,7 @@ import type {
   ClassificationRuleDto,
   ReceiptMatchSuggestionDto,
   ReceiptMatchConfirmationDto,
+  BulkUpdateTransactionMetadataResultDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -121,6 +122,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       createManualTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_manual_create') },
       getTransactionDetail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_detail_get') },
       updateTransaction: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_update') },
+      bulkUpdateTransactionMetadata: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_metadata_bulk_update') },
       getSourceDocument: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_get') },
       updateSourceDocumentAudience: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_audience_update') },
       querySourceDocumentRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_records_query') },
@@ -184,6 +186,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     createManualTransaction: (input) => invokeValidated(invoke, 'transaction_manual_create', parseTransactionRow, { input }),
     getTransactionDetail: (householdId, transactionId) => invokeValidated(invoke, 'transaction_detail_get', parseTransactionDetail, { householdId, transactionId }),
     updateTransaction: (input) => invokeValidated(invoke, 'transaction_update', parseTransactionDetail, { input }),
+    bulkUpdateTransactionMetadata: (input) => invokeValidated(invoke, 'transaction_metadata_bulk_update', parseBulkUpdateTransactionMetadataResult, { input }),
     getSourceDocument: (householdId, sourceDocumentId) => invokeValidated(invoke, 'source_document_get', parseSourceDocument, { householdId, sourceDocumentId }),
     updateSourceDocumentAudience: (input) => invokeValidated(invoke, 'source_document_audience_update', parseSourceDocument, { input }),
     querySourceDocumentRecords: (request) => invokeValidated(invoke, 'source_document_records_query', parseSourceRecordPage, { request }),
@@ -666,6 +669,8 @@ function parseTransactionRow(value: unknown): TransactionPageDto['items'][number
     creditAccountName: asNullableString(row.creditAccountName),
     categoryAccountId: asNullableString(row.categoryAccountId),
     categoryName: asNullableString(row.categoryName),
+    labels: parseTransactionLabels(row.labels),
+    tags: parseStringList(row.tags),
     ...attribution, ...audience,
   }
 }
@@ -681,9 +686,22 @@ function parseTransactionDetail(value: unknown): TransactionDetailDto {
     transactionType: record.transactionType as TransactionDetailDto['transactionType'], payee: asNullableString(record.payee), description: asNullableString(record.description),
     ...attribution, ...audience,
     status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable, calculationTarget: record.calculationTarget,
+    labels: parseTransactionLabels(record.labels), tags: parseStringList(record.tags),
     entries: record.entries.map((item) => { const entry = asRecord(item); if (entry.side !== 'DEBIT' && entry.side !== 'CREDIT') throw new TypeError('journal entry'); return { id: asRequiredString(entry.id), accountId: asRequiredString(entry.accountId), accountName: asRequiredString(entry.accountName), accountKind: asRequiredString(entry.accountKind), side: entry.side, amountJpy: asSafeSignedInteger(entry.amountJpy), lineNumber: asSafeInteger(entry.lineNumber) } }),
     sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole), ...parseAudience(evidence, true) } }),
   }
+}
+
+const TRANSACTION_LABELS = ['SUBSCRIPTION', 'RECURRING', 'TAX_DEDUCTIBLE', 'REIMBURSABLE', 'UNUSUAL', 'SHARED_EXPENSE', 'PRIVATE_EXPENSE'] as const
+
+function parseTransactionLabels(value: unknown): TransactionPageDto['items'][number]['labels'] {
+  if (!Array.isArray(value) || !value.every((item) => TRANSACTION_LABELS.includes(item as typeof TRANSACTION_LABELS[number]))) throw new TypeError('transaction labels')
+  return value as TransactionPageDto['items'][number]['labels']
+}
+
+function parseBulkUpdateTransactionMetadataResult(value: unknown): BulkUpdateTransactionMetadataResultDto {
+  const record = asRecord(value)
+  return { updatedCount: asSafeInteger(record.updatedCount) }
 }
 
 function parseSourceDocument(value: unknown): SourceDocumentViewDto {

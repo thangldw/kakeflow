@@ -91,7 +91,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileMetadataDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -305,20 +305,28 @@ function SpendingCard({ expense = currentMonthMetrics.expense, categories, onDet
 
 const txIcons = { food: Utensils, home: Zap, transport: TrainFront, income: ArrowDownLeft, subscription: Sparkles }
 
-function TransactionRows({ rows = transactions, onSelect }: { rows?: readonly Transaction[]; onSelect?: (id: string) => void }) {
+const transactionLabelNames: Readonly<Record<TransactionLabelDto, string>> = {
+  SUBSCRIPTION: 'サブスク', RECURRING: '定期', TAX_DEDUCTIBLE: '税控除', REIMBURSABLE: '立替',
+  UNUSUAL: '通常外', SHARED_EXPENSE: '共通支出', PRIVATE_EXPENSE: '個人支出',
+}
+
+function TransactionRows({ rows = transactions, onSelect, selectedIds, onToggleSelection }: { rows?: readonly Transaction[]; onSelect?: (id: string) => void; selectedIds?: ReadonlySet<string>; onToggleSelection?: (id: string, selected: boolean) => void }) {
   return <div className="transaction-list">{rows.map((tx) => {
     const Icon = txIcons[tx.icon]
     const content = <>
       <div className={`transaction-icon ${tx.amount > 0 ? 'positive' : ''}`}><Icon size={18} /></div>
-      <div className="transaction-main"><strong>{tx.merchant}</strong><span>{tx.date} ・ {tx.detail}</span><div className="transaction-family-labels"><span className={tx.calculationTarget === false ? 'calculation-badge excluded' : 'calculation-badge included'}>{tx.calculationTarget === false ? '集計対象外' : '計算対象'}</span>{tx.attributionLabel && tx.audienceLabel && <><span>帰属: {tx.attributionLabel}</span><span>表示: {tx.audienceLabel}</span></>}</div></div>
+      <div className="transaction-main"><strong>{tx.merchant}</strong><span>{tx.date} ・ {tx.detail}</span><div className="transaction-family-labels"><span className={tx.calculationTarget === false ? 'calculation-badge excluded' : 'calculation-badge included'}>{tx.calculationTarget === false ? '集計対象外' : '計算対象'}</span>{tx.attributionLabel && tx.audienceLabel && <><span>帰属: {tx.attributionLabel}</span><span>表示: {tx.audienceLabel}</span></>}{tx.labels?.map((label) => <span className="metadata-label" key={label}>{transactionLabelNames[label as TransactionLabelDto] ?? label}</span>)}{tx.tags?.map((tag) => <span className="metadata-tag" key={tag}>#{tag}</span>)}</div></div>
       <span className="category-pill">{tx.category}</span>
       <span className="account-label">{tx.account}</span>
       <strong className={tx.amount > 0 ? 'amount-positive' : ''}>{yen(tx.amount)}</strong>
       {tx.status === 'review' && <span className="review-dot" title="要確認" />}
     </>
-    return onSelect
-      ? <button type="button" className="transaction-row selectable" key={tx.id} onClick={() => onSelect(tx.id)}>{content}</button>
+    const row = onSelect
+      ? <button type="button" className="transaction-row selectable" onClick={() => onSelect(tx.id)}>{content}</button>
       : <div className="transaction-row" key={tx.id}>{content}</div>
+    return onToggleSelection
+      ? <div className="transaction-selection-row" key={tx.id}><label className="transaction-selector"><input type="checkbox" aria-label={`${tx.merchant}を一括編集対象に選択`} checked={selectedIds?.has(tx.id) ?? false} onChange={(event) => onToggleSelection(tx.id, event.target.checked)} /></label>{row}</div>
+      : <div key={tx.id}>{row}</div>
   })}</div>
 }
 
@@ -473,6 +481,8 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
   const [query, setQuery] = useState('')
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [calculationFilter, setCalculationFilter] = useState<'ALL' | 'INCLUDED' | 'EXCLUDED'>('ALL')
+  const [labelFilter, setLabelFilter] = useState<TransactionLabelDto | ''>('')
+  const [tagFilter, setTagFilter] = useState('')
   const [liveRows, setLiveRows] = useState<readonly TransactionRowDto[]>([])
   const [liveTotals, setLiveTotals] = useState<DashboardMonthlyTotalsDto | null>(null)
   const [ledgerPage, setLedgerPage] = useState(1)
@@ -493,6 +503,12 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
   const [manualNotice, setManualNotice] = useState('')
   const [selectedDetail, setSelectedDetail] = useState<TransactionDetailDto | null>(null)
   const [detailNotice, setDetailNotice] = useState('')
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState<ReadonlySet<string>>(new Set())
+  const [metadataOperation, setMetadataOperation] = useState<'ADD' | 'REMOVE'>('ADD')
+  const [metadataLabel, setMetadataLabel] = useState<TransactionLabelDto | ''>('')
+  const [metadataTags, setMetadataTags] = useState('')
+  const [metadataBusy, setMetadataBusy] = useState(false)
+  const [metadataNotice, setMetadataNotice] = useState('')
   const desktop = platformClient.runtime === 'tauri'
 
   useEffect(() => {
@@ -501,7 +517,7 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
     const period = periodFromMonth(month)
     setLoadError(false)
     void Promise.all([
-      platformClient.queryTransactions({ householdId, accountGroupId, attributionScope, accountingBasis: basis, calculationTargetFilter: calculationFilter, fromDate: period.fromDate, toDate: period.toDate, search: query.trim() || null, page: ledgerPage, pageSize: 25 }),
+      platformClient.queryTransactions({ householdId, accountGroupId, attributionScope, accountingBasis: basis, calculationTargetFilter: calculationFilter, label: labelFilter || null, tag: tagFilter.trim() || null, fromDate: period.fromDate, toDate: period.toDate, search: query.trim() || null, page: ledgerPage, pageSize: 25 }),
       platformClient.queryDashboard({ householdId, accountGroupId, attributionScope, month: period.month, accountingBasis: basis }),
     ]).then(([page, totals]) => {
       if (active) { setLiveRows(page.items); setLiveTotals(totals); setTotalPages(page.totalPages); setTotalItems(page.totalItems) }
@@ -509,10 +525,11 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
       if (active) { setLiveRows([]); setLiveTotals(null); setTotalPages(0); setTotalItems(0); setLoadError(true) }
     })
     return () => { active = false }
-  }, [accountGroupId, attributionScope, basis, calculationFilter, desktop, householdId, ledgerPage, month, query, revision])
+  }, [accountGroupId, attributionScope, basis, calculationFilter, desktop, householdId, labelFilter, ledgerPage, month, query, revision, tagFilter])
 
-  useEffect(() => { setLedgerPage(1) }, [accountGroupId, attributionScope, basis, calculationFilter, householdId, month, query])
+  useEffect(() => { setLedgerPage(1) }, [accountGroupId, attributionScope, basis, calculationFilter, householdId, labelFilter, month, query, tagFilter])
   useEffect(() => { setManualDate(`${month}-01`) }, [month])
+  useEffect(() => { setSelectedTransactionIds(new Set()); setMetadataNotice('') }, [householdId, month])
 
   const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
   const displayRows = desktop ? liveRows.map(toTransactionViewModel) : basisTransactions
@@ -528,6 +545,44 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
   const saveDetail = async (input: UpdatePostedTransactionInputDto) => {
     await platformClient.updateTransaction(input)
     setSelectedDetail(null); onChanged(); setDetailNotice('取引と仕訳を更新しました。')
+  }
+  const toggleTransactionSelection = (transactionId: string, selected: boolean) => {
+    setSelectedTransactionIds((current) => {
+      const next = new Set(current)
+      if (selected) {
+        if (next.size >= 200) { setMetadataNotice('一度に編集できる取引は200件までです。'); return current }
+        next.add(transactionId)
+      } else next.delete(transactionId)
+      return next
+    })
+  }
+  const toggleVisibleTransactions = () => {
+    const visibleIds = visible.map((transaction) => transaction.id)
+    const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedTransactionIds.has(id))
+    setSelectedTransactionIds((current) => {
+      const next = new Set(current)
+      if (allSelected) visibleIds.forEach((id) => next.delete(id))
+      else visibleIds.slice(0, Math.max(0, 200 - next.size)).forEach((id) => next.add(id))
+      return next
+    })
+  }
+  const applyBulkMetadata = async () => {
+    if (!householdId || selectedTransactionIds.size === 0) { setMetadataNotice('編集する取引を選択してください。'); return }
+    const tags = [...new Set(metadataTags.split(',').map((tag) => tag.trim().replace(/^#/, '')).filter(Boolean))]
+    if (!metadataLabel && tags.length === 0) { setMetadataNotice('ラベルまたはタグを入力してください。'); return }
+    if (tags.length > 20 || tags.some((tag) => tag.length > 64)) { setMetadataNotice('タグは一度に20個、1個64文字以内で入力してください。'); return }
+    setMetadataBusy(true); setMetadataNotice('')
+    try {
+      const labels = metadataLabel ? [metadataLabel] : []
+      const result = await platformClient.bulkUpdateTransactionMetadata({
+        householdId, transactionIds: [...selectedTransactionIds],
+        addLabels: metadataOperation === 'ADD' ? labels : [], removeLabels: metadataOperation === 'REMOVE' ? labels : [],
+        addTags: metadataOperation === 'ADD' ? tags : [], removeTags: metadataOperation === 'REMOVE' ? tags : [],
+      })
+      setSelectedTransactionIds(new Set()); setMetadataTags(''); setMetadataLabel(''); onChanged()
+      setMetadataNotice(`${result.updatedCount}件のラベル・タグを${metadataOperation === 'ADD' ? '追加' : '削除'}しました。カテゴリーと仕訳は変更していません。`)
+    } catch { setMetadataNotice('ラベル・タグを更新できませんでした。選択内容を確認してください。') }
+    finally { setMetadataBusy(false) }
   }
   const createManual = async () => {
     const amount = Number(manualAmount)
@@ -560,8 +615,11 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
     {detailNotice && <div className="import-notice" role="status">{detailNotice}</div>}
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="calculation-filter" aria-label="計算対象フィルター"><button className={calculationFilter === 'ALL' ? 'active' : ''} aria-pressed={calculationFilter === 'ALL'} onClick={() => setCalculationFilter('ALL')}>すべて</button><button className={calculationFilter === 'INCLUDED' ? 'active' : ''} aria-pressed={calculationFilter === 'INCLUDED'} onClick={() => setCalculationFilter('INCLUDED')}>計算対象</button><button className={calculationFilter === 'EXCLUDED' ? 'active' : ''} aria-pressed={calculationFilter === 'EXCLUDED'} onClick={() => setCalculationFilter('EXCLUDED')}>集計対象外</button></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
+      {desktop && <div className="metadata-filters" aria-label="ラベルとタグの絞り込み"><label>ラベル<select aria-label="ラベルで絞り込み" value={labelFilter} onChange={(event) => setLabelFilter(event.target.value as TransactionLabelDto | '')}><option value="">すべて</option>{Object.entries(transactionLabelNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>タグ<input aria-label="タグで絞り込み" value={tagFilter} onChange={(event) => setTagFilter(event.target.value.replace(/^#/, ''))} placeholder="旅行" /></label>{(labelFilter || tagFilter) && <button className="text-btn" onClick={() => { setLabelFilter(''); setTagFilter('') }}>絞り込みを解除</button>}</div>}
+      {desktop && <section className="bulk-metadata-toolbar" aria-label="ラベルとタグの一括編集"><div className="bulk-selection"><button type="button" className="secondary-btn" onClick={toggleVisibleTransactions}>{visible.length > 0 && visible.every((row) => selectedTransactionIds.has(row.id)) ? '表示中の選択を解除' : '表示中を選択'}</button><strong>{selectedTransactionIds.size}件選択</strong><small>最大200件</small></div><label>操作<select aria-label="ラベルとタグの操作" value={metadataOperation} onChange={(event) => setMetadataOperation(event.target.value as 'ADD' | 'REMOVE')}><option value="ADD">追加</option><option value="REMOVE">削除</option></select></label><label>ラベル<select aria-label="一括編集するラベル" value={metadataLabel} onChange={(event) => setMetadataLabel(event.target.value as TransactionLabelDto | '')}><option value="">変更なし</option>{Object.entries(transactionLabelNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>タグ<input aria-label="一括編集するタグ" value={metadataTags} onChange={(event) => setMetadataTags(event.target.value)} placeholder="旅行, 子ども（カンマ区切り）" /></label><button type="button" className="primary-btn" disabled={metadataBusy || selectedTransactionIds.size === 0} onClick={() => void applyBulkMetadata()}>{metadataBusy ? '更新中…' : `${metadataOperation === 'ADD' ? '追加' : '削除'}を適用`}</button><p>ラベルは業務状態、タグは自由な整理軸です。カテゴリーや仕訳は変更しません。</p></section>}
+      {metadataNotice && <div className="bulk-metadata-notice" role="status">{metadataNotice}</div>}
       <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}・家計集計は計算対象のみ</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{desktop ? `${totalItems}件中 ${visible.length}件` : `${visible.length}件を表示`}</em></div>
-      {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} onSelect={desktop ? (id) => void openDetail(id) : undefined} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
+      {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} onSelect={desktop ? (id) => void openDetail(id) : undefined} selectedIds={selectedTransactionIds} onToggleSelection={desktop ? toggleTransactionSelection : undefined} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
       {desktop && totalPages > 1 && <div className="pagination"><button className="secondary-btn" disabled={ledgerPage <= 1} onClick={() => setLedgerPage((value) => value - 1)}>前へ</button><span>{ledgerPage} / {totalPages}</span><button className="secondary-btn" disabled={ledgerPage >= totalPages} onClick={() => setLedgerPage((value) => value + 1)}>次へ</button></div>}
     </section>
     {selectedDetail && <TransactionDetailPanel key={selectedDetail.updatedAt} detail={selectedDetail} accounts={accounts} members={members} onClose={() => setSelectedDetail(null)} onSave={saveDetail} onChanged={onChanged} />}
