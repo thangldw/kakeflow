@@ -247,7 +247,8 @@ async function mapCardTransaction(transaction: CardTransactionCandidate, context
   return [candidate(context, {
     occurredOn: date, postedOn: null, amountJpy: amount,
     direction: transaction.isRefund || (transaction.billingAmount ?? 0) < 0 ? 'IN' : 'OUT',
-    descriptionRaw: transaction.paymentMethod || null, merchantRaw: transaction.merchant || null,
+    descriptionRaw: transaction.isRefund ? ['REFUND', transaction.paymentMethod].filter(Boolean).join(' / ') : transaction.paymentMethod || null,
+    merchantRaw: transaction.merchant || null,
     externalTransactionId: null, evidence,
   })]
 }
