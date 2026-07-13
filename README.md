@@ -196,5 +196,5 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Define pending-import handoff semantics, then add optional remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
+2. Build optional remote transport on top of the completed local pending-import handoff format, with authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

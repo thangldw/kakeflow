@@ -165,6 +165,38 @@ export interface EvidenceBundleSummaryDto {
   readonly importedDocumentCount: number
   readonly deduplicatedDocumentCount: number
 }
+export interface PendingImportExportRequestDto { readonly householdId: string; readonly runId: string }
+export interface PendingImportExportSummaryDto {
+  readonly packageId: string; readonly schemaVersion: 1; readonly householdId: string
+  readonly portableRunId: string; readonly manifestSha256: string; readonly sourceSha256: string
+  readonly recordCount: number; readonly candidateCount: number; readonly statementCount: number; readonly byteSize: number
+}
+export interface PendingImportAccountDependencyDto {
+  readonly portableAccountId: string; readonly name: string; readonly accountKind: AccountDto['accountKind']
+  readonly accountSubtype: AccountDto['accountSubtype'] | null; readonly currency: string
+  readonly institutionName: string | null; readonly maskedIdentifier: string | null
+}
+export interface PendingImportMemberDependencyDto {
+  readonly portableMemberId: string; readonly displayName: string; readonly role: string
+}
+export interface PendingImportStageDto {
+  readonly packageId: string; readonly schemaVersion: 1; readonly originInstallationId: string
+  readonly portableRunId: string; readonly manifestSha256: string; readonly sourceFilename: string; readonly sourceSha256: string
+  readonly recordCount: number; readonly candidateCount: number; readonly statementCount: number
+  readonly accountDependencies: readonly PendingImportAccountDependencyDto[]
+  readonly memberDependencies: readonly PendingImportMemberDependencyDto[]
+  readonly alreadyApplied: boolean; readonly existingLocalRunId: string | null
+}
+export interface PendingImportAccountMappingDto { readonly portableAccountId: string; readonly localAccountId: string }
+export interface PendingImportMemberMappingDto { readonly portableMemberId: string; readonly localMemberId: string }
+export interface PendingImportMappingsDto {
+  readonly accounts: readonly PendingImportAccountMappingDto[]
+  readonly members: readonly PendingImportMemberMappingDto[]
+}
+export interface PendingImportApplySummaryDto {
+  readonly packageId: string; readonly localRunId: string; readonly localDocumentId: string
+  readonly recordCount: number; readonly candidateCount: number; readonly statementCount: number; readonly reusedExisting: boolean
+}
 export interface LocalSyncIdentityDto { readonly id: string; readonly displayName: string; readonly createdAt: string }
 export interface PrincipalMemberBindingDto {
   readonly householdId: string; readonly principalId: string
@@ -525,6 +557,10 @@ export type AppCommand =
   | 'change_package_discard'
   | 'evidence_bundle_export_save'
   | 'evidence_bundle_pick_and_import'
+  | 'pending_import_export_to_picker'
+  | 'pending_import_pick_and_stage'
+  | 'pending_import_apply'
+  | 'pending_import_discard'
   | 'households_list'
   | 'household_create'
   | 'household_members_list'
@@ -613,6 +649,10 @@ export interface PlatformClient {
   discardChangePackage(packageId: string): Promise<void>
   exportEvidenceBundle(householdId: string, passphrase: string): Promise<EvidenceBundleSummaryDto | null>
   pickAndImportEvidenceBundle(householdId: string, passphrase: string): Promise<EvidenceBundleSummaryDto | null>
+  exportPendingImport(request: PendingImportExportRequestDto, passphrase: string): Promise<PendingImportExportSummaryDto | null>
+  pickAndStagePendingImport(householdId: string, passphrase: string): Promise<PendingImportStageDto | null>
+  applyPendingImport(householdId: string, packageId: string, mappings: PendingImportMappingsDto): Promise<PendingImportApplySummaryDto>
+  discardPendingImport(packageId: string): Promise<boolean>
   listHouseholds(): Promise<readonly HouseholdDto[]>
   createHousehold(input: CreateHouseholdInputDto): Promise<HouseholdDto>
   listHouseholdMembers(householdId: string): Promise<readonly HouseholdMemberDto[]>

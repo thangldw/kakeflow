@@ -95,6 +95,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0040_dashboard_template_layouts.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0041_pending_import_handoff.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;

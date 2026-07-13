@@ -53,6 +53,9 @@ import type {
   BulkUpdateTransactionMetadataResultDto,
   ChangePackageReviewDto,
   EvidenceBundleSummaryDto,
+  PendingImportApplySummaryDto,
+  PendingImportExportSummaryDto,
+  PendingImportStageDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -139,6 +142,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       discardChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_discard') },
       exportEvidenceBundle: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'evidence_bundle_export_save') },
       pickAndImportEvidenceBundle: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'evidence_bundle_pick_and_import') },
+      exportPendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_export_to_picker') },
+      pickAndStagePendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_pick_and_stage') },
+      applyPendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_apply') },
+      discardPendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_discard') },
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listHouseholdMembers: async () => [],
@@ -227,6 +234,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     discardChangePackage: async (packageId) => { await invokeValidated(invoke, 'change_package_discard', parseVoid, { packageId }) },
     exportEvidenceBundle: (householdId, passphrase) => invokeValidated(invoke, 'evidence_bundle_export_save', parseNullableEvidenceBundleSummary, { householdId, passphrase }),
     pickAndImportEvidenceBundle: (householdId, passphrase) => invokeValidated(invoke, 'evidence_bundle_pick_and_import', parseNullableEvidenceBundleSummary, { householdId, passphrase }),
+    exportPendingImport: (request, passphrase) => invokeValidated(invoke, 'pending_import_export_to_picker', (value) => parseNullablePendingImportExportSummary(value, request.householdId), { request, passphrase }),
+    pickAndStagePendingImport: (householdId, passphrase) => invokeValidated(invoke, 'pending_import_pick_and_stage', parseNullablePendingImportStage, { householdId, passphrase }),
+    applyPendingImport: (householdId, packageId, mappings) => invokeValidated(invoke, 'pending_import_apply', (value) => parsePendingImportApplySummary(value, packageId), { householdId, packageId, mappings }),
+    discardPendingImport: (packageId) => invokeValidated(invoke, 'pending_import_discard', parseBoolean, { packageId }),
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
     listHouseholdMembers: (householdId) => invokeValidated(invoke, 'household_members_list', parseHouseholdMembers, { householdId }),
@@ -395,6 +406,87 @@ function parseEvidenceBundleSummary(value: unknown): EvidenceBundleSummaryDto {
 
 function parseNullableEvidenceBundleSummary(value: unknown): EvidenceBundleSummaryDto | null {
   return value === null ? null : parseEvidenceBundleSummary(value)
+}
+
+const MAX_PENDING_IMPORT_RECORDS = 100_000
+const MAX_PENDING_IMPORT_CANDIDATES = 100_000
+const MAX_PENDING_IMPORT_STATEMENTS = 16
+const MAX_PENDING_IMPORT_DEPENDENCIES = 100_000
+const MAX_PENDING_IMPORT_PACKAGE_BYTES = 512 * 1024 * 1024
+
+function parsePendingImportCounts(record: Record<string, unknown>): { recordCount: number; candidateCount: number; statementCount: number } {
+  const recordCount = asBoundedInteger(record.recordCount, MAX_PENDING_IMPORT_RECORDS)
+  const candidateCount = asBoundedInteger(record.candidateCount, MAX_PENDING_IMPORT_CANDIDATES)
+  const statementCount = asBoundedInteger(record.statementCount, MAX_PENDING_IMPORT_STATEMENTS)
+  if (recordCount === 0 || candidateCount === 0) throw new TypeError('pending import counts')
+  return { recordCount, candidateCount, statementCount }
+}
+
+function parseNullablePendingImportExportSummary(value: unknown, expectedHouseholdId: string): PendingImportExportSummaryDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  if (record.schemaVersion !== 1 || record.householdId !== expectedHouseholdId) throw new TypeError('pending import export')
+  const byteSize = asBoundedInteger(record.byteSize, MAX_PENDING_IMPORT_PACKAGE_BYTES)
+  if (byteSize === 0) throw new TypeError('pending import export size')
+  return {
+    packageId: asRequiredString(record.packageId), schemaVersion: 1, householdId: expectedHouseholdId,
+    portableRunId: asRequiredString(record.portableRunId), manifestSha256: asCanonicalHash(record.manifestSha256),
+    sourceSha256: asCanonicalHash(record.sourceSha256), ...parsePendingImportCounts(record), byteSize,
+  }
+}
+
+function parseNullablePendingImportStage(value: unknown): PendingImportStageDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  if (record.schemaVersion !== 1 || typeof record.alreadyApplied !== 'boolean'
+      || !Array.isArray(record.accountDependencies) || record.accountDependencies.length > MAX_PENDING_IMPORT_DEPENDENCIES
+      || !Array.isArray(record.memberDependencies) || record.memberDependencies.length > MAX_PENDING_IMPORT_DEPENDENCIES
+      || !Object.hasOwn(record, 'existingLocalRunId')) throw new TypeError('pending import stage')
+  const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
+  const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
+  const accountDependencies = record.accountDependencies.map((value) => {
+    const dependency = asRecord(value)
+    if (!accountKinds.includes(dependency.accountKind as typeof accountKinds[number])
+        || (dependency.accountSubtype !== null && !accountSubtypes.includes(dependency.accountSubtype as typeof accountSubtypes[number]))
+        || !Object.hasOwn(dependency, 'institutionName') || !Object.hasOwn(dependency, 'maskedIdentifier')) throw new TypeError('pending import account dependency')
+    return {
+      portableAccountId: asRequiredString(dependency.portableAccountId), name: asRequiredString(dependency.name),
+      accountKind: dependency.accountKind as PendingImportStageDto['accountDependencies'][number]['accountKind'],
+      accountSubtype: dependency.accountSubtype as PendingImportStageDto['accountDependencies'][number]['accountSubtype'],
+      currency: asRequiredString(dependency.currency), institutionName: asNullableStrictString(dependency.institutionName),
+      maskedIdentifier: asNullableStrictString(dependency.maskedIdentifier),
+    }
+  })
+  const memberDependencies = record.memberDependencies.map((value) => {
+    const dependency = asRecord(value)
+    return { portableMemberId: asRequiredString(dependency.portableMemberId), displayName: asRequiredString(dependency.displayName), role: asRequiredString(dependency.role) }
+  })
+  if (new Set(accountDependencies.map((item) => item.portableAccountId)).size !== accountDependencies.length
+      || new Set(memberDependencies.map((item) => item.portableMemberId)).size !== memberDependencies.length) throw new TypeError('pending import duplicate dependency')
+  const existingLocalRunId = asNullableStrictString(record.existingLocalRunId)
+  if (record.alreadyApplied !== (existingLocalRunId !== null)) throw new TypeError('pending import applied state')
+  return {
+    packageId: asRequiredString(record.packageId), schemaVersion: 1,
+    originInstallationId: asRequiredString(record.originInstallationId), portableRunId: asRequiredString(record.portableRunId),
+    manifestSha256: asCanonicalHash(record.manifestSha256), sourceFilename: asRequiredString(record.sourceFilename),
+    sourceSha256: asCanonicalHash(record.sourceSha256), ...parsePendingImportCounts(record),
+    accountDependencies, memberDependencies, alreadyApplied: record.alreadyApplied, existingLocalRunId,
+  }
+}
+
+function parsePendingImportApplySummary(value: unknown, expectedPackageId: string): PendingImportApplySummaryDto {
+  const record = asRecord(value)
+  if (record.packageId !== expectedPackageId || typeof record.reusedExisting !== 'boolean') throw new TypeError('pending import apply')
+  return {
+    packageId: expectedPackageId, localRunId: asRequiredString(record.localRunId),
+    localDocumentId: asRequiredString(record.localDocumentId), ...parsePendingImportCounts(record),
+    reusedExisting: record.reusedExisting,
+  }
+}
+
+function parseBoolean(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new TypeError('boolean')
+  return value
 }
 
 function parseNullableChangePackageReview(value: unknown): ChangePackageReviewDto | null {
@@ -1201,6 +1293,12 @@ function asSafeInteger(value: unknown): number {
   return value
 }
 
+function asBoundedInteger(value: unknown, maximum: number): number {
+  const integer = asSafeInteger(value)
+  if (integer > maximum) throw new TypeError('bounded integer')
+  return integer
+}
+
 function asSafeSignedInteger(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError('integer')
   return value
@@ -1210,6 +1308,11 @@ function asNullableString(value: unknown): string | null {
   if (value === null || typeof value === 'undefined') return null
   if (typeof value !== 'string') throw new TypeError('string')
   return value
+}
+
+function asNullableStrictString(value: unknown): string | null {
+  if (value === null) return null
+  return asRequiredString(value)
 }
 
 function asRequiredString(value: unknown): string {

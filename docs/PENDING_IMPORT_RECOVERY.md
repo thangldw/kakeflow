@@ -32,4 +32,4 @@ If discovery fails, the current same-household recovered list remains visible an
 
 ## Boundary
 
-This release restores reviews on the same device and database. It does not transport mutable candidates to another device. Cross-device pending-import handoff remains a separate versioned format because confirmed evidence capsules and local change packages intentionally contain confirmed facts, not mutable Inbox decisions.
+Recovery itself remains a same-device operation. KakeFlow 0.49 adds a separate, versioned [pending-import handoff format](PENDING_IMPORT_HANDOFF.md) for explicitly copying one candidate-bearing review through a passphrase-protected local file. Confirmed evidence capsules and local change packages continue to contain confirmed facts, not mutable Inbox decisions.

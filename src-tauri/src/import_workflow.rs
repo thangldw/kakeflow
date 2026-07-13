@@ -308,9 +308,23 @@ pub fn start_import(
 ) -> Result<ImportSummary> {
     validate_start(request, vault_storage_uri)?;
     let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let summary = start_import_in_transaction(&tx, request, vault_storage_uri)?;
+    tx.commit()?;
+    Ok(summary)
+}
+
+/// Materializes a fully validated import graph inside a caller-owned
+/// transaction. Portable handoff uses this boundary so its receipt and aliases
+/// commit atomically with the mutable review run.
+pub(crate) fn start_import_in_transaction(
+    tx: &Transaction<'_>,
+    request: &StartImport,
+    vault_storage_uri: &str,
+) -> Result<ImportSummary> {
+    validate_start(request, vault_storage_uri)?;
 
     ensure_members_belong(
-        &tx,
+        tx,
         &request.household_id,
         [request.audience_member_id.as_deref()],
     )?;
@@ -328,8 +342,7 @@ pub fn start_import(
         }
     }
 
-    if let Some(summary) = existing_summary(&tx, &request.household_id, &request.sha256)? {
-        tx.commit()?;
+    if let Some(summary) = existing_summary(tx, &request.household_id, &request.sha256)? {
         return Ok(ImportSummary {
             reused_existing: true,
             ..summary
@@ -418,7 +431,7 @@ pub fn start_import(
             }
         }
         ensure_members_belong(
-            &tx,
+            tx,
             &request.household_id,
             [
                 candidate.attributed_member_id.as_deref(),
@@ -527,7 +540,6 @@ pub fn start_import(
             )?;
         }
     }
-    tx.commit()?;
     Ok(ImportSummary {
         run_id: request.run_id.clone(),
         document_id: request.document_id.clone(),
