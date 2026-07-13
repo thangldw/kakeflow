@@ -350,6 +350,12 @@ html[data-theme='dark'] .goal-editor { border-color: var(--line); }
 .principal-binding-row { display: flex; align-items: end; gap: 12px; }
 .principal-binding-row label { display: grid; gap: 7px; flex: 1; }
 .principal-binding-row select { width: 100%; }
+.field-error { color: var(--orange); font-size: 9px; }
+.sync-technical-details { color: var(--muted); font-size: 10px; }
+.sync-technical-details summary { width: fit-content; cursor: pointer; font-weight: 700; }
+.sync-technical-details dl { display: grid; gap: 5px; margin: 9px 0 0; }
+.sync-technical-details dl > div { display: flex; gap: 8px; flex-wrap: wrap; }
+.sync-technical-details dd { margin: 0; overflow-wrap: anywhere; }
 
 @media (max-width: 1150px) {
   .local-sync-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -157,6 +157,7 @@ import App from './App'
 
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
     localStorage.clear()
     delete document.documentElement.dataset.theme
     delete document.documentElement.dataset.themePreference

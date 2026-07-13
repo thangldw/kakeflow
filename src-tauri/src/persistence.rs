@@ -73,6 +73,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0030_cash_flow_dashboard.sql")),
     M::up(include_str!("../migrations/0031_sync_foundation.sql")),
     M::up(include_str!("../migrations/0032_core_change_capture.sql")),
+    M::up(include_str!(
+        "../migrations/0033_replicable_ledger_capture.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -377,6 +380,215 @@ fn validate_restored_semantics(
                e.envelope_id IS NULL OR e.household_id!=c.household_id
                OR e.entity_kind!=c.entity_kind OR e.entity_id!=c.entity_id
              )) LIMIT 1",
+        )?;
+    }
+    if schema_version >= 33 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             LEFT JOIN sync_change_envelopes e ON e.envelope_id=c.processed_envelope_id
+             WHERE c.processed_envelope_id IS NOT NULL AND (
+               e.envelope_id IS NULL OR e.operation!=c.operation
+               OR e.canonical_payload_json!=c.payload_json
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='HOUSEHOLD' AND (
+               COALESCE(json_type(c.payload_json,'$.recordKind'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.recordKind')!='HOUSEHOLD'
+               OR COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.household_id
+               OR c.entity_id!=c.household_id OR c.operation!='UPSERT'
+               OR COALESCE(json_type(c.payload_json,'$.name'),'missing')!='text'
+               OR trim(json_extract(c.payload_json,'$.name'))=''
+               OR COALESCE(json_type(c.payload_json,'$.baseCurrency'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.baseCurrency')!='JPY'
+               OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+               OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='HOUSEHOLD_MEMBER' AND (
+               COALESCE(json_type(c.payload_json,'$.recordKind'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.recordKind')!='HOUSEHOLD_MEMBER'
+               OR COALESCE(json_type(c.payload_json,'$.householdId'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.householdId')!=c.household_id
+               OR COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.displayName'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.displayName'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.relationshipLabel'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.sortOrder'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.sortOrder')<0
+                 OR COALESCE(json_type(c.payload_json,'$.status'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.status') NOT IN ('ACTIVE','ARCHIVED')
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='ACCOUNT' AND (
+               COALESCE(json_type(c.payload_json,'$.recordKind'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.recordKind')!='ACCOUNT'
+               OR COALESCE(json_type(c.payload_json,'$.householdId'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.householdId')!=c.household_id
+               OR COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.name'),'missing')!='text'
+                 OR trim(json_extract(c.payload_json,'$.name'))=''
+                 OR COALESCE(json_type(c.payload_json,'$.accountKind'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.accountKind') NOT IN ('ASSET','LIABILITY','EQUITY','INCOME','EXPENSE')
+                 OR COALESCE(json_type(c.payload_json,'$.accountSubtype'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.accountSubtype') NOT IN ('BANK','CASH','WALLET','SECURITIES','CREDIT_CARD','RECEIVABLE','OTHER')
+                 OR COALESCE(json_type(c.payload_json,'$.currency'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.currency')!='JPY'
+                 OR COALESCE(json_type(c.payload_json,'$.institutionName'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.maskedIdentifier'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.isArchived'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.isArchived') NOT IN (0,1)
+                 OR COALESCE(json_type(c.payload_json,'$.ownershipKind'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.ownershipKind') NOT IN ('HOUSEHOLD','MEMBER')
+                 OR COALESCE(json_type(c.payload_json,'$.ownerMemberId'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.visibility'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.visibility') NOT IN ('SHARED','PERSONAL')
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+               ))
+             ) LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM sync_local_change_capture c
+             WHERE c.entity_kind='TRANSACTION'
+               AND (c.processed_envelope_id IS NOT NULL OR c.capture_sequence=(
+                 SELECT max(latest.capture_sequence)
+                 FROM sync_local_change_capture latest
+                 WHERE latest.household_id=c.household_id
+                   AND latest.entity_kind=c.entity_kind
+                   AND latest.entity_id=c.entity_id
+                   AND latest.processed_envelope_id IS NULL
+               )) AND (
+               COALESCE(json_type(c.payload_json,'$.recordKind'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.recordKind')!='TRANSACTION_AGGREGATE'
+               OR COALESCE(json_type(c.payload_json,'$.householdId'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.householdId')!=c.household_id
+               OR COALESCE(json_type(c.payload_json,'$.id'),'missing')!='text'
+               OR json_extract(c.payload_json,'$.id')!=c.entity_id
+               OR (c.operation='UPSERT' AND (
+                 COALESCE(json_type(c.payload_json,'$.occurredOn'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.occurredOn') NOT GLOB '????-??-??'
+                 OR COALESCE(json_type(c.payload_json,'$.postedOn'),'missing') NOT IN ('text','null')
+                 OR (json_type(c.payload_json,'$.postedOn')='text'
+                     AND json_extract(c.payload_json,'$.postedOn') NOT GLOB '????-??-??')
+                 OR COALESCE(json_type(c.payload_json,'$.payee'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.description'),'missing') NOT IN ('text','null')
+                 OR COALESCE(json_type(c.payload_json,'$.transactionType'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.transactionType') NOT IN (
+                   'EXPENSE','INCOME','TRANSFER','CARD_PURCHASE','CARD_PAYMENT',
+                   'REFUND','FEE','INTEREST','ADJUSTMENT')
+                 OR COALESCE(json_type(c.payload_json,'$.status'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.status') NOT IN ('DRAFT','POSTED','VOID')
+                 OR COALESCE(json_type(c.payload_json,'$.calculationTarget'),'missing')!='integer'
+                 OR json_extract(c.payload_json,'$.calculationTarget') NOT IN (0,1)
+                 OR COALESCE(json_type(c.payload_json,'$.attributionKind'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.attributionKind') NOT IN ('HOUSEHOLD','MEMBER')
+                 OR COALESCE(json_type(c.payload_json,'$.attributedMemberId'),'missing') NOT IN ('text','null')
+                 OR (json_extract(c.payload_json,'$.attributionKind')='HOUSEHOLD'
+                     AND json_type(c.payload_json,'$.attributedMemberId')!='null')
+                 OR (json_extract(c.payload_json,'$.attributionKind')='MEMBER'
+                     AND json_type(c.payload_json,'$.attributedMemberId')!='text')
+                 OR COALESCE(json_type(c.payload_json,'$.audienceVisibility'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.audienceVisibility') NOT IN ('SHARED','PERSONAL')
+                 OR COALESCE(json_type(c.payload_json,'$.audienceMemberId'),'missing') NOT IN ('text','null')
+                 OR (json_extract(c.payload_json,'$.audienceVisibility')='SHARED'
+                     AND json_type(c.payload_json,'$.audienceMemberId')!='null')
+                 OR (json_extract(c.payload_json,'$.audienceVisibility')='PERSONAL'
+                     AND json_type(c.payload_json,'$.audienceMemberId')!='text')
+                 OR COALESCE(json_type(c.payload_json,'$.createdAt'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.createdAt') NOT GLOB '????-??-??T??:??:??*Z'
+                 OR COALESCE(json_type(c.payload_json,'$.updatedAt'),'missing')!='text'
+                 OR json_extract(c.payload_json,'$.updatedAt') NOT GLOB '????-??-??T??:??:??*Z'
+                 OR COALESCE(json_type(c.payload_json,'$.journalEntries'),'missing')!='array'
+                 OR COALESCE(json_type(c.payload_json,'$.labels'),'missing')!='array'
+                 OR COALESCE(json_type(c.payload_json,'$.tags'),'missing')!='array'
+                 OR COALESCE(json_type(c.payload_json,'$.sourceLinks'),'missing')!='array'
+                 OR COALESCE(json_type(c.payload_json,'$.externalKeys'),'missing')!='array'
+                 OR EXISTS(
+                   SELECT 1 FROM json_each(c.payload_json,'$.journalEntries') j
+                   LEFT JOIN accounts a ON a.id=json_extract(j.value,'$.accountId')
+                   WHERE COALESCE(json_type(j.value,'$.id'),'missing')!='text'
+                     OR json_extract(j.value,'$.id')=''
+                     OR COALESCE(json_type(j.value,'$.transactionId'),'missing')!='text'
+                     OR json_extract(j.value,'$.transactionId')!=c.entity_id
+                     OR COALESCE(json_type(j.value,'$.accountId'),'missing')!='text'
+                     OR COALESCE(json_type(j.value,'$.entrySide'),'missing')!='text'
+                     OR json_extract(j.value,'$.entrySide') NOT IN ('DEBIT','CREDIT')
+                     OR COALESCE(json_type(j.value,'$.amountJpy'),'missing')!='integer'
+                     OR json_extract(j.value,'$.amountJpy')<=0
+                     OR COALESCE(json_type(j.value,'$.lineNumber'),'missing')!='integer'
+                     OR json_extract(j.value,'$.lineNumber')<=0
+                     OR COALESCE(json_type(j.value,'$.createdAt'),'missing')!='text'
+                     OR json_extract(j.value,'$.createdAt') NOT GLOB '????-??-??T??:??:??*Z'
+                     OR ((a.id IS NULL OR a.household_id!=c.household_id)
+                       AND c.capture_sequence=(
+                         SELECT max(current.capture_sequence)
+                         FROM sync_local_change_capture current
+                         WHERE current.household_id=c.household_id
+                           AND current.entity_kind=c.entity_kind
+                           AND current.entity_id=c.entity_id
+                       ))
+                 )
+                 OR json_array_length(c.payload_json,'$.journalEntries')!=(
+                   SELECT count(DISTINCT json_extract(j.value,'$.lineNumber'))
+                   FROM json_each(c.payload_json,'$.journalEntries') j
+                 )
+                 OR EXISTS(SELECT 1 FROM json_each(c.payload_json,'$.labels') l
+                           WHERE l.type!='text' OR trim(l.value)='')
+                 OR EXISTS(SELECT 1 FROM json_each(c.payload_json,'$.tags') tag
+                           WHERE tag.type!='text' OR trim(tag.value)='')
+                 OR EXISTS(
+                   SELECT 1 FROM json_each(c.payload_json,'$.sourceLinks') s
+                   WHERE COALESCE(json_type(s.value,'$.transactionId'),'missing')!='text'
+                     OR json_extract(s.value,'$.transactionId')!=c.entity_id
+                     OR COALESCE(json_type(s.value,'$.sourceRecordId'),'missing')!='text'
+                     OR json_extract(s.value,'$.sourceRecordId')=''
+                     OR COALESCE(json_type(s.value,'$.candidateId'),'missing') NOT IN ('text','null')
+                 )
+                 OR EXISTS(
+                   SELECT 1 FROM json_each(c.payload_json,'$.externalKeys') k
+                   WHERE COALESCE(json_type(k.value,'$.householdId'),'missing')!='text'
+                     OR json_extract(k.value,'$.householdId')!=c.household_id
+                     OR COALESCE(json_type(k.value,'$.transactionId'),'missing')!='text'
+                     OR json_extract(k.value,'$.transactionId')!=c.entity_id
+                     OR COALESCE(json_type(k.value,'$.externalSource'),'missing')!='text'
+                     OR COALESCE(json_type(k.value,'$.externalId'),'missing')!='text'
+                     OR json_extract(k.value,'$.externalId')=''
+                     OR COALESCE(json_type(k.value,'$.factHash'),'missing')!='text'
+                     OR length(json_extract(k.value,'$.factHash'))!=64
+                     OR json_extract(k.value,'$.factHash') GLOB '*[^0-9a-f]*'
+                     OR COALESCE(json_type(k.value,'$.createdAt'),'missing')!='text'
+                     OR json_extract(k.value,'$.createdAt') NOT GLOB '????-??-??T??:??:??*Z'
+                 )
+                 OR (json_extract(c.payload_json,'$.status')='POSTED' AND (
+                   json_array_length(c.payload_json,'$.journalEntries')<2
+                   OR COALESCE((SELECT SUM(
+                     CASE json_extract(j.value,'$.entrySide')
+                       WHEN 'DEBIT' THEN json_extract(j.value,'$.amountJpy')
+                       WHEN 'CREDIT' THEN -json_extract(j.value,'$.amountJpy')
+                       ELSE 1 END)
+                     FROM json_each(c.payload_json,'$.journalEntries') j),1)!=0
+                 ))
+               ))
+             ) LIMIT 1",
         )?;
     }
     if schema_version >= 22 {
@@ -1038,6 +1250,296 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn migration_thirty_three_preserves_capture_links_and_sequence_monotonicity() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 32)
+            .expect("schema thirty two");
+        connection
+            .execute(
+                "INSERT INTO households(id,name) VALUES('family','Family')",
+                [],
+            )
+            .unwrap();
+        crate::sync_foundation::get_local_status(&connection, "family").unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('processed','family','Processed','ASSET','BANK'),
+                       ('expense','family','Expense','EXPENSE','OTHER')",
+                [],
+            )
+            .unwrap();
+        crate::sync_foundation::get_local_status(&connection, "family").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES('legacy-tx','family','2026-07-13','EXPENSE','POSTED');
+                 INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES('legacy-d','legacy-tx','expense','DEBIT',1000,1),
+                       ('legacy-c','legacy-tx','processed','CREDIT',1000,2);",
+            )
+            .unwrap();
+        crate::sync_foundation::get_local_status(&connection, "family").unwrap();
+        connection
+            .execute(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('pending','family','Pending','ASSET','BANK')",
+                [],
+            )
+            .unwrap();
+        let before_max: i64 = connection
+            .query_row(
+                "SELECT max(capture_sequence) FROM sync_local_change_capture",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        migrations
+            .to_version(&mut connection, 33)
+            .expect("schema thirty three");
+        let counts: (i64, i64) = connection
+            .query_row(
+                "SELECT count(*),sum(processed_envelope_id IS NULL)
+                 FROM sync_local_change_capture",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (11, 11));
+        assert!(validate_restored_semantics(&connection, 33).is_ok());
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_extract(payload_json,'$.recordKind')
+                     FROM sync_local_change_capture WHERE entity_id='legacy-tx'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "TRANSACTION_AGGREGATE"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_change_envelopes
+                     WHERE entity_kind IN ('HOUSEHOLD_MEMBER','ACCOUNT','TRANSACTION')
+                       AND json_extract(canonical_payload_json,'$.recordKind') IS NULL",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        let dependency_payloads: (String, String, String) = connection
+            .query_row(
+                "SELECT
+                   (SELECT json_extract(payload_json,'$.recordKind')
+                    FROM sync_local_change_capture WHERE entity_kind='HOUSEHOLD'
+                    ORDER BY capture_sequence DESC LIMIT 1),
+                   (SELECT json_extract(payload_json,'$.createdAt')
+                    FROM sync_local_change_capture WHERE entity_kind='HOUSEHOLD_MEMBER'
+                    ORDER BY capture_sequence DESC LIMIT 1),
+                   (SELECT json_extract(payload_json,'$.currency')
+                    FROM sync_local_change_capture WHERE entity_kind='ACCOUNT' AND entity_id='processed'
+                    ORDER BY capture_sequence DESC LIMIT 1)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(dependency_payloads.0, "HOUSEHOLD");
+        assert!(dependency_payloads.1.ends_with('Z'));
+        assert_eq!(dependency_payloads.2, "JPY");
+        connection
+            .execute(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('new','family','New','ASSET','BANK')",
+                [],
+            )
+            .unwrap();
+        let after_max: i64 = connection
+            .query_row(
+                "SELECT max(capture_sequence) FROM sync_local_change_capture",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(after_max > before_max);
+    }
+
+    #[test]
+    fn restored_semantics_validate_only_final_pending_ledger_snapshot_and_require_balance() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "BEGIN;
+                     INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK'),
+                           ('food','family','Food','EXPENSE','OTHER');
+                     INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                     VALUES('tx','family','2026-07-13','EXPENSE','POSTED');
+                     INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES('d','tx','food','DEBIT',4200,1),('c','tx','bank','CREDIT',4200,2);
+                     COMMIT;",
+                )?;
+                // Earlier pending snapshots are partial by design; only the
+                // latest state for an entity is a replay candidate.
+                assert!(validate_restored_semantics(connection, 33).is_ok());
+                connection.execute(
+                    "UPDATE sync_local_change_capture
+                     SET payload_json=json_remove(payload_json,'$.status')
+                     WHERE capture_sequence=(
+                       SELECT max(capture_sequence) FROM sync_local_change_capture
+                       WHERE entity_kind='TRANSACTION' AND entity_id='tx'
+                         AND processed_envelope_id IS NULL
+                     )",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 33).is_err());
+                connection.execute(
+                    "UPDATE sync_local_change_capture
+                     SET payload_json=(SELECT payload_json FROM sync_transaction_aggregate_payloads
+                                       WHERE transaction_id='tx')
+                     WHERE capture_sequence=(
+                       SELECT max(capture_sequence) FROM sync_local_change_capture
+                       WHERE entity_kind='TRANSACTION' AND entity_id='tx'
+                         AND processed_envelope_id IS NULL
+                     )",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 33).is_ok());
+                connection.execute(
+                    "UPDATE sync_local_change_capture
+                     SET payload_json=json_set(payload_json,'$.journalEntries[0].amountJpy',4201)
+                     WHERE capture_sequence=(
+                       SELECT max(capture_sequence) FROM sync_local_change_capture
+                       WHERE entity_kind='TRANSACTION' AND entity_id='tx'
+                         AND processed_envelope_id IS NULL
+                     )",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 33).is_err());
+                Ok(())
+            })
+            .expect("restore semantic audit should execute");
+    }
+
+    #[test]
+    fn ledger_aggregate_replays_with_production_schema_foreign_keys() {
+        let source = AppState::in_memory(TEST_KEY).expect("source schema");
+        let payload_json = source
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK'),
+                           ('food','family','Food','EXPENSE','OTHER');
+                     INSERT INTO transactions(id,household_id,occurred_on,transaction_type,payee,status)
+                     VALUES('tx','family','2026-07-13','EXPENSE','Market','POSTED');
+                     INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES('tx-d','tx','food','DEBIT',4200,1),('tx-c','tx','bank','CREDIT',4200,2);
+                     INSERT INTO transaction_labels VALUES('tx','RECURRING');
+                     INSERT INTO transaction_tags VALUES('tx','family');
+                     INSERT INTO transaction_external_keys(
+                       household_id,external_source,external_id,fact_hash,transaction_id)
+                     VALUES('family','MONEY_FORWARD_ME','mf-1',
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','tx');",
+                )?;
+                crate::sync_foundation::get_local_status(connection, "family").unwrap();
+                let envelope = crate::sync_foundation::list_pending_envelopes(connection, "family", 50)
+                    .unwrap()
+                    .into_iter()
+                    .find(|item| item.entity_kind == "TRANSACTION" && item.entity_id == "tx")
+                    .expect("transaction envelope");
+                Ok(envelope.canonical_payload_json)
+            })
+            .unwrap();
+
+        let destination = AppState::in_memory(TEST_KEY).expect("destination schema");
+        destination
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK'),
+                           ('food','family','Food','EXPENSE','OTHER');",
+                )?;
+                let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
+                let string = |key: &str| payload.get(key).and_then(serde_json::Value::as_str);
+                connection.execute(
+                    "INSERT INTO transactions(
+                       id,household_id,occurred_on,posted_on,transaction_type,payee,description,status,
+                       calculation_target,attribution_kind,attributed_member_id,
+                       audience_visibility,audience_member_id,created_at,updated_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                    rusqlite::params![
+                        string("id"), string("householdId"), string("occurredOn"),
+                        string("postedOn"), string("transactionType"), string("payee"),
+                        string("description"), string("status"),
+                        payload["calculationTarget"].as_i64(), string("attributionKind"),
+                        string("attributedMemberId"), string("audienceVisibility"),
+                        string("audienceMemberId"), string("createdAt"), string("updatedAt")
+                    ],
+                )?;
+                for entry in payload["journalEntries"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO journal_entries(
+                           id,transaction_id,account_id,entry_side,amount_jpy,line_number,created_at)
+                         VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                        rusqlite::params![
+                            entry["id"].as_str(), entry["transactionId"].as_str(),
+                            entry["accountId"].as_str(), entry["entrySide"].as_str(),
+                            entry["amountJpy"].as_i64(), entry["lineNumber"].as_i64(),
+                            entry["createdAt"].as_str()
+                        ],
+                    )?;
+                }
+                for label in payload["labels"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO transaction_labels VALUES(?1,?2)",
+                        rusqlite::params![string("id"), label.as_str()],
+                    )?;
+                }
+                for tag in payload["tags"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO transaction_tags VALUES(?1,?2)",
+                        rusqlite::params![string("id"), tag.as_str()],
+                    )?;
+                }
+                for key in payload["externalKeys"].as_array().unwrap() {
+                    connection.execute(
+                        "INSERT INTO transaction_external_keys VALUES(?1,?2,?3,?4,?5,?6)",
+                        rusqlite::params![
+                            key["householdId"].as_str(), key["externalSource"].as_str(),
+                            key["externalId"].as_str(), key["factHash"].as_str(),
+                            key["transactionId"].as_str(), key["createdAt"].as_str()
+                        ],
+                    )?;
+                }
+                assert!(validate_restored_semantics(connection, 33).is_ok());
+                let restored: (i64, String, String, String) = connection.query_row(
+                    "SELECT
+                       SUM(CASE entry_side WHEN 'DEBIT' THEN amount_jpy ELSE -amount_jpy END),
+                       group_concat(id,','),
+                       (SELECT group_concat(label,',') FROM transaction_labels WHERE transaction_id='tx'),
+                       (SELECT group_concat(tag,',') FROM transaction_tags WHERE transaction_id='tx')
+                     FROM (SELECT * FROM journal_entries WHERE transaction_id='tx' ORDER BY line_number)",
+                    [],
+                    |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+                )?;
+                assert_eq!(restored, (0,"tx-d,tx-c".into(),"RECURRING".into(),"family".into()));
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

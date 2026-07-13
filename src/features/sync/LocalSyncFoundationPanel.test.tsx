@@ -30,7 +30,7 @@ describe('LocalSyncFoundationPanel', () => {
     expect(await screen.findByText('KakeFlow on macOS')).toBeInTheDocument()
     expect(screen.getByText('2件・最新 #2')).toBeInTheDocument()
     expect(screen.getByText('端末内のみ')).toBeInTheDocument()
-    expect(screen.getByText(/クラウド同期・他端末への送信はまだ行いません/)).toBeInTheDocument()
+    expect(screen.getByText(/クラウドや他の端末には送信されません/)).toBeInTheDocument()
     expect(screen.queryByText('同期済み')).not.toBeInTheDocument()
   })
 
@@ -39,13 +39,23 @@ describe('LocalSyncFoundationPanel', () => {
       { id: 'taro', householdId: 'family', displayName: 'Taro', relationshipLabel: null, status: 'ACTIVE', sortOrder: 0, createdAt: 'x', updatedAt: 'x' },
       { id: 'old', householdId: 'family', displayName: 'Archived', relationshipLabel: null, status: 'ARCHIVED', sortOrder: 1, createdAt: 'x', updatedAt: 'x' },
     ]} />)
-    const select = await screen.findByLabelText('ローカル主体を家族メンバーに対応付け')
+    const select = await screen.findByLabelText('この端末を主に使うメンバー')
     expect(screen.queryByRole('option', { name: 'Archived' })).not.toBeInTheDocument()
     expect(updateBinding).not.toHaveBeenCalled()
     fireEvent.change(select, { target: { value: '' } })
-    fireEvent.click(screen.getByRole('button', { name: '対応を保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '利用者を保存' }))
     await waitFor(() => expect(updateBinding).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', principalId: status.principal.id, memberId: null })))
     expect(screen.getByText(/現在はログイン、閲覧制限、アクセス制御を行いません/)).toBeInTheDocument()
+  })
+
+  it('keeps the current archived binding visible until it is reassigned', async () => {
+    getStatus.mockResolvedValueOnce({ ...status, binding: { ...status.binding, memberId: 'old', memberName: 'Archived' } })
+    render(<LocalSyncFoundationPanel householdId="family" allowBinding members={[
+      { id: 'taro', householdId: 'family', displayName: 'Taro', relationshipLabel: null, status: 'ACTIVE', sortOrder: 0, createdAt: 'x', updatedAt: 'x' },
+      { id: 'old', householdId: 'family', displayName: 'Archived', relationshipLabel: null, status: 'ARCHIVED', sortOrder: 1, createdAt: 'x', updatedAt: 'x' },
+    ]} />)
+    expect(await screen.findByRole('option', { name: 'Archived（アーカイブ済み）' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('現在の利用者はアーカイブ済みです')
   })
 
   it('offers retry after a local status failure', async () => {

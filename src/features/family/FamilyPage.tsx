@@ -17,11 +17,13 @@ export function FamilyPage({ householdId, members, accounts, onMembersChanged }:
   const [relationshipLabel, setRelationshipLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  const [nameError, setNameError] = useState('')
   const activeMembers = members.filter((member) => member.status === 'ACTIVE')
 
   const createMember = async () => {
-    if (!householdId || !displayName.trim()) { setNotice('表示名を入力してください。'); return }
+    if (!householdId || !displayName.trim()) { setNameError('表示名を入力してください。'); return }
     setBusy(true); setNotice('')
+    setNameError('')
     try {
       await platformClient.createHouseholdMember({
         id: crypto.randomUUID(), householdId, displayName: displayName.trim(),
@@ -42,11 +44,11 @@ export function FamilyPage({ householdId, members, accounts, onMembersChanged }:
     <section className="panel family-panel">
       <div className="panel-head"><div><h2>家族メンバー</h2><p>{activeMembers.length}人が有効・{accounts.filter((account) => account.ownershipKind === 'MEMBER').length}口座をメンバー別に整理</p></div></div>
       {platformClient.runtime === 'tauri' && householdId ? <>
-        <div className="family-member-form">
-          <label>表示名<input aria-label="新しいメンバーの表示名" maxLength={80} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="例：太郎" /></label>
+        <form className="family-member-form" aria-busy={busy} onSubmit={(event) => { event.preventDefault(); void createMember() }}>
+          <label>表示名<input aria-label="新しいメンバーの表示名" aria-invalid={Boolean(nameError)} aria-describedby={nameError ? 'family-member-name-error' : undefined} maxLength={80} value={displayName} onChange={(event) => { setDisplayName(event.target.value); if (event.target.value.trim()) setNameError('') }} placeholder="例：太郎" />{nameError && <small id="family-member-name-error" className="field-error">{nameError}</small>}</label>
           <label>続柄・メモ<input aria-label="新しいメンバーの続柄・メモ" maxLength={80} value={relationshipLabel} onChange={(event) => setRelationshipLabel(event.target.value)} placeholder="例：父" /></label>
-          <button className="primary-btn" disabled={busy} onClick={() => void createMember()}>{busy ? '追加中…' : 'メンバーを追加'}</button>
-        </div>
+          <button type="submit" className="primary-btn" disabled={busy}>{busy ? '追加中…' : 'メンバーを追加'}</button>
+        </form>
         <div className="family-member-list">
           {members.map((member) => <MemberEditor key={member.id} householdId={householdId} member={member} accountCount={accounts.filter((account) => account.ownerMemberId === member.id).length} onChanged={onMembersChanged} setNotice={setNotice} />)}
           {members.length === 0 && <p className="empty-state">メンバーはまだ登録されていません。口座は「世帯共有」のまま利用できます。</p>}
@@ -73,6 +75,7 @@ function MemberEditor({ householdId, member, accountCount, onChanged, setNotice 
     finally { setBusy(false) }
   }
   const archive = async () => {
+    if (!window.confirm(`${member.displayName}をアーカイブします。${accountCount > 0 ? `このメンバーには${accountCount}口座が紐づいているため、先に口座の所有者変更が必要です。` : '過去の取引への帰属は保持されます。'}`)) return
     setBusy(true)
     try {
       await platformClient.archiveHouseholdMember(householdId, member.id)
@@ -80,7 +83,7 @@ function MemberEditor({ householdId, member, accountCount, onChanged, setNotice 
     } catch { setNotice('メンバーをアーカイブできませんでした。所有する口座がある場合は、先に口座の所有者を変更してください。') }
     finally { setBusy(false) }
   }
-  return <article className={`family-member-row ${member.status === 'ARCHIVED' ? 'archived' : ''}`}>
+  return <article className={`family-member-row ${member.status === 'ARCHIVED' ? 'archived' : ''}`} aria-label={`${member.displayName}のメンバー設定`} aria-busy={busy}>
     <div className="family-member-avatar" aria-hidden="true">{member.displayName.trim().slice(0, 2)}</div>
     <label>表示名<input aria-label={`${member.displayName}の表示名`} maxLength={80} disabled={member.status === 'ARCHIVED'} value={name} onChange={(event) => setName(event.target.value)} /></label>
     <label>続柄・メモ<input aria-label={`${member.displayName}の続柄・メモ`} maxLength={80} disabled={member.status === 'ARCHIVED'} value={relationship} onChange={(event) => setRelationship(event.target.value)} /></label>

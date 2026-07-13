@@ -260,10 +260,18 @@ fn drain_local_change_capture(connection: &Connection, household_id: &str) -> Re
     let transaction = connection.unchecked_transaction()?;
     let captured = {
         let mut statement = transaction.prepare(
-            "SELECT capture_sequence,entity_kind,entity_id,operation,payload_json
-             FROM sync_local_change_capture
-             WHERE household_id=?1 AND processed_envelope_id IS NULL
-             ORDER BY capture_sequence LIMIT 1000",
+            "SELECT c.capture_sequence,c.entity_kind,c.entity_id,c.operation,c.payload_json
+             FROM sync_local_change_capture c
+             WHERE c.household_id=?1 AND c.processed_envelope_id IS NULL
+               AND c.capture_sequence=(
+                 SELECT max(latest.capture_sequence)
+                 FROM sync_local_change_capture latest
+                 WHERE latest.household_id=c.household_id
+                   AND latest.entity_kind=c.entity_kind
+                   AND latest.entity_id=c.entity_id
+                   AND latest.processed_envelope_id IS NULL
+               )
+             ORDER BY c.capture_sequence LIMIT 1000",
         )?;
         let rows = statement.query_map([household_id], |row| {
             Ok((
@@ -279,6 +287,7 @@ fn drain_local_change_capture(connection: &Connection, household_id: &str) -> Re
     for (capture_sequence, entity_kind, entity_id, operation, payload_json) in captured {
         let payload: Value =
             serde_json::from_str(&payload_json).map_err(|_| SyncFoundationError::Encoding)?;
+        let canonical_payload_json = canonical_json(&payload)?;
         let mutation_id = format!("capture:{capture_sequence}");
         let envelope_id = enqueue_change_in_transaction(
             &transaction,
@@ -290,9 +299,19 @@ fn drain_local_change_capture(connection: &Connection, household_id: &str) -> Re
             &payload,
         )?;
         transaction.execute(
-            "UPDATE sync_local_change_capture SET processed_envelope_id=?1
-             WHERE capture_sequence=?2 AND processed_envelope_id IS NULL",
-            params![envelope_id, capture_sequence],
+            "UPDATE sync_local_change_capture
+             SET processed_envelope_id=?1,operation=?2,payload_json=?3
+             WHERE household_id=?4 AND entity_kind=?5 AND entity_id=?6
+               AND capture_sequence<=?7 AND processed_envelope_id IS NULL",
+            params![
+                envelope_id,
+                operation,
+                canonical_payload_json,
+                household_id,
+                entity_kind,
+                entity_id,
+                capture_sequence
+            ],
         )?;
     }
     transaction.commit()?;
@@ -556,7 +575,11 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection.execute_batch(
             "PRAGMA foreign_keys=ON;
-             CREATE TABLE households(id TEXT PRIMARY KEY) STRICT;
+             CREATE TABLE households(
+               id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT 'Family',
+               base_currency TEXT NOT NULL DEFAULT 'JPY',
+               created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
+               updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z') STRICT;
              CREATE TABLE household_members(
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
                display_name TEXT NOT NULL, status TEXT NOT NULL, sort_order INTEGER NOT NULL,
@@ -566,16 +589,42 @@ mod tests {
              CREATE TABLE accounts(
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
                name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
+               currency TEXT NOT NULL DEFAULT 'JPY', institution_name TEXT, masked_identifier TEXT,
                is_archived INTEGER NOT NULL DEFAULT 0, owner_member_id TEXT,
                ownership_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', visibility TEXT NOT NULL DEFAULT 'SHARED',
+               created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
                updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z') STRICT;
              CREATE TABLE transactions(
                id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
                occurred_on TEXT NOT NULL, posted_on TEXT, transaction_type TEXT NOT NULL,
                payee TEXT, description TEXT, status TEXT NOT NULL DEFAULT 'POSTED',
                calculation_target INTEGER NOT NULL DEFAULT 1,
+               attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT,
+               audience_visibility TEXT NOT NULL DEFAULT 'SHARED', audience_member_id TEXT,
+               created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
                updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z') STRICT;
-             INSERT INTO households VALUES('family');
+             CREATE TABLE journal_entries(
+               id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+               account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
+               entry_side TEXT NOT NULL, amount_jpy INTEGER NOT NULL, line_number INTEGER NOT NULL,
+               created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
+               UNIQUE(transaction_id,line_number)) STRICT;
+             CREATE TABLE transaction_labels(
+               transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+               label TEXT NOT NULL, PRIMARY KEY(transaction_id,label)) STRICT, WITHOUT ROWID;
+             CREATE TABLE transaction_tags(
+               transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+               tag TEXT NOT NULL, PRIMARY KEY(transaction_id,tag)) STRICT, WITHOUT ROWID;
+             CREATE TABLE transaction_sources(
+               transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+               source_record_id TEXT NOT NULL,candidate_id TEXT,
+               PRIMARY KEY(transaction_id,source_record_id)) STRICT, WITHOUT ROWID;
+             CREATE TABLE transaction_external_keys(
+               household_id TEXT NOT NULL,external_source TEXT NOT NULL,external_id TEXT NOT NULL,
+               fact_hash TEXT NOT NULL,transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+               created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z',
+               PRIMARY KEY(household_id,external_source,external_id)) STRICT, WITHOUT ROWID;
+             INSERT INTO households(id) VALUES('family');
              INSERT INTO household_members(id,household_id,display_name,status,sort_order)
              VALUES('taro','family','Taro','ACTIVE',0);",
         ).unwrap();
@@ -584,6 +633,11 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(include_str!("../migrations/0032_core_change_capture.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0033_replicable_ledger_capture.sql"
+            ))
             .unwrap();
         connection
     }
@@ -603,6 +657,7 @@ mod tests {
     fn binding_change_creates_deterministic_pending_envelope() {
         let connection = database();
         let status = get_local_status(&connection, "family").unwrap();
+        let baseline = status.outbox.envelope_count;
         let input = UpdatePrincipalMemberBindingInput {
             household_id: "family".into(),
             principal_id: status.principal.id,
@@ -611,12 +666,15 @@ mod tests {
         };
         let changed = update_principal_member_binding(&connection, &input).unwrap();
         assert_eq!(changed.binding.member_id, None);
-        assert_eq!(changed.outbox.envelope_count, 1);
+        assert_eq!(changed.outbox.envelope_count, baseline + 1);
         let pending = list_pending_envelopes(&connection, "family", 10).unwrap();
-        assert_eq!(pending.len(), 1);
-        assert_eq!(pending[0].origin_sequence, 1);
+        let binding = pending
+            .iter()
+            .find(|item| item.entity_kind == "PRINCIPAL_BINDING")
+            .unwrap();
+        assert_eq!(binding.origin_sequence, baseline + 1);
         assert_eq!(
-            pending[0].canonical_payload_json,
+            binding.canonical_payload_json,
             format!(
                 "{{\"householdId\":\"family\",\"memberId\":null,\"principalId\":\"{}\"}}",
                 input.principal_id
@@ -639,7 +697,9 @@ mod tests {
         assert_eq!(
             list_pending_envelopes(&connection, "family", 10)
                 .unwrap()
-                .len(),
+                .iter()
+                .filter(|item| item.mutation_id == "retry")
+                .count(),
             1
         );
         input.member_id = Some("taro".into());
@@ -652,7 +712,7 @@ mod tests {
     #[test]
     fn core_domain_writes_are_captured_and_drained_in_order() {
         let connection = database();
-        get_local_status(&connection, "family").unwrap();
+        let baseline = get_local_status(&connection, "family").unwrap().outbox;
         connection
             .execute(
                 "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
@@ -669,19 +729,312 @@ mod tests {
             .unwrap();
         let status = get_local_status(&connection, "family").unwrap();
         let pending = list_pending_envelopes(&connection, "family", 20).unwrap();
-        assert_eq!(status.outbox.envelope_count, 2);
+        assert_eq!(status.outbox.envelope_count, baseline.envelope_count + 2);
         assert_eq!(
             pending
                 .iter()
+                .filter(|item| matches!(item.entity_kind.as_str(), "ACCOUNT" | "TRANSACTION"))
                 .map(|item| item.entity_kind.as_str())
                 .collect::<Vec<_>>(),
             vec!["ACCOUNT", "TRANSACTION"]
         );
-        assert_eq!(pending[0].origin_sequence, 1);
-        assert_eq!(pending[1].origin_sequence, 2);
+        assert_eq!(
+            pending[pending.len() - 2].origin_sequence,
+            baseline.latest_sequence + 1
+        );
+        assert_eq!(
+            pending[pending.len() - 1].origin_sequence,
+            baseline.latest_sequence + 2
+        );
         assert_eq!(connection.query_row(
             "SELECT count(*) FROM sync_local_change_capture WHERE processed_envelope_id IS NULL",
             [], |row| row.get::<_, i64>(0),
         ).unwrap(), 0);
+    }
+
+    #[test]
+    fn posted_transaction_aggregate_replays_into_a_second_database_balanced() {
+        let source = database();
+        get_local_status(&source, "family").unwrap();
+        source
+            .execute_batch(
+                "BEGIN;
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('bank','family','Bank','ASSET','BANK'),
+                       ('food','family','Food','EXPENSE','OTHER');
+                 INSERT INTO transactions(
+                   id,household_id,occurred_on,posted_on,transaction_type,payee,description,status,
+                   calculation_target,attribution_kind,attributed_member_id,
+                   audience_visibility,audience_member_id)
+                 VALUES('ledger-tx','family','2026-07-13','2026-07-14','EXPENSE','Market',
+                        'Weekly groceries','POSTED',1,'MEMBER','taro','PERSONAL','taro');
+                 INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES('ledger-tx-d','ledger-tx','food','DEBIT',4200,1),
+                       ('ledger-tx-c','ledger-tx','bank','CREDIT',4200,2);
+                 INSERT INTO transaction_labels VALUES('ledger-tx','Recurring'),('ledger-tx','Reviewed');
+                 INSERT INTO transaction_tags VALUES('ledger-tx','weekly'),('ledger-tx','family');
+                 INSERT INTO transaction_sources VALUES('ledger-tx','source-row-7','candidate-7');
+                 INSERT INTO transaction_external_keys(
+                   household_id,external_source,external_id,fact_hash,transaction_id)
+                 VALUES('family','MONEY_FORWARD_ME','mf-7',
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','ledger-tx');
+                 COMMIT;",
+            )
+            .unwrap();
+
+        get_local_status(&source, "family").unwrap();
+        let envelopes = list_pending_envelopes(&source, "family", 20).unwrap();
+        let aggregate = envelopes
+            .iter()
+            .find(|item| item.entity_kind == "TRANSACTION" && item.entity_id == "ledger-tx")
+            .unwrap();
+        assert_eq!(
+            envelopes
+                .iter()
+                .filter(|item| item.entity_kind == "TRANSACTION")
+                .count(),
+            1
+        );
+        let payload: Value = serde_json::from_str(&aggregate.canonical_payload_json).unwrap();
+        assert_eq!(payload["recordKind"], "TRANSACTION_AGGREGATE");
+        assert_eq!(payload["attributionKind"], "MEMBER");
+        assert_eq!(payload["audienceVisibility"], "PERSONAL");
+        assert_eq!(
+            payload["labels"],
+            serde_json::json!(["Recurring", "Reviewed"])
+        );
+        assert_eq!(payload["tags"], serde_json::json!(["family", "weekly"]));
+        assert_eq!(payload["journalEntries"].as_array().unwrap().len(), 2);
+        assert_eq!(payload["journalEntries"][0]["lineNumber"], 1);
+        assert_eq!(payload["journalEntries"][1]["lineNumber"], 2);
+        assert_eq!(payload["sourceLinks"][0]["sourceRecordId"], "source-row-7");
+        assert_eq!(payload["externalKeys"][0]["externalId"], "mf-7");
+
+        let capture_stats: (i64, i64) = source
+            .query_row(
+                "SELECT count(*),count(DISTINCT processed_envelope_id)
+                 FROM sync_local_change_capture
+                 WHERE entity_kind='TRANSACTION' AND entity_id='ledger-tx'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(capture_stats, (9, 1));
+
+        let destination = Connection::open_in_memory().unwrap();
+        destination
+            .execute_batch(
+                "CREATE TABLE transactions(
+                   id TEXT PRIMARY KEY,household_id TEXT,occurred_on TEXT,posted_on TEXT,
+                   transaction_type TEXT,payee TEXT,description TEXT,status TEXT,
+                   calculation_target INTEGER,attribution_kind TEXT,attributed_member_id TEXT,
+                   audience_visibility TEXT,audience_member_id TEXT,created_at TEXT,updated_at TEXT);
+                 CREATE TABLE journal_entries(
+                   id TEXT PRIMARY KEY,transaction_id TEXT,account_id TEXT,entry_side TEXT,
+                   amount_jpy INTEGER,line_number INTEGER,created_at TEXT,
+                   UNIQUE(transaction_id,line_number));
+                 CREATE TABLE transaction_labels(transaction_id TEXT,label TEXT,PRIMARY KEY(transaction_id,label));
+                 CREATE TABLE transaction_tags(transaction_id TEXT,tag TEXT,PRIMARY KEY(transaction_id,tag));
+                 CREATE TABLE transaction_sources(
+                   transaction_id TEXT,source_record_id TEXT,candidate_id TEXT,
+                   PRIMARY KEY(transaction_id,source_record_id));
+                 CREATE TABLE transaction_external_keys(
+                   household_id TEXT,external_source TEXT,external_id TEXT,fact_hash TEXT,
+                   transaction_id TEXT,created_at TEXT,
+                   PRIMARY KEY(household_id,external_source,external_id));",
+            )
+            .unwrap();
+        let value = |key: &str| payload.get(key).and_then(Value::as_str);
+        destination
+            .execute(
+                "INSERT INTO transactions VALUES(
+                   ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                params![
+                    value("id"),
+                    value("householdId"),
+                    value("occurredOn"),
+                    value("postedOn"),
+                    value("transactionType"),
+                    value("payee"),
+                    value("description"),
+                    value("status"),
+                    payload["calculationTarget"].as_i64(),
+                    value("attributionKind"),
+                    value("attributedMemberId"),
+                    value("audienceVisibility"),
+                    value("audienceMemberId"),
+                    value("createdAt"),
+                    value("updatedAt")
+                ],
+            )
+            .unwrap();
+        for entry in payload["journalEntries"].as_array().unwrap() {
+            destination
+                .execute(
+                    "INSERT INTO journal_entries VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                    params![
+                        entry["id"].as_str(),
+                        entry["transactionId"].as_str(),
+                        entry["accountId"].as_str(),
+                        entry["entrySide"].as_str(),
+                        entry["amountJpy"].as_i64(),
+                        entry["lineNumber"].as_i64(),
+                        entry["createdAt"].as_str()
+                    ],
+                )
+                .unwrap();
+        }
+        for label in payload["labels"].as_array().unwrap() {
+            destination
+                .execute(
+                    "INSERT INTO transaction_labels VALUES(?1,?2)",
+                    params![value("id"), label.as_str()],
+                )
+                .unwrap();
+        }
+        for tag in payload["tags"].as_array().unwrap() {
+            destination
+                .execute(
+                    "INSERT INTO transaction_tags VALUES(?1,?2)",
+                    params![value("id"), tag.as_str()],
+                )
+                .unwrap();
+        }
+        for link in payload["sourceLinks"].as_array().unwrap() {
+            destination
+                .execute(
+                    "INSERT INTO transaction_sources VALUES(?1,?2,?3)",
+                    params![
+                        link["transactionId"].as_str(),
+                        link["sourceRecordId"].as_str(),
+                        link["candidateId"].as_str()
+                    ],
+                )
+                .unwrap();
+        }
+        for key in payload["externalKeys"].as_array().unwrap() {
+            destination
+                .execute(
+                    "INSERT INTO transaction_external_keys VALUES(?1,?2,?3,?4,?5,?6)",
+                    params![
+                        key["householdId"].as_str(),
+                        key["externalSource"].as_str(),
+                        key["externalId"].as_str(),
+                        key["factHash"].as_str(),
+                        key["transactionId"].as_str(),
+                        key["createdAt"].as_str()
+                    ],
+                )
+                .unwrap();
+        }
+
+        let balance: i64 = destination
+            .query_row(
+                "SELECT SUM(CASE entry_side WHEN 'DEBIT' THEN amount_jpy ELSE -amount_jpy END)
+                 FROM journal_entries WHERE transaction_id='ledger-tx'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(balance, 0);
+        assert_eq!(
+            destination
+                .query_row(
+                    "SELECT payee||':'||attribution_kind||':'||audience_visibility
+                     FROM transactions WHERE id='ledger-tx'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "Market:MEMBER:PERSONAL"
+        );
+        assert_eq!(
+            destination
+                .query_row(
+                    "SELECT group_concat(label,',') FROM
+                     (SELECT label FROM transaction_labels ORDER BY label)",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "Recurring,Reviewed"
+        );
+        assert_eq!(
+            destination
+                .query_row(
+                    "SELECT source_record_id||':'||candidate_id FROM transaction_sources",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "source-row-7:candidate-7"
+        );
+        assert_eq!(
+            destination
+                .query_row(
+                    "SELECT external_source||':'||external_id FROM transaction_external_keys",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "MONEY_FORWARD_ME:mf-7"
+        );
+
+        let before = envelopes.len();
+        get_local_status(&source, "family").unwrap();
+        assert_eq!(
+            list_pending_envelopes(&source, "family", 20).unwrap().len(),
+            before
+        );
+    }
+
+    #[test]
+    fn metadata_updates_are_captured_and_household_moves_are_rejected() {
+        let connection = database();
+        get_local_status(&connection, "family").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('bank','family','Bank','ASSET','BANK'),('food','family','Food','EXPENSE','OTHER');
+                 INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES('tx','family','2026-07-13','EXPENSE','POSTED');
+                 INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES('d','tx','food','DEBIT',1000,1),('c','tx','bank','CREDIT',1000,2);
+                 INSERT INTO transaction_labels VALUES('tx','OLD');
+                 INSERT INTO transaction_tags VALUES('tx','before');",
+            )
+            .unwrap();
+        get_local_status(&connection, "family").unwrap();
+        connection
+            .execute_batch(
+                "UPDATE transaction_labels SET label='NEW' WHERE transaction_id='tx' AND label='OLD';
+                 UPDATE transaction_tags SET tag='after' WHERE transaction_id='tx' AND tag='before';",
+            )
+            .unwrap();
+        get_local_status(&connection, "family").unwrap();
+        let latest = list_pending_envelopes(&connection, "family", 50)
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.entity_kind == "TRANSACTION" && item.entity_id == "tx")
+            .max_by_key(|item| item.origin_sequence)
+            .unwrap();
+        let payload: Value = serde_json::from_str(&latest.canonical_payload_json).unwrap();
+        assert_eq!(payload["labels"], serde_json::json!(["NEW"]));
+        assert_eq!(payload["tags"], serde_json::json!(["after"]));
+        connection
+            .execute("INSERT INTO households(id) VALUES('other')", [])
+            .unwrap();
+        assert!(connection
+            .execute(
+                "UPDATE accounts SET household_id='other' WHERE id='bank'",
+                []
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "UPDATE transactions SET household_id='other' WHERE id='tx'",
+                []
+            )
+            .is_err());
     }
 }
