@@ -14,6 +14,7 @@ import type {
   CardSettlementBankMappingDto,
   CardSettlementBalanceCoverageDto,
   DashboardMonthlyTotalsDto,
+  DashboardPreferencesDto,
   DatabaseStatusDto,
   ExtractedDocumentDto,
   HouseholdDto,
@@ -145,6 +146,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       markWatchedFileInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_failed') },
       markWatchedFileInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_staged') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
+      getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: new Date(0).toISOString() }),
+      upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
       listSavingsGoals: async () => [],
@@ -219,6 +222,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     markWatchedFileInboxFailed: (householdId, itemId, leaseToken, errorCode) => invokeValidated(invoke, 'watched_file_inbox_mark_failed', parseWatchedFileInboxItem, { householdId, itemId, leaseToken, errorCode }),
     markWatchedFileInboxStaged: (householdId, itemId, leaseToken, importRunId) => invokeValidated(invoke, 'watched_file_inbox_mark_staged', parseWatchedFileInboxItem, { householdId, itemId, leaseToken, importRunId }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
+    getDashboardPreferences: (householdId) => invokeValidated(invoke, 'dashboard_preferences_get', parseDashboardPreferences, { householdId }),
+    upsertDashboardPreferences: (input) => invokeValidated(invoke, 'dashboard_preferences_upsert', parseDashboardPreferences, { input }),
     listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
     upsertBudget: (input) => invokeValidated(invoke, 'budget_upsert', parseBudget, { input }),
     listSavingsGoals: (householdId) => invokeValidated(invoke, 'savings_goals_list', parseSavingsGoals, { householdId }),
@@ -693,6 +698,25 @@ function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
       const category = asRecord(item)
       return { accountId: asRequiredString(category.accountId), name: asRequiredString(category.name), amountJpy: asSafeSignedInteger(category.amountJpy) }
     }),
+  }
+}
+
+function parseDashboardPreferences(value: unknown): DashboardPreferencesDto {
+  const record = asRecord(value)
+  const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION'] as const
+  const themes = ['SYSTEM', 'LIGHT', 'DARK'] as const
+  const densities = ['COMFORTABLE', 'COMPACT'] as const
+  if (!templates.includes(record.template as typeof templates[number])
+    || !themes.includes(record.theme as typeof themes[number])
+    || !densities.includes(record.density as typeof densities[number])) {
+    throw new TypeError('dashboard preferences')
+  }
+  return {
+    householdId: asRequiredString(record.householdId),
+    template: record.template as DashboardPreferencesDto['template'],
+    theme: record.theme as DashboardPreferencesDto['theme'],
+    density: record.density as DashboardPreferencesDto['density'],
+    updatedAt: asIsoTimestamp(record.updatedAt),
   }
 }
 

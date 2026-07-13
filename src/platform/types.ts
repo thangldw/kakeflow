@@ -236,6 +236,30 @@ export interface DashboardExpenseCategoryDto {
   readonly amountJpy: number
 }
 
+export type DashboardTemplateDto =
+  | 'FINANCIAL_OVERVIEW'
+  | 'HOUSEHOLD_LEDGER'
+  | 'ASSETS_LIABILITIES'
+  | 'CARD_RECONCILIATION'
+
+export type DashboardThemeDto = 'SYSTEM' | 'LIGHT' | 'DARK'
+export type DashboardDensityDto = 'COMFORTABLE' | 'COMPACT'
+
+export interface DashboardPreferencesDto {
+  readonly householdId: string
+  readonly template: DashboardTemplateDto
+  readonly theme: DashboardThemeDto
+  readonly density: DashboardDensityDto
+  readonly updatedAt: string
+}
+
+export interface UpsertDashboardPreferencesInputDto {
+  readonly householdId: string
+  readonly template: DashboardTemplateDto
+  readonly theme: DashboardThemeDto
+  readonly density: DashboardDensityDto
+}
+
 export interface TransactionPageRequestDto {
   readonly householdId: string
   readonly accountGroupId?: string | null
@@ -438,6 +462,8 @@ export type AppCommand =
   | 'watched_file_inbox_mark_failed'
   | 'watched_file_inbox_mark_staged'
   | 'dashboard_query'
+  | 'dashboard_preferences_get'
+  | 'dashboard_preferences_upsert'
   | 'budgets_query'
   | 'budget_upsert'
   | 'savings_goals_list'
@@ -512,6 +538,8 @@ export interface PlatformClient {
   markWatchedFileInboxFailed(householdId: string, itemId: string, leaseToken: string, errorCode: string): Promise<WatchedFileInboxItemDto>
   markWatchedFileInboxStaged(householdId: string, itemId: string, leaseToken: string, importRunId: string): Promise<WatchedFileInboxItemDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
+  getDashboardPreferences(householdId: string): Promise<DashboardPreferencesDto>
+  upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
   listSavingsGoals(householdId: string): Promise<readonly SavingsGoalDto[]>

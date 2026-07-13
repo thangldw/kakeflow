@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.25.0 — 2026-07-13
+
+- Add four household-scoped Home focus presets: Financial Overview, Household Ledger, Assets & Liabilities, and Card Reconciliation.
+- Reorder and emphasize only existing, source-backed KPIs and widgets; changing a preset never changes accounting basis, ledger rows, dashboard queries, or card-settlement semantics.
+- Add app-wide `System`, `Light`, and `Dark` appearance plus `Comfortable` and `Compact` density with responsive desktop layouts.
+- Persist preferences in SQLite per household, return deterministic defaults without writing, and restore each household's independent selection when switching.
+- Protect asynchronous preference loading and saving from stale household responses, and validate every enum, household relation, timestamp, IPC response, migration, and restored database state.
+
 ## 0.24.0 — 2026-07-13
 
 - Add a durable, household-scoped Folder Inbox that persists metadata and processing state in SQLite without storing file bytes or absolute watched-folder paths in the queue.
