@@ -2,7 +2,9 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.47 makes pending import review restart-safe. Import Inbox discovers every household-scoped manual or folder import still in `REVIEW_REQUIRED`, restores its existing immutable preview, deduplicates the two discovery paths, and still requires explicit approval before posting. See [pending import recovery](docs/PENDING_IMPORT_RECOVERY.md).
+Version 0.48 keeps an independent Home widget layout for every dashboard template. Switching between Financial Overview, Household Ledger, Assets & Liabilities, Card Reconciliation, and Cash Flow restores that view's own order and visibility without overwriting the others. See [dashboard preferences](docs/DASHBOARD_PREFERENCES.md).
+
+Version 0.47 made pending import review restart-safe. Import Inbox discovers every household-scoped manual or folder import still in `REVIEW_REQUIRED`, restores its existing immutable preview, deduplicates the two discovery paths, and still requires explicit approval before posting. See [pending import recovery](docs/PENDING_IMPORT_RECOVERY.md).
 
 Version 0.46 added a household-persisted Home layout editor. Users can reorder eligible widgets by drag-and-drop or accessible move buttons, hide and restore panels, and reset the active template while KakeFlow preserves accounting basis, metric definitions, drill-downs, and the rule that at least one widget remains visible. See [dashboard preferences](docs/DASHBOARD_PREFERENCES.md).
 

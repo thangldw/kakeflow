@@ -27,7 +27,9 @@ The resolved values are applied to the document root as theme and density attrib
 
 ## Widget layout
 
-Version 0.46 adds a compact layout editor to Home. Users can drag eligible widgets, use the equivalent named up/down buttons from a keyboard, hide or restore a widget, and reset the active template. The rendered DOM follows the visual order so focus and screen-reader reading order stay coherent. A polite announcement reports completed moves.
+The compact layout editor lets users drag eligible widgets, use the equivalent named up/down buttons from a keyboard, hide or restore a widget, and reset the active template. The rendered DOM follows the visual order so focus and screen-reader reading order stay coherent. A polite announcement reports completed moves.
+
+Version 0.48 stores a separate layout for each of the five templates. Switching templates restores the target template's order and visibility; it does not copy, reset, or overwrite another template. Reset affects only the template currently shown.
 
 Every saved order is exhaustive and contains each known widget exactly once. Templates filter that order to their eligible widgets; Cash Flow never exposes the accrual-only category panel. Hidden IDs remain available in the editor, and KakeFlow refuses to hide the last visible eligible widget. The renderer also falls back to the first eligible widget if migrated or template-filtered data would otherwise produce an empty Home.
 
@@ -35,8 +37,8 @@ Layout changes do not alter KPI cards, Data Quality, chart facts, accounting bas
 
 ## Persistence
 
-Preferences are stored in SQLite under the active household and contain the template, theme, density, exhaustive widget order, hidden-widget subset, and update timestamp. A household without a stored record receives deterministic defaults (`FINANCIAL_OVERVIEW`, `SYSTEM`, `COMFORTABLE`, canonical order, no hidden widgets) without creating a database row.
+Preferences are stored in SQLite under the active household and contain the active template, theme, density, five exhaustive template layouts, and update timestamp. A household without a stored record receives deterministic defaults (`FINANCIAL_OVERVIEW`, `SYSTEM`, `COMFORTABLE`, per-template canonical orders, no hidden widgets) without creating a database row. Migration preserves the legacy active layout and initializes the other templates independently.
 
 Loads and saves are household-scoped. If the user switches household while a request is in flight, a stale response cannot overwrite the new household's preferences. Database restore validation rejects unknown enum values, duplicate/unknown/missing widget IDs, hiding all widgets, malformed timestamps, and invalid household relations.
 
-Widget order and visibility stay device-local in v0.46. Existing local change-package schemas continue to carry template, theme, and density only, preserving their canonical hashes and never erasing a destination device's custom layout. A future package-schema version can add explicit layout transport without changing legacy lineage.
+Widget order and visibility remain device-local in v0.48. Existing local change-package schemas continue to carry template, theme, and density only, preserving their canonical hashes and never erasing a destination device's custom layouts. A future package-schema version can add explicit layout transport without changing legacy lineage.

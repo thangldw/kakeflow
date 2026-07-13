@@ -15,6 +15,8 @@ import type {
   CardSettlementBalanceCoverageDto,
   DashboardMonthlyTotalsDto,
   DashboardPreferencesDto,
+  DashboardTemplateDto,
+  DashboardTemplateLayoutsDto,
   DashboardWidgetIdDto,
   DatabaseStatusDto,
   ExtractedDocumentDto,
@@ -93,6 +95,16 @@ const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
   accrualTrend: Object.freeze([]), cashFlowTrend: Object.freeze([]), expenseCategories: Object.freeze([]),
 })
 
+function defaultDashboardTemplateLayouts(): DashboardTemplateLayoutsDto {
+  return {
+    FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
+    HOUSEHOLD_LEDGER: { widgetOrder: ['SPENDING', 'RECENT', 'TREND', 'CARDS'], hiddenWidgets: [] },
+    ASSETS_LIABILITIES: { widgetOrder: ['TREND', 'SPENDING', 'CARDS', 'RECENT'], hiddenWidgets: [] },
+    CARD_RECONCILIATION: { widgetOrder: ['CARDS', 'RECENT', 'TREND', 'SPENDING'], hiddenWidgets: [] },
+    CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: [] },
+  }
+}
+
 type TauriGlobal = typeof globalThis & {
   __TAURI_INTERNALS__?: unknown
 }
@@ -162,7 +174,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       markWatchedFileInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_failed') },
       markWatchedFileInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_staged') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
-      getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [], updatedAt: new Date(0).toISOString() }),
+      getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', templateLayouts: defaultDashboardTemplateLayouts(), updatedAt: new Date(0).toISOString() }),
       upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
@@ -893,24 +905,45 @@ function parseDashboardPreferences(value: unknown): DashboardPreferencesDto {
   const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION', 'CASH_FLOW'] as const
   const themes = ['SYSTEM', 'LIGHT', 'DARK'] as const
   const densities = ['COMFORTABLE', 'COMPACT'] as const
-  const widgets = ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const satisfies readonly DashboardWidgetIdDto[]
-  const widgetOrder = parseDashboardWidgetIds(record.widgetOrder, widgets.length)
-  const hiddenWidgets = parseDashboardWidgetIds(record.hiddenWidgets, 3)
   if (!templates.includes(record.template as typeof templates[number])
     || !themes.includes(record.theme as typeof themes[number])
-    || !densities.includes(record.density as typeof densities[number])
-    || widgetOrder.length !== widgets.length
-    || widgets.some((widget) => !widgetOrder.includes(widget))) {
+    || !densities.includes(record.density as typeof densities[number])) {
     throw new TypeError('dashboard preferences')
   }
+  const templateLayouts = parseDashboardTemplateLayouts(record.templateLayouts)
   return {
     householdId: asRequiredString(record.householdId),
     template: record.template as DashboardPreferencesDto['template'],
     theme: record.theme as DashboardPreferencesDto['theme'],
     density: record.density as DashboardPreferencesDto['density'],
-    widgetOrder,
-    hiddenWidgets,
+    templateLayouts,
     updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+function parseDashboardTemplateLayouts(value: unknown): DashboardTemplateLayoutsDto {
+  const record = asRecord(value)
+  const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION', 'CASH_FLOW'] as const satisfies readonly DashboardTemplateDto[]
+  if (Object.keys(record).length !== templates.length || templates.some((template) => !Object.hasOwn(record, template))) throw new TypeError('dashboard template layouts')
+  const parseLayout = (template: DashboardTemplateDto) => {
+    const layout = asRecord(record[template])
+    if (Object.keys(layout).length !== 2 || !Object.hasOwn(layout, 'widgetOrder') || !Object.hasOwn(layout, 'hiddenWidgets')) throw new TypeError('dashboard layout')
+    const widgetOrder = parseDashboardWidgetIds(layout.widgetOrder, 4)
+    const eligible: readonly DashboardWidgetIdDto[] = template === 'CASH_FLOW'
+      ? ['TREND', 'RECENT', 'CARDS'] as const
+      : ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const
+    const hiddenWidgets = parseDashboardWidgetIds(layout.hiddenWidgets, eligible.length - 1)
+    if (widgetOrder.length !== 4
+      || (['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const).some((widget) => !widgetOrder.includes(widget))
+      || hiddenWidgets.some((widget) => !eligible.includes(widget as typeof eligible[number]))) throw new TypeError('dashboard layout domain')
+    return { widgetOrder, hiddenWidgets }
+  }
+  return {
+    FINANCIAL_OVERVIEW: parseLayout('FINANCIAL_OVERVIEW'),
+    HOUSEHOLD_LEDGER: parseLayout('HOUSEHOLD_LEDGER'),
+    ASSETS_LIABILITIES: parseLayout('ASSETS_LIABILITIES'),
+    CARD_RECONCILIATION: parseLayout('CARD_RECONCILIATION'),
+    CASH_FLOW: parseLayout('CASH_FLOW'),
   }
 }
 
