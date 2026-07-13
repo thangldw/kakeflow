@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.52.0 — 2026-07-14
+
+- Add the dedicated `rakuten-securities-domestic-trade-history-v1` adapter for Rakuten Securities domestic-stock trade-history CSV exports, grounded in the provider's published trade and settlement semantics.
+- Limit the supported contract to explicit domestic spot and odd-lot purchases and sales; reject credit/margin rows, `現引`, `現渡`, and every unsupported transaction type instead of creating incorrect investment legs.
+- Require the exact twelve-field family for trade date, combined security, account, trade category, side, quantity, unit price, commission, tax, other expenses, tax label, and settlement amount; retain extra source columns in exact physical-row evidence.
+- Normalize accepted rows into balanced `BUY` or `SELL` investment events, preserve settlement mismatches as `ADJUSTED` events with an auditable adjustment and warning, and exclude brokerage activity from household-expense metrics.
+- Require an explicit active securities-account mapping and `証券取引に保存` action; filename, provider text, and file discovery never select an account or save an event.
+- Add only synthetic, fictitious fixtures plus focused detection, parsing, unsupported-row, provenance, mapping, and save coverage; no customer export is checked into the repository.
+
 ## 0.51.0 — 2026-07-14
 
 - Add the dedicated `sbi-securities-trade-history-v1` adapter for SBI Securities domestic and foreign `約定履歴` CSV exports, grounded in SBI's published field semantics rather than generic brokerage-column guessing.
