@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { excelRowsToCsv, previewImportFile } from './importService'
+import { zipSync } from 'fflate'
+import { excelRowsToCsv, previewImportFile, previewImportFiles } from './importService'
 
 describe('import preview service', () => {
   it('detects and parses a Japanese bank CSV file', async () => {
@@ -28,6 +29,42 @@ describe('import preview service', () => {
 
     expect(result).toMatchObject({ adapterId: 'yucho-direct-ledger-v1', recordCount: 2, status: 'ready' })
     expect(result.parsed?.metadata).toMatchObject({ institution: 'JP_BANK', exportSequenceIsDurableTransactionId: false })
+  })
+
+  it('expands a manual Yucho ZIP into ordinary child previews with archive provenance', async () => {
+    const csv = 'お客さま口座情報\n現在高：,140000,円\n取引日,入出金明細ID,受入金額（円）,払出金額（円）,詳細1,詳細2,現在（貸付）高\n20260701,1,50000,,給与,勤務先,150000'
+    const zip = zipSync({ '002.csv': new TextEncoder().encode(`${csv}\n20260702,2,,1000,ATM,払出,149000`), '001.csv': new TextEncoder().encode(csv), '説明.txt': new TextEncoder().encode('ignored') })
+    const result = await previewImportFiles([new File([zip], 'ゆうちょ一括.zip', { type: 'application/zip', lastModified: 1_700_000_000_000 })])
+    expect(result).toHaveLength(2)
+    expect(result.map((item) => item.archiveEntryName)).toEqual(['001.csv', '002.csv'])
+    expect(result[0]).toMatchObject({ filename: 'ゆうちょ一括.zip › 001.csv', archiveFilename: 'ゆうちょ一括.zip', adapterId: 'yucho-direct-ledger-v1', status: 'ready', sourceModifiedAt: '2023-11-14T22:13:20.000Z' })
+    expect(result[0].issues).toContainEqual(expect.objectContaining({ code: 'ZIP_NON_CSV_IGNORED', severity: 'warning' }))
+    expect(result.flatMap((item) => item.issues).filter((issue) => issue.code === 'ZIP_NON_CSV_IGNORED')).toHaveLength(1)
+  })
+
+  it('shows one disclosure when byte-identical CSV entries are collapsed', async () => {
+    const csv = new TextEncoder().encode('unknown,data\n1,2')
+    const result = await previewImportFiles([new File([zipSync({ 'b.csv': csv, 'a.csv': csv })], 'duplicate.zip', { type: 'application/zip' })])
+    expect(result).toHaveLength(1)
+    expect(result[0].archiveEntryName).toBe('a.csv')
+    expect(result.flatMap((item) => item.issues).filter((issue) => issue.code === 'ZIP_DUPLICATE_CSV_IGNORED')).toHaveLength(1)
+    expect(result[0].issues.find((issue) => issue.code === 'ZIP_DUPLICATE_CSV_IGNORED')?.message).toContain('b.csv → a.csv')
+  })
+
+  it('does not process safe children from a partially unsafe ZIP', async () => {
+    const zip = zipSync({ '../unsafe.csv': new TextEncoder().encode('x'), 'safe.csv': new TextEncoder().encode('x') })
+    const result = await previewImportFiles([new File([zip], 'unsafe.zip', { type: 'application/zip' })])
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({ filename: 'unsafe.zip', status: 'error' })
+    expect(result[0].issues[0].code).toBe('ZIP_PATH_UNSAFE')
+  })
+
+  it('includes expanded ZIP entries in the twenty-file batch limit', async () => {
+    const files = Object.fromEntries(Array.from({ length: 20 }, (_, index) => [`${String(index).padStart(2, '0')}.csv`, new TextEncoder().encode(String(index))]))
+    const zip = new File([zipSync(files)], 'bulk.zip', { type: 'application/zip' })
+    const result = await previewImportFiles([new File(['x'], 'before.csv'), zip])
+    expect(result.some((item) => item.issues.some((issue) => issue.code === 'BATCH_TOO_LARGE'))).toBe(true)
+    expect(result.filter((item) => item.archiveFilename)).toHaveLength(0)
   })
 
   it('detects the official Money Forward ME household-ledger export', async () => {

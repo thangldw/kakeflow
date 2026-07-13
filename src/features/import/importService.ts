@@ -1,6 +1,7 @@
 import { decodeCsvBytes, detectImportAdapter } from '../../ingestion'
 import type { AdapterId, ParsedImport, ParseIssue } from '../../ingestion'
 import readXlsxFile from 'read-excel-file/browser'
+import { expandZipCsv, ZipImportError } from './zipImport'
 
 export interface ImportPreview {
   id: string
@@ -20,6 +21,8 @@ export interface ImportPreview {
   folderInboxItemId?: string
   watchedFolderId?: string
   relativePath?: string
+  archiveFilename?: string
+  archiveEntryName?: string
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -142,12 +145,39 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
 
 export async function previewImportFiles(files: FileList | readonly File[]): Promise<ImportPreview[]> {
   const selected = Array.from(files)
-  const accepted = selected.slice(0, MAX_BATCH_FILES)
   const previews: ImportPreview[] = []
-  for (let index = 0; index < accepted.length; index += 2) {
-    previews.push(...await Promise.all(accepted.slice(index, index + 2).map(previewImportFile)))
+  for (const file of selected.slice(0, MAX_BATCH_FILES)) {
+    const isZip = /\.zip$/i.test(file.name) || /^(?:application\/zip|application\/x-zip-compressed)$/i.test(file.type)
+    let expanded: ImportPreview[]
+    if (isZip) {
+      try {
+        if (file.size > MAX_FILE_BYTES) throw new ZipImportError('ZIP_FILE_TOO_LARGE', 'ZIPファイルは25MB以下にしてください。')
+        const archive = expandZipCsv(await readFileBytes(file))
+        expanded = []
+        for (const [entryIndex, entry] of archive.entries.entries()) {
+          const displayName = `${file.name} › ${entry.name}`
+          const child = await previewImportFile(new File([new Uint8Array(entry.bytes)], displayName, { type: 'text/csv', lastModified: file.lastModified }))
+          expanded.push({
+            ...child, archiveFilename: file.name, archiveEntryName: entry.name,
+            issues: entryIndex !== 0 ? child.issues : [
+              ...child.issues,
+              ...(archive.ignoredNames.length === 0 ? [] : [{ code: 'ZIP_NON_CSV_IGNORED', severity: 'warning' as const, message: `CSV以外の${archive.ignoredNames.length}件を取り込み対象外にしました: ${archive.ignoredNames.join(', ')}` }]),
+              ...(archive.duplicateCsvEntries.length === 0 ? [] : [{ code: 'ZIP_DUPLICATE_CSV_IGNORED', severity: 'warning' as const, message: `内容が同一のCSV ${archive.duplicateCsvEntries.length}件を重複として除外しました: ${archive.duplicateCsvEntries.map((duplicate) => `${duplicate.ignoredName} → ${duplicate.canonicalName}`).join(', ')}` }]),
+            ],
+          })
+        }
+      } catch (error) {
+        const issue = error instanceof ZipImportError ? error : new ZipImportError('ZIP_READ_FAILED', 'ZIPファイルを読み取れませんでした。')
+        expanded = [{ id: `zip-error:${file.name}:${file.size}`, filename: file.name, adapterId: null, encoding: 'not-read', recordCount: 0, status: 'error', parsedAt: new Date().toISOString(), issues: [{ code: issue.code, message: issue.message, severity: 'error' }] }]
+      }
+    } else expanded = [await previewImportFile(file)]
+    if (previews.length + expanded.length > MAX_BATCH_FILES) {
+      previews.push({ id: `batch-limit:${selected.length}:${previews.length + expanded.length}`, filename: '取込上限超過', adapterId: null, encoding: 'not-read', recordCount: 0, status: 'error', parsedAt: new Date().toISOString(), issues: [{ code: 'BATCH_TOO_LARGE', message: 'ZIP内のCSVを含め、一度にプレビューできるファイルは20件までです。', severity: 'error' }] })
+      break
+    }
+    previews.push(...expanded)
   }
-  if (selected.length > MAX_BATCH_FILES) {
+  if (selected.length > MAX_BATCH_FILES && !previews.some((preview) => preview.issues.some((issue) => issue.code === 'BATCH_TOO_LARGE'))) {
     previews.push({
       id: `batch-limit:${selected.length}`, filename: `${selected.length - MAX_BATCH_FILES}件のファイル`,
       adapterId: null, encoding: 'not-read', recordCount: 0, status: 'error', parsedAt: new Date().toISOString(),

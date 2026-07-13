@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.0 — 2026-07-13
+
+- Add bounded manual ZIP upload and drop for official Yucho Direct bulk exports while leaving watched-folder ZIP behavior unchanged.
+- Expand each distinct CSV payload into a normal import preview with deterministic ordering, `archive.zip › entry.csv` source provenance, explicit bank-account mapping, review, and explicit posting.
+- Reject an archive atomically when it is malformed, split/multidisk, ZIP64, encrypted, path-bearing, directory-bearing, ambiguously named, inconsistently described, CRC-invalid, or uses an unsupported compression method.
+- Bound archive processing to 25 MB compressed, 20 entries, 10 MB per entry, and 50 MB total expanded data; expanded CSV children also count against the existing 20-preview batch limit.
+- Ignore non-CSV entries only after the archive passes validation and disclose them once in the preview rather than silently treating them as financial data.
+- Collapse byte-identical CSV entries to one content-addressed preview with a visible canonical-name mapping, and reject unflagged non-ASCII legacy filenames instead of decoding Japanese names inconsistently.
+
 ## 0.27.0 — 2026-07-13
 
 - Add a dedicated `yucho-direct-ledger-v1` adapter for the official Yucho Direct personal-account CSV, detected ahead of the generic Japanese bank format.
