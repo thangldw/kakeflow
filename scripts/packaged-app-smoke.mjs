@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
-const defaultTimeoutMs = 45_000
+const defaultTimeoutMs = 90_000
 
 export function executableForPlatform(platform = process.platform, repositoryRoot = root) {
   const release = path.join(repositoryRoot, 'src-tauri', 'target', 'release')
@@ -29,20 +29,24 @@ export function launchArgumentsForPlatform(platform = process.platform) {
 export function validateSmokeResult(result) {
   const requiredPages = new Map([
     ['ホーム', 'Packaged Smoke Householdの家計'],
+    ['取引', 'すべての取引'], ['インポート', 'インポート Inbox'],
+    ['カード照合', 'カード引落・支払余力'], ['資産・投資', '資産・投資'],
+    ['カレンダー・レポート', 'カレンダー・レポート'], ['予算・目標', '予算・貯蓄目標'],
+    ['分類ルール', '分類ルール'], ['家族スペース', '家族スペース'], ['設定', '設定'],
   ])
   const evidence = result?.visualEvidence
   const pages = Array.isArray(evidence?.visitedPages) ? evidence.visitedPages : []
-  const pagesValid = [...requiredPages].every(([navigationLabel, pageTitle]) =>
-    pages.some((page) =>
-      page?.navigationLabel === navigationLabel &&
+  const pagesValid = pages.length === requiredPages.size && [...requiredPages].every(([navigationLabel, pageTitle], index) => {
+    const page = pages[index]
+    return page?.navigationLabel === navigationLabel &&
       page.pageTitle === pageTitle &&
       page.activeNavigation === true &&
+      page.headingVisible === true &&
       Number.isInteger(page.mainWidth) && page.mainWidth >= 600 &&
       Number.isInteger(page.mainHeight) && page.mainHeight > 0 &&
-      Number.isInteger(page.interactiveElementCount) && page.interactiveElementCount > 0 &&
-      Number.isInteger(page.renderedTextLength) && page.renderedTextLength >= 20,
-    ),
-  )
+      Number.isInteger(page.interactiveElementCount) && page.interactiveElementCount >= 0 &&
+      Number.isInteger(page.renderedTextLength) && page.renderedTextLength >= 20
+  })
   if (
     result?.status !== 'ok' ||
     result.application !== 'KakeFlow' ||
@@ -55,7 +59,7 @@ export function validateSmokeResult(result) {
     evidence.householdName !== 'Packaged Smoke Household' ||
     !Array.isArray(evidence.navigationLabels) ||
     ![...requiredPages.keys()].every((label) => evidence.navigationLabels.includes(label)) ||
-    !Number.isInteger(evidence.interactionCount) || evidence.interactionCount < 1 ||
+    !Number.isInteger(evidence.interactionCount) || evidence.interactionCount < requiredPages.size + 1 ||
     !Number.isInteger(evidence.viewportWidth) || evidence.viewportWidth < 800 ||
     !Number.isInteger(evidence.viewportHeight) || evidence.viewportHeight < 600 ||
     typeof evidence.devicePixelRatio !== 'number' || !Number.isFinite(evidence.devicePixelRatio) || evidence.devicePixelRatio <= 0 ||

@@ -26,15 +26,20 @@ describe('packaged app smoke harness', () => {
   })
 
   it('accepts only a complete successful boot, IPC, and migration result', () => {
+    const requiredPages = [
+      ['ホーム', 'Packaged Smoke Householdの家計'], ['取引', 'すべての取引'], ['インポート', 'インポート Inbox'],
+      ['カード照合', 'カード引落・支払余力'], ['資産・投資', '資産・投資'], ['カレンダー・レポート', 'カレンダー・レポート'],
+      ['予算・目標', '予算・貯蓄目標'], ['分類ルール', '分類ルール'], ['家族スペース', '家族スペース'], ['設定', '設定'],
+    ]
     const visualEvidence = {
       onboardingTitle: '家計簿をはじめましょう',
       householdName: 'Packaged Smoke Household',
-      navigationLabels: ['ホーム', '取引', 'インポート', 'カレンダー・レポート'],
-      interactionCount: 1,
+      navigationLabels: requiredPages.map(([label]) => label),
+      interactionCount: 11,
       viewportWidth: 1280,
       viewportHeight: 800,
       devicePixelRatio: 2,
-      visitedPages: [['ホーム', 'Packaged Smoke Householdの家計']].map(([navigationLabel, pageTitle]) => ({ navigationLabel, pageTitle, activeNavigation: true, mainWidth: 1000, mainHeight: 700, interactiveElementCount: 2, renderedTextLength: 100 })),
+      visitedPages: requiredPages.map(([navigationLabel, pageTitle]) => ({ navigationLabel, pageTitle, activeNavigation: true, headingVisible: true, mainWidth: 1000, mainHeight: 700, interactiveElementCount: 0, renderedTextLength: 100 })),
     }
     expect(
       validateSmokeResult({

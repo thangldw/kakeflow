@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.33.0 — 2026-07-13
+
+- Expand packaged-WebView smoke from Home-only evidence to all ten top-level workspaces, including Settings.
+- Verify canonical navigation order, exact page heading, visible heading/main region, active navigation, rendered text, viewport, IPC, migrations, integrity, and persisted onboarding data.
+- Preserve partial route evidence after every successful page so packaged failures identify the last verified workspace.
+- Mirror independent canonical workspace expectations in JavaScript, Node, and Rust validators and extend the process timeout for slower packaged WebViews.
+
 ## 0.32.0 — 2026-07-13
 
 - Promote the existing source-backed Action Center to Home with the three highest-priority actions and an exact total count.

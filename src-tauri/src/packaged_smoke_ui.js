@@ -60,25 +60,39 @@
     'created household selection',
   )
   await invoke('packaged_smoke_progress', { stage: 'household-selected' })
-  const navigationButtons = Array.from(sidebar.querySelectorAll('nav button.nav-item'))
-  const navigationLabels = navigationButtons.map((button) => button.textContent?.trim() ?? '')
-  const heading = mainHeading()
+  const navigationButtons = Array.from(sidebar.querySelectorAll('button.nav-item'))
+  const navigationLabels = navigationButtons.map((button) => button.querySelector('span')?.textContent?.trim() ?? '')
   const main = document.querySelector('main')
-  const homeButton = navigationButtons.find((button) => button.textContent?.trim() === 'ホーム')
-  if (!(heading instanceof HTMLElement) || !(main instanceof HTMLElement) || !visible(main) || !visible(heading)) {
+  const expectedPages = [
+    ['ホーム', 'Packaged Smoke Householdの家計'],
+    ['取引', 'すべての取引'],
+    ['インポート', 'インポート Inbox'],
+    ['カード照合', 'カード引落・支払余力'],
+    ['資産・投資', '資産・投資'],
+    ['カレンダー・レポート', 'カレンダー・レポート'],
+    ['予算・目標', '予算・貯蓄目標'],
+    ['分類ルール', '分類ルール'],
+    ['家族スペース', '家族スペース'],
+    ['設定', '設定'],
+  ]
+  if (!(main instanceof HTMLElement) || !visible(main)) {
     throw new Error('Home page is not visibly rendered after onboarding')
   }
-  const rect = main.getBoundingClientRect()
-  const visitedPages = [{
-    navigationLabel: 'ホーム',
-    pageTitle: heading.textContent?.trim() ?? '',
-    activeNavigation: homeButton instanceof HTMLButtonElement && homeButton.classList.contains('active'),
-    mainWidth: Math.round(rect.width),
-    mainHeight: Math.round(rect.height),
-    interactiveElementCount: main.querySelectorAll('button, input, select, textarea, a[href]').length,
-    renderedTextLength: main.innerText.trim().length,
-  }]
-  await invoke('packaged_smoke_progress', { stage: 'home-verified' })
+  const visitedPages = []
+  for (const [navigationLabel, pageTitle] of expectedPages) {
+    const button = navigationButtons.find((candidate) => candidate.querySelector('span')?.textContent?.trim() === navigationLabel)
+    if (!(button instanceof HTMLButtonElement)) throw new Error(`Navigation is unavailable: ${navigationLabel}`)
+    button.click()
+    interactionCount += 1
+    const heading = await waitFor(() => {
+      const candidate = mainHeading()
+      return candidate?.textContent?.trim() === pageTitle && visible(candidate) ? candidate : null
+    }, `${navigationLabel} page`)
+    const rect = main.getBoundingClientRect()
+    visitedPages.push({ navigationLabel, pageTitle: heading.textContent?.trim() ?? '', activeNavigation: button.classList.contains('active'), headingVisible: visible(heading), mainWidth: Math.round(rect.width), mainHeight: Math.round(rect.height), interactiveElementCount: main.querySelectorAll('button, input, select, textarea, a[href]').length, renderedTextLength: main.innerText.trim().length })
+    window.__KAKEFLOW_PACKAGED_SMOKE_EVIDENCE__ = { onboardingTitle, householdName: 'Packaged Smoke Household', navigationLabels, visitedPages: [...visitedPages], interactionCount, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, devicePixelRatio: window.devicePixelRatio }
+    await invoke('packaged_smoke_progress', { stage: `page-${visitedPages.length}-verified` })
+  }
 
   const visualEvidence = {
     onboardingTitle,
