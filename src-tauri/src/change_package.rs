@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::sync_foundation::{canonical_json, get_local_status, sha256_hex};
 
-pub const PACKAGE_SCHEMA_VERSION: u32 = 3;
+pub const PACKAGE_SCHEMA_VERSION: u32 = 4;
 pub const PACKAGE_MODE: &str = "FULL_CURRENT_STATE";
 pub const LEGACY_COVERED_KINDS: [&str; 11] = [
     "HOUSEHOLD",
@@ -37,7 +37,7 @@ pub const V2_COVERED_KINDS: [&str; 13] = [
     "DASHBOARD_PREFERENCES",
     "DELIMITED_PARSER_PROFILE",
 ];
-pub const COVERED_KINDS: [&str; 18] = [
+pub const V3_COVERED_KINDS: [&str; 18] = [
     "HOUSEHOLD",
     "HOUSEHOLD_MEMBER",
     "ACCOUNT",
@@ -57,8 +57,19 @@ pub const COVERED_KINDS: [&str; 18] = [
     "DASHBOARD_PREFERENCES",
     "DELIMITED_PARSER_PROFILE",
 ];
+pub const COVERED_KINDS: [&str; 18] = V3_COVERED_KINDS;
 
 const MAX_PACKAGE_RECORDS: usize = 100_000;
+
+fn covered_kinds_for(schema_version: u32) -> Option<&'static [&'static str]> {
+    match schema_version {
+        1 => Some(&LEGACY_COVERED_KINDS),
+        2 => Some(&V2_COVERED_KINDS),
+        3 => Some(&V3_COVERED_KINDS),
+        4 => Some(&COVERED_KINDS),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ChangePackageError {
@@ -130,6 +141,7 @@ pub struct ChangePackageRecordReviewDto {
 #[serde(rename_all = "camelCase")]
 pub struct ChangePackageReviewDto {
     pub package_id: String,
+    pub schema_version: u32,
     pub target_household_id: String,
     pub source_installation_id: String,
     pub source_revision: u64,
@@ -167,24 +179,104 @@ struct SnapshotIdentity<'a> {
     records: &'a [ChangePackageRecordDto],
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DashboardPreferencesV4Payload {
+    record_kind: String,
+    household_id: String,
+    dashboard_template: String,
+    theme: String,
+    density: String,
+    template_layouts: Vec<DashboardTemplateLayoutV4Payload>,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DashboardTemplateLayoutV4Payload {
+    dashboard_template: String,
+    widget_order: Vec<String>,
+    hidden_widgets: Vec<String>,
+}
+
+const DASHBOARD_TEMPLATES: [&str; 5] = [
+    "FINANCIAL_OVERVIEW",
+    "HOUSEHOLD_LEDGER",
+    "ASSETS_LIABILITIES",
+    "CARD_RECONCILIATION",
+    "CASH_FLOW",
+];
+const DASHBOARD_WIDGETS: [&str; 4] = ["TREND", "SPENDING", "RECENT", "CARDS"];
+
+fn valid_dashboard_preferences_v4(payload: &Value, household_id: &str) -> bool {
+    let Ok(payload) = serde_json::from_value::<DashboardPreferencesV4Payload>(payload.clone())
+    else {
+        return false;
+    };
+    if payload.record_kind != "DASHBOARD_PREFERENCES"
+        || payload.household_id != household_id
+        || !DASHBOARD_TEMPLATES.contains(&payload.dashboard_template.as_str())
+        || !matches!(payload.theme.as_str(), "SYSTEM" | "LIGHT" | "DARK")
+        || !matches!(payload.density.as_str(), "COMFORTABLE" | "COMPACT")
+        || payload.created_at.is_empty()
+        || payload.updated_at.is_empty()
+        || payload.template_layouts.len() != DASHBOARD_TEMPLATES.len()
+    {
+        return false;
+    }
+    for (index, layout) in payload.template_layouts.iter().enumerate() {
+        if layout.dashboard_template != DASHBOARD_TEMPLATES[index]
+            || layout.widget_order.len() != DASHBOARD_WIDGETS.len()
+            || layout
+                .widget_order
+                .iter()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+                != DASHBOARD_WIDGETS.into_iter().collect::<BTreeSet<_>>()
+        {
+            return false;
+        }
+        let eligible = if layout.dashboard_template == "CASH_FLOW" {
+            ["TREND", "RECENT", "CARDS"].as_slice()
+        } else {
+            DASHBOARD_WIDGETS.as_slice()
+        };
+        let hidden = layout
+            .hidden_widgets
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if hidden.len() != layout.hidden_widgets.len()
+            || hidden.len() >= eligible.len()
+            || !hidden.iter().all(|widget| eligible.contains(widget))
+        {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn export_current_state(
     connection: &Connection,
     household_id: &str,
 ) -> Result<LocalChangePackageDto> {
-    build_current_state(connection, household_id, true)
+    build_current_state(connection, household_id, true, PACKAGE_SCHEMA_VERSION)
 }
 
 fn current_state_for_comparison(
     connection: &Connection,
     household_id: &str,
+    schema_version: u32,
 ) -> Result<LocalChangePackageDto> {
-    build_current_state(connection, household_id, false)
+    build_current_state(connection, household_id, false, schema_version)
 }
 
 fn build_current_state(
     connection: &Connection,
     household_id: &str,
     allocate_revision: bool,
+    schema_version: u32,
 ) -> Result<LocalChangePackageDto> {
     if household_id.is_empty() || household_id.len() > 128 {
         return Err(ChangePackageError::InvalidInput);
@@ -371,11 +463,16 @@ fn build_current_state(
         &transaction,
         &mut records,
         "DASHBOARD_PREFERENCES",
-        "SELECT household_id,json(json_object(
-           'recordKind','DASHBOARD_PREFERENCES','householdId',household_id,
-           'dashboardTemplate',dashboard_template,'theme',theme,'density',density,
-           'createdAt',created_at,'updatedAt',updated_at))
-         FROM dashboard_preferences WHERE household_id=?1",
+        if schema_version >= 4 {
+            "SELECT household_id,payload_json FROM sync_dashboard_preferences_v4_payloads
+             WHERE household_id=?1"
+        } else {
+            "SELECT household_id,json(json_object(
+               'recordKind','DASHBOARD_PREFERENCES','householdId',household_id,
+               'dashboardTemplate',dashboard_template,'theme',theme,'density',density,
+               'createdAt',created_at,'updatedAt',updated_at))
+             FROM dashboard_preferences WHERE household_id=?1"
+        },
         household_id,
     )?;
     push_query_records(
@@ -387,6 +484,9 @@ fn build_current_state(
         household_id,
     )?;
 
+    let covered_kind_slice =
+        covered_kinds_for(schema_version).ok_or(ChangePackageError::InvalidInput)?;
+    records.retain(|record| covered_kind_slice.contains(&record.entity_kind.as_str()));
     if records.len() > MAX_PACKAGE_RECORDS {
         return Err(ChangePackageError::LimitExceeded);
     }
@@ -397,7 +497,7 @@ fn build_current_state(
     if identities.len() != records.len() {
         return Err(ChangePackageError::Encoding);
     }
-    let covered_kinds = COVERED_KINDS
+    let covered_kinds = covered_kind_slice
         .iter()
         .map(|kind| (*kind).to_owned())
         .collect::<Vec<_>>();
@@ -418,7 +518,7 @@ fn build_current_state(
     let source_revision =
         u64::try_from(source_revision).map_err(|_| ChangePackageError::Encoding)?;
     let identity = SnapshotIdentity {
-        schema_version: PACKAGE_SCHEMA_VERSION,
+        schema_version,
         mode: PACKAGE_MODE,
         source_installation_id: &status.device.id,
         source_principal_id: &status.principal.id,
@@ -437,7 +537,7 @@ fn build_current_state(
     let package_id = format!("change-package-{snapshot_sha256}");
     let package_value = json!({
         "packageId": package_id,
-        "schemaVersion": PACKAGE_SCHEMA_VERSION,
+        "schemaVersion": schema_version,
         "mode": PACKAGE_MODE,
         "sourceInstallationId": status.device.id,
         "sourcePrincipalId": status.principal.id,
@@ -455,7 +555,7 @@ fn build_current_state(
     transaction.commit()?;
     Ok(LocalChangePackageDto {
         package_id,
-        schema_version: PACKAGE_SCHEMA_VERSION,
+        schema_version,
         mode: PACKAGE_MODE.to_owned(),
         source_installation_id: status.device.id,
         source_principal_id: status.principal.id,
@@ -484,7 +584,7 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<LocalChangePackageDto> {
 }
 
 pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
-    if !matches!(package.schema_version, 1 | 2 | PACKAGE_SCHEMA_VERSION)
+    if !matches!(package.schema_version, 1 | 2 | 3 | PACKAGE_SCHEMA_VERSION)
         || package.mode != PACKAGE_MODE
         || package.source_installation_id.is_empty()
         || package.source_installation_id.len() > 128
@@ -497,12 +597,8 @@ pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
     {
         return Err(ChangePackageError::InvalidInput);
     }
-    let expected_kind_slice: &[&str] = match package.schema_version {
-        1 => &LEGACY_COVERED_KINDS,
-        2 => &V2_COVERED_KINDS,
-        3 => &COVERED_KINDS,
-        _ => return Err(ChangePackageError::InvalidInput),
-    };
+    let expected_kind_slice =
+        covered_kinds_for(package.schema_version).ok_or(ChangePackageError::InvalidInput)?;
     let expected_kinds = expected_kind_slice
         .iter()
         .map(|kind| (*kind).to_owned())
@@ -532,6 +628,9 @@ pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
         if canonical != record.canonical_payload_json
             || sha256_hex(canonical.as_bytes()) != record.payload_sha256
             || !payload_identity_matches(record, &payload, &package.household_id)
+            || (package.schema_version == 4
+                && record.entity_kind == "DASHBOARD_PREFERENCES"
+                && !valid_dashboard_preferences_v4(&payload, &package.household_id))
         {
             return Err(ChangePackageError::InvalidInput);
         }
@@ -625,7 +724,8 @@ pub fn stage_package(
         return Err(ChangePackageError::ReviewPending);
     }
 
-    let current = current_state_for_comparison(connection, target_household_id)?;
+    let current =
+        current_state_for_comparison(connection, target_household_id, package.schema_version)?;
     if current.source_installation_id == package.source_installation_id {
         return Err(ChangePackageError::InvalidInput);
     }
@@ -952,7 +1052,11 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
 
     // Re-read the destination immediately before opening the write transaction.
     // Production calls serialize access through AppState's connection mutex.
-    let current = current_state_for_comparison(connection, &review.target_household_id)?;
+    let current = current_state_for_comparison(
+        connection,
+        &review.target_household_id,
+        package.schema_version,
+    )?;
     let current_hashes = current
         .records
         .into_iter()
@@ -1010,6 +1114,7 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
             &transaction,
             &record.entity_kind,
             &record.canonical_payload_json,
+            package.schema_version,
         )?;
     }
     for record in review
@@ -1023,6 +1128,7 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
             &review.target_household_id,
             &record.entity_kind,
             &record.entity_id,
+            package.schema_version,
         )?;
     }
 
@@ -1039,6 +1145,7 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
             &review.target_household_id,
             &record.entity_kind,
             &record.entity_id,
+            package.schema_version,
         )?;
         match record.operation.as_str() {
             "UPSERT" => {
@@ -1111,7 +1218,12 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
     load_package_by_id(connection, package_id)?.ok_or(ChangePackageError::NotFound)
 }
 
-fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Result<()> {
+fn materialize_upsert(
+    connection: &Connection,
+    kind: &str,
+    payload: &str,
+    schema_version: u32,
+) -> Result<()> {
     match kind {
         "HOUSEHOLD" => {
             connection.execute(
@@ -1215,8 +1327,9 @@ fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Res
             )?;
         }
         "DASHBOARD_PREFERENCES" => {
-            connection.execute(
-                "INSERT INTO dashboard_preferences(
+            if schema_version < 4 {
+                connection.execute(
+                    "INSERT INTO dashboard_preferences(
                household_id,dashboard_template,theme,density,created_at,updated_at)
              VALUES(json_extract(?1,'$.householdId'),json_extract(?1,'$.dashboardTemplate'),
                json_extract(?1,'$.theme'),json_extract(?1,'$.density'),
@@ -1224,8 +1337,46 @@ fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Res
              ON CONFLICT(household_id) DO UPDATE SET dashboard_template=excluded.dashboard_template,
                theme=excluded.theme,density=excluded.density,created_at=excluded.created_at,
                updated_at=excluded.updated_at",
-                [payload],
-            )?;
+                    [payload],
+                )?;
+            } else {
+                connection.execute(
+                    "INSERT INTO dashboard_preferences(
+                       household_id,dashboard_template,theme,density,widget_order,hidden_widgets,
+                       created_at,updated_at)
+                     SELECT json_extract(?1,'$.householdId'),json_extract(?1,'$.dashboardTemplate'),
+                       json_extract(?1,'$.theme'),json_extract(?1,'$.density'),
+                       json_extract(layout.value,'$.widgetOrder'),
+                       json_extract(layout.value,'$.hiddenWidgets'),
+                       json_extract(?1,'$.createdAt'),json_extract(?1,'$.updatedAt')
+                     FROM json_each(?1,'$.templateLayouts') layout
+                     WHERE json_extract(layout.value,'$.dashboardTemplate')=
+                           json_extract(?1,'$.dashboardTemplate')
+                     ON CONFLICT(household_id) DO UPDATE SET
+                       dashboard_template=excluded.dashboard_template,theme=excluded.theme,
+                       density=excluded.density,widget_order=excluded.widget_order,
+                       hidden_widgets=excluded.hidden_widgets,created_at=excluded.created_at,
+                       updated_at=excluded.updated_at",
+                    [payload],
+                )?;
+                connection.execute(
+                    "DELETE FROM dashboard_template_layouts
+                     WHERE household_id=json_extract(?1,'$.householdId')",
+                    [payload],
+                )?;
+                connection.execute(
+                    "INSERT INTO dashboard_template_layouts(
+                       household_id,dashboard_template,widget_order,hidden_widgets,
+                       created_at,updated_at)
+                     SELECT json_extract(?1,'$.householdId'),
+                       json_extract(layout.value,'$.dashboardTemplate'),
+                       json_extract(layout.value,'$.widgetOrder'),
+                       json_extract(layout.value,'$.hiddenWidgets'),
+                       json_extract(?1,'$.createdAt'),json_extract(?1,'$.updatedAt')
+                     FROM json_each(?1,'$.templateLayouts') layout",
+                    [payload],
+                )?;
+            }
         }
         "DELIMITED_PARSER_PROFILE" => materialize_parser_profile(connection, payload)?,
         _ => return Err(ChangePackageError::InvalidInput),
@@ -1985,7 +2136,14 @@ fn materialize_delete(
     household_id: &str,
     kind: &str,
     entity_id: &str,
+    schema_version: u32,
 ) -> Result<()> {
+    if kind == "DASHBOARD_PREFERENCES" && schema_version >= 4 {
+        connection.execute(
+            "DELETE FROM dashboard_template_layouts WHERE household_id=?1",
+            [household_id],
+        )?;
+    }
     let (table, key) = match kind {
         "ACCOUNT" => ("accounts", "id"),
         "TRANSACTION" => ("transactions", "id"),
@@ -2053,6 +2211,7 @@ fn load_entity_payload(
     household_id: &str,
     kind: &str,
     entity_id: &str,
+    schema_version: u32,
 ) -> Result<Option<String>> {
     let sql = match kind {
         "HOUSEHOLD" => {
@@ -2134,6 +2293,10 @@ fn load_entity_payload(
           'cardAccountId',card_account_id,'bankAccountId',bank_account_id,
           'createdAt',created_at,'updatedAt',updated_at))
           FROM card_settlement_bank_mappings WHERE household_id=?1 AND card_account_id=?2"
+        }
+        "DASHBOARD_PREFERENCES" if schema_version >= 4 => {
+            "SELECT payload_json FROM sync_dashboard_preferences_v4_payloads
+             WHERE household_id=?1 AND household_id=?2"
         }
         "DASHBOARD_PREFERENCES" => {
             "SELECT json(json_object(
@@ -2238,7 +2401,7 @@ fn load_package_by_id(
 ) -> Result<Option<ChangePackageReviewDto>> {
     let header = connection
         .query_row(
-            "SELECT package_id,target_household_id,source_installation_id,source_revision,
+            "SELECT package_id,schema_version,target_household_id,source_installation_id,source_revision,
                     source_created_at,state,record_count,create_count,update_count,
                     unchanged_count,delete_count,conflict_count
              FROM change_packages WHERE package_id=?1",
@@ -2246,17 +2409,18 @@ fn load_package_by_id(
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(6)?,
                     row.get::<_, i64>(7)?,
                     row.get::<_, i64>(8)?,
                     row.get::<_, i64>(9)?,
                     row.get::<_, i64>(10)?,
                     row.get::<_, i64>(11)?,
+                    row.get::<_, i64>(12)?,
                 ))
             },
         )
@@ -2286,17 +2450,18 @@ fn load_package_by_id(
     let records = rows.collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(Some(ChangePackageReviewDto {
         package_id: header.0,
-        target_household_id: header.1,
-        source_installation_id: header.2,
-        source_revision: u64::try_from(header.3).map_err(|_| ChangePackageError::Encoding)?,
-        source_created_at: header.4,
-        state: header.5,
-        record_count: as_u64(header.6)?,
-        create_count: as_u64(header.7)?,
-        update_count: as_u64(header.8)?,
-        unchanged_count: as_u64(header.9)?,
-        delete_count: as_u64(header.10)?,
-        conflict_count: as_u64(header.11)?,
+        schema_version: as_u64(header.1)? as u32,
+        target_household_id: header.2,
+        source_installation_id: header.3,
+        source_revision: u64::try_from(header.4).map_err(|_| ChangePackageError::Encoding)?,
+        source_created_at: header.5,
+        state: header.6,
+        record_count: as_u64(header.7)?,
+        create_count: as_u64(header.8)?,
+        update_count: as_u64(header.9)?,
+        unchanged_count: as_u64(header.10)?,
+        delete_count: as_u64(header.11)?,
+        conflict_count: as_u64(header.12)?,
         records,
     }))
 }
@@ -2416,6 +2581,20 @@ mod tests {
     const TEST_KEY: &[u8] = b"change-package-test-key-material-32bytes";
 
     fn resign_package(package: &mut LocalChangePackageDto) {
+        if package.schema_version < 4 {
+            for record in &mut package.records {
+                if record.entity_kind == "DASHBOARD_PREFERENCES" {
+                    let mut value: Value = serde_json::from_str(&record.canonical_payload_json)
+                        .expect("dashboard payload");
+                    value
+                        .as_object_mut()
+                        .expect("dashboard object")
+                        .remove("templateLayouts");
+                    record.canonical_payload_json = canonical_json(&value).unwrap();
+                    record.payload_sha256 = sha256_hex(record.canonical_payload_json.as_bytes());
+                }
+            }
+        }
         let identity = SnapshotIdentity {
             schema_version: package.schema_version,
             mode: &package.mode,
@@ -2589,6 +2768,27 @@ mod tests {
         ).unwrap();
     }
 
+    fn replace_dashboard_layouts(connection: &Connection, household_id: &str) {
+        connection
+            .execute(
+                "DELETE FROM dashboard_template_layouts WHERE household_id=?1",
+                [household_id],
+            )
+            .unwrap();
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO dashboard_template_layouts(
+                   household_id,dashboard_template,widget_order,hidden_widgets)
+                 VALUES
+                  ('{household_id}','FINANCIAL_OVERVIEW','[\"RECENT\",\"TREND\",\"SPENDING\",\"CARDS\"]','[\"CARDS\"]'),
+                  ('{household_id}','HOUSEHOLD_LEDGER','[\"SPENDING\",\"TREND\",\"RECENT\",\"CARDS\"]','[\"TREND\"]'),
+                  ('{household_id}','ASSETS_LIABILITIES','[\"CARDS\",\"TREND\",\"SPENDING\",\"RECENT\"]','[\"RECENT\"]'),
+                  ('{household_id}','CARD_RECONCILIATION','[\"CARDS\",\"TREND\",\"RECENT\",\"SPENDING\"]','[\"SPENDING\"]'),
+                  ('{household_id}','CASH_FLOW','[\"RECENT\",\"TREND\",\"CARDS\",\"SPENDING\"]','[\"CARDS\"]');"
+            ))
+            .unwrap();
+    }
+
     #[test]
     fn complete_package_round_trips_all_covered_aggregates_without_echo() {
         let source = AppState::in_memory(TEST_KEY).unwrap();
@@ -2720,6 +2920,240 @@ mod tests {
                 assert_eq!(
                     apply_package(connection, &review.package_id).unwrap().state,
                     "APPLIED"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_four_exports_five_layouts_and_rejects_malformed_layout_graphs() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        let mut package = state
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                replace_dashboard_layouts(connection, "family");
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        assert_eq!(package.schema_version, 4);
+        assert_eq!(package.covered_kinds.len(), 18);
+        let dashboard = package
+            .records
+            .iter()
+            .find(|record| record.entity_kind == "DASHBOARD_PREFERENCES")
+            .unwrap();
+        let payload: Value = serde_json::from_str(&dashboard.canonical_payload_json).unwrap();
+        let layouts = payload["templateLayouts"].as_array().unwrap();
+        assert_eq!(layouts.len(), 5);
+        assert_eq!(layouts[0]["dashboardTemplate"], "FINANCIAL_OVERVIEW");
+        assert_eq!(layouts[4]["dashboardTemplate"], "CASH_FLOW");
+
+        let dashboard = package
+            .records
+            .iter_mut()
+            .find(|record| record.entity_kind == "DASHBOARD_PREFERENCES")
+            .unwrap();
+        let mut payload: Value = serde_json::from_str(&dashboard.canonical_payload_json).unwrap();
+        payload["templateLayouts"].as_array_mut().unwrap().pop();
+        dashboard.canonical_payload_json = canonical_json(&payload).unwrap();
+        dashboard.payload_sha256 = sha256_hex(dashboard.canonical_payload_json.as_bytes());
+        resign_package(&mut package);
+        assert!(matches!(
+            validate_package(&package),
+            Err(ChangePackageError::InvalidInput)
+        ));
+    }
+
+    #[test]
+    fn schema_three_apply_preserves_all_destination_template_layouts() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let mut package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                connection.execute(
+                    "UPDATE dashboard_preferences SET theme='LIGHT' WHERE household_id='family'",
+                    [],
+                )?;
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        package.schema_version = 3;
+        resign_package(&mut package);
+        validate_package(&package).unwrap();
+
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                replace_dashboard_layouts(connection, "family");
+                let before: String = connection.query_row(
+                    "SELECT json_group_array(json_object(
+                       'template',dashboard_template,'order',json(widget_order),
+                       'hidden',json(hidden_widgets)))
+                     FROM (SELECT * FROM dashboard_template_layouts
+                           WHERE household_id='family' ORDER BY dashboard_template)",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                let dashboard = review
+                    .records
+                    .iter()
+                    .find(|record| record.entity_kind == "DASHBOARD_PREFERENCES")
+                    .unwrap();
+                assert_eq!(dashboard.review_state, "CONFLICT");
+                let resolutions = review
+                    .records
+                    .iter()
+                    .filter(|record| record.resolution == "PENDING")
+                    .map(|record| ChangePackageResolutionInput {
+                        entity_kind: record.entity_kind.clone(),
+                        entity_id: record.entity_id.clone(),
+                        resolution: if record.entity_kind == "DASHBOARD_PREFERENCES" {
+                            "APPLY_INCOMING"
+                        } else {
+                            "KEEP_LOCAL"
+                        }
+                        .to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                let review = if resolutions.is_empty() {
+                    review
+                } else {
+                    resolve_package(connection, &review.package_id, &resolutions).unwrap()
+                };
+                assert_eq!(
+                    apply_package(connection, &review.package_id).unwrap().state,
+                    "APPLIED"
+                );
+                let after: String = connection.query_row(
+                    "SELECT json_group_array(json_object(
+                       'template',dashboard_template,'order',json(widget_order),
+                       'hidden',json(hidden_widgets)))
+                     FROM (SELECT * FROM dashboard_template_layouts
+                           WHERE household_id='family' ORDER BY dashboard_template)",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(after, before);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_four_layout_only_edit_is_captured_and_blocks_stale_apply_without_echo() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                replace_dashboard_layouts(connection, "family");
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                replace_dashboard_layouts(connection, "family");
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                let resolutions = review
+                    .records
+                    .iter()
+                    .filter(|record| record.resolution == "PENDING")
+                    .map(|record| ChangePackageResolutionInput {
+                        entity_kind: record.entity_kind.clone(),
+                        entity_id: record.entity_id.clone(),
+                        resolution: if record.entity_kind == "DASHBOARD_PREFERENCES" {
+                            "APPLY_INCOMING"
+                        } else {
+                            "KEEP_LOCAL"
+                        }
+                        .to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                let review = if resolutions.is_empty() {
+                    review
+                } else {
+                    resolve_package(connection, &review.package_id, &resolutions).unwrap()
+                };
+                assert_eq!(review.state, "READY");
+                let capture_before: i64 = connection.query_row(
+                    "SELECT count(*) FROM sync_local_change_capture",
+                    [],
+                    |row| row.get(0),
+                )?;
+                connection.execute(
+                    "UPDATE dashboard_template_layouts
+                     SET hidden_widgets='[]' WHERE household_id='family'
+                       AND dashboard_template='FINANCIAL_OVERVIEW'",
+                    [],
+                )?;
+                let capture_after: i64 = connection.query_row(
+                    "SELECT count(*) FROM sync_local_change_capture",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(capture_after, capture_before + 1);
+                assert!(matches!(
+                    apply_package(connection, &review.package_id),
+                    Err(ChangePackageError::Conflict)
+                ));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn dashboard_layout_replacement_capture_finishes_complete_and_parent_delete_is_tombstone() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        state
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                replace_dashboard_layouts(connection, "family");
+                connection.execute("DELETE FROM sync_local_change_capture", [])?;
+                connection.execute(
+                    "DELETE FROM dashboard_template_layouts
+                     WHERE household_id='family' AND dashboard_template='FINANCIAL_OVERVIEW'",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO dashboard_template_layouts(
+                       household_id,dashboard_template,widget_order,hidden_widgets)
+                     VALUES('family','FINANCIAL_OVERVIEW',
+                       '[\"TREND\",\"SPENDING\",\"RECENT\",\"CARDS\"]','[\"RECENT\"]')",
+                    [],
+                )?;
+                let latest_payload: String = connection.query_row(
+                    "SELECT payload_json FROM sync_local_change_capture
+                     WHERE entity_kind='DASHBOARD_PREFERENCES'
+                     ORDER BY capture_sequence DESC LIMIT 1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(
+                    serde_json::from_str::<Value>(&latest_payload).unwrap()["templateLayouts"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    5
+                );
+                connection.execute("DELETE FROM sync_local_change_capture", [])?;
+                connection.execute(
+                    "DELETE FROM dashboard_preferences WHERE household_id='family'",
+                    [],
+                )?;
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT group_concat(operation,',') FROM sync_local_change_capture
+                         WHERE entity_kind='DASHBOARD_PREFERENCES'",
+                        [],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "DELETE"
                 );
                 Ok(())
             })

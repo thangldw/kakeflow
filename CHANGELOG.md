@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.50.0 — 2026-07-14
+
+- Extend local change packages to schema v4 while retaining the same bounded eighteen-kind household snapshot and the existing explicit review/apply workflow.
+- Carry the complete dashboard-preference aggregate: active template, theme, density, and the independent widget order and hidden-widget set for all five Home templates.
+- Validate an exact five-template layout graph with exhaustive unique widget orders, template-eligible hidden widgets, at least one visible eligible panel, and deterministic canonical hashes.
+- Apply accepted dashboard preferences and all five layouts atomically, preserve conflict rechecks and idempotent receipts, and suppress incoming changes from echoing into the local outbox.
+- Keep schema-v1, schema-v2, and schema-v3 packages readable; legacy dashboard payloads update template, theme, and density without erasing destination layouts introduced in later versions.
+- Keep layout transport local-file-only and presentation-only: it adds no server, login, remote synchronization, access-control claim, or effect on ledger calculations.
+- Cover two-database layout round trips, layout-only conflicts, malformed and incomplete graphs, legacy schema preservation, omission defaults, migration capture, restore validation, idempotency, and no-echo behavior.
+
 ## 0.49.0 — 2026-07-13
 
 - Add a separate passphrase-protected `.kakeflow-review` format for copying one candidate-bearing `REVIEW_REQUIRED` run between desktop installations without changing the source review.
