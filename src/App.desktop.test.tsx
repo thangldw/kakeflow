@@ -275,6 +275,7 @@ describe('KakeFlow desktop read models', () => {
       postedTransactionCount: 1,
       netWorthAsOf: '2026-07-31', assetsJpy: 620_000, liabilitiesJpy: 120_000, netWorthJpy: 500_000,
       accrualTrend: [{ month: '2026-07', incomeJpy: 500_000, expenseJpy: 120_000 }],
+      cashFlowTrend: Array.from({ length: 6 }, (_, index) => ({ month: `2026-${String(index + 2).padStart(2, '0')}`, inflowJpy: index === 5 ? 480_000 : 0, outflowJpy: index === 5 ? 204_987 : 0, netCashFlowJpy: index === 5 ? 275_013 : 0 })),
       expenseCategories: [{ accountId: 'family-other-expense', name: 'その他', amountJpy: 120_000 }],
     }))
     desktop.queryTransactions.mockReset().mockImplementation(async ({ accountingBasis, pageSize }: { accountingBasis: 'ACCRUAL' | 'CASH'; pageSize: number }) => ({
@@ -335,6 +336,53 @@ describe('KakeFlow desktop read models', () => {
     expect(document.documentElement).toHaveAttribute('data-theme', 'dark')
     expect(document.documentElement).toHaveAttribute('data-density', 'compact')
     expect(desktop.getDashboardPreferences).toHaveBeenCalledWith('parents')
+  })
+
+  it('uses cash basis consistently for the cash-flow Home without double counting card purchases', async () => {
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' })
+    render(<App />)
+
+    await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CASH_FLOW'))
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'CASH', month: '2026-07' })))
+    expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'CASH', fromDate: '2026-07-01', toDate: '2026-07-31' }))
+
+    expect(within(screen.getByText('今月の入金').closest('article')!).getByText('¥480,000')).toBeInTheDocument()
+    expect(within(screen.getByText('今月の出金').closest('article')!).getByText('¥204,987')).toBeInTheDocument()
+    expect(within(screen.getByText('差引キャッシュフロー').closest('article')!).getByText('¥275,013')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '直近6か月の入金と出金' })).toBeInTheDocument()
+    expect(screen.getByText('Rakuten Card')).toBeInTheDocument()
+    expect(screen.queryByText('生協')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '支出の内訳' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /資金移動を見る/ })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('ホームの表示テンプレート'), { target: { value: 'FINANCIAL_OVERVIEW' } })
+    await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', template: 'FINANCIAL_OVERVIEW' })))
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' })))
+    expect(await screen.findByText('生協')).toBeInTheDocument()
+  })
+
+  it('does not let a delayed cash-flow response overwrite a newer accrual Home', async () => {
+    desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' })
+    let resolveCash: ((value: Awaited<ReturnType<typeof desktop.queryDashboard>>) => void) | undefined
+    const accrual = {
+      month: '2026-07', accountingBasis: 'ACCRUAL' as const, incomeJpy: 500_000, expenseJpy: 120_000, savingsJpy: 380_000, postedTransactionCount: 1,
+      netWorthAsOf: '2026-07-31', assetsJpy: 620_000, liabilitiesJpy: 120_000, netWorthJpy: 500_000,
+      accrualTrend: [{ month: '2026-07', incomeJpy: 500_000, expenseJpy: 120_000 }], cashFlowTrend: Array.from({ length: 6 }, (_, index) => ({ month: `2026-${String(index + 2).padStart(2, '0')}`, inflowJpy: index === 5 ? 480_000 : 0, outflowJpy: index === 5 ? 204_987 : 0, netCashFlowJpy: index === 5 ? 275_013 : 0 })), expenseCategories: [],
+    }
+    desktop.queryDashboard.mockImplementation(({ accountingBasis }: { accountingBasis: 'ACCRUAL' | 'CASH' }) => accountingBasis === 'CASH'
+      ? new Promise((resolve) => { resolveCash = resolve })
+      : Promise.resolve(accrual))
+    render(<App />)
+    await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CASH_FLOW'))
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ accountingBasis: 'CASH' })))
+
+    fireEvent.change(screen.getByLabelText('ホームの表示テンプレート'), { target: { value: 'FINANCIAL_OVERVIEW' } })
+    expect(await screen.findByText('生協')).toBeInTheDocument()
+    resolveCash?.({ ...accrual, accountingBasis: 'CASH', incomeJpy: 480_000, expenseJpy: 204_987, savingsJpy: 275_013 })
+
+    await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW'))
+    expect(screen.getByText('生協')).toBeInTheDocument()
+    expect(screen.queryByText('差引キャッシュフロー')).not.toBeInTheDocument()
   })
 
   it('bulk adds transaction labels and tags without category edits', async () => {

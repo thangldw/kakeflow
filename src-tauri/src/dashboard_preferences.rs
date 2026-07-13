@@ -11,6 +11,7 @@ pub enum DashboardTemplate {
     HouseholdLedger,
     AssetsLiabilities,
     CardReconciliation,
+    CashFlow,
 }
 
 impl DashboardTemplate {
@@ -20,6 +21,7 @@ impl DashboardTemplate {
             Self::HouseholdLedger => "HOUSEHOLD_LEDGER",
             Self::AssetsLiabilities => "ASSETS_LIABILITIES",
             Self::CardReconciliation => "CARD_RECONCILIATION",
+            Self::CashFlow => "CASH_FLOW",
         }
     }
 
@@ -29,6 +31,7 @@ impl DashboardTemplate {
             "HOUSEHOLD_LEDGER" => Some(Self::HouseholdLedger),
             "ASSETS_LIABILITIES" => Some(Self::AssetsLiabilities),
             "CARD_RECONCILIATION" => Some(Self::CardReconciliation),
+            "CASH_FLOW" => Some(Self::CashFlow),
             _ => None,
         }
     }
@@ -258,6 +261,9 @@ mod tests {
             .execute_batch(include_str!("../migrations/0029_dashboard_preferences.sql"))
             .expect("migration");
         connection
+            .execute_batch(include_str!("../migrations/0030_cash_flow_dashboard.sql"))
+            .expect("cash-flow migration");
+        connection
     }
 
     #[test]
@@ -293,6 +299,23 @@ mod tests {
         assert_eq!(saved.theme, DashboardTheme::Dark);
         assert_eq!(saved.density, DashboardDensity::Compact);
         assert_ne!(saved.updated_at, "1970-01-01T00:00:00.000Z");
+        assert_eq!(get(&connection, "family").expect("read"), saved);
+    }
+
+    #[test]
+    fn cash_flow_template_round_trips() {
+        let connection = database();
+        let saved = upsert(
+            &connection,
+            &UpsertDashboardPreferencesInput {
+                household_id: "family".to_owned(),
+                template: DashboardTemplate::CashFlow,
+                theme: DashboardTheme::System,
+                density: DashboardDensity::Compact,
+            },
+        )
+        .expect("save cash flow");
+        assert_eq!(saved.template, DashboardTemplate::CashFlow);
         assert_eq!(get(&connection, "family").expect("read"), saved);
     }
 

@@ -84,7 +84,7 @@ const WEB_STATUS: AppStatusDto = Object.freeze({
 
 const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
   netWorthAsOf: '1970-01-31', assetsJpy: 0, liabilitiesJpy: 0, netWorthJpy: 0,
-  accrualTrend: Object.freeze([]), expenseCategories: Object.freeze([]),
+  accrualTrend: Object.freeze([]), cashFlowTrend: Object.freeze([]), expenseCategories: Object.freeze([]),
 })
 
 type TauriGlobal = typeof globalThis & {
@@ -678,7 +678,21 @@ function parseAppliedClassification(value: unknown): AppliedClassificationDto {
 
 function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
   const record = asRecord(value)
-  if (typeof record.month !== 'string' || typeof record.netWorthAsOf !== 'string' || (record.accountingBasis !== 'ACCRUAL' && record.accountingBasis !== 'CASH') || !Array.isArray(record.accrualTrend) || !Array.isArray(record.expenseCategories)) throw new TypeError('dashboard')
+  if (typeof record.month !== 'string' || typeof record.netWorthAsOf !== 'string' || (record.accountingBasis !== 'ACCRUAL' && record.accountingBasis !== 'CASH') || !Array.isArray(record.accrualTrend) || !Array.isArray(record.cashFlowTrend) || !Array.isArray(record.expenseCategories)) throw new TypeError('dashboard')
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(record.month) || record.cashFlowTrend.length !== 6) throw new TypeError('dashboard cash flow trend')
+  const requestedMonthOrdinal = Number(record.month.slice(0, 4)) * 12 + Number(record.month.slice(5)) - 1
+  const cashFlowTrend = record.cashFlowTrend.map((item, index) => {
+    const point = asRecord(item)
+    const month = asRequiredString(point.month)
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new TypeError('cash flow month')
+    const monthOrdinal = Number(month.slice(0, 4)) * 12 + Number(month.slice(5)) - 1
+    if (monthOrdinal !== requestedMonthOrdinal - 5 + index) throw new TypeError('cash flow month sequence')
+    const inflowJpy = asSafeInteger(point.inflowJpy)
+    const outflowJpy = asSafeInteger(point.outflowJpy)
+    const netCashFlowJpy = asSafeSignedInteger(point.netCashFlowJpy)
+    if (netCashFlowJpy !== inflowJpy - outflowJpy) throw new TypeError('cash flow net')
+    return { month, inflowJpy, outflowJpy, netCashFlowJpy }
+  })
   return {
     month: record.month,
     accountingBasis: record.accountingBasis,
@@ -694,6 +708,7 @@ function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
       const point = asRecord(item)
       return { month: asRequiredString(point.month), incomeJpy: asSafeSignedInteger(point.incomeJpy), expenseJpy: asSafeSignedInteger(point.expenseJpy) }
     }),
+    cashFlowTrend,
     expenseCategories: record.expenseCategories.map((item) => {
       const category = asRecord(item)
       return { accountId: asRequiredString(category.accountId), name: asRequiredString(category.name), amountJpy: asSafeSignedInteger(category.amountJpy) }
@@ -703,7 +718,7 @@ function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
 
 function parseDashboardPreferences(value: unknown): DashboardPreferencesDto {
   const record = asRecord(value)
-  const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION'] as const
+  const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION', 'CASH_FLOW'] as const
   const themes = ['SYSTEM', 'LIGHT', 'DARK'] as const
   const densities = ['COMFORTABLE', 'COMPACT'] as const
   if (!templates.includes(record.template as typeof templates[number])

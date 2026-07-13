@@ -85,6 +85,12 @@ describe('platform client', () => {
         month: '2026-07', accountingBasis: 'ACCRUAL', incomeJpy: 650000, expenseJpy: 250000, savingsJpy: 400000, postedTransactionCount: 10,
         netWorthAsOf: '2026-07-31', assetsJpy: 8_500_000, liabilitiesJpy: 250_000, netWorthJpy: 8_250_000,
         accrualTrend: [{ month: '2026-07', incomeJpy: 650000, expenseJpy: 250000 }],
+        cashFlowTrend: Array.from({ length: 6 }, (_, index) => ({
+          month: `2026-${String(index + 2).padStart(2, '0')}`,
+          inflowJpy: index === 5 ? 650000 : 0,
+          outflowJpy: index === 5 ? 250000 : 0,
+          netCashFlowJpy: index === 5 ? 400000 : 0,
+        })),
         expenseCategories: [{ accountId: 'family-groceries', name: 'Groceries', amountJpy: 250000 }],
       },
       transactions_query: { items: [], page: 1, pageSize: 20, totalItems: 0, totalPages: 0 },
@@ -366,7 +372,7 @@ describe('platform client', () => {
 
   it('loads and persists strictly validated household dashboard preferences', async () => {
     const saved = {
-      householdId: 'family', template: 'ASSETS_LIABILITIES', theme: 'DARK', density: 'COMPACT',
+      householdId: 'family', template: 'CASH_FLOW', theme: 'DARK', density: 'COMPACT',
       updatedAt: '2026-07-13T08:30:00.000Z',
     }
     const invokeSpy = vi.fn()
@@ -377,7 +383,7 @@ describe('platform client', () => {
         return saved as T
       },
     })
-    const input = { householdId: 'family', template: 'ASSETS_LIABILITIES' as const, theme: 'DARK' as const, density: 'COMPACT' as const }
+    const input = { householdId: 'family', template: 'CASH_FLOW' as const, theme: 'DARK' as const, density: 'COMPACT' as const }
 
     await expect(client.getDashboardPreferences('family')).resolves.toEqual(saved)
     await expect(client.upsertDashboardPreferences(input)).resolves.toEqual(saved)
@@ -395,6 +401,32 @@ describe('platform client', () => {
       const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
       await expect(invalidClient.getDashboardPreferences('family')).rejects.toMatchObject({
         code: 'INVALID_RESPONSE', command: 'dashboard_preferences_get',
+      })
+    }
+  })
+
+  it('rejects malformed or non-contiguous cash-flow dashboard trends', async () => {
+    const trend = Array.from({ length: 6 }, (_, index) => ({
+      month: `2026-${String(index + 2).padStart(2, '0')}`,
+      inflowJpy: index === 5 ? 1000 : 0,
+      outflowJpy: index === 5 ? 400 : 0,
+      netCashFlowJpy: index === 5 ? 600 : 0,
+    }))
+    const valid = {
+      month: '2026-07', accountingBasis: 'CASH', incomeJpy: 1000, expenseJpy: 400, savingsJpy: 600,
+      postedTransactionCount: 2, netWorthAsOf: '2026-07-31', assetsJpy: 1000, liabilitiesJpy: 0, netWorthJpy: 1000,
+      accrualTrend: [], cashFlowTrend: trend, expenseCategories: [],
+    }
+    const invalidResponses = [
+      { ...valid, cashFlowTrend: trend.slice(1) },
+      { ...valid, cashFlowTrend: trend.map((point, index) => index === 5 ? { ...point, netCashFlowJpy: 599 } : point) },
+      { ...valid, cashFlowTrend: trend.map((point, index) => index === 5 ? { ...point, outflowJpy: -1 } : point) },
+      { ...valid, cashFlowTrend: trend.map((point, index) => index === 2 ? { ...point, month: '2026-02' } : point) },
+    ]
+    for (const response of invalidResponses) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(client.queryDashboard({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07', accountingBasis: 'CASH' })).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'dashboard_query',
       })
     }
   })

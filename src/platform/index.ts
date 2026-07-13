@@ -40,6 +40,7 @@ export type {
   CardSettlementBalanceCoverageDto,
   DashboardMonthlyTotalsDto,
   DashboardAccrualTrendPointDto,
+  DashboardCashFlowTrendPointDto,
   DashboardExpenseCategoryDto,
   DashboardRequestDto,
   DashboardTemplateDto,

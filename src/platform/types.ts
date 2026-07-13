@@ -221,6 +221,7 @@ export interface DashboardMonthlyTotalsDto {
   readonly liabilitiesJpy: number
   readonly netWorthJpy: number
   readonly accrualTrend: readonly DashboardAccrualTrendPointDto[]
+  readonly cashFlowTrend: readonly DashboardCashFlowTrendPointDto[]
   readonly expenseCategories: readonly DashboardExpenseCategoryDto[]
 }
 
@@ -241,6 +242,7 @@ export type DashboardTemplateDto =
   | 'HOUSEHOLD_LEDGER'
   | 'ASSETS_LIABILITIES'
   | 'CARD_RECONCILIATION'
+  | 'CASH_FLOW'
 
 export type DashboardThemeDto = 'SYSTEM' | 'LIGHT' | 'DARK'
 export type DashboardDensityDto = 'COMFORTABLE' | 'COMPACT'
@@ -251,6 +253,13 @@ export interface DashboardPreferencesDto {
   readonly theme: DashboardThemeDto
   readonly density: DashboardDensityDto
   readonly updatedAt: string
+}
+
+export interface DashboardCashFlowTrendPointDto {
+  readonly month: string
+  readonly inflowJpy: number
+  readonly outflowJpy: number
+  readonly netCashFlowJpy: number
 }
 
 export interface UpsertDashboardPreferencesInputDto {

@@ -70,6 +70,7 @@ const MIGRATIONS: &[M<'static>] = &[
     )),
     M::up(include_str!("../migrations/0028_watched_file_inbox.sql")),
     M::up(include_str!("../migrations/0029_dashboard_preferences.sql")),
+    M::up(include_str!("../migrations/0030_cash_flow_dashboard.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -496,19 +497,26 @@ fn validate_restored_semantics(
         )?;
     }
     if schema_version >= 29 {
+        let allowed_templates = if schema_version >= 30 {
+            "'FINANCIAL_OVERVIEW','HOUSEHOLD_LEDGER','ASSETS_LIABILITIES',
+             'CARD_RECONCILIATION','CASH_FLOW'"
+        } else {
+            "'FINANCIAL_OVERVIEW','HOUSEHOLD_LEDGER','ASSETS_LIABILITIES',
+             'CARD_RECONCILIATION'"
+        };
         reject_if_exists(
             connection,
-            "SELECT 1 FROM dashboard_preferences p
+            &format!(
+                "SELECT 1 FROM dashboard_preferences p
              LEFT JOIN households h ON h.id=p.household_id
              WHERE h.id IS NULL
-                OR p.dashboard_template NOT IN (
-                    'FINANCIAL_OVERVIEW','HOUSEHOLD_LEDGER',
-                    'ASSETS_LIABILITIES','CARD_RECONCILIATION')
+                OR p.dashboard_template NOT IN ({allowed_templates})
                 OR p.theme NOT IN ('SYSTEM','LIGHT','DARK')
                 OR p.density NOT IN ('COMFORTABLE','COMPACT')
                 OR p.created_at NOT GLOB '????-??-??T??:??:??*Z'
                 OR p.updated_at NOT GLOB '????-??-??T??:??:??*Z'
-             LIMIT 1",
+             LIMIT 1"
+            ),
         )?;
     }
     if schema_version >= 2 {
@@ -923,6 +931,61 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_thirty_preserves_dashboard_preferences_and_adds_cash_flow() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 29)
+            .expect("schema twenty nine");
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES ('family','Family');
+                 INSERT INTO dashboard_preferences(
+                   household_id,dashboard_template,theme,density,created_at,updated_at)
+                 VALUES('family','ASSETS_LIABILITIES','DARK','COMPACT',
+                   '2026-07-01T00:00:00.000Z','2026-07-02T00:00:00.000Z');",
+            )
+            .expect("legacy preference");
+        migrations
+            .to_version(&mut connection, 30)
+            .expect("schema thirty");
+        let preserved: (String, String, String, String) = connection
+            .query_row(
+                "SELECT dashboard_template,theme,density,updated_at
+                 FROM dashboard_preferences WHERE household_id='family'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("preserved preference");
+        assert_eq!(
+            preserved,
+            (
+                "ASSETS_LIABILITIES".to_owned(),
+                "DARK".to_owned(),
+                "COMPACT".to_owned(),
+                "2026-07-02T00:00:00.000Z".to_owned(),
+            )
+        );
+        connection
+            .execute(
+                "UPDATE dashboard_preferences SET dashboard_template='CASH_FLOW'
+                 WHERE household_id='family'",
+                [],
+            )
+            .expect("cash flow template");
+        assert!(validate_restored_semantics(&connection, 30).is_ok());
+        assert!(connection
+            .execute(
+                "UPDATE dashboard_preferences SET dashboard_template='UNKNOWN'
+                 WHERE household_id='family'",
+                [],
+            )
+            .is_err());
     }
 
     #[test]

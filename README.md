@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.25 adds persisted dashboard focus presets and app-wide appearance controls. Each household can choose a financial overview, household ledger, assets/liabilities, or card-reconciliation focus plus system/light/dark theme and comfortable/compact density without changing the underlying accounting metrics.
+Version 0.26 adds a truthful Cash Flow Home preset with dedicated six-month inflow, outflow, and net-cash-flow facts. Card purchases remain accrual expenses while the later bank settlement appears once as cash outflow, so the two dates are never combined into duplicate spending.
 
 ## Product tour
 
@@ -111,7 +111,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
-- Persisted [dashboard focus and appearance preferences](docs/DASHBOARD_PREFERENCES.md) with four truthful presets, system/light/dark themes, comfortable/compact density, household isolation, responsive layouts, and no change to accounting basis or ledger data.
+- Persisted [dashboard focus and appearance preferences](docs/DASHBOARD_PREFERENCES.md) with five truthful presets including dedicated Cash Flow, system/light/dark themes, comfortable/compact density, household isolation, responsive layouts, and no change to ledger data.
 - Durable [app-wide Folder Inbox](docs/DURABLE_FOLDER_INBOX.md) with SQLite-backed discovery state, idempotent event/poll/manual reconciliation, bounded leases and retries, restart-safe preview rehydration, explicit retry/ignore controls, and no automatic ledger posting.
 - Explicit [receipt-to-transaction evidence matching](docs/RECEIPT_EVIDENCE_MATCHING.md) for offline OCR candidates, with exact-amount and three-day date-window eligibility, explainable merchant-based ranking, and up to ten suggestions.
 - User-confirmed evidence linking that attaches the receipt's immutable source rows to an existing posted expense/card purchase as supporting evidence without creating a transaction, journal entry, balance movement, or duplicate expense.

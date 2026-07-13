@@ -255,7 +255,7 @@ function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: str
   )
 }
 
-function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month, income: point.income * 1000, expense: point.expense * 1000 })) }: { data?: readonly { month: string; income: number; expense: number }[] }) {
+function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month, income: point.income * 1000, expense: point.expense * 1000 })), incomeLabel = '収入', expenseLabel = '支出' }: { data?: readonly { month: string; income: number; expense: number }[]; incomeLabel?: string; expenseLabel?: string }) {
   if (data.length === 0) return <p className="empty-state">トレンドを表示する取引はまだありません。</p>
   const max = Math.max(1, ...data.flatMap((point) => [point.income, point.expense])) * 1.08
   const width = 620
@@ -267,7 +267,7 @@ function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month,
   return (
     <div className="chart-wrap">
       <div className="chart-y"><span>{yen(Math.round(max))}</span><span>{yen(Math.round(max * .67))}</span><span>{yen(Math.round(max * .34))}</span><span>¥0</span></div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="直近6か月の収入と支出">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`直近6か月の${incomeLabel}と${expenseLabel}`}>
         {[44, 87, 130, 173].map((line) => <line key={line} x1="18" y1={line} x2="602" y2={line} className="gridline" />)}
         <path d={`${path('income')} L ${x(data.length - 1)} ${height - 10} L ${x(0)} ${height - 10} Z`} className="area-income" />
         <path d={path('income')} className="line-income" />
@@ -349,6 +349,7 @@ const dashboardTemplateLabels: Record<DashboardPreferencesDto['template'], strin
   HOUSEHOLD_LEDGER: '家計簿',
   ASSETS_LIABILITIES: '資産・負債',
   CARD_RECONCILIATION: 'カード照合',
+  CASH_FLOW: 'キャッシュフロー',
 }
 
 function DashboardControls({ preferences, disabled, onChange }: { preferences: DashboardPreferencesDto; disabled: boolean; onChange: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
@@ -360,16 +361,21 @@ function DashboardControls({ preferences, disabled, onChange }: { preferences: D
 }
 
 function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: Partial<Pick<DashboardPreferencesDto, 'template' | 'theme' | 'density'>>) => void }) {
+  const cashFlow = preferences.template === 'CASH_FLOW'
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
   const projectedSavings = desktop ? liveDashboard?.savingsJpy ?? 0 : savings
   const displayTransactions = desktop ? liveTransactions.map(toTransactionViewModel) : transactions.slice(0, 4)
-  const trend = desktop ? (liveDashboard?.accrualTrend ?? []).map((point) => ({ month: point.month, income: point.incomeJpy, expense: point.expenseJpy })) : undefined
+  const trend = desktop ? cashFlow
+    ? (liveDashboard?.cashFlowTrend ?? []).map((point) => ({ month: point.month, income: point.inflowJpy, expense: point.outflowJpy }))
+    : (liveDashboard?.accrualTrend ?? []).map((point) => ({ month: point.month, income: point.incomeJpy, expense: point.expenseJpy })) : undefined
   const categories = desktop ? (liveDashboard?.expenseCategories ?? []).map((item) => ({ name: item.name, amount: item.amountJpy })) : undefined
   const assets = desktop ? liveDashboard?.assetsJpy ?? 0 : currentMonthMetrics.netWorth
   const liabilities = desktop ? liveDashboard?.liabilitiesJpy ?? 0 : 0
   const netWorth = desktop ? liveDashboard?.netWorthJpy ?? 0 : currentMonthMetrics.netWorth
-  const kpis = preferences.template === 'HOUSEHOLD_LEDGER'
+  const kpis = cashFlow
+    ? [<KpiCard key="cash-in" label="今月の入金" value={yen(income)} meta="資金移動ベース" icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="cash-out" label="今月の出金" value={yen(expense)} meta="カード購入ではなく銀行引落時に計上" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="net-cash" label="差引キャッシュフロー" value={yen(projectedSavings)} meta="入金 − 出金" icon={CircleDollarSign} accent="#eee5cf" />, <KpiCard key="assets" label="月末資産" value={yen(assets)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={WalletCards} accent="#e4edda" />]
+    : preferences.template === 'HOUSEHOLD_LEDGER'
     ? [<KpiCard key="income" label="今月の収入" value={yen(income)} meta="発生ベース" icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta="カード引落は二重計上しません" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="savings" label="貯蓄見込み" value={yen(projectedSavings)} meta="収入 − 支出" icon={CircleDollarSign} accent="#eee5cf" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={TrendingUp} accent="#e4edda" />]
     : preferences.template === 'ASSETS_LIABILITIES'
       ? [<KpiCard key="assets" label="資産" value={yen(assets)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={WalletCards} accent="#dce9e6" />, <KpiCard key="liabilities" label="負債" value={yen(liabilities)} meta="カードを含む台帳残高" icon={CreditCard} accent="#f7e3d9" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta="資産 − 負債" icon={TrendingUp} accent="#e4edda" />, <KpiCard key="savings" label="今月の貯蓄" value={yen(projectedSavings)} meta="収入 − 支出" icon={CircleDollarSign} accent="#eee5cf" />]
@@ -377,20 +383,20 @@ function Overview({ setPage, liveDashboard, liveTransactions, liveCards, desktop
         ? [<KpiCard key="liabilities" label="カードを含む負債" value={yen(liabilities)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={CreditCard} accent="#f7e3d9" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta="カード購入は利用日に計上" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="assets" label="支払原資を含む資産" value={yen(assets)} meta="台帳上の資産残高" icon={WalletCards} accent="#dce9e6" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta="支払い後も二重計上しません" icon={TrendingUp} accent="#e4edda" />]
         : [<KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta={desktop ? `${liveDashboard?.netWorthAsOf ?? '月末'} 現在` : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />, <KpiCard key="income" label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="savings" label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />]
   const panels = {
-    trend: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>収支の推移</h2><p>発生ベース・直近6か月</p></div><div className="chart-legend"><span className="income">収入</span><span className="expense">支出</span></div></div><TrendChart data={trend} /></article>,
+    trend: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>{cashFlow ? '入出金の推移' : '収支の推移'}</h2><p>{cashFlow ? '資金移動ベース' : '発生ベース'}・直近6か月</p></div><div className="chart-legend"><span className="income">{cashFlow ? '入金' : '収入'}</span><span className="expense">{cashFlow ? '出金' : '支出'}</span></div></div><TrendChart data={trend} incomeLabel={cashFlow ? '入金' : '収入'} expenseLabel={cashFlow ? '出金' : '支出'} /></article>,
     spending: <div key="spending" className="dashboard-widget dashboard-widget--spending"><SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} /></div>,
-    recent: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>最近の取引</h2><p>確認済みの最新データ</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
+    recent: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>{cashFlow ? '最近の資金移動' : '最近の取引'}</h2><p>{cashFlow ? 'カード購入を除く実際の入出金' : '確認済みの最新データ'}</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
     cards: <div key="cards" className="dashboard-widget dashboard-widget--cards"><ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} /></div>,
   }
-  const panelOrder = preferences.template === 'HOUSEHOLD_LEDGER' ? [panels.spending, panels.recent, panels.trend, panels.cards] : preferences.template === 'ASSETS_LIABILITIES' ? [panels.trend, panels.spending, panels.cards, panels.recent] : preferences.template === 'CARD_RECONCILIATION' ? [panels.cards, panels.recent, panels.trend, panels.spending] : [panels.trend, panels.spending, panels.recent, panels.cards]
+  const panelOrder = cashFlow ? [panels.trend, panels.recent, panels.cards] : preferences.template === 'HOUSEHOLD_LEDGER' ? [panels.spending, panels.recent, panels.trend, panels.cards] : preferences.template === 'ASSETS_LIABILITIES' ? [panels.trend, panels.spending, panels.cards, panels.recent] : preferences.template === 'CARD_RECONCILIATION' ? [panels.cards, panels.recent, panels.trend, panels.spending] : [panels.trend, panels.spending, panels.recent, panels.cards]
   return <div className={`overview overview--${preferences.template.toLowerCase().replaceAll('_', '-')}`}>
-    <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
+    <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を${cashFlow ? '資金移動' : '発生'}ベースで集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
       <DashboardControls preferences={preferences} disabled={preferencesBusy} onChange={updatePreferences} />
-      {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> 資産・投資を見る</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> カード照合を開く</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>}
+      {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> 資産・投資を見る</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> カード照合を開く</button> : cashFlow ? <button className="primary-btn" onClick={() => setPage('transactions')}><WalletCards size={17} /> 資金移動を見る</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>}
     </PageHeader>
     <section className="kpi-grid">{kpis}</section>
     <section className="dashboard-grid">{panelOrder}</section>
-    <div className="data-footnote"><FileCheck2 size={15} /> 確定済み台帳から集計 ・ 未確認の候補は含みません</div>
+    <div className="data-footnote"><FileCheck2 size={15} /> 確定済み台帳から{cashFlow ? '実際の資産入出金を' : ''}集計 ・ 未確認の候補は含みません</div>
   </div>
 }
 
@@ -1660,6 +1666,8 @@ function App() {
   const [dashboardPreferencesBusy, setDashboardPreferencesBusy] = useState(false)
   const dashboardPreferencesHouseholdRef = useRef(activeHouseholdId)
   dashboardPreferencesHouseholdRef.current = activeHouseholdId
+  const dashboardRequestGenerationRef = useRef(0)
+  const homeBasis = dashboardPreferences.template === 'CASH_FLOW' ? 'CASH' : 'ACCRUAL'
   const folderAutoScanRef = useRef(folderAutoScan)
   const hydratedFolderItemsRef = useRef(new Set<string>())
   const folderRefreshBusyRef = useRef(false)
@@ -1844,19 +1852,20 @@ function App() {
       return
     }
     let active = true
+    const requestGeneration = ++dashboardRequestGenerationRef.current
     const period = periodFromMonth(selectedMonth)
     void Promise.all([
-      platformClient.queryDashboard({ householdId, accountGroupId: activeAccountGroupId, attributionScope: activeAttributionScope, month: period.month, accountingBasis: 'ACCRUAL' }),
-      platformClient.queryTransactions({ householdId, accountGroupId: activeAccountGroupId, attributionScope: activeAttributionScope, accountingBasis: 'ACCRUAL', fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
+      platformClient.queryDashboard({ householdId, accountGroupId: activeAccountGroupId, attributionScope: activeAttributionScope, month: period.month, accountingBasis: homeBasis }),
+      platformClient.queryTransactions({ householdId, accountGroupId: activeAccountGroupId, attributionScope: activeAttributionScope, accountingBasis: homeBasis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
       platformClient.importSummary(householdId),
       platformClient.listCardSettlements(householdId),
     ]).then(([dashboard, page, summary, cards]) => {
-      if (active) { setLiveDashboard(dashboard); setLiveTransactions(page.items); setImportCounts(summary); setLiveCards(cards) }
+      if (active && dashboardRequestGenerationRef.current === requestGeneration && dashboard.accountingBasis === homeBasis) { setLiveDashboard(dashboard); setLiveTransactions(page.items); setImportCounts(summary); setLiveCards(cards) }
     }).catch(() => {
-      if (active) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]) }
+      if (active && dashboardRequestGenerationRef.current === requestGeneration) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]) }
     })
     return () => { active = false }
-  }, [activeAccountGroupId, activeAttributionScope, activeHouseholdId, ledgerRevision, selectedMonth])
+  }, [activeAccountGroupId, activeAttributionScope, activeHouseholdId, homeBasis, ledgerRevision, selectedMonth])
 
   useEffect(() => {
     hydratedFolderItemsRef.current.clear()
