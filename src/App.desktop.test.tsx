@@ -9,6 +9,7 @@ const desktop = vi.hoisted(() => ({
   archiveHouseholdMember: vi.fn(),
   listAccounts: vi.fn(),
   queryDashboard: vi.fn(),
+  importSummary: vi.fn(),
   getDashboardPreferences: vi.fn(),
   upsertDashboardPreferences: vi.fn(),
   queryTransactions: vi.fn(),
@@ -122,7 +123,7 @@ vi.mock('./platform', async () => {
       markWatchedFileInboxNeedsMapping: desktop.markWatchedFileInboxNeedsMapping,
       markWatchedFileInboxFailed: desktop.markWatchedFileInboxFailed,
       markWatchedFileInboxStaged: desktop.markWatchedFileInboxStaged,
-      importSummary: vi.fn(),
+      importSummary: desktop.importSummary,
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
       commitImport: desktop.commitImport,
@@ -175,6 +176,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.getDashboardPreferences.mockReset().mockImplementation(async (householdId: string) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', updatedAt: '2026-07-13T00:00:00Z' }))
     desktop.upsertDashboardPreferences.mockReset().mockImplementation(async (input) => ({ ...input, updatedAt: '2026-07-13T00:01:00Z' }))
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
+    desktop.importSummary.mockReset().mockResolvedValue({ totalRuns: 3, discovered: 0, extracting: 0, reviewRequired: 1, posted: 2, failed: 0, rolledBack: 0, sourceDocuments: 2, sourceRecords: 42, pendingCandidates: 1, readyCandidates: 2, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 2 })
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
     desktop.updateCardStatementDueDate.mockReset().mockImplementation(async (input) => ({
@@ -305,6 +307,10 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getAllByText('帰属: 世帯共通').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('表示: 共有').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('¥8,246,320')).not.toBeInTheDocument()
+    const dataQuality = screen.getByRole('heading', { name: 'データ品質' }).closest('section')!
+    expect(within(dataQuality).getByText('yucho.csv ・ MANUAL_UPLOAD')).toBeInTheDocument()
+    expect(within(dataQuality).getByText('3件')).toBeInTheDocument()
+    expect(within(dataQuality).getByText('42行 ・ 2種類')).toBeInTheDocument()
     expect(desktop.queryDashboard).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' }))
   })
 
@@ -673,7 +679,7 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.markWatchedFileInboxNeedsMapping).toHaveBeenCalledWith('family', 'inbox-1', 'lease'))
     expect(desktop.startImport).not.toHaveBeenCalled()
     expect(desktop.commitImport).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: /^インポート/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'インポート（1件の確認対象）' }))
     expect(await screen.findByText('history.csv')).toBeInTheDocument()
     expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
   })

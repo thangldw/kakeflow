@@ -16,6 +16,10 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText('純資産')).toBeInTheDocument()
     expect(screen.getByText('¥8,246,320')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'カード支払い' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'データ品質' })).toBeInTheDocument()
+    expect(screen.getByText('ブラウザプレビュー用のサンプル状態')).toBeInTheDocument()
+    expect(screen.getByLabelText('ホームの表示テンプレート')).toBeDisabled()
+    expect(screen.getByText('表示設定の保存はデスクトップ版で利用できます。')).toBeInTheDocument()
   })
 
   it('identifies the non-persistent browser preview runtime', async () => {
@@ -28,7 +32,7 @@ describe('KakeFlow application shell', () => {
   it('navigates to the import inbox', async () => {
     await renderApp()
 
-    fireEvent.click(screen.getByRole('button', { name: /インポート/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
 
     expect(screen.getByRole('heading', { name: 'インポート Inbox' })).toBeInTheDocument()
     expect(screen.getByText('paypay_2026.csv')).toBeInTheDocument()

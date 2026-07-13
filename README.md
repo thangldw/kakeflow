@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.29 closes the credit-card forecast loop with editable statement payment due dates. Users can set, correct, or clear a verified date without changing statement lines, journal entries, reconciliation links, or payment totals; coverage and Action Center projections refresh from the saved value.
+Version 0.30 makes dashboard trust visible with a source-backed data-quality summary: latest confirmed import, original-document and source-row coverage, distinct source channels, review backlog, failed imports, and a direct path to Import Inbox. Browser-only display preferences are now visibly read-only, and trend/KPI semantics have stronger accessible alternatives.
 
 ## Product tour
 
@@ -117,6 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
 - User-confirmed [credit-card statement due dates](docs/CARD_DUE_DATES.md) with set/correct/clear controls, household-scoped validation, explicit no-inference labeling, and immediate coverage/forecast refresh without ledger mutation.
 - Bounded [Yucho bulk ZIP import](docs/YUCHO_BULK_ZIP_IMPORT.md) for manual upload and drop, with deterministic per-CSV previews, archive-entry provenance, atomic archive rejection, CRC verification, explicit review, and no automatic ledger posting.
 - Dedicated [Yucho Direct transaction import](docs/YUCHO_DIRECT_IMPORT.md) using the official seven-column personal-account CSV, explicit account mapping, physical-row provenance, running-balance validation, and conservative ATM/card semantics.

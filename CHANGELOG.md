@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.30.0 — 2026-07-13
+
+- Add a source-backed Home data-quality panel with latest successful import, canonical source filename/type, original-document and source-row totals, distinct source channels, review backlog, and failed-import count.
+- Select freshness only from same-household source documents attached to `POSTED` import runs, with deterministic timestamp-and-ID tie-breaking and atomic TypeScript validation of nullable provenance.
+- Link the quality summary directly to Import Inbox and avoid claiming complete account coverage when the available facts only establish import/source coverage.
+- Disable no-op dashboard preference controls in browser preview and label their desktop-only persistence explicitly.
+- Add semantic “increase” text to demo KPI trends and a screen-reader numeric table for the six-month trend chart.
+- Capture and preserve a screenshot-grounded UX/accessibility audit of the Overview-to-Card flow; use its highest-impact findings to shape this release.
+
 ## 0.29.0 — 2026-07-13
 
 - Add household-scoped set, correction, and explicit clearing of a credit-card statement's payment due date from the Cards workspace.
