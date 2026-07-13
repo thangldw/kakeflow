@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.27.0 — 2026-07-13
+
+- Add a dedicated `yucho-direct-ledger-v1` adapter for the official Yucho Direct personal-account CSV, detected ahead of the generic Japanese bank format.
+- Find the exact seven-column header after the account-information preamble, normalize full-width header punctuation, and parse official `YYYYMMDD` transaction dates.
+- Map deposits, withdrawals, detail fields, and signed current/loan balances into the canonical bank candidate while requiring the user to select the destination account explicitly.
+- Validate row width, real calendar dates, positive integer JPY amounts, mutually exclusive debit/credit columns, duplicate export sequences, signed balances, and oldest-first running-balance continuity.
+- Keep `入出金明細ID` only in immutable raw provenance because Yucho defines it as a sequence assigned during CSV export, not a durable bank transaction identifier.
+- Treat `カード` conservatively as an unknown bank event because it can represent an ATM cash-card transaction; never infer a credit-card settlement from that label.
+
 ## 0.26.0 — 2026-07-13
 
 - Add a fifth persisted `CASH_FLOW` Home preset with cash-specific inflow, outflow, net-flow, and month-end asset labels.

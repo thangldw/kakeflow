@@ -1,5 +1,6 @@
 export type AdapterId =
   | 'japanese-bank-ledger-v1'
+  | 'yucho-direct-ledger-v1'
   | 'paypay-history-v1'
   | 'amazon-mastercard-statement-v1'
   | 'rakuten-enavi-v1'
