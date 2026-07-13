@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.39.0 — 2026-07-13
+
+- Extend local change-package schema v2 to exactly 13 aggregate kinds with complete card statements and card payments while retaining schema-v1 compatibility.
+- Reconstruct statement periods, due dates, amounts, derived reconciliation states, deterministic ordered lines, unconfirmed suggestions, and confirmed bank-payment links.
+- Preserve statement source identifiers as portable references without treating a same-ID local document as proof of the same source bytes.
+- Apply transactions, statements, and payments in dependency order; delete in reverse order; validate the complete resulting card graph and roll back inconsistent mixed conflict choices.
+- Keep schema-v1 packages scoped to their original 11 kinds so an older package never implies deletion of card reconciliation data.
+- Show card statements and card-settlement records with clear labels in the no-default review workflow; network transport remains outside this release.
+
 ## 0.38.0 — 2026-07-13
 
 - Add native save/select workflows for full-current-state local change packages covering exactly 11 household, ledger, planning, and configuration aggregate kinds.

@@ -2,7 +2,7 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.38 adds reviewable [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) to the truthful [local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md). A user can save the current household state, select a package on another KakeFlow installation, resolve every conflict or deletion explicitly, and apply all accepted changes atomically. The package covers the ledger plus the seven [replicable planning and configuration aggregates](docs/REPLICABLE_PLANNING_CONFIG_CAPTURE.md), preserves portable transaction evidence references, and never uses a network transport. Cloud sync and automatic multi-device delivery are still not claimed.
+Version 0.39 extends reviewable [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) with the complete credit-card reconciliation graph. Package schema v2 moves 13 household aggregates, including ordered statement lines, due dates, unconfirmed match suggestions, confirmed bank-payment links, and portable statement-document references. Schema-v1 packages remain readable and never imply deletion of the two new card aggregates. Cloud sync and automatic multi-device delivery are still not claimed.
 
 ## Product tour
 
@@ -117,7 +117,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
-- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 11-kind household snapshot, validate digests and lineage, require explicit conflict/delete choices, preserve portable transaction references, and apply atomically without echoing incoming changes into the local outbox. There is no server, login, automatic delivery, remote sync, or access-control claim.
+- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v2 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 13-kind household snapshot, preserve ledger and card-reconciliation references, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
 - [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard files, with adapter-compatible account filtering, per-preview selection, and no default or name-based inference.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
@@ -188,6 +188,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Remaining product milestones
 
-1. Define the remaining portable source/import, card/reconciliation, and investment/portfolio aggregate graphs, then add incoming apply, conflict/merge semantics, optional end-to-end encrypted remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
+1. Define the remaining portable source/import and investment/portfolio aggregate graphs, then add incoming apply and conflict semantics for those domains, optional end-to-end encrypted remote transport, authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
 2. Add more institution-specific brokerage and statement adapters.
 3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

@@ -7,13 +7,28 @@ use thiserror::Error;
 
 use crate::sync_foundation::{canonical_json, get_local_status, sha256_hex};
 
-pub const PACKAGE_SCHEMA_VERSION: u32 = 1;
+pub const PACKAGE_SCHEMA_VERSION: u32 = 2;
 pub const PACKAGE_MODE: &str = "FULL_CURRENT_STATE";
-pub const COVERED_KINDS: [&str; 11] = [
+pub const LEGACY_COVERED_KINDS: [&str; 11] = [
     "HOUSEHOLD",
     "HOUSEHOLD_MEMBER",
     "ACCOUNT",
     "TRANSACTION",
+    "MONTHLY_BUDGET_PLAN",
+    "SAVINGS_GOAL",
+    "CLASSIFICATION_RULE",
+    "ACCOUNT_GROUP",
+    "CARD_SETTLEMENT_MAPPING",
+    "DASHBOARD_PREFERENCES",
+    "DELIMITED_PARSER_PROFILE",
+];
+pub const COVERED_KINDS: [&str; 13] = [
+    "HOUSEHOLD",
+    "HOUSEHOLD_MEMBER",
+    "ACCOUNT",
+    "TRANSACTION",
+    "CARD_STATEMENT",
+    "CARD_PAYMENT",
     "MONTHLY_BUDGET_PLAN",
     "SAVINGS_GOAL",
     "CLASSIFICATION_RULE",
@@ -233,6 +248,22 @@ fn build_current_state(
     push_query_records(
         &transaction,
         &mut records,
+        "CARD_STATEMENT",
+        "SELECT statement_id,payload_json FROM sync_card_statement_aggregate_payloads
+         WHERE household_id=?1 ORDER BY statement_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
+        "CARD_PAYMENT",
+        "SELECT payment_id,payload_json FROM sync_card_payment_payloads
+         WHERE household_id=?1 ORDER BY payment_id",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
         "MONTHLY_BUDGET_PLAN",
         "SELECT household_id,payload_json FROM sync_monthly_budget_plan_payloads
          WHERE household_id=?1",
@@ -393,7 +424,7 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<LocalChangePackageDto> {
 }
 
 pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
-    if package.schema_version != PACKAGE_SCHEMA_VERSION
+    if !matches!(package.schema_version, 1 | PACKAGE_SCHEMA_VERSION)
         || package.mode != PACKAGE_MODE
         || package.source_installation_id.is_empty()
         || package.source_installation_id.len() > 128
@@ -406,16 +437,21 @@ pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
     {
         return Err(ChangePackageError::InvalidInput);
     }
-    let expected_kinds = COVERED_KINDS
+    let expected_kind_slice: &[&str] = if package.schema_version == 1 {
+        &LEGACY_COVERED_KINDS
+    } else {
+        &COVERED_KINDS
+    };
+    let expected_kinds = expected_kind_slice
         .iter()
         .map(|kind| (*kind).to_owned())
         .collect::<Vec<_>>();
     if package.covered_kinds != expected_kinds
-        || package.counts_by_kind.len() != COVERED_KINDS.len()
+        || package.counts_by_kind.len() != expected_kind_slice.len()
     {
         return Err(ChangePackageError::InvalidInput);
     }
-    let mut actual_counts = COVERED_KINDS
+    let mut actual_counts = expected_kind_slice
         .iter()
         .map(|kind| ((*kind).to_owned(), 0_u64))
         .collect::<BTreeMap<_, _>>();
@@ -630,7 +666,10 @@ pub fn stage_package(
         });
     }
     for (key, current_record) in &current_records {
-        if incoming_keys.contains(key) || !kind_supports_absence_delete(&key.0) {
+        if incoming_keys.contains(key)
+            || !package.covered_kinds.iter().any(|kind| kind == &key.0)
+            || !kind_supports_absence_delete(&key.0)
+        {
             continue;
         }
         let head = heads.get(key);
@@ -889,6 +928,18 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
         params![review.target_household_id, package_id],
     )?;
 
+    // Confirmed payment rows are intentionally immutable during ordinary use.
+    // Package replacement is validated and atomic, so remove every accepted
+    // payment target before inserting the incoming graph.
+    for record in review.records.iter().filter(|record| {
+        record.resolution == "APPLY_INCOMING" && record.entity_kind == "CARD_PAYMENT"
+    }) {
+        transaction.execute(
+            "DELETE FROM card_payments WHERE household_id=?1 AND id=?2",
+            params![review.target_household_id, record.entity_id],
+        )?;
+    }
+
     for record in review
         .records
         .iter()
@@ -913,6 +964,8 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
             &record.entity_id,
         )?;
     }
+
+    validate_card_reconciliation_graph(&transaction, &review.target_household_id)?;
 
     for record in review
         .records
@@ -1048,6 +1101,8 @@ fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Res
             )?;
         }
         "TRANSACTION" => materialize_transaction(connection, payload)?,
+        "CARD_STATEMENT" => materialize_card_statement(connection, payload)?,
+        "CARD_PAYMENT" => materialize_card_payment(connection, payload)?,
         "MONTHLY_BUDGET_PLAN" => {
             connection.execute(
                 "DELETE FROM monthly_category_budgets WHERE household_id=json_extract(?1,'$.householdId')",
@@ -1195,6 +1250,146 @@ fn materialize_transaction(connection: &Connection, payload: &str) -> Result<()>
     Ok(())
 }
 
+fn materialize_card_statement(connection: &Connection, payload: &str) -> Result<()> {
+    let incoming_source: Option<String> = connection.query_row(
+        "SELECT json_extract(?1,'$.sourceDocumentId')",
+        [payload],
+        |row| row.get(0),
+    )?;
+    let existing_source: Option<String> = connection
+        .query_row(
+            "SELECT source_document_id FROM card_statements
+             WHERE id=json_extract(?1,'$.id')",
+            [payload],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    if existing_source.is_some() && existing_source != incoming_source {
+        return Err(ChangePackageError::Conflict);
+    }
+    connection.execute(
+        "INSERT INTO card_statements(
+           id,household_id,card_account_id,period_start,period_end,payment_due_on,
+           statement_amount_jpy,reconciliation_status,created_at,source_document_id)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),
+           json_extract(?1,'$.cardAccountId'),json_extract(?1,'$.periodStart'),
+           json_extract(?1,'$.periodEnd'),json_extract(?1,'$.paymentDueOn'),
+           json_extract(?1,'$.statementAmountJpy'),json_extract(?1,'$.reconciliationStatus'),
+           json_extract(?1,'$.createdAt'),?2)
+         ON CONFLICT(id) DO UPDATE SET card_account_id=excluded.card_account_id,
+           period_start=excluded.period_start,period_end=excluded.period_end,
+           payment_due_on=excluded.payment_due_on,
+           statement_amount_jpy=excluded.statement_amount_jpy,
+           reconciliation_status=excluded.reconciliation_status,
+           created_at=excluded.created_at,source_document_id=excluded.source_document_id",
+        params![payload, existing_source.as_deref()],
+    )?;
+    connection.execute(
+        "DELETE FROM card_statement_transactions WHERE statement_id=json_extract(?1,'$.id')",
+        [payload],
+    )?;
+    connection.execute(
+        "INSERT INTO card_statement_transactions(
+           statement_id,transaction_id,statement_line_number,billed_amount_jpy)
+         SELECT json_extract(value,'$.statementId'),json_extract(value,'$.transactionId'),
+           json_extract(value,'$.statementLineNumber'),json_extract(value,'$.billedAmountJpy')
+         FROM json_each(?1,'$.lines')",
+        [payload],
+    )?;
+    connection.execute(
+        "DELETE FROM card_statement_portable_source_refs
+         WHERE statement_id=json_extract(?1,'$.id')",
+        [payload],
+    )?;
+    if let Some(source_id) = incoming_source.filter(|_| existing_source.is_none()) {
+        connection.execute(
+            "INSERT INTO card_statement_portable_source_refs(statement_id,source_document_id)
+             VALUES(json_extract(?1,'$.id'),?2)",
+            params![payload, source_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn materialize_card_payment(connection: &Connection, payload: &str) -> Result<()> {
+    connection.execute(
+        "INSERT INTO card_payments(
+           id,household_id,statement_id,bank_transaction_id,card_account_id,
+           payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,
+           created_at,confirmed_at)
+         VALUES(json_extract(?1,'$.id'),json_extract(?1,'$.householdId'),
+           json_extract(?1,'$.statementId'),json_extract(?1,'$.bankTransactionId'),
+           json_extract(?1,'$.cardAccountId'),json_extract(?1,'$.paymentAmountJpy'),
+           json_extract(?1,'$.paymentOn'),json_extract(?1,'$.matchScoreBps'),
+           json_extract(?1,'$.reconciliationStatus'),json_extract(?1,'$.createdAt'),
+           json_extract(?1,'$.confirmedAt'))",
+        [payload],
+    )?;
+    Ok(())
+}
+
+fn validate_card_reconciliation_graph(connection: &Connection, household_id: &str) -> Result<()> {
+    let invalid: bool = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM card_statements cs
+           LEFT JOIN accounts a ON a.id=cs.card_account_id
+           WHERE cs.household_id=?1 AND (
+             a.id IS NULL OR a.household_id!=cs.household_id
+             OR a.account_kind!='LIABILITY' OR a.account_subtype!='CREDIT_CARD'
+             OR cs.reconciliation_status != CASE
+               WHEN (SELECT COALESCE(SUM(cp.payment_amount_jpy),0) FROM card_payments cp
+                     WHERE cp.statement_id=cs.id AND cp.confirmed_at IS NOT NULL)=0
+                 THEN 'UNMATCHED'
+               WHEN (SELECT COALESCE(SUM(cp.payment_amount_jpy),0) FROM card_payments cp
+                     WHERE cp.statement_id=cs.id AND cp.confirmed_at IS NOT NULL)<cs.statement_amount_jpy
+                 THEN 'PARTIALLY_RECONCILED'
+               WHEN (SELECT COALESCE(SUM(cp.payment_amount_jpy),0) FROM card_payments cp
+                     WHERE cp.statement_id=cs.id AND cp.confirmed_at IS NOT NULL)=cs.statement_amount_jpy
+                 THEN 'FULLY_RECONCILED'
+               ELSE 'OVERPAID' END)
+           UNION ALL
+           SELECT 1 FROM card_statement_transactions line
+           JOIN card_statements cs ON cs.id=line.statement_id
+           LEFT JOIN transactions t ON t.id=line.transaction_id
+           WHERE cs.household_id=?1 AND (t.id IS NULL OR t.household_id!=cs.household_id)
+           UNION ALL
+           SELECT 1 FROM card_payments cp
+           LEFT JOIN accounts a ON a.id=cp.card_account_id
+           LEFT JOIN transactions t ON t.id=cp.bank_transaction_id
+           LEFT JOIN card_statements cs ON cs.id=cp.statement_id
+           WHERE cp.household_id=?1 AND (
+             a.id IS NULL OR a.household_id!=cp.household_id
+             OR a.account_kind!='LIABILITY' OR a.account_subtype!='CREDIT_CARD'
+             OR t.id IS NULL OR t.household_id!=cp.household_id
+             OR (cs.id IS NOT NULL AND (
+               cs.household_id!=cp.household_id OR cs.card_account_id!=cp.card_account_id))
+             OR (cp.confirmed_at IS NOT NULL AND (
+               cs.id IS NULL OR cp.confirmed_at NOT GLOB '????-??-??T??:??:??*Z'
+               OR t.status!='POSTED' OR t.transaction_type!='CARD_PAYMENT'
+               OR cp.reconciliation_status!='FULLY_RECONCILED'
+               OR cp.payment_on<cs.period_end OR cp.payment_on>date(cs.period_end,'+120 days')
+               OR cp.payment_amount_jpy!=(
+                 SELECT COALESCE(SUM(je.amount_jpy),0) FROM journal_entries je
+                 WHERE je.transaction_id=t.id AND je.account_id=cs.card_account_id
+                   AND je.entry_side='DEBIT')
+               OR 1!=(
+                 SELECT COUNT(DISTINCT je.account_id)
+                 FROM journal_entries je JOIN accounts debit_account ON debit_account.id=je.account_id
+                 WHERE je.transaction_id=t.id AND je.entry_side='DEBIT'
+                   AND debit_account.account_kind='LIABILITY'
+                   AND debit_account.account_subtype='CREDIT_CARD'))))
+           LIMIT 1)",
+        [household_id],
+        |row| row.get(0),
+    )?;
+    if invalid {
+        Err(ChangePackageError::Conflict)
+    } else {
+        Ok(())
+    }
+}
+
 fn materialize_rule(connection: &Connection, payload: &str) -> Result<()> {
     connection.execute(
         "INSERT INTO classification_rules(
@@ -1297,6 +1492,8 @@ fn materialize_delete(
     let (table, key) = match kind {
         "ACCOUNT" => ("accounts", "id"),
         "TRANSACTION" => ("transactions", "id"),
+        "CARD_STATEMENT" => ("card_statements", "id"),
+        "CARD_PAYMENT" => ("card_payments", "id"),
         "SAVINGS_GOAL" => ("savings_goals", "id"),
         "CLASSIFICATION_RULE" => ("classification_rules", "id"),
         "ACCOUNT_GROUP" => ("account_groups", "id"),
@@ -1325,6 +1522,8 @@ fn entity_belongs_to_other_household(
         "HOUSEHOLD_MEMBER" => "household_members",
         "ACCOUNT" => "accounts",
         "TRANSACTION" => "transactions",
+        "CARD_STATEMENT" => "card_statements",
+        "CARD_PAYMENT" => "card_payments",
         "SAVINGS_GOAL" => "savings_goals",
         "CLASSIFICATION_RULE" => "classification_rules",
         "ACCOUNT_GROUP" => "account_groups",
@@ -1374,6 +1573,14 @@ fn load_entity_payload(
         "TRANSACTION" => {
             "SELECT payload_json FROM sync_transaction_aggregate_payloads
           WHERE household_id=?1 AND transaction_id=?2"
+        }
+        "CARD_STATEMENT" => {
+            "SELECT payload_json FROM sync_card_statement_aggregate_payloads
+          WHERE household_id=?1 AND statement_id=?2"
+        }
+        "CARD_PAYMENT" => {
+            "SELECT payload_json FROM sync_card_payment_payloads
+          WHERE household_id=?1 AND payment_id=?2"
         }
         "MONTHLY_BUDGET_PLAN" => {
             "SELECT payload_json FROM sync_monthly_budget_plan_payloads
@@ -1576,6 +1783,8 @@ fn kind_supports_absence_delete(kind: &str) -> bool {
         kind,
         "ACCOUNT"
             | "TRANSACTION"
+            | "CARD_STATEMENT"
+            | "CARD_PAYMENT"
             | "SAVINGS_GOAL"
             | "CLASSIFICATION_RULE"
             | "ACCOUNT_GROUP"
@@ -1590,12 +1799,14 @@ fn dependency_rank(kind: &str) -> u8 {
         "HOUSEHOLD" => 0,
         "HOUSEHOLD_MEMBER" => 1,
         "ACCOUNT" => 2,
-        "SAVINGS_GOAL" | "DASHBOARD_PREFERENCES" | "DELIMITED_PARSER_PROFILE" => 3,
+        "TRANSACTION" => 3,
+        "CARD_STATEMENT" => 4,
+        "CARD_PAYMENT" => 5,
+        "SAVINGS_GOAL" | "DASHBOARD_PREFERENCES" | "DELIMITED_PARSER_PROFILE" => 6,
         "MONTHLY_BUDGET_PLAN"
         | "CLASSIFICATION_RULE"
         | "ACCOUNT_GROUP"
-        | "CARD_SETTLEMENT_MAPPING" => 4,
-        "TRANSACTION" => 5,
+        | "CARD_SETTLEMENT_MAPPING" => 7,
         _ => u8::MAX,
     }
 }
@@ -1667,6 +1878,39 @@ mod tests {
 
     const TEST_KEY: &[u8] = b"change-package-test-key-material-32bytes";
 
+    fn resign_package(package: &mut LocalChangePackageDto) {
+        let identity = SnapshotIdentity {
+            schema_version: package.schema_version,
+            mode: &package.mode,
+            source_installation_id: &package.source_installation_id,
+            source_principal_id: &package.source_principal_id,
+            source_revision: package.source_revision,
+            household_id: &package.household_id,
+            created_at: &package.created_at,
+            covered_kinds: &package.covered_kinds,
+            counts_by_kind: &package.counts_by_kind,
+            records: &package.records,
+        };
+        let canonical_identity = canonical_json(&serde_json::to_value(identity).unwrap()).unwrap();
+        package.snapshot_sha256 = sha256_hex(canonical_identity.as_bytes());
+        package.package_id = format!("change-package-{}", package.snapshot_sha256);
+        let value = json!({
+            "packageId": package.package_id,
+            "schemaVersion": package.schema_version,
+            "mode": package.mode,
+            "sourceInstallationId": package.source_installation_id,
+            "sourcePrincipalId": package.source_principal_id,
+            "sourceRevision": package.source_revision,
+            "householdId": package.household_id,
+            "createdAt": package.created_at,
+            "coveredKinds": package.covered_kinds,
+            "countsByKind": package.counts_by_kind,
+            "snapshotSha256": package.snapshot_sha256,
+            "records": package.records,
+        });
+        package.package_sha256 = sha256_hex(canonical_json(&value).unwrap().as_bytes());
+    }
+
     fn seed_complete_household(connection: &Connection) {
         connection
             .execute_batch(
@@ -1677,12 +1921,37 @@ mod tests {
                        ('food','family','Food','EXPENSE','OTHER');
                  INSERT INTO transactions(
                    id,household_id,occurred_on,transaction_type,payee,status)
-                 VALUES('tx','family','2026-07-13','CARD_PURCHASE','Market','POSTED');
+                 VALUES('tx','family','2026-06-13','CARD_PURCHASE','Market','POSTED'),
+                       ('payment-tx','family','2026-07-27','CARD_PAYMENT','Bank debit','POSTED'),
+                       ('possible-payment-tx','family','2026-06-27','CARD_PAYMENT','Bank debit','POSTED');
                  INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
-                 VALUES('tx-d','tx','food','DEBIT',1200,1),('tx-c','tx','card','CREDIT',1200,2);
+                 VALUES('tx-d','tx','food','DEBIT',1200,1),('tx-c','tx','card','CREDIT',1200,2),
+                       ('payment-d','payment-tx','card','DEBIT',1200,1),
+                       ('payment-c','payment-tx','bank','CREDIT',1200,2),
+                       ('possible-payment-d','possible-payment-tx','card','DEBIT',500,1),
+                       ('possible-payment-c','possible-payment-tx','bank','CREDIT',500,2);
                  INSERT INTO transaction_labels VALUES('tx','Reviewed');
                  INSERT INTO transaction_tags VALUES('tx','weekly');
                  INSERT INTO transaction_portable_source_links VALUES('tx','source-row-1','candidate-1');
+                 INSERT INTO card_statements(
+                   id,household_id,card_account_id,period_start,period_end,payment_due_on,
+                   statement_amount_jpy,reconciliation_status)
+                 VALUES('statement-full','family','card','2026-06-01','2026-06-30','2026-07-27',
+                          1200,'FULLY_RECONCILED'),
+                       ('statement-unmatched','family','card','2026-05-01','2026-05-31','2026-06-27',
+                          500,'UNMATCHED');
+                 INSERT INTO card_statement_transactions(
+                   statement_id,transaction_id,statement_line_number,billed_amount_jpy)
+                 VALUES('statement-full','tx',1,1200);
+                 INSERT INTO card_statement_portable_source_refs(statement_id,source_document_id)
+                 VALUES('statement-full','portable-card-source');
+                 INSERT INTO card_payments(
+                   id,household_id,statement_id,bank_transaction_id,card_account_id,
+                   payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
+                 VALUES('payment-full','family','statement-full','payment-tx','card',1200,
+                          '2026-07-27',10000,'FULLY_RECONCILED','2026-07-27T00:00:00Z'),
+                       ('payment-possible','family','statement-unmatched','possible-payment-tx','card',500,
+                          '2026-06-27',9000,'POSSIBLE_MATCH',NULL);
                  INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
                  VALUES('family','2026-07','food',50000);
                  INSERT INTO savings_goals(id,household_id,name,target_jpy,saved_jpy,target_date,status)
@@ -1731,6 +2000,16 @@ mod tests {
                 connection.execute(
                     "INSERT INTO households(id,name) VALUES('family','Destination')",
                     [],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO import_runs(id,household_id,status) VALUES('local-run','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES('portable-card-source','family','local-run','OTHER','different.csv',
+                       'text/csv',1,
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                       'documents/different.csv');",
                 )?;
                 let destination_revision_before = export_current_state(connection, "family")
                     .unwrap()
@@ -1798,8 +2077,238 @@ mod tests {
                     1
                 );
                 assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM card_statement_transactions
+                         WHERE statement_id='statement-full' AND transaction_id='tx'
+                           AND statement_line_number=1 AND billed_amount_jpy=1200",
+                        [], |row| row.get::<_, i64>(0),
+                    )?,
+                    1
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM card_payments WHERE household_id='family'",
+                        [], |row| row.get::<_, i64>(0),
+                    )?,
+                    2
+                );
+                assert!(
+                    connection.query_row(
+                        "SELECT source_document_id IS NULL FROM card_statements
+                         WHERE id='statement-full'",
+                        [], |row| row.get::<_, bool>(0),
+                    )?
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT source_document_id FROM card_statement_portable_source_refs
+                         WHERE statement_id='statement-full'",
+                        [], |row| row.get::<_, String>(0),
+                    )?,
+                    "portable-card-source"
+                );
+                assert_eq!(
                     apply_package(connection, &review.package_id).unwrap().state,
                     "APPLIED"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_one_packages_remain_valid_and_do_not_delete_card_graphs() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let mut package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        package.schema_version = 1;
+        package.covered_kinds = LEGACY_COVERED_KINDS
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect();
+        package
+            .records
+            .retain(|record| package.covered_kinds.contains(&record.entity_kind));
+        package.counts_by_kind = package
+            .covered_kinds
+            .iter()
+            .map(|kind| {
+                (
+                    kind.clone(),
+                    package
+                        .records
+                        .iter()
+                        .filter(|record| &record.entity_kind == kind)
+                        .count() as u64,
+                )
+            })
+            .collect();
+        resign_package(&mut package);
+        validate_package(&package).unwrap();
+
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                assert!(review.records.iter().all(|record| !matches!(
+                    record.entity_kind.as_str(),
+                    "CARD_STATEMENT" | "CARD_PAYMENT"
+                )));
+                assert_eq!(
+                    connection
+                        .query_row("SELECT count(*) FROM card_statements", [], |row| row
+                            .get::<_, i64>(0))?,
+                    2
+                );
+                assert_eq!(
+                    connection.query_row("SELECT count(*) FROM card_payments", [], |row| row
+                        .get::<_, i64>(0))?,
+                    2
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn mixed_card_conflict_choices_cannot_commit_a_stale_statement_status() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                connection.execute_batch(
+                    "DELETE FROM card_payments WHERE id='payment-full';
+                     UPDATE journal_entries SET amount_jpy=1300
+                     WHERE transaction_id='payment-tx';
+                     UPDATE card_statements SET statement_amount_jpy=1300
+                     WHERE id='statement-full';
+                     INSERT INTO card_payments(
+                       id,household_id,statement_id,bank_transaction_id,card_account_id,
+                       payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
+                     VALUES('payment-full','family','statement-full','payment-tx','card',1300,
+                       '2026-07-27',10000,'FULLY_RECONCILED','2026-07-27T00:00:00Z');",
+                )?;
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                let resolutions = review
+                    .records
+                    .iter()
+                    .filter(|record| record.resolution == "PENDING")
+                    .map(|record| ChangePackageResolutionInput {
+                        entity_kind: record.entity_kind.clone(),
+                        entity_id: record.entity_id.clone(),
+                        resolution: if record.entity_kind == "CARD_STATEMENT"
+                            && record.entity_id == "statement-full"
+                        {
+                            "KEEP_LOCAL"
+                        } else {
+                            "APPLY_INCOMING"
+                        }
+                        .to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                let ready = resolve_package(connection, &review.package_id, &resolutions).unwrap();
+                assert!(matches!(
+                    apply_package(connection, &ready.package_id),
+                    Err(ChangePackageError::Conflict)
+                ));
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT payment_amount_jpy FROM card_payments WHERE id='payment-full'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    1200
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT state FROM change_packages WHERE package_id=?1",
+                        [&ready.package_id],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "READY"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn confirmed_payment_with_two_card_liability_debits_rolls_back() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                connection.execute_batch(
+                    "DELETE FROM card_payments WHERE id='payment-full';
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('card-2','family','Second card','LIABILITY','CREDIT_CARD');
+                     INSERT INTO journal_entries(
+                       id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES('extra-card-debit','payment-tx','card-2','DEBIT',100,3),
+                           ('extra-bank-credit','payment-tx','bank','CREDIT',100,4);
+                     INSERT INTO card_payments(
+                       id,household_id,statement_id,bank_transaction_id,card_account_id,
+                       payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
+                     VALUES('payment-full','family','statement-full','payment-tx','card',1200,
+                       '2026-07-27',10000,'FULLY_RECONCILED','2026-07-27T00:00:00Z');",
+                )?;
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Destination')",
+                    [],
+                )?;
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                let resolutions = review
+                    .records
+                    .iter()
+                    .filter(|record| record.resolution == "PENDING")
+                    .map(|record| ChangePackageResolutionInput {
+                        entity_kind: record.entity_kind.clone(),
+                        entity_id: record.entity_id.clone(),
+                        resolution: "APPLY_INCOMING".to_owned(),
+                    })
+                    .collect::<Vec<_>>();
+                let ready = if resolutions.is_empty() {
+                    review
+                } else {
+                    resolve_package(connection, &review.package_id, &resolutions).unwrap()
+                };
+                assert!(matches!(
+                    apply_package(connection, &ready.package_id),
+                    Err(ChangePackageError::Conflict)
+                ));
+                assert_eq!(
+                    connection.query_row("SELECT count(*) FROM accounts", [], |row| row
+                        .get::<_, i64>(0))?,
+                    0
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT state FROM change_packages WHERE package_id=?1",
+                        [&ready.package_id],
+                        |row| row.get::<_, String>(0),
+                    )?,
+                    "READY"
                 );
                 Ok(())
             })

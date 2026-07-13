@@ -80,6 +80,9 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0034_replicable_planning_capture.sql"
     )),
     M::up(include_str!("../migrations/0035_local_change_packages.sql")),
+    M::up(include_str!(
+        "../migrations/0036_replicable_card_reconciliation.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1447,6 +1450,250 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_thirty_six_preserves_v1_packages_and_captures_card_aggregates() {
+        const DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 35)
+            .expect("schema thirty five");
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('card','family','Card','LIABILITY','CREDIT_CARD'),
+                       ('bank','family','Bank','ASSET','BANK');
+                 INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES('purchase-1','family','2026-07-01','CARD_PURCHASE','DRAFT'),
+                       ('purchase-2','family','2026-07-02','CARD_PURCHASE','DRAFT'),
+                       ('payment-tx','family','2026-07-27','CARD_PAYMENT','DRAFT');
+                 INSERT INTO card_statements(
+                   id,household_id,card_account_id,period_start,period_end,payment_due_on,
+                   statement_amount_jpy,reconciliation_status)
+                 VALUES('statement','family','card','2026-06-01','2026-06-30','2026-07-27',
+                        3000,'UNMATCHED');
+                 INSERT INTO card_statement_transactions(
+                   statement_id,transaction_id,statement_line_number,billed_amount_jpy)
+                 VALUES('statement','purchase-2',2,2000),('statement','purchase-1',1,1000);
+                 INSERT INTO card_payments(
+                   id,household_id,statement_id,bank_transaction_id,card_account_id,
+                   payment_amount_jpy,payment_on,match_score_bps,reconciliation_status)
+                 VALUES('payment','family','statement','payment-tx','card',3000,
+                        '2026-07-27',9000,'POSSIBLE_MATCH');
+                 INSERT INTO change_packages(
+                   package_id,target_household_id,source_installation_id,source_principal_id,
+                   source_revision,snapshot_sha256,manifest_json,package_sha256,state,
+                   record_count,create_count,source_created_at,staged_at,reviewed_at,updated_at)
+                 VALUES('v1-package','family','device','principal',1,'{DIGEST}','{{}}','{DIGEST}',
+                        'REJECTED',1,1,'2026-07-13T00:00:00Z',
+                        '2026-07-13T00:00:00Z','2026-07-13T00:00:01Z',
+                        '2026-07-13T00:00:01Z');
+                 INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution)
+                 VALUES('v1-package',0,'ACCOUNT','bank','UPSERT',
+                        '{{\"recordKind\":\"ACCOUNT\",\"id\":\"bank\"}}','{DIGEST}',
+                        'CREATE','APPLY_INCOMING');"
+            ))
+            .expect("schema-35 fixture");
+
+        migrations
+            .to_version(&mut connection, 36)
+            .expect("schema thirty six");
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT schema_version FROM change_packages WHERE package_id='v1-package'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT entity_kind FROM change_package_records
+                     WHERE package_id='v1-package' AND record_order=0",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "ACCOUNT"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_local_change_capture
+                     WHERE entity_kind IN ('CARD_STATEMENT','CARD_PAYMENT')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_extract(payload_json,'$.lines[0].transactionId')
+                     FROM sync_card_statement_aggregate_payloads WHERE statement_id='statement'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "purchase-1"
+        );
+
+        connection
+            .execute(
+                "INSERT INTO change_packages(
+                   package_id,schema_version,target_household_id,source_installation_id,
+                   source_principal_id,source_revision,snapshot_sha256,manifest_json,
+                   package_sha256,state,record_count,create_count,source_created_at)
+                 VALUES('v2-package',2,'family','device-2','principal',1,?1,'{}',?1,
+                        'STAGED',1,1,'2026-07-13T00:00:00Z')",
+                [DIGEST],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution)
+                 VALUES('v2-package',0,'CARD_STATEMENT','statement','UPSERT',
+                        '{\"recordKind\":\"CARD_STATEMENT\",\"id\":\"statement\"}',?1,
+                        'CREATE','APPLY_INCOMING')",
+                [DIGEST],
+            )
+            .unwrap();
+        assert!(connection
+            .execute(
+                "UPDATE change_packages SET schema_version=1 WHERE package_id='v2-package'",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution)
+                 VALUES('v1-package',1,'CARD_PAYMENT','payment','UPSERT',
+                        '{\"recordKind\":\"CARD_PAYMENT\",\"id\":\"payment\"}',?1,
+                        'CREATE','APPLY_INCOMING')",
+                [DIGEST],
+            )
+            .is_err());
+
+        connection
+            .execute(
+                "INSERT INTO card_statement_portable_source_refs(statement_id,source_document_id)
+                 VALUES('statement','portable-document')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_extract(payload_json,'$.sourceDocumentId')
+                     FROM sync_card_statement_aggregate_payloads WHERE statement_id='statement'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "portable-document"
+        );
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO import_runs(id,household_id,status) VALUES('run','family','POSTED');
+                 INSERT INTO source_documents(
+                   id,household_id,import_run_id,source_type,original_filename,media_type,
+                   byte_size,sha256,storage_path)
+                 VALUES('actual-document','family','run','MANUAL_UPLOAD','card.csv','text/csv',
+                        1,'{DIGEST}','documents/card.csv');
+                 UPDATE card_statements SET source_document_id='actual-document'
+                 WHERE id='statement';"
+            ))
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_extract(payload_json,'$.sourceDocumentId')
+                     FROM sync_card_statement_aggregate_payloads WHERE statement_id='statement'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "actual-document"
+        );
+        connection
+            .execute(
+                "UPDATE card_statement_transactions SET billed_amount_jpy=1100
+                 WHERE statement_id='statement' AND transaction_id='purchase-1'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_extract(payload_json,'$.lines[0].billedAmountJpy')
+                     FROM sync_local_change_capture
+                     WHERE entity_kind='CARD_STATEMENT' AND entity_id='statement'
+                     ORDER BY capture_sequence DESC LIMIT 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1100
+        );
+        connection
+            .execute(
+                "UPDATE card_payments SET match_score_bps=9500 WHERE id='payment'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT json_extract(payload_json,'$.matchScoreBps')
+                     FROM sync_local_change_capture
+                     WHERE entity_kind='CARD_PAYMENT' AND entity_id='payment'
+                     ORDER BY capture_sequence DESC LIMIT 1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            9500
+        );
+        connection
+            .execute("DELETE FROM card_payments WHERE id='payment'", [])
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT operation FROM sync_local_change_capture
+                     WHERE entity_kind='CARD_PAYMENT' AND entity_id='payment'
+                     ORDER BY capture_sequence DESC LIMIT 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "DELETE"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+            0
+        );
+        assert!(integrity_check(&connection).unwrap());
     }
 
     #[test]
