@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.0 — 2026-07-13
+
+- Require a destination account for every generic Japanese bank, PayPay, Rakuten Card, and Amazon Mastercard file before staging.
+- Filter each per-file selector to the compatible canonical account type: bank asset, wallet asset, or credit-card liability.
+- Remove household-ID defaults and issuer-name matching from import routing; filenames and account names are never treated as authoritative mappings.
+- Keep selections independent across previews and discard them when the household changes or the corresponding preview leaves the Inbox.
+
 ## 0.30.0 — 2026-07-13
 
 - Add a source-backed Home data-quality panel with latest successful import, canonical source filename/type, original-document and source-row totals, distinct source channels, review backlog, and failed-import count.

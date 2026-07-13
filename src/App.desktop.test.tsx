@@ -169,6 +169,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.archiveHouseholdMember.mockReset().mockResolvedValue(undefined)
     desktop.listAccounts.mockReset().mockResolvedValue([
       { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'MEMBER', ownerMemberId: 'taro', ownerMemberName: '太郎', visibility: 'PERSONAL' },
+      { id: 'family-wallet', name: 'PayPay', accountKind: 'ASSET', accountSubtype: 'WALLET', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
       { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
@@ -727,6 +728,7 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.click(await screen.findByRole('button', { name: 'インポート（1件の確認対象）' }))
     fireEvent.click(await screen.findByRole('button', { name: '更新' }))
+    fireEvent.change(await screen.findByLabelText('bank.csvの取込先銀行口座'), { target: { value: 'family-bank' } })
     fireEvent.click(await screen.findByRole('button', { name: '取込開始' }))
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
     await waitFor(() => expect(desktop.markWatchedFileInboxStaged).toHaveBeenCalledWith('family', 'inbox-ready', 'lease', 'run-1'))
@@ -866,7 +868,14 @@ describe('KakeFlow desktop read models', () => {
     const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
     const file = new File(['日付,摘要,支払い金額,預かり金額,差引残高\n2026/07/12,STORE,1200,,10000'], 'bank.csv', { type: 'text/csv' })
     fireEvent.change(input, { target: { files: [file] } })
-    fireEvent.click(await screen.findByRole('button', { name: '取込開始' }))
+    const start = await screen.findByRole('button', { name: '取込開始' })
+    fireEvent.click(start)
+    expect(await screen.findByText('銀行CSVの取込先銀行口座を選択してください。')).toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    const account = screen.getByLabelText('bank.csvの取込先銀行口座')
+    expect(within(account).queryByRole('option', { name: 'カード' })).not.toBeInTheDocument()
+    fireEvent.change(account, { target: { value: 'family-bank' } })
+    fireEvent.click(start)
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({ audienceVisibility: 'SHARED', audienceMemberId: null, candidates: [expect.objectContaining({ attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })] }), expect.any(Uint8Array)))
 
     const commit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
@@ -876,6 +885,76 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(commit)
 
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
+  })
+
+  it.each([
+    {
+      name: 'PayPay', filename: 'paypay.csv', accountLabel: 'paypay.csvの取込先ウォレット口座', accountId: 'family-wallet', missing: 'PayPay履歴の取込先ウォレット口座を選択してください。', adapterId: 'paypay-history-v1',
+      csv: 'Date & Time,Amount Outgoing (Yen),Amount Incoming (Yen),Transaction Type,Payment Option,Transaction ID,Description\n2026/07/12 12:00,1200,,Payment,PayPay Balance,pay-1,STORE',
+    },
+    {
+      name: 'Rakuten', filename: 'rakuten.csv', accountLabel: 'rakuten.csvの取込先カード口座', accountId: 'family-card', missing: '楽天カード明細の取込先カード口座を選択してください。', adapterId: 'rakuten-enavi-v1',
+      csv: '利用日,利用店名・商品名,利用者,支払方法,利用金額,7月支払金額\n2026/06/12,STORE,本人,一括,1200,1200',
+    },
+    {
+      name: 'Amazon', filename: 'amazon.csv', accountLabel: 'amazon.csvの取込先カード口座', accountId: 'family-card', missing: 'Amazon Mastercard明細の取込先カード口座を選択してください。', adapterId: 'amazon-mastercard-statement-v1',
+      csv: '田中太郎,****1234,Amazon Mastercard\n2026/06/12,STORE,1200,一括\n合計,,,1200',
+    },
+  ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv }) => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File([csv], filename, { type: 'text/csv' })] } })
+
+    const start = await screen.findByRole('button', { name: '取込開始' })
+    fireEvent.click(start)
+    expect(await screen.findByText(missing)).toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    const account = screen.getByLabelText(accountLabel)
+    if (accountId === 'family-card') expect(within(account).queryByRole('option', { name: '銀行' })).not.toBeInTheDocument()
+    else expect(within(account).queryByRole('option', { name: 'カード' })).not.toBeInTheDocument()
+    fireEvent.change(account, { target: { value: accountId } })
+    fireEvent.click(start)
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId,
+      candidates: [expect.objectContaining({ accountId })],
+      ...(accountId === 'family-card' ? { cardStatements: [expect.objectContaining({ cardAccountId: accountId })] } : {}),
+    }), expect.any(Uint8Array)))
+  })
+
+  it('keeps destination mappings independent for two bank previews in one batch', async () => {
+    desktop.listAccounts.mockResolvedValue([
+      { id: 'family-bank', name: '既定テスト口座', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'bank-a', name: '生活口座', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'bank-b', name: '貯蓄口座', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+    ])
+    desktop.startImport.mockImplementation(async (request) => ({ runId: `run-${request.originalFilename}`, documentId: `document-${request.originalFilename}`, status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false }))
+    desktop.previewImport.mockImplementation(async (runId: string) => {
+      const suffix = runId.endsWith('bank-a.csv') ? 'a' : 'b'
+      return {
+        summary: { runId, documentId: `document-bank-${suffix}.csv`, status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: `bank-${suffix}.csv`, mediaType: 'text/csv', byteSize: 1, sha256: `hash-${suffix}`, audienceVisibility: 'SHARED', audienceMemberId: null },
+        candidates: [{ id: `candidate-${suffix}`, accountId: `bank-${suffix}`, occurredOn: '2026-07-12', postedOn: null, amountJpy: 100, direction: 'OUT', descriptionRaw: `STORE ${suffix}`, merchantRaw: `STORE ${suffix}`, externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+      }
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const header = '日付,摘要,支払い金額,預かり金額,差引残高\n'
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [
+      new File([`${header}2026/07/11,STORE A,100,,10000`], 'bank-a.csv', { type: 'text/csv' }),
+      new File([`${header}2026/07/12,STORE B,200,,20000`], 'bank-b.csv', { type: 'text/csv' }),
+    ] } })
+
+    fireEvent.change(await screen.findByLabelText('bank-a.csvの取込先銀行口座'), { target: { value: 'bank-a' } })
+    fireEvent.change(screen.getByLabelText('bank-b.csvの取込先銀行口座'), { target: { value: 'bank-b' } })
+    const starts = screen.getAllByRole('button', { name: '取込開始' })
+    fireEvent.click(starts[0]); fireEvent.click(starts[1])
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledTimes(2))
+    const mappedAccounts = desktop.startImport.mock.calls.map(([request]) => request.candidates[0].accountId)
+    expect(mappedAccounts).toEqual(expect.arrayContaining(['bank-a', 'bank-b']))
   })
 
   it('requires and applies an explicit bank account for a Yucho import', async () => {
