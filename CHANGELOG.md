@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.42.0 — 2026-07-13
+
+- Add a dedicated, strict `jcb-myjcb-statement-v1` adapter for an explicit v1 header contract, including reordered columns and CP932/UTF-8 decoding through the existing import boundary.
+- Preserve exact physical source-row provenance while parsing JPY billed amounts, refunds, cardholder/payment labels, and explicit original-currency amount/rate fields.
+- Exclude metadata and statement-total rows from card purchases, block invalid dates, ambiguous positive refund markers, and total mismatches before staging, without silently changing source values.
+- Require an explicit active credit-card liability account before staging; issuer or filename text never selects an account or posts a transaction.
+- Add a synthetic, fictitious JCB fixture plus detection, parsing, mapping, provenance, account-selection, refund, FX, and malformed-layout coverage.
+
 ## 0.41.0 — 2026-07-13
 
 - Extend local change-package schema v3 to exactly 18 aggregate kinds with portfolio snapshots/positions/snapshot FX, brokerage events/legs, dated investment FX, market prices, and Money Forward aggregate asset history while retaining schema-v1/v2 compatibility.

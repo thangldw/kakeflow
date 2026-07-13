@@ -4,6 +4,7 @@ export type AdapterId =
   | 'paypay-history-v1'
   | 'amazon-mastercard-statement-v1'
   | 'rakuten-enavi-v1'
+  | 'jcb-myjcb-statement-v1'
   | 'securities-asset-snapshot-v1'
   | 'japanese-brokerage-transactions-v1'
   | 'money-forward-me-asset-trend-v1'
@@ -130,7 +131,7 @@ export interface CardTransactionCandidate {
 
 export interface CardStatementCandidate {
   kind: 'card-statement'
-  issuer: 'AMAZON_MASTERCARD' | 'RAKUTEN_CARD'
+  issuer: 'AMAZON_MASTERCARD' | 'RAKUTEN_CARD' | 'JCB'
   holderName?: string
   maskedCardNumber?: string
   productName?: string

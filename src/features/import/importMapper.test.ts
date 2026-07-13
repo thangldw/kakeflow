@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { jcbMyJcbAdapter } from '../../ingestion'
 import type { ParsedImport } from '../../ingestion/types'
 import { mapParsedImportToStartImport, type HashFn, type IdFactory, type ImportMapperInput } from './importMapper'
 
@@ -115,6 +116,28 @@ describe('import mapper', () => {
     expect(result.request.cardStatements[0]).toMatchObject({
       cardAccountId: 'account-1', issuer: 'RAKUTEN_CARD', periodStart: '2026-06-10', periodEnd: '2026-06-20', statementAmountJpy: 4000,
       lines: [{ statementLineNumber: 1, billedAmountJpy: 5000 }, { statementLineNumber: 2, billedAmountJpy: -1000 }],
+    })
+  })
+
+  it('maps a JCB statement into pending card purchases with exact source-row provenance', async () => {
+    const text = [
+      'JCBカードご利用代金明細',
+      'ご利用先など,ご利用日,お支払い金額(円),支払区分',
+      '架空ストア,2026/06/01,1200,ショッピング',
+      '架空返金,2026/06/03,-200,ショッピング',
+      'お支払い合計,,1000,',
+    ].join('\n')
+    const parsed = jcbMyJcbAdapter.parse({ text, filename: 'myjcb.csv' }) as ParsedImport<unknown>
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+    expect(result.issues).toEqual([])
+    expect(result.request.records.map((record) => record.rowNumber)).toEqual([3, 4])
+    expect(result.request.candidates).toHaveLength(2)
+    expect(result.request.candidates[0]).toMatchObject({ direction: 'OUT', amountJpy: 1200, reviewStatus: 'PENDING', merchantRaw: '架空ストア' })
+    expect(result.request.candidates[1]).toMatchObject({ direction: 'IN', amountJpy: 200, reviewStatus: 'PENDING', merchantRaw: '架空返金', descriptionRaw: 'REFUND / ショッピング' })
+    expect(result.request.cardStatements[0]).toMatchObject({
+      cardAccountId: 'account-1', issuer: 'JCB', statementAmountJpy: 1000,
+      periodStart: '2026-06-01', periodEnd: '2026-06-03',
+      lines: [{ statementLineNumber: 1, billedAmountJpy: 1200 }, { statementLineNumber: 2, billedAmountJpy: -200 }],
     })
   })
 

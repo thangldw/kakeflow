@@ -919,6 +919,10 @@ describe('KakeFlow desktop read models', () => {
       name: 'Amazon', filename: 'amazon.csv', accountLabel: 'amazon.csvの取込先カード口座', accountId: 'family-card', missing: 'Amazon Mastercard明細の取込先カード口座を選択してください。', adapterId: 'amazon-mastercard-statement-v1',
       csv: '田中太郎,****1234,Amazon Mastercard\n2026/06/12,STORE,1200,一括\n合計,,,1200',
     },
+    {
+      name: 'JCB', filename: 'myjcb.csv', accountLabel: 'myjcb.csvの取込先カード口座', accountId: 'family-card', missing: 'JCB明細の取込先カード口座を選択してください。', adapterId: 'jcb-myjcb-statement-v1',
+      csv: 'JCBカードご利用代金明細\nご利用日,ご利用先など,お支払い金額(円),支払区分\n2026/06/12,架空ストア,1200,ショッピング\n,お支払い合計,1200,',
+    },
   ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv }) => {
     const { container } = render(<App />)
     await screen.findByText('生協')
@@ -940,6 +944,43 @@ describe('KakeFlow desktop read models', () => {
       candidates: [expect.objectContaining({ accountId })],
       ...(accountId === 'family-card' ? { cardStatements: [expect.objectContaining({ cardAccountId: accountId })] } : {}),
     }), expect.any(Uint8Array)))
+  })
+
+  it('shows a blocking JCB total mismatch before staging', async () => {
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const csv = 'JCBカードご利用代金明細\nご利用日,ご利用先など,お支払い金額(円)\n2026/06/12,架空ストア,1200\n,お支払い合計,999'
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'myjcb.csv', { type: 'text/csv' })] } })
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Detail sum (1200) does not match statement total (999).')
+    expect(screen.getByText('確認が必要')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '取込開始' })).not.toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+  })
+
+  it('defaults a signed JCB credit to REFUND even when the merchant has no refund keyword', async () => {
+    let stagedCandidates: readonly Record<string, unknown>[] = []
+    desktop.startImport.mockImplementation(async (request) => {
+      stagedCandidates = request.candidates
+      return { runId: 'run-jcb', documentId: 'document-jcb', status: 'REVIEW_REQUIRED', recordCount: request.records.length, candidateCount: request.candidates.length, reusedExisting: false }
+    })
+    desktop.previewImport.mockImplementation(async () => ({
+      summary: { runId: 'run-jcb', documentId: 'document-jcb', status: 'REVIEW_REQUIRED', recordCount: 2, candidateCount: stagedCandidates.length, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'myjcb.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: stagedCandidates.map((candidate) => ({ ...candidate, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] })),
+    }))
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const csv = 'JCBカードご利用代金明細\nご利用日,ご利用先など,お支払い金額(円),支払区分\n2026/06/10,架空ストア,1200,ショッピング\n2026/06/12,AMAZON.CO.JP,-200,ショッピング\n,お支払い合計,1000,'
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File([csv], 'myjcb.csv', { type: 'text/csv' })] } })
+    fireEvent.change(await screen.findByLabelText('myjcb.csvの取込先カード口座'), { target: { value: 'family-card' } })
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+
+    const types = await screen.findAllByLabelText(/の取引種別/)
+    expect(types.map((select) => (select as HTMLSelectElement).value)).toEqual(expect.arrayContaining(['CARD_PURCHASE', 'REFUND']))
+    expect(stagedCandidates).toEqual(expect.arrayContaining([expect.objectContaining({ direction: 'IN', descriptionRaw: 'REFUND / ショッピング' })]))
   })
 
   it('keeps destination mappings independent for two bank previews in one batch', async () => {
