@@ -848,8 +848,41 @@ function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly Acc
   }
 }
 
-function ImportReviewSection({ stagedImport, accounts, householdId, busy, isReceipt, onRollback, onCommit, onReceiptLinked }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; isReceipt: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void; onReceiptLinked: () => Promise<void> }) {
-  const [drafts, setDrafts] = useState(() => Object.fromEntries(stagedImport.candidates.map((candidate) => [candidate.id, { approved: false, decision: suggestedPosting(candidate, accounts, householdId) }])))
+interface PostingDraft {
+  readonly approved: boolean
+  readonly decision: PostingDecisionDto
+  readonly error: string | null
+}
+
+function initialPostingDraft(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDraft {
+  try {
+    return { approved: false, decision: suggestedPosting(candidate, accounts, householdId), error: null }
+  } catch {
+    return {
+      approved: false,
+      error: '取込先または相手勘定が見つかりません。口座設定を確認するか、このインポートを取り消してください。',
+      decision: {
+        candidateId: candidate.id,
+        transactionId: globalThis.crypto.randomUUID(),
+        transactionType: candidate.suggestedTransactionType ?? 'EXPENSE',
+        payee: candidate.merchantRaw,
+        description: candidate.descriptionRaw,
+        calculationTarget: candidate.calculationTarget,
+        attributionKind: candidate.attributionKind,
+        attributedMemberId: candidate.attributedMemberId,
+        audienceVisibility: candidate.audienceVisibility,
+        audienceMemberId: candidate.audienceMemberId,
+        entries: [
+          { id: globalThis.crypto.randomUUID(), accountId: '', side: 'DEBIT', amountJpy: candidate.amountJpy },
+          { id: globalThis.crypto.randomUUID(), accountId: '', side: 'CREDIT', amountJpy: candidate.amountJpy },
+        ],
+      },
+    }
+  }
+}
+
+function ImportReviewSection({ stagedImport, accounts, householdId, busy, isReceipt, recovered, sourceCompletionBlocked, onRollback, onCommit, onReceiptLinked }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; isReceipt: boolean; recovered: boolean; sourceCompletionBlocked: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void; onReceiptLinked: () => Promise<void> }) {
+  const [drafts, setDrafts] = useState<Record<string, PostingDraft>>(() => Object.fromEntries(stagedImport.candidates.map((candidate) => [candidate.id, initialPostingDraft(candidate, accounts, householdId)])))
   const [receiptMatches, setReceiptMatches] = useState<Record<string, readonly ReceiptMatchSuggestionDto[]>>({})
   const [receiptSelections, setReceiptSelections] = useState<Record<string, string>>({})
   const [matchingCandidate, setMatchingCandidate] = useState<string | null>(null)
@@ -870,11 +903,19 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
     catch { /* The native command revalidates atomically; keep the candidate reviewable on failure. */ }
     finally { setMatchingCandidate(null) }
   }
-  const updateDecision = (candidateId: string, change: (decision: PostingDecisionDto) => PostingDecisionDto) => setDrafts((current) => ({ ...current, [candidateId]: { ...current[candidateId], decision: change(current[candidateId].decision) } }))
-  const approved = stagedImport.candidates.every((candidate) => drafts[candidate.id]?.approved)
+  const updateDecision = (candidateId: string, change: (decision: PostingDecisionDto) => PostingDecisionDto) => setDrafts((current) => {
+    const draft = current[candidateId]
+    return !draft ? current : { ...current, [candidateId]: { ...draft, decision: change(draft.decision) } }
+  })
+  const approved = stagedImport.candidates.every((candidate) => drafts[candidate.id]?.approved && !drafts[candidate.id]?.error)
   const decisions = stagedImport.candidates.map((candidate) => drafts[candidate.id]?.decision).filter((decision): decision is PostingDecisionDto => Boolean(decision))
+  const sourceOnly = stagedImport.candidates.length === 0
+  const postingError = Object.values(drafts).find((draft) => draft.error)?.error
 
-  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み</p></div><b>REVIEW</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>既存取引の候補</strong><select aria-label={`${candidate.id}のレシート紐付け候補`} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? '紐付け中…' : '新規支出を作らず証憑として紐付け'}</button><small>金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}</div><div className="review-actions"><span>{approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : '承認済みを台帳へ反映'}</button></div></section>
+  if (postingError) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div><p className="empty-state" role="alert">{postingError}</p><div className="review-actions"><span>口座設定の修正後に再度開くか、取り消してください。</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? '処理中…' : '取り消す'}</button></div></section>
+  if (sourceOnly && sourceCompletionBlocked) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>投資・資産データ{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div><p className="empty-state" role="alert">専用データの保存が完了する前に中断されました。この取込を取り消し、原本ファイルを再度取り込んでください。</p><div className="review-actions"><span>未保存の投資データを完了済みとして扱いません。</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? '処理中…' : '取り消して再取込'}</button></div></section>
+
+  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const debit = draft.decision.entries.find((entry) => entry.side === 'DEBIT')!; const credit = draft.decision.entries.find((entry) => entry.side === 'CREDIT')!; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><select aria-label={`${candidate.id}の借方口座`} value={debit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'DEBIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><select aria-label={`${candidate.id}の貸方口座`} value={credit.accountId} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, entries: decision.entries.map((entry) => entry.side === 'CREDIT' ? { ...entry, accountId: event.target.value } : entry) }))}>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>既存取引の候補</strong><select aria-label={`${candidate.id}のレシート紐付け候補`} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? '紐付け中…' : '新規支出を作らず証憑として紐付け'}</button><small>金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}{sourceOnly && <p className="empty-state">台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。</p>}</div><div className="review-actions"><span>{sourceOnly ? '台帳へ取引は追加されません' : approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : sourceOnly ? '原本処理を完了' : '承認済みを台帳へ反映'}</button></div></section>
 }
 
 interface DurableFolderInboxView {
@@ -909,17 +950,54 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [standardImportAccounts, setStandardImportAccounts] = useState<Record<string, string>>({})
   const [originalParserPreviews, setOriginalParserPreviews] = useState<Record<string, ImportPreview>>({})
   const [rescuePreviewId, setRescuePreviewId] = useState<string | null>(null)
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
+  const [recoveryError, setRecoveryError] = useState('')
+  const [recoveryRevision, setRecoveryRevision] = useState(0)
+  const [recoveredReceiptRunIds, setRecoveredReceiptRunIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [sourceResumeRequiredRunIds, setSourceResumeRequiredRunIds] = useState<ReadonlySet<string>>(() => new Set())
   const rescueTriggerRef = useRef<HTMLButtonElement | null>(null)
   const hydratedStagedRunsRef = useRef(new Set<string>())
+  const inFlightRunsRef = useRef(new Set<string>())
+  const recoveredReviewCount = Object.keys(staged).filter((key) => key.startsWith('recovered:')).length
 
   useEffect(() => {
     hydratedStagedRunsRef.current.clear()
     setStaged({})
     setReceiptStagedIds(new Set())
+    setRecoveredReceiptRunIds(new Set())
+    setSourceResumeRequiredRunIds(new Set())
     setMoneyForwardAccounts({})
     setStandardImportAccounts({})
     setRescuePreviewId(null)
   }, [householdId])
+
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) { setRecoveryBusy(false); setRecoveryError(''); return }
+    let active = true
+    setRecoveryBusy(true); setRecoveryError('')
+    void platformClient.listPendingReviews(householdId).then(async (result) => {
+      const recovered = await Promise.allSettled(result.runs.map(async (run) => ({ run, preview: await platformClient.previewImport(run.runId) })))
+      if (!active) return
+      const successful = recovered.flatMap((item) => item.status === 'fulfilled' ? [item.value] : [])
+      const failedCount = recovered.length - successful.length
+      setStaged((current) => {
+        const next = { ...current }
+        const pendingRunIds = new Set(result.runs.map((run) => run.runId))
+        for (const key of Object.keys(next)) if (key.startsWith('recovered:') && !pendingRunIds.has(next[key].summary.runId)) delete next[key]
+        const known = new Set(Object.values(next).map((preview) => preview.summary.runId))
+        for (const { run, preview } of successful) {
+          if (known.has(run.runId)) continue
+          next[`recovered:${run.runId}`] = preview; known.add(run.runId); hydratedStagedRunsRef.current.add(run.runId)
+        }
+        return next
+      })
+      setRecoveredReceiptRunIds(new Set(result.runs.filter((run) => /^receipt-(?:text|image-ocr)-v\d+$/.test(run.adapterId ?? '')).map((run) => run.runId)))
+      setSourceResumeRequiredRunIds(new Set(result.runs.filter((run) => run.completionState === 'SOURCE_RESUME_REQUIRED').map((run) => run.runId)))
+      if (failedCount > 0) setRecoveryError(`${failedCount}件の確認待ちを復元できませんでした。他の候補は表示しています。`)
+    }).catch(() => { if (active) setRecoveryError('確認待ちのインポートを復元できませんでした。再試行してください。') })
+      .finally(() => { if (active) setRecoveryBusy(false) })
+    return () => { active = false }
+  }, [householdId, recoveryRevision])
 
   useEffect(() => {
     const activeIds = new Set(previews.map((preview) => preview.id))
@@ -964,8 +1042,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       if (item.householdId !== householdId || item.state !== 'STAGED' || !item.importRunId || hydratedStagedRunsRef.current.has(item.importRunId)) continue
       hydratedStagedRunsRef.current.add(item.importRunId)
       void platformClient.previewImport(item.importRunId).then((preview) => {
-        if (!active || preview.candidates.length === 0) return
-        setStaged((current) => ({ ...current, [`folder:${item.id}`]: preview }))
+        if (!active) return
+        setStaged((current) => Object.values(current).some((existing) => existing.summary.runId === preview.summary.runId) ? current : ({ ...current, [`folder:${item.id}`]: preview }))
       }).catch(() => { hydratedStagedRunsRef.current.delete(item.importRunId!) })
     }
     return () => { active = false }
@@ -1220,6 +1298,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   }
 
   const commitRun = async (previewId: string, stagedImport: ImportPreviewDto, decisions: readonly PostingDecisionDto[]) => {
+    if (inFlightRunsRef.current.has(stagedImport.summary.runId)) return
+    inFlightRunsRef.current.add(stagedImport.summary.runId)
     setActiveRun(stagedImport.summary.runId)
     setNotice('')
     try {
@@ -1227,27 +1307,36 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
       onChanged()
-      setNotice(`${result.postedCount}件の取引を台帳へ反映しました。`)
+      setRecoveryRevision((value) => value + 1)
+      setNotice(result.postedCount === 0 ? '取引を追加せず原本処理を完了しました。' : `${result.postedCount}件の取引を台帳へ反映しました。`)
     } catch {
       setNotice('台帳へ反映できませんでした。候補の口座と仕訳を確認してください。')
     } finally {
+      inFlightRunsRef.current.delete(stagedImport.summary.runId)
       setActiveRun(null)
     }
   }
 
   const rollbackRun = async (previewId: string, runId: string) => {
+    if (inFlightRunsRef.current.has(runId)) return
+    inFlightRunsRef.current.add(runId)
     setActiveRun(runId)
     try {
       await platformClient.rollbackImport(runId)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
       onChanged()
-      const folderInboxItemId = previewId.startsWith('folder:') ? previewId.slice('folder:'.length) : previews.find((preview) => preview.id === previewId)?.folderInboxItemId
+      setRecoveryRevision((value) => value + 1)
+      const folderInboxItemId = previewId.startsWith('folder:')
+        ? previewId.slice('folder:'.length)
+        : previews.find((preview) => preview.id === previewId)?.folderInboxItemId
+          ?? folderInbox.items.find((item) => item.householdId === householdId && item.importRunId === runId)?.id
       if (folderInboxItemId) await folderInbox.retry(folderInboxItemId)
       setNotice('未確定のインポートを取り消しました。')
     } catch {
       setNotice('インポートを取り消せませんでした。')
     } finally {
+      inFlightRunsRef.current.delete(runId)
       setActiveRun(null)
     }
   }
@@ -1258,7 +1347,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
     } else setStaged((current) => ({ ...current, [previewId]: nextPreview }))
-    onChanged(); setNotice('既存取引にレシート証憑を紐付けました。新しい支出は作成していません。')
+    onChanged(); setRecoveryRevision((value) => value + 1); setNotice('既存取引にレシート証憑を紐付けました。新しい支出は作成していません。')
   }
 
   return <>
@@ -1268,6 +1357,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       <input ref={inputRef} aria-label="CSV、TSV、Excel、PDF、レシート画像、ゆうちょ公式ZIPを選択" className="visually-hidden" type="file" accept=".csv,.tsv,.xlsx,.pdf,.png,.jpg,.jpeg,.zip,text/csv,text/tab-separated-values,application/zip,application/x-zip-compressed,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
     {folderInbox.counts && folderInbox.counts.actionable > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>永続 Folder Inbox に {folderInbox.counts.actionable} 件の確認対象があります。プレビューだけを自動化し、台帳への反映は必ず明示的な承認後です。</span><button className="text-btn" disabled={folderInbox.busy} onClick={() => void folderInbox.refresh(true)}>更新</button></div>}
+    {(recoveryBusy || recoveryError) && <div className="import-notice" role={recoveryError ? 'alert' : 'status'}><span>{recoveryError || '保存済みの確認待ちインポートを復元しています…'}</span>{recoveryError && <button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>再試行</button>}</div>}
+    {!recoveryBusy && !recoveryError && recoveredReviewCount > 0 && <div className="import-notice" role="status"><span>再起動前からの確認待ちを {recoveredReviewCount} 件復元しました。台帳へは自動反映しません。</span><button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>確認待ちを更新</button></div>}
     <section className="status-grid">
       {[
         ['取込済み', String(summary?.posted ?? (platformClient.runtime === 'web' ? 79 : 0)), `${summary?.sourceDocuments ?? 0}原本`],
@@ -1319,7 +1410,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       {rescuePreviewId && householdId && (() => { const item = previews.find((preview) => preview.id === rescuePreviewId); return item?.fileBytes ? <CustomParserRescueDialog householdId={householdId} filename={item.filename} bytes={item.fileBytes} accounts={accounts} returnFocus={rescueTriggerRef.current} onCancel={() => setRescuePreviewId(null)} onSaved={(profile, accountId) => { setParserProfiles((current) => [...current.filter((candidate) => candidate.id !== profile.id), profile]); setSelectedParserProfiles((current) => ({ ...current, [item.id]: profile.id })); applyCustomParserProfile(item, profile, accountId); setRescuePreviewId(null) }} /> : null })()}
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}
-    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} isReceipt={receiptStagedIds.has(previewId)} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} onReceiptLinked={() => refreshAfterReceiptLink(previewId, stagedImport.summary.runId)} />)}
+    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} isReceipt={receiptStagedIds.has(previewId) || recoveredReceiptRunIds.has(stagedImport.summary.runId)} recovered={previewId.startsWith('recovered:')} sourceCompletionBlocked={sourceResumeRequiredRunIds.has(stagedImport.summary.runId)} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} onReceiptLinked={() => refreshAfterReceiptLink(previewId, stagedImport.summary.runId)} />)}
   </>
 }
 

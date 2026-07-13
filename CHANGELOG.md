@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.47.0 — 2026-07-13
+
+- Recover every household-scoped `REVIEW_REQUIRED` import after restart, including manual uploads that are not represented by the watched-folder Inbox.
+- Add a bounded-complete native pending-review query with deterministic newest-first order, safe source metadata/counts, exact-one-document validation, tenant isolation, and an explicit error above 200 runs instead of silent truncation.
+- Hydrate the existing immutable preview for each recovered run, deduplicate it against watched-folder recovery by canonical run ID, and never approve or post a candidate automatically.
+- Keep the last valid recovered reviews visible when refresh fails, expose retry/refresh state, and remove committed, rolled-back, or receipt-linked runs from the workspace coherently.
+- Restore previews independently so one stale or failed run cannot hide other valid reviews; block duplicate commit/rollback clicks synchronously and keep missing-account reviews rollbackable instead of crashing.
+- Distinguish safe zero-candidate completion from interrupted investment-domain imports, and never mark portfolio, brokerage, or aggregate-asset data complete until its household/document-scoped facts exist.
+- Cover strict IPC validation, backend ordering/isolation/overflow/malformed and mixed-household graphs, manual restart recovery and posting, partial failure retention, zero-candidate safety, and dual-discovery deduplication.
+
 ## 0.46.0 — 2026-07-13
 
 - Add a compact Home layout editor with mouse drag-and-drop plus explicit keyboard move controls; DOM order always follows the saved visual order.

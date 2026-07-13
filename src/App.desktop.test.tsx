@@ -10,6 +10,7 @@ const desktop = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   queryDashboard: vi.fn(),
   importSummary: vi.fn(),
+  listPendingReviews: vi.fn(),
   getDashboardPreferences: vi.fn(),
   upsertDashboardPreferences: vi.fn(),
   queryTransactions: vi.fn(),
@@ -124,6 +125,7 @@ vi.mock('./platform', async () => {
       markWatchedFileInboxFailed: desktop.markWatchedFileInboxFailed,
       markWatchedFileInboxStaged: desktop.markWatchedFileInboxStaged,
       importSummary: desktop.importSummary,
+      listPendingReviews: desktop.listPendingReviews,
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
       commitImport: desktop.commitImport,
@@ -179,6 +181,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.upsertDashboardPreferences.mockReset().mockImplementation(async (input) => ({ ...input, updatedAt: '2026-07-13T00:01:00Z' }))
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.importSummary.mockReset().mockResolvedValue({ totalRuns: 3, discovered: 0, extracting: 0, reviewRequired: 1, posted: 2, failed: 0, rolledBack: 0, sourceDocuments: 2, sourceRecords: 42, pendingCandidates: 1, readyCandidates: 2, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 2 })
+    desktop.listPendingReviews.mockReset().mockImplementation(async (householdId: string) => ({ householdId, runs: [] }))
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
     desktop.updateCardStatementDueDate.mockReset().mockImplementation(async (input) => ({
@@ -748,20 +751,153 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
   })
 
+  it('recovers a manually staged review after restart and commits it exactly once', async () => {
+    const pending = { householdId: 'family', runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }] }
+    desktop.listPendingReviews.mockResolvedValueOnce(pending).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByText('RECOVERED')).toBeInTheDocument()
+    expect(screen.getByText(/再起動後に復元/)).toBeInTheDocument()
+    expect(desktop.previewImport).toHaveBeenCalledWith('run-1')
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'STOREを承認' }))
+    const commitButton = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    fireEvent.click(commitButton)
+    fireEvent.click(commitButton)
+
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.queryByText('RECOVERED')).not.toBeInTheDocument())
+    expect(await screen.findByText('1件の取引を台帳へ反映しました。')).toBeInTheDocument()
+  })
+
+  it('recovers and finalizes a zero-candidate source run without inventing a transaction', async () => {
+    desktop.listPendingReviews.mockResolvedValueOnce({ householdId: 'family', runs: [{ runId: 'run-zero', documentId: 'document-zero', status: 'REVIEW_REQUIRED', adapterId: 'securities-asset-snapshot-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 3, candidateCount: 0, completionState: 'SOURCE_READY' }] }).mockResolvedValue({ householdId: 'family', runs: [] })
+    desktop.previewImport.mockResolvedValueOnce({
+      summary: { runId: 'run-zero', documentId: 'document-zero', status: 'REVIEW_REQUIRED', recordCount: 3, candidateCount: 0, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-zero', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [],
+    })
+    desktop.commitImport.mockResolvedValueOnce({ runId: 'run-zero', postedCount: 0 })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByText('台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '原本処理を完了' }))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-zero', []))
+    expect(await screen.findByText('取引を追加せず原本処理を完了しました。')).toBeInTheDocument()
+  })
+
+  it('never finalizes an interrupted investment import before its domain data is stored', async () => {
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{ runId: 'run-resume', documentId: 'document-resume', status: 'REVIEW_REQUIRED', adapterId: 'securities-asset-snapshot-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance-interrupted.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 3, candidateCount: 0, completionState: 'SOURCE_RESUME_REQUIRED' }] })
+    desktop.previewImport.mockResolvedValueOnce({
+      summary: { runId: 'run-resume', documentId: 'document-resume', status: 'REVIEW_REQUIRED', recordCount: 3, candidateCount: 0, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance-interrupted.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-resume', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [],
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('専用データの保存が完了する前に中断されました')
+    expect(screen.queryByRole('button', { name: '原本処理を完了' })).not.toBeInTheDocument()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '取り消して再取込' }))
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('run-resume'))
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
+
+  it('keeps successful previews when another pending run fails to preview', async () => {
+    const runs = [
+      { runId: 'run-good', documentId: 'document-good', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:01:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'good.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 },
+      { runId: 'run-raced', documentId: 'document-raced', status: 'REVIEW_REQUIRED', adapterId: null, adapterVersion: null, startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'raced.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 },
+    ]
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs })
+    desktop.previewImport.mockImplementation(async (runId: string) => {
+      if (runId === 'run-raced') throw new Error('already posted')
+      return {
+        summary: { runId: 'run-good', documentId: 'document-good', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+        source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'good.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-good', audienceVisibility: 'SHARED', audienceMemberId: null },
+        candidates: [{ id: 'candidate-good', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'GOOD', merchantRaw: 'GOOD', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+      }
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByText('good.csv')).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('1件の確認待ちを復元できませんでした')
+    expect(screen.queryByText('raced.csv')).not.toBeInTheDocument()
+  })
+
+  it('keeps a recovered run removable when its source account no longer exists', async () => {
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{ runId: 'run-missing', documentId: 'document-missing', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'archived-account.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }] })
+    desktop.previewImport.mockResolvedValueOnce({
+      summary: { runId: 'run-missing', documentId: 'document-missing', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'archived-account.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-missing', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{ id: 'candidate-missing', accountId: 'archived-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('取込先または相手勘定が見つかりません')
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '取り消す' }))
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('run-missing'))
+  })
+
+  it('rolls back a recovered manual review without posting it', async () => {
+    desktop.listPendingReviews.mockResolvedValueOnce({ householdId: 'family', runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: null, adapterVersion: null, startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }] }).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    expect(await screen.findByText('RECOVERED')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取り消す' }))
+
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('run-1'))
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByText('RECOVERED')).not.toBeInTheDocument())
+  })
+
+  it('keeps a recovered review on list failure and retries without a false empty state', async () => {
+    const pending = { householdId: 'family', runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: null, adapterVersion: null, startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }] }
+    desktop.listPendingReviews.mockResolvedValueOnce(pending).mockRejectedValueOnce(new Error('temporary')).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    expect(await screen.findByText('RECOVERED')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '確認待ちを更新' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('確認待ちのインポートを復元できませんでした')
+    expect(screen.getByText('RECOVERED')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '再試行' }))
+    await waitFor(() => expect(desktop.listPendingReviews).toHaveBeenCalledTimes(3))
+  })
+
   it('rehydrates a staged folder review whenever Import Inbox remounts and never auto-posts it', async () => {
     const stagedItem = { id: 'inbox-staged', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' }
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-12T00:01:00Z', sourceType: 'LOCAL_FOLDER', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: '2026-07-12T00:00:01Z', recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW' }] })
     desktop.listWatchedFileInbox.mockResolvedValue([stagedItem])
     desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 1, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 1 })
+    desktop.retryWatchedFileInboxItem.mockResolvedValue(undefined)
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
     expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: '承認済みを台帳へ反映' })).toHaveLength(1)
     expect(desktop.commitImport).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'ホーム' }))
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
     expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: '承認済みを台帳へ反映' })).toHaveLength(1)
     await waitFor(() => expect(desktop.previewImport.mock.calls.filter(([runId]) => runId === 'run-1').length).toBeGreaterThanOrEqual(2))
     expect(desktop.commitImport).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '取り消す' }))
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('run-1'))
+    await waitFor(() => expect(desktop.retryWatchedFileInboxItem).toHaveBeenCalledWith('family', 'inbox-staged'))
   })
 
   it('keeps auto-preview off while still exposing an app-wide actionable Inbox badge', async () => {

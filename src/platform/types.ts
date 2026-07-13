@@ -115,6 +115,26 @@ export interface ImportPreviewDto {
   readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }
   readonly candidates: readonly PreviewCandidateDto[]
 }
+export interface PendingReviewRunDto {
+  readonly runId: string
+  readonly documentId: string
+  readonly status: 'REVIEW_REQUIRED'
+  readonly adapterId: string | null
+  readonly adapterVersion: string | null
+  readonly startedAt: string
+  readonly sourceType: string
+  readonly originalFilename: string
+  readonly mediaType: string
+  readonly byteSize: number
+  readonly sourceModifiedAt: string | null
+  readonly recordCount: number
+  readonly candidateCount: number
+  readonly completionState: 'CANDIDATE_REVIEW' | 'SOURCE_READY' | 'SOURCE_RESUME_REQUIRED'
+}
+export interface PendingReviewListDto {
+  readonly householdId: string
+  readonly runs: readonly PendingReviewRunDto[]
+}
 export interface JournalEntryDecisionDto { readonly id: string; readonly accountId: string; readonly side: 'DEBIT' | 'CREDIT'; readonly amountJpy: number }
 export interface PostingDecisionDto {
   readonly candidateId: string; readonly transactionId: string; readonly transactionType: string
@@ -552,6 +572,7 @@ export type AppCommand =
   | 'classification_rules_preview'
   | 'classification_rule_apply'
   | 'import_summary'
+  | 'pending_review_list'
   | 'import_start'
   | 'import_preview'
   | 'import_commit'
@@ -639,6 +660,7 @@ export interface PlatformClient {
   previewClassificationRules(input: ClassificationPreviewInputDto): Promise<ClassificationPreviewDto>
   applyClassificationRule(input: ApplyClassificationRuleInputDto): Promise<AppliedClassificationDto>
   importSummary(householdId: string): Promise<ImportRunCountsDto>
+  listPendingReviews(householdId: string): Promise<PendingReviewListDto>
   startImport(request: StartImportDto, fileBytes: Uint8Array): Promise<ImportSummaryDto>
   previewImport(runId: string): Promise<ImportPreviewDto>
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>

@@ -17,6 +17,7 @@ const MAX_CANDIDATES: usize = 100_000;
 const MAX_EVIDENCE_PER_CANDIDATE: usize = 128;
 const MAX_JSON_BYTES: usize = 1_048_576;
 const MAX_TEXT_BYTES: usize = 16_384;
+const MAX_PENDING_REVIEW_RUNS: usize = 200;
 
 #[derive(Debug, Error)]
 pub enum ImportWorkflowError {
@@ -149,6 +150,36 @@ pub struct ImportSummary {
     pub record_count: u64,
     pub candidate_count: u64,
     pub reused_existing: bool,
+}
+
+/// Safe, bounded metadata used to recover an Import Inbox review after the
+/// frontend process has restarted. Original bytes, vault locations, hashes and
+/// extracted raw payloads deliberately remain behind the existing per-run
+/// preview boundary.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReviewRunDto {
+    pub run_id: String,
+    pub document_id: String,
+    pub status: String,
+    pub adapter_id: Option<String>,
+    pub adapter_version: Option<String>,
+    pub started_at: String,
+    pub source_type: String,
+    pub original_filename: String,
+    pub media_type: String,
+    pub byte_size: i64,
+    pub source_modified_at: Option<String>,
+    pub record_count: u64,
+    pub candidate_count: u64,
+    pub completion_state: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingReviewListDto {
+    pub household_id: String,
+    pub runs: Vec<PendingReviewRunDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,6 +541,26 @@ pub fn start_import(
 /// Returns review data without exposing the vault URI or source payload JSON.
 pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPreview> {
     validate_id("run_id", run_id)?;
+    let source_graph: Option<(u64, u64)> = connection
+        .query_row(
+            "SELECT count(sd.id), \
+                    coalesce(sum(CASE WHEN sd.household_id=ir.household_id THEN 1 ELSE 0 END),0) \
+             FROM import_runs ir \
+             LEFT JOIN source_documents sd ON sd.import_run_id=ir.id \
+             WHERE ir.id=?1 \
+             GROUP BY ir.id",
+            [run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((document_count, matching_household_count)) = source_graph else {
+        return Err(ImportWorkflowError::RunNotFound);
+    };
+    if document_count != 1 || matching_household_count != 1 {
+        return Err(ImportWorkflowError::Validation(
+            "import source graph is invalid".into(),
+        ));
+    }
     let (
         document_id,
         _household_id,
@@ -527,6 +578,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
                         sd.original_filename, sd.media_type, sd.byte_size, sd.sha256, \
                         sd.audience_visibility, sd.audience_member_id \
                  FROM import_runs ir JOIN source_documents sd ON sd.import_run_id = ir.id \
+                  AND sd.household_id=ir.household_id \
                  WHERE ir.id = ?1 ORDER BY sd.imported_at LIMIT 1",
             [run_id],
             |row| {
@@ -692,6 +744,127 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
         },
         candidates,
     })
+}
+
+/// Lists every review-required run for one household without silently
+/// truncating the Inbox. A recoverable run must have exactly one source
+/// document, matching the atomic `start_import` contract and the existing
+/// `preview_import` shape.
+pub fn list_pending_reviews(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<PendingReviewListDto> {
+    validate_id("household id", household_id)?;
+
+    let total: u64 = connection.query_row(
+        "SELECT count(*) FROM import_runs WHERE household_id=?1 AND status='REVIEW_REQUIRED'",
+        [household_id],
+        |row| row.get(0),
+    )?;
+    if total > MAX_PENDING_REVIEW_RUNS as u64 {
+        return Err(ImportWorkflowError::Validation(
+            "too many pending import reviews".into(),
+        ));
+    }
+
+    let mut statement = connection.prepare(
+        "SELECT ir.id, sd.id, ir.status, ir.adapter_id, ir.adapter_version, ir.started_at, \
+                sd.source_type, sd.original_filename, sd.media_type, sd.byte_size, \
+                sd.source_modified_at, \
+                (SELECT count(*) FROM source_records sr \
+                  JOIN source_documents source ON source.id=sr.source_document_id \
+                  WHERE source.import_run_id=ir.id \
+                    AND source.household_id=ir.household_id), \
+                (SELECT count(DISTINCT tc.id) FROM transaction_candidates tc \
+                  JOIN candidate_sources cs ON cs.candidate_id=tc.id \
+                  JOIN source_records sr ON sr.id=cs.source_record_id \
+                  JOIN source_documents source ON source.id=sr.source_document_id \
+                  WHERE source.import_run_id=ir.id \
+                    AND source.household_id=ir.household_id \
+                    AND tc.household_id=ir.household_id \
+                    AND tc.review_status IN ('PENDING','READY')), \
+                EXISTS(SELECT 1 FROM portfolio_snapshots p \
+                  WHERE p.household_id=ir.household_id AND p.source_document_id=sd.id), \
+                EXISTS(SELECT 1 FROM brokerage_events e \
+                  WHERE e.household_id=ir.household_id AND e.source_document_id=sd.id), \
+                EXISTS(SELECT 1 FROM aggregate_asset_snapshots a \
+                  WHERE a.household_id=ir.household_id AND a.source_document_id=sd.id) \
+         FROM import_runs ir \
+         JOIN source_documents sd ON sd.import_run_id=ir.id \
+          AND sd.household_id=ir.household_id \
+         WHERE ir.household_id=?1 AND ir.status='REVIEW_REQUIRED' \
+         GROUP BY ir.id \
+         HAVING count(sd.id)=1 \
+            AND (SELECT count(*) FROM source_documents all_sd \
+                 WHERE all_sd.import_run_id=ir.id)=1 \
+         ORDER BY ir.started_at DESC, ir.id ASC",
+    )?;
+    let runs = statement
+        .query_map([household_id], |row| {
+            let adapter_id: Option<String> = row.get(3)?;
+            let candidate_count: u64 = row.get(12)?;
+            let has_portfolio: bool = row.get(13)?;
+            let has_brokerage: bool = row.get(14)?;
+            let has_aggregate_assets: bool = row.get(15)?;
+            Ok(PendingReviewRunDto {
+                run_id: row.get(0)?,
+                document_id: row.get(1)?,
+                status: row.get(2)?,
+                completion_state: pending_review_completion_state(
+                    adapter_id.as_deref(),
+                    candidate_count,
+                    has_portfolio,
+                    has_brokerage,
+                    has_aggregate_assets,
+                )
+                .into(),
+                adapter_id,
+                adapter_version: row.get(4)?,
+                started_at: row.get(5)?,
+                source_type: row.get(6)?,
+                original_filename: row.get(7)?,
+                media_type: row.get(8)?,
+                byte_size: row.get(9)?,
+                source_modified_at: row.get(10)?,
+                record_count: row.get(11)?,
+                candidate_count,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    if runs.len() as u64 != total {
+        return Err(ImportWorkflowError::Validation(
+            "pending import source graph is invalid".into(),
+        ));
+    }
+
+    Ok(PendingReviewListDto {
+        household_id: household_id.to_owned(),
+        runs,
+    })
+}
+
+fn pending_review_completion_state(
+    adapter_id: Option<&str>,
+    candidate_count: u64,
+    has_portfolio: bool,
+    has_brokerage: bool,
+    has_aggregate_assets: bool,
+) -> &'static str {
+    if candidate_count > 0 {
+        return "CANDIDATE_REVIEW";
+    }
+    let source_ready = match adapter_id {
+        Some("securities-asset-snapshot-v1") => has_portfolio,
+        Some("japanese-brokerage-transactions-v1") => has_brokerage,
+        Some("money-forward-me-asset-trend-v1") => has_aggregate_assets,
+        _ => true,
+    };
+    if source_ready {
+        "SOURCE_READY"
+    } else {
+        "SOURCE_RESUME_REQUIRED"
+    }
 }
 
 /// Posts caller-approved candidates as balanced double-entry transactions.
@@ -1786,6 +1959,15 @@ mod tests {
                    statement_id TEXT NOT NULL REFERENCES staged_card_statements(id) ON DELETE CASCADE,
                    candidate_id TEXT NOT NULL REFERENCES transaction_candidates(id), statement_line_number INTEGER NOT NULL,
                    billed_amount_jpy INTEGER NOT NULL, PRIMARY KEY(statement_id,candidate_id));
+                 CREATE TABLE portfolio_snapshots (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   source_document_id TEXT NOT NULL REFERENCES source_documents(id));
+                 CREATE TABLE brokerage_events (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   source_document_id TEXT NOT NULL REFERENCES source_documents(id));
+                 CREATE TABLE aggregate_asset_snapshots (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   source_document_id TEXT NOT NULL REFERENCES source_documents(id));
                  INSERT INTO households(id,name) VALUES('household','Test');
                  INSERT INTO household_members(id,household_id,display_name,status)
                    VALUES('member','household','Member','ARCHIVED');
@@ -1894,6 +2076,274 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn pending_review_list_is_complete_scoped_safe_and_newest_first() {
+        let connection = database();
+        let mut older = request("run-older", "doc-older", 'd');
+        older.original_filename = "older.csv".into();
+        older.adapter_id = Some("bank-v1".into());
+        let mut newer = request("run-newer", "doc-newer", 'e');
+        newer.original_filename = "newer.csv".into();
+        newer.adapter_id = None;
+        newer.adapter_version = None;
+        start_import(&connection, &older, "vault://must-not-leak-older").unwrap();
+        start_import(&connection, &newer, "vault://must-not-leak-newer").unwrap();
+        connection
+            .execute(
+                "UPDATE import_runs SET started_at='2026-07-12T09:00:00Z' WHERE id='run-older'",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE import_runs SET started_at='2026-07-13T09:00:00Z' WHERE id='run-newer'",
+                [],
+            )
+            .unwrap();
+
+        connection
+            .execute(
+                "INSERT INTO households(id,name) VALUES('other-household','Other')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO import_runs(id,household_id,status,started_at) \
+                 VALUES('other-run','other-household','REVIEW_REQUIRED','2026-07-14T09:00:00Z')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO source_documents( \
+                   id,household_id,import_run_id,source_type,original_filename,media_type, \
+                   byte_size,sha256,storage_path) \
+                 VALUES('other-doc','other-household','other-run','MANUAL_UPLOAD','secret.csv', \
+                        'text/csv',1,?1,'vault://other-secret')",
+                ["f".repeat(64)],
+            )
+            .unwrap();
+
+        let result = list_pending_reviews(&connection, "household").unwrap();
+        assert_eq!(result.household_id, "household");
+        assert_eq!(result.runs.len(), 2);
+        assert_eq!(result.runs[0].run_id, "run-newer");
+        assert_eq!(result.runs[1].run_id, "run-older");
+        assert_eq!(result.runs[0].candidate_count, 1);
+        assert_eq!(result.runs[0].completion_state, "CANDIDATE_REVIEW");
+        assert_eq!(result.runs[0].record_count, 2);
+        assert_eq!(result.runs[0].status, "REVIEW_REQUIRED");
+        assert_eq!(result.runs[0].adapter_id, None);
+        assert_eq!(result.runs[1].adapter_id.as_deref(), Some("bank-v1"));
+        assert_eq!(result.runs[1].original_filename, "older.csv");
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("vault://"));
+        assert!(!json.contains("raw_payload"));
+        assert!(!json.contains(&"d".repeat(64)));
+        assert!(!json.contains("other-run"));
+
+        commit_import(&connection, "run-newer", &[decision("run-newer", 1_000)]).unwrap();
+        assert_eq!(
+            list_pending_reviews(&connection, "household")
+                .unwrap()
+                .runs
+                .iter()
+                .map(|run| run.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run-older"]
+        );
+    }
+
+    #[test]
+    fn pending_review_list_rejects_an_invalid_source_graph() {
+        let connection = database();
+        connection
+            .execute(
+                "INSERT INTO import_runs(id,household_id,status) \
+                 VALUES('orphan','household','REVIEW_REQUIRED')",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            list_pending_reviews(&connection, "household"),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "pending import source graph is invalid"
+        ));
+    }
+
+    #[test]
+    fn pending_review_list_rejects_a_cross_household_source_document() {
+        let connection = database();
+        connection
+            .execute(
+                "INSERT INTO households(id,name) VALUES('other-household','Other')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO import_runs(id,household_id,status) \
+                 VALUES('cross-run','household','REVIEW_REQUIRED')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO source_documents( \
+                   id,household_id,import_run_id,source_type,original_filename,media_type, \
+                   byte_size,sha256,storage_path) \
+                 VALUES('cross-doc','other-household','cross-run','MANUAL_UPLOAD','cross.csv', \
+                        'text/csv',1,?1,'vault://cross')",
+                ["a".repeat(64)],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            list_pending_reviews(&connection, "household"),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "pending import source graph is invalid"
+        ));
+    }
+
+    #[test]
+    fn pending_review_and_preview_reject_an_extra_cross_household_document() {
+        let connection = database();
+        start_import(
+            &connection,
+            &request("mixed-run", "valid-doc", 'a'),
+            "vault://valid",
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO households(id,name) VALUES('other-household','Other')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO source_documents( \
+                   id,household_id,import_run_id,source_type,original_filename,media_type, \
+                   byte_size,sha256,storage_path,imported_at) \
+                 VALUES('cross-doc','other-household','mixed-run','MANUAL_UPLOAD','cross-first.csv', \
+                        'text/csv',1,?1,'vault://cross','2020-01-01T00:00:00Z')",
+                ["b".repeat(64)],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            list_pending_reviews(&connection, "household"),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "pending import source graph is invalid"
+        ));
+        assert!(matches!(
+            preview_import(&connection, "mixed-run"),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "import source graph is invalid"
+        ));
+    }
+
+    #[test]
+    fn pending_review_completion_state_distinguishes_ready_and_resumable_sources() {
+        let connection = database();
+        let cases = [
+            ("generic", "generic-doc", 'a', "generic-v1"),
+            (
+                "portfolio",
+                "portfolio-doc",
+                'b',
+                "securities-asset-snapshot-v1",
+            ),
+            (
+                "brokerage",
+                "brokerage-doc",
+                'c',
+                "japanese-brokerage-transactions-v1",
+            ),
+            (
+                "aggregate",
+                "aggregate-doc",
+                'd',
+                "money-forward-me-asset-trend-v1",
+            ),
+        ];
+        for (run_id, document_id, sha, adapter_id) in cases {
+            let mut source = request(run_id, document_id, sha);
+            source.adapter_id = Some(adapter_id.into());
+            source.candidates.clear();
+            start_import(&connection, &source, &format!("vault://{run_id}")).unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO brokerage_events(id,household_id,source_document_id) \
+                 VALUES('event','household','brokerage-doc')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO aggregate_asset_snapshots(id,household_id,source_document_id) \
+                 VALUES('aggregate-snapshot','household','aggregate-doc')",
+                [],
+            )
+            .unwrap();
+
+        let result = list_pending_reviews(&connection, "household").unwrap();
+        let state = |run_id: &str| {
+            result
+                .runs
+                .iter()
+                .find(|run| run.run_id == run_id)
+                .unwrap()
+                .completion_state
+                .as_str()
+        };
+        assert_eq!(state("generic"), "SOURCE_READY");
+        assert_eq!(state("portfolio"), "SOURCE_RESUME_REQUIRED");
+        assert_eq!(state("brokerage"), "SOURCE_READY");
+        assert_eq!(state("aggregate"), "SOURCE_READY");
+
+        connection
+            .execute(
+                "INSERT INTO portfolio_snapshots(id,household_id,source_document_id) \
+                 VALUES('portfolio-snapshot','household','portfolio-doc')",
+                [],
+            )
+            .unwrap();
+        let resumed = list_pending_reviews(&connection, "household").unwrap();
+        assert_eq!(
+            resumed
+                .runs
+                .iter()
+                .find(|run| run.run_id == "portfolio")
+                .unwrap()
+                .completion_state,
+            "SOURCE_READY"
+        );
+    }
+
+    #[test]
+    fn pending_review_list_fails_instead_of_truncating_over_the_bound() {
+        let connection = database();
+        let transaction = connection.unchecked_transaction().unwrap();
+        for index in 0..=MAX_PENDING_REVIEW_RUNS {
+            transaction
+                .execute(
+                    "INSERT INTO import_runs(id,household_id,status) VALUES(?1,'household','REVIEW_REQUIRED')",
+                    [format!("run-{index:03}")],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        assert!(matches!(
+            list_pending_reviews(&connection, "household"),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "too many pending import reviews"
+        ));
     }
 
     #[test]

@@ -70,6 +70,8 @@ export type {
   ImportRunCountsDto,
   ImportPreviewDto,
   ImportSummaryDto,
+  PendingReviewRunDto,
+  PendingReviewListDto,
   MonthlyCategoryBudgetDto,
   UpsertMonthlyCategoryBudgetInputDto,
   SavingsGoalDto,

@@ -24,6 +24,8 @@ import type {
   ImportPreviewDto,
   ImportRunCountsDto,
   ImportSummaryDto,
+  PendingReviewListDto,
+  PendingReviewRunDto,
   Invoke,
   MonthlyCategoryBudgetDto,
   PlatformClient,
@@ -175,6 +177,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       previewClassificationRules: async () => ({ winningRuleId: null, matches: [] }),
       applyClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_apply') },
       importSummary: async () => ({ totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0, latestSuccessfulImportAt: null, latestSourceFilename: null, latestSourceType: null, distinctSourceTypes: 0 }),
+      listPendingReviews: async (householdId) => ({ householdId, runs: [] }),
       startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
       commitImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_commit') },
@@ -262,6 +265,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     previewClassificationRules: (input) => invokeValidated(invoke, 'classification_rules_preview', parseClassificationPreview, { input }),
     applyClassificationRule: (input) => invokeValidated(invoke, 'classification_rule_apply', parseAppliedClassification, { input }),
     importSummary: (householdId) => invokeValidated(invoke, 'import_summary', parseImportSummary, { householdId }),
+    listPendingReviews: (householdId) => invokeValidated(invoke, 'pending_review_list', (value) => parsePendingReviewList(value, householdId), { householdId }),
     startImport: (request, fileBytes) => invokeValidated(invoke, 'import_start', parseImportSummaryDto, { request: { import: request, fileBytes: Array.from(fileBytes) } }),
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
     commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
@@ -445,6 +449,61 @@ function parseImportSummaryDto(value: unknown): ImportSummaryDto {
   const record = asRecord(value)
   if (typeof record.runId !== 'string' || typeof record.documentId !== 'string' || typeof record.status !== 'string' || typeof record.reusedExisting !== 'boolean') throw new TypeError('import summary')
   return { runId: record.runId, documentId: record.documentId, status: record.status, recordCount: asSafeInteger(record.recordCount), candidateCount: asSafeInteger(record.candidateCount), reusedExisting: record.reusedExisting }
+}
+
+function parsePendingReviewList(value: unknown, expectedHouseholdId: string): PendingReviewListDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.runs) || record.runs.length > 200) throw new TypeError('pending review list')
+  const runs = record.runs.map(parsePendingReviewRun)
+  if (new Set(runs.map((run) => run.runId)).size !== runs.length
+    || new Set(runs.map((run) => run.documentId)).size !== runs.length) {
+    throw new TypeError('duplicate pending review')
+  }
+  for (let index = 1; index < runs.length; index += 1) {
+    const previous = runs[index - 1]
+    const current = runs[index]
+    const previousTime = Date.parse(previous.startedAt)
+    const currentTime = Date.parse(current.startedAt)
+    if (previousTime < currentTime || (previousTime === currentTime && previous.runId > current.runId)) {
+      throw new TypeError('pending review order')
+    }
+  }
+  const householdId = asRequiredString(record.householdId)
+  if (householdId !== expectedHouseholdId) throw new TypeError('pending review household')
+  return { householdId, runs }
+}
+
+function parsePendingReviewRun(value: unknown): PendingReviewRunDto {
+  const record = asRecord(value)
+  if (record.status !== 'REVIEW_REQUIRED'
+    || !Object.hasOwn(record, 'adapterId')
+    || !Object.hasOwn(record, 'adapterVersion')
+    || !Object.hasOwn(record, 'sourceModifiedAt')
+    || typeof record.adapterId === 'undefined'
+    || typeof record.adapterVersion === 'undefined'
+    || typeof record.sourceModifiedAt === 'undefined') throw new TypeError('pending review status')
+  const adapterId = asNullableString(record.adapterId)
+  const adapterVersion = asNullableString(record.adapterVersion)
+  if (adapterId === '' || adapterVersion === '') throw new TypeError('pending review adapter')
+  if (record.completionState !== 'CANDIDATE_REVIEW' && record.completionState !== 'SOURCE_READY' && record.completionState !== 'SOURCE_RESUME_REQUIRED') throw new TypeError('pending review completion state')
+  const candidateCount = asSafeInteger(record.candidateCount)
+  if ((candidateCount > 0) !== (record.completionState === 'CANDIDATE_REVIEW')) throw new TypeError('pending review completion consistency')
+  return {
+    runId: asRequiredString(record.runId),
+    documentId: asRequiredString(record.documentId),
+    status: 'REVIEW_REQUIRED',
+    adapterId,
+    adapterVersion,
+    startedAt: asIsoTimestamp(record.startedAt),
+    sourceType: asRequiredString(record.sourceType),
+    originalFilename: asRequiredString(record.originalFilename),
+    mediaType: asRequiredString(record.mediaType),
+    byteSize: asSafeInteger(record.byteSize),
+    sourceModifiedAt: record.sourceModifiedAt === null ? null : asIsoTimestamp(record.sourceModifiedAt),
+    recordCount: asSafeInteger(record.recordCount),
+    candidateCount,
+    completionState: record.completionState,
+  }
 }
 
 function parseImportPreview(value: unknown): ImportPreviewDto {
