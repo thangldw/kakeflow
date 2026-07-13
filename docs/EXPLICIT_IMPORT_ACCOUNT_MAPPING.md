@@ -1,6 +1,6 @@
 # Explicit import account mapping
 
-KakeFlow requires the user to select the canonical destination account for each transactional source file before staging it for review. This applies to the built-in generic Japanese bank, PayPay history, Rakuten e-NAVI, Amazon Mastercard, and JCB MyJCB adapters.
+KakeFlow requires the user to select the canonical destination account for each transactional source file before staging it for review. This applies to the built-in generic Japanese bank, PayPay history, Rakuten e-NAVI, Amazon Mastercard, JCB MyJCB, and SMBC Vpass adapters.
 
 ## Why selection is explicit
 
@@ -22,6 +22,7 @@ KakeFlow therefore does not use:
 | Rakuten e-NAVI statement | `LIABILITY / CREDIT_CARD` |
 | Amazon Mastercard statement | `LIABILITY / CREDIT_CARD` |
 | JCB MyJCB statement | `LIABILITY / CREDIT_CARD` |
+| SMBC Vpass statement | `LIABILITY / CREDIT_CARD` |
 
 The mapping is stored in the in-progress preview state and passed to every normalized candidate from that file. For card files, the same selected liability account is also assigned to the statement and all of its statement lines.
 

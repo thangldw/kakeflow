@@ -7,6 +7,7 @@ export { payPayAdapter } from './adapters/paypay'
 export { amazonMastercardAdapter } from './adapters/amazonMastercard'
 export { rakutenEnaviAdapter } from './adapters/rakuten'
 export { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
+export { smbcVpassAdapter } from './adapters/smbcVpass'
 export { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 export { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
 export { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
@@ -19,6 +20,7 @@ import { yuchoDirectAdapter } from './adapters/yuchoDirect'
 import { payPayAdapter } from './adapters/paypay'
 import { rakutenEnaviAdapter } from './adapters/rakuten'
 import { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
+import { smbcVpassAdapter } from './adapters/smbcVpass'
 import { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 import { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
 import { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
@@ -32,6 +34,7 @@ export const importAdapters = [
   amazonMastercardAdapter,
   rakutenEnaviAdapter,
   jcbMyJcbAdapter,
+  smbcVpassAdapter,
   securitiesAssetSnapshotAdapter,
   japaneseBrokerageTransactionsAdapter,
   moneyForwardAssetTrendAdapter,

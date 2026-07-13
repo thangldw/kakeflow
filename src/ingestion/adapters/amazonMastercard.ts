@@ -5,15 +5,16 @@ import type { CardStatementCandidate, CardTransactionCandidate, ImportAdapter, P
 export const amazonMastercardAdapter: ImportAdapter<CardStatementCandidate> = {
   id: 'amazon-mastercard-statement-v1',
   detect(input) {
+    const csv = tokenizeCsv(input.text)
+    const product = /Amazon\s*マスター|Amazon\s*Mastercard/i.test((csv.rows[0]?.fields[2] ?? '').normalize('NFKC'))
     const sample = input.text.slice(0, 2_000).normalize('NFKC')
-    const product = /Amazon\s*マスター|Amazon\s*Mastercard/i.test(sample)
     const headerless = !sample.includes('利用日,利用店名')
     return { adapterId: this.id, score: clampScore((product ? 0.85 : 0) + (product && headerless ? 0.15 : 0)), reasons: [product ? 'Amazon Mastercard product metadata found' : 'Product metadata not found', headerless ? 'Headerless layout detected' : 'Header-like row detected'] }
   },
   parse(input) {
     const csv = tokenizeCsv(input.text); const issues: ParseIssue[] = [...csv.issues]
     const metadata = csv.rows[0]
-    if (!metadata || !metadata.fields.join(' ').normalize('NFKC').match(/Amazon\s*マスター|Amazon\s*Mastercard/i)) return { adapterId: this.id, records: [], issues: [{ code: 'AMAZON_METADATA_MISSING', message: 'Amazon Mastercard metadata row was not found.', severity: 'error' }], metadata: {} }
+    if (!metadata || !(metadata.fields[2] ?? '').normalize('NFKC').match(/Amazon\s*マスター|Amazon\s*Mastercard/i)) return { adapterId: this.id, records: [], issues: [{ code: 'AMAZON_METADATA_MISSING', message: 'Amazon Mastercard product metadata was not found in column 3 of the first row.', severity: 'error' }], metadata: {} }
     const transactions: CardTransactionCandidate[] = []; let statementTotal: number | null = null
     for (const row of csv.rows.slice(1)) {
       const date = parseJapaneseDate(row.fields[0]); const amounts = row.fields.map(parseJapaneseAmount)
