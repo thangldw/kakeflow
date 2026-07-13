@@ -59,6 +59,10 @@ describe('platform client', () => {
     await expect(client.listWatchedFileInbox('family')).resolves.toEqual([])
     await expect(client.countWatchedFileInbox('family')).resolves.toEqual({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 0 })
     await expect(client.listPendingReviews('family')).resolves.toEqual({ householdId: 'family', runs: [] })
+    await expect(client.exportPendingImport({ householdId: 'family', runId: 'run-1' }, 'long secure passphrase')).rejects.toMatchObject({ command: 'pending_import_export_to_picker' })
+    await expect(client.pickAndStagePendingImport('family', 'long secure passphrase')).rejects.toMatchObject({ command: 'pending_import_pick_and_stage' })
+    await expect(client.applyPendingImport('family', 'package-1', { accounts: [], members: [] })).rejects.toMatchObject({ command: 'pending_import_apply' })
+    await expect(client.discardPendingImport('package-1')).rejects.toMatchObject({ command: 'pending_import_discard' })
     await expect(client.claimWatchedFileInboxItems('family', ['item'])).rejects.toMatchObject({ command: 'watched_file_inbox_claim' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
@@ -637,6 +641,55 @@ describe('platform client', () => {
     for (const response of invalidResponses) {
       const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
       await expect(client.listPendingReviews('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'pending_review_list' })
+    }
+  })
+
+  it('validates pending-import handoff DTOs and keeps package paths outside IPC', async () => {
+    const hash = 'a'.repeat(64)
+    const exportSummary = { packageId: 'package-1', schemaVersion: 1, householdId: 'family', portableRunId: 'run-1', manifestSha256: hash, sourceSha256: hash, recordCount: 2, candidateCount: 1, statementCount: 0, byteSize: 4096 }
+    const stage = {
+      packageId: 'package-1', schemaVersion: 1, originInstallationId: 'installation-1', portableRunId: 'run-1',
+      manifestSha256: hash, sourceFilename: 'bank.csv', sourceSha256: hash, recordCount: 2, candidateCount: 1, statementCount: 0,
+      accountDependencies: [{ portableAccountId: 'portable-bank', name: 'Bank', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', institutionName: 'MUFG', maskedIdentifier: null }],
+      memberDependencies: [{ portableMemberId: 'portable-member', displayName: 'Taro', role: 'OWNER' }],
+      alreadyApplied: false, existingLocalRunId: null,
+    }
+    const applied = { packageId: 'package-1', localRunId: 'local-run', localDocumentId: 'local-document', recordCount: 2, candidateCount: 1, statementCount: 0, reusedExisting: false }
+    const invokeSpy = vi.fn()
+    const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      invokeSpy(command, args)
+      if (command === 'pending_import_export_to_picker') return exportSummary as T
+      if (command === 'pending_import_pick_and_stage') return stage as T
+      if (command === 'pending_import_apply') return applied as T
+      return true as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+    const request = { householdId: 'family', runId: 'run-1' }
+    const mappings = { accounts: [{ portableAccountId: 'portable-bank', localAccountId: 'family-bank' }], members: [{ portableMemberId: 'portable-member', localMemberId: 'member-1' }] }
+    await expect(client.exportPendingImport(request, 'long secure passphrase')).resolves.toEqual(exportSummary)
+    await expect(client.pickAndStagePendingImport('family', 'long secure passphrase')).resolves.toEqual(stage)
+    await expect(client.applyPendingImport('family', 'package-1', mappings)).resolves.toEqual(applied)
+    await expect(client.discardPendingImport('package-1')).resolves.toBe(true)
+    expect(invokeSpy).toHaveBeenCalledWith('pending_import_export_to_picker', { request, passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledWith('pending_import_pick_and_stage', { householdId: 'family', passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledWith('pending_import_apply', { householdId: 'family', packageId: 'package-1', mappings })
+    expect(invokeSpy).toHaveBeenCalledWith('pending_import_discard', { packageId: 'package-1' })
+    expect(JSON.stringify(invokeSpy.mock.calls)).not.toContain('packagePath')
+
+    const invalidStages: readonly unknown[] = [
+      { ...stage, schemaVersion: 2 },
+      { ...stage, candidateCount: 0 },
+      { ...stage, statementCount: 17 },
+      { ...stage, manifestSha256: 'not-a-hash' },
+      { ...stage, accountDependencies: [...stage.accountDependencies, stage.accountDependencies[0]] },
+      { ...stage, memberDependencies: [...stage.memberDependencies, stage.memberDependencies[0]] },
+      { ...stage, accountDependencies: [{ ...stage.accountDependencies[0], accountKind: 'UNKNOWN' }] },
+      { ...stage, accountDependencies: [{ ...stage.accountDependencies[0], institutionName: undefined }] },
+      { ...stage, alreadyApplied: true, existingLocalRunId: null },
+    ]
+    for (const response of invalidStages) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(invalidClient.pickAndStagePendingImport('family', 'long secure passphrase')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'pending_import_pick_and_stage' })
     }
   })
 

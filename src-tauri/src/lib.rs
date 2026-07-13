@@ -19,6 +19,7 @@ pub mod investment_performance;
 mod key_store;
 pub mod ocr;
 mod parser_profiles;
+pub mod pending_import_bundle;
 mod persistence;
 pub mod portfolio;
 mod private_fs;
@@ -106,6 +107,13 @@ struct BackupPaths {
 }
 
 struct BackupMasterKey(Zeroizing<[u8; 32]>);
+
+#[derive(Default)]
+struct PendingImportStages(
+    std::sync::Mutex<
+        std::collections::HashMap<(String, String), pending_import_bundle::StagedPendingImport>,
+    >,
+);
 
 #[derive(Default)]
 struct RestoreCommandAuthorization {
@@ -704,6 +712,152 @@ async fn evidence_bundle_pick_and_import(
         .map_err(|_| "Evidence bundle operation could not be completed".to_owned())?
         .map(Some)
         .map_err(evidence_bundle_message)
+}
+
+fn pending_import_message(error: pending_import_bundle::PendingImportBundleError) -> String {
+    match error {
+        pending_import_bundle::PendingImportBundleError::NotFound => {
+            "The pending import could not be found"
+        }
+        pending_import_bundle::PendingImportBundleError::UnsupportedRun => {
+            "Only transaction candidate reviews can be handed off in this version"
+        }
+        pending_import_bundle::PendingImportBundleError::MissingDependency => {
+            "Every source account and member must be mapped explicitly"
+        }
+        pending_import_bundle::PendingImportBundleError::Conflict => {
+            "This pending import conflicts with existing local review data"
+        }
+        pending_import_bundle::PendingImportBundleError::Terminal => {
+            "The same source document already belongs to a completed local import"
+        }
+        pending_import_bundle::PendingImportBundleError::LimitExceeded => {
+            "The pending import package exceeds supported limits"
+        }
+        _ => "Pending import handoff could not be completed",
+    }
+    .to_owned()
+}
+
+#[tauri::command]
+async fn pending_import_export_to_picker(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    request: pending_import_bundle::PendingImportExportRequest,
+    passphrase: String,
+) -> Result<Option<pending_import_bundle::PendingImportExportSummaryDto>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Pending Review", &["kakeflow-review"])
+        .set_file_name("kakeflow-pending-review.kakeflow-review")
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected pending review destination is unavailable".to_owned())?;
+    let passphrase = Zeroizing::new(passphrase);
+    state
+        .with_connection(|connection| {
+            Ok(pending_import_bundle::export_pending_import(
+                connection,
+                &vault,
+                &request,
+                &destination,
+                passphrase.as_str(),
+            ))
+        })
+        .map_err(|_| "Pending import handoff could not be completed".to_owned())?
+        .map(Some)
+        .map_err(pending_import_message)
+}
+
+#[tauri::command]
+async fn pending_import_pick_and_stage(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    stages: tauri::State<'_, PendingImportStages>,
+    household_id: String,
+    passphrase: String,
+) -> Result<Option<pending_import_bundle::PendingImportStageDto>, String> {
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Pending Review", &["kakeflow-review"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let source = selected
+        .into_path()
+        .map_err(|_| "Selected pending review package is unavailable".to_owned())?;
+    let passphrase = Zeroizing::new(passphrase);
+    let staged = state
+        .with_connection(|connection| {
+            Ok(pending_import_bundle::stage_pending_import(
+                connection,
+                &source,
+                &household_id,
+                passphrase.as_str(),
+            ))
+        })
+        .map_err(|_| "Pending import handoff could not be completed".to_owned())?
+        .map_err(pending_import_message)?;
+    let summary = staged.summary().clone();
+    stages
+        .0
+        .lock()
+        .map_err(|_| "Pending import staging is unavailable".to_owned())?
+        .insert((household_id, summary.package_id.clone()), staged);
+    Ok(Some(summary))
+}
+
+#[tauri::command]
+fn pending_import_apply(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    stages: tauri::State<'_, PendingImportStages>,
+    household_id: String,
+    package_id: String,
+    mappings: pending_import_bundle::PendingImportMappingsDto,
+) -> Result<pending_import_bundle::PendingImportApplySummaryDto, String> {
+    let mut guard = stages
+        .0
+        .lock()
+        .map_err(|_| "Pending import staging is unavailable".to_owned())?;
+    let staged = guard
+        .get(&(household_id.clone(), package_id.clone()))
+        .ok_or_else(|| "Stage the pending import package before applying it".to_owned())?;
+    if staged.summary().package_id != package_id || staged.target_household_id() != household_id {
+        return Err("Pending import staging is invalid".to_owned());
+    }
+    let result = state
+        .with_connection(|connection| {
+            Ok(pending_import_bundle::apply_pending_import(
+                connection, &vault, staged, &mappings,
+            ))
+        })
+        .map_err(|_| "Pending import handoff could not be completed".to_owned())?
+        .map_err(pending_import_message)?;
+    guard.remove(&(household_id, package_id));
+    Ok(result)
+}
+
+#[tauri::command]
+fn pending_import_discard(
+    stages: tauri::State<'_, PendingImportStages>,
+    package_id: String,
+) -> Result<bool, String> {
+    let mut guard = stages
+        .0
+        .lock()
+        .map_err(|_| "Pending import staging is unavailable".to_owned())?;
+    let before = guard.len();
+    guard.retain(|(_, staged_package_id), _| staged_package_id != &package_id);
+    Ok(guard.len() != before)
 }
 
 fn database_status(state: &AppState) -> Result<DatabaseStatus, String> {
@@ -2575,6 +2729,7 @@ pub fn run() {
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
             app.manage(RestoreCommandAuthorization::default());
+            app.manage(PendingImportStages::default());
             app.manage(BackupPaths {
                 app_data_root: app_data_dir.clone(),
                 database: database_path,
@@ -2606,6 +2761,10 @@ pub fn run() {
             change_package_discard,
             evidence_bundle_export_save,
             evidence_bundle_pick_and_import,
+            pending_import_export_to_picker,
+            pending_import_pick_and_stage,
+            pending_import_apply,
+            pending_import_discard,
             packaged_smoke_complete,
             packaged_smoke_failure,
             packaged_smoke_progress,

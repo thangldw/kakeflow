@@ -88,13 +88,14 @@ import { LocalChangePackagePanel } from './features/sync/LocalChangePackagePanel
 import { PortableEvidenceBundlePanel } from './features/sync/PortableEvidenceBundlePanel'
 import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
 import { CustomParserRescueDialog } from './features/parser-profiles/CustomParserRescueDialog'
+import { PendingImportHandoffPanel } from './features/import/PendingImportHandoffPanel'
 import { delimitedParserProfilePlatform } from './features/parser-profiles/delimitedParserProfilePlatform'
 import type { DelimitedParserProfileDto } from './features/parser-profiles/delimitedParserProfilePlatform'
 import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -939,7 +940,7 @@ interface DurableFolderInboxView {
   ignore(itemId: string): Promise<void>
 }
 
-function ImportPage({ previews, setPreviews, householdId, accounts, summary, onChanged, folderInbox }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; folderInbox: DurableFolderInboxView }) {
+function ImportPage({ previews, setPreviews, householdId, accounts, members, summary, onChanged, folderInbox }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; folderInbox: DurableFolderInboxView }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
@@ -965,6 +966,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
   const [recoveryRevision, setRecoveryRevision] = useState(0)
   const [recoveredReceiptRunIds, setRecoveredReceiptRunIds] = useState<ReadonlySet<string>>(() => new Set())
   const [sourceResumeRequiredRunIds, setSourceResumeRequiredRunIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [pendingReviewRuns, setPendingReviewRuns] = useState<readonly PendingReviewRunDto[]>([])
   const rescueTriggerRef = useRef<HTMLButtonElement | null>(null)
   const hydratedStagedRunsRef = useRef(new Set<string>())
   const inFlightRunsRef = useRef(new Set<string>())
@@ -976,6 +978,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
     setReceiptStagedIds(new Set())
     setRecoveredReceiptRunIds(new Set())
     setSourceResumeRequiredRunIds(new Set())
+    setPendingReviewRuns([])
     setMoneyForwardAccounts({})
     setStandardImportAccounts({})
     setRescuePreviewId(null)
@@ -989,6 +992,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
       const recovered = await Promise.allSettled(result.runs.map(async (run) => ({ run, preview: await platformClient.previewImport(run.runId) })))
       if (!active) return
       const successful = recovered.flatMap((item) => item.status === 'fulfilled' ? [item.value] : [])
+      setPendingReviewRuns(result.runs)
       const failedCount = recovered.length - successful.length
       setStaged((current) => {
         const next = { ...current }
@@ -1377,6 +1381,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, summary, onC
         ['ソース行', String(summary?.sourceRecords ?? (platformClient.runtime === 'web' ? 4 : 0)), '監査証跡'],
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
+    <PendingImportHandoffPanel householdId={householdId} accounts={accounts} members={members} pendingRuns={pendingReviewRuns} onApplied={() => { setRecoveryRevision((value) => value + 1); onChanged() }} />
     {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>変更履歴と処理状態は端末内データベースに保持され、再起動後も復元されます。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={folderInbox.autoScan} onChange={(event) => folderInbox.setAutoScan(event.target.checked)} /><span>自動プレビュー</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{folderInbox.items.filter((item) => item.watchedFolderId === folder.id && item.state !== 'REMOVED').map((item) => { const stateLabel = { DISCOVERED: '検出済み', PROCESSING: '解析中', READY: 'プレビュー完了', NEEDS_MAPPING: '形式の対応付けが必要', STAGED: '取込処理に接続済み', FAILED: '失敗', IGNORED: '無視', REMOVED: '削除済み' }[item.state]; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>{item.relativePath} ・ {(item.byteSize / 1024).toFixed(1)} KB ・ 試行 {item.attemptCount}</small></span><b className={item.state === 'READY' || item.state === 'STAGED' ? 'ready' : 'review'}>{stateLabel}</b><span className="folder-inbox-actions">{(item.state === 'FAILED' || item.state === 'IGNORED') && <button className="mini-btn" onClick={() => void folderInbox.retry(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" onClick={() => void folderInbox.ignore(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div>)}</section>}
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
@@ -2297,7 +2302,7 @@ function App() {
   const pageContent = {
     overview: <Overview setPage={navigateToPage} openAllActions={openAllActions} householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
+    import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} members={householdMembers} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} initialView={reportsInitialView} openPage={navigateToPage} />,

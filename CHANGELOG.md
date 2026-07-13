@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.49.0 — 2026-07-13
+
+- Add a separate passphrase-protected `.kakeflow-review` format for copying one candidate-bearing `REVIEW_REQUIRED` run between desktop installations without changing the source review.
+- Carry exact source bytes, immutable source rows, candidate/evidence relationships, staged card statements, and dependency descriptors while excluding approvals, posting drafts, confirmed facts, receipt-only imports, and investment/source-only workflows.
+- Require an explicit destination mapping for every account and family member; validate active household membership plus account kind, subtype, and currency without inferring identity from names.
+- Apply the mapped graph atomically as a normal Import Inbox review, preserve source and candidate audience/attribution, and never create a transaction or journal entry before the existing approval boundary.
+- Record immutable origin receipts and entity aliases for exact-package idempotency, reject equivocation and same-source collisions, and remove newly written vault objects when database apply fails.
+- Keep paths and temporary plaintext outside the webview through native save/select dialogs and opaque staged package IDs; disclose that handoff is local-file copy rather than cloud sync.
+- Cover basic and member/card/evidence round trips, wrong-passphrase and tamper rejection, missing mappings, no-posting behavior, idempotency/equivocation, terminal collisions, unsupported sources, and rollback cleanup.
+
 ## 0.48.0 — 2026-07-13
 
 - Persist an independent widget order and hidden-widget set for every Home dashboard template instead of reusing one layout across all views.
