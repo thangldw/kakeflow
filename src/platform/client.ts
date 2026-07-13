@@ -47,6 +47,7 @@ import type {
   ReceiptMatchConfirmationDto,
   BulkUpdateTransactionMetadataResultDto,
   ChangePackageReviewDto,
+  EvidenceBundleSummaryDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -121,6 +122,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       resolveChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_resolve') },
       applyChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_apply') },
       discardChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_discard') },
+      exportEvidenceBundle: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'evidence_bundle_export_save') },
+      pickAndImportEvidenceBundle: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'evidence_bundle_pick_and_import') },
       listHouseholds: async () => [],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listHouseholdMembers: async () => [],
@@ -206,6 +209,8 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     resolveChangePackage: (packageId, resolutions) => invokeValidated(invoke, 'change_package_resolve', parseChangePackageReview, { packageId, resolutions }),
     applyChangePackage: (packageId) => invokeValidated(invoke, 'change_package_apply', parseChangePackageReview, { packageId }),
     discardChangePackage: async (packageId) => { await invokeValidated(invoke, 'change_package_discard', parseVoid, { packageId }) },
+    exportEvidenceBundle: (householdId, passphrase) => invokeValidated(invoke, 'evidence_bundle_export_save', parseNullableEvidenceBundleSummary, { householdId, passphrase }),
+    pickAndImportEvidenceBundle: (householdId, passphrase) => invokeValidated(invoke, 'evidence_bundle_pick_and_import', parseNullableEvidenceBundleSummary, { householdId, passphrase }),
     listHouseholds: () => invokeValidated(invoke, 'households_list', parseHouseholds),
     createHousehold: (input) => invokeValidated(invoke, 'household_create', parseHousehold, { input }),
     listHouseholdMembers: (householdId) => invokeValidated(invoke, 'household_members_list', parseHouseholdMembers, { householdId }),
@@ -355,6 +360,24 @@ function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStat
 function parseNullableString(value: unknown): string | null {
   if (value === null || typeof value === 'string') return value
   throw new TypeError('nullable string')
+}
+
+function parseEvidenceBundleSummary(value: unknown): EvidenceBundleSummaryDto {
+  const record = asRecord(value)
+  return {
+    bundleId: asRequiredString(record.bundleId),
+    householdId: asRequiredString(record.householdId),
+    originInstallationId: asRequiredString(record.originInstallationId),
+    documentCount: asSafeInteger(record.documentCount),
+    recordCount: asSafeInteger(record.recordCount),
+    plaintextBytes: asSafeInteger(record.plaintextBytes),
+    importedDocumentCount: asSafeInteger(record.importedDocumentCount),
+    deduplicatedDocumentCount: asSafeInteger(record.deduplicatedDocumentCount),
+  }
+}
+
+function parseNullableEvidenceBundleSummary(value: unknown): EvidenceBundleSummaryDto | null {
+  return value === null ? null : parseEvidenceBundleSummary(value)
 }
 
 function parseNullableChangePackageReview(value: unknown): ChangePackageReviewDto | null {

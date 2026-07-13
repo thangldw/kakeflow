@@ -11,6 +11,7 @@ export type {
   AppHealthDto,
   AppStatusDto,
   BackupSummaryDto,
+  EvidenceBundleSummaryDto,
   LocalSyncFoundationStatusDto,
   LocalSyncIdentityDto,
   PrincipalMemberBindingDto,

@@ -83,6 +83,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0036_replicable_card_reconciliation.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0037_portable_confirmed_evidence.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -154,6 +157,49 @@ impl AppState {
         let connection = self.connection.lock().map_err(|_| PersistenceError::Lock)?;
         operation(&connection)
     }
+}
+
+/// Creates a keyed SQLCipher container without applying the application
+/// migrations. This is reserved for small, self-describing encrypted capsule
+/// manifests whose schema is owned by their feature module.
+pub(crate) fn create_keyed_container_database(
+    database_path: &std::path::Path,
+    key_material: &[u8],
+) -> Result<Connection, PersistenceError> {
+    if database_path.exists() {
+        return Err(PersistenceError::Directory);
+    }
+    let parent = database_path.parent().ok_or(PersistenceError::Directory)?;
+    fs::create_dir_all(parent).map_err(|_| PersistenceError::Directory)?;
+    restrict_directory_permissions(parent)?;
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    apply_key(&connection, key_material)?;
+    configure_connection(&connection)?;
+    restrict_database_file_permissions(database_path)?;
+    Ok(connection)
+}
+
+/// Opens an existing keyed capsule database without creating it or running
+/// product migrations.
+pub(crate) fn open_keyed_container_database_read_only(
+    database_path: &std::path::Path,
+    key_material: &[u8],
+) -> Result<Connection, PersistenceError> {
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    apply_key(&connection, key_material)?;
+    connection.pragma_update(None, "foreign_keys", "ON")?;
+    if !integrity_check(&connection)? {
+        return Err(PersistenceError::Database(rusqlite::Error::InvalidQuery));
+    }
+    Ok(connection)
 }
 
 fn apply_key(connection: &Connection, key_material: &[u8]) -> Result<(), PersistenceError> {

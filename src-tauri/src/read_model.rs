@@ -1640,25 +1640,57 @@ pub fn get_transaction_detail(
 
     let mut evidence = connection
         .prepare(
-            "SELECT sr.id, sd.id, sd.source_type, sd.original_filename,
-                    sd.media_type, sr.row_number, sd.imported_at,
-                    CASE WHEN rcl.candidate_id IS NOT NULL
-                         THEN 'SUPPORTING'
-                         ELSE COALESCE(cs.evidence_role, 'PRIMARY')
-                    END,
-                    sd.audience_visibility, sd.audience_member_id, audience.display_name
-             FROM transaction_sources ts
-             JOIN source_records sr ON sr.id = ts.source_record_id
-             JOIN source_documents sd ON sd.id = sr.source_document_id
-             LEFT JOIN candidate_sources cs
-               ON cs.candidate_id = ts.candidate_id
-              AND cs.source_record_id = ts.source_record_id
-             LEFT JOIN receipt_candidate_links rcl
-               ON rcl.candidate_id = ts.candidate_id
-              AND rcl.transaction_id = ts.transaction_id
-             LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
-             WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
-             ORDER BY sd.imported_at, sd.id, sr.row_number, sr.id
+            "SELECT source_record_id, source_document_id, source_type, original_filename,
+                    media_type, row_number, imported_at, evidence_role,
+                    audience_visibility, audience_member_id, audience_member_name
+             FROM (
+               SELECT sr.id AS source_record_id, sd.id AS source_document_id,
+                      sd.source_type, sd.original_filename, sd.media_type, sr.row_number,
+                      sd.imported_at,
+                      CASE WHEN rcl.candidate_id IS NOT NULL
+                           THEN 'SUPPORTING'
+                           ELSE COALESCE(cs.evidence_role, 'PRIMARY')
+                      END AS evidence_role,
+                      sd.audience_visibility, sd.audience_member_id,
+                      audience.display_name AS audience_member_name,
+                      sd.id AS sort_document_id, sr.id AS sort_record_id
+               FROM transaction_sources ts
+               JOIN source_records sr ON sr.id = ts.source_record_id
+               JOIN source_documents sd ON sd.id = sr.source_document_id
+               LEFT JOIN candidate_sources cs
+                 ON cs.candidate_id = ts.candidate_id
+                AND cs.source_record_id = ts.source_record_id
+               LEFT JOIN receipt_candidate_links rcl
+                 ON rcl.candidate_id = ts.candidate_id
+                AND rcl.transaction_id = ts.transaction_id
+               LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
+               WHERE ts.transaction_id = ?1 AND sd.household_id = ?2
+               UNION ALL
+               SELECT alias.portable_record_id, document_alias.portable_document_id,
+                      sd.source_type, sd.original_filename, sd.media_type, sr.row_number,
+                      sd.imported_at,
+                      CASE WHEN portable.candidate_id IS NOT NULL THEN 'SUPPORTING' ELSE 'PRIMARY' END,
+                      sd.audience_visibility, sd.audience_member_id, audience.display_name,
+                      document_alias.portable_document_id, alias.portable_record_id
+               FROM transaction_portable_source_links portable
+               JOIN evidence_source_record_aliases alias
+                 ON alias.household_id = ?2
+                AND alias.portable_record_id = portable.source_record_id
+               JOIN evidence_source_document_aliases document_alias
+                 ON document_alias.household_id = alias.household_id
+                AND document_alias.origin_installation_id = alias.origin_installation_id
+                AND document_alias.portable_document_id = alias.portable_document_id
+               JOIN source_records sr ON sr.id = alias.local_record_id
+               JOIN source_documents sd ON sd.id = document_alias.local_document_id
+               LEFT JOIN household_members audience ON audience.id = sd.audience_member_id
+               WHERE portable.transaction_id = ?1
+                 AND NOT EXISTS (
+                   SELECT 1 FROM transaction_sources actual
+                   WHERE actual.transaction_id = portable.transaction_id
+                     AND actual.source_record_id = alias.local_record_id
+                 )
+             )
+             ORDER BY imported_at, sort_document_id, row_number, sort_record_id
              LIMIT ?3",
         )
         .map_err(map_database_error)?;
@@ -4175,6 +4207,21 @@ mod tests {
                  CREATE TABLE transaction_sources (
                    transaction_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
                    candidate_id TEXT, PRIMARY KEY(transaction_id, source_record_id));
+                 CREATE TABLE transaction_portable_source_links (
+                   transaction_id TEXT NOT NULL, source_record_id TEXT NOT NULL,
+                   candidate_id TEXT, PRIMARY KEY(transaction_id, source_record_id));
+                 CREATE TABLE evidence_source_document_aliases (
+                   household_id TEXT NOT NULL, origin_installation_id TEXT NOT NULL,
+                   portable_document_id TEXT NOT NULL, portable_import_run_id TEXT NOT NULL,
+                   local_document_id TEXT NOT NULL, content_sha256 TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   PRIMARY KEY(household_id, origin_installation_id, portable_document_id));
+                 CREATE TABLE evidence_source_record_aliases (
+                   household_id TEXT NOT NULL, origin_installation_id TEXT NOT NULL,
+                   portable_document_id TEXT NOT NULL, portable_record_id TEXT NOT NULL,
+                   local_record_id TEXT NOT NULL, record_hash TEXT NOT NULL,
+                   created_at TEXT NOT NULL,
+                   PRIMARY KEY(household_id, origin_installation_id, portable_record_id));
                  CREATE TABLE receipt_candidate_links (
                    candidate_id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
                    transaction_id TEXT NOT NULL);
@@ -5559,6 +5606,61 @@ mod tests {
             )
             .unwrap();
         assert_eq!(source_links, 1);
+    }
+
+    #[test]
+    fn portable_evidence_aliases_are_visible_without_changing_transaction_links() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        create_manual_transaction(&connection, &manual_expense("portable", "family", 500)).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO import_runs (id, household_id, status) VALUES ('local-run','family','POSTED');
+                 INSERT INTO source_documents
+                   (id,household_id,import_run_id,source_type,original_filename,media_type,
+                    byte_size,sha256,storage_path)
+                 VALUES ('local-doc','family','local-run','MANUAL_UPLOAD','portable.csv','text/csv',
+                         10,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                         'vault://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                 INSERT INTO source_records(id,source_document_id,row_number,record_hash,raw_payload_json)
+                 VALUES ('local-record','local-doc',4,
+                         'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}');
+                 INSERT INTO evidence_source_document_aliases VALUES(
+                   'family','origin','portable-doc','portable-run','local-doc',
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                   '2026-07-13T00:00:00Z');
+                 INSERT INTO evidence_source_record_aliases VALUES(
+                   'family','origin','portable-doc','portable-record','local-record',
+                   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                   '2026-07-13T00:00:00Z');
+                 INSERT INTO transaction_portable_source_links VALUES(
+                   'portable','portable-record',NULL);",
+            )
+            .unwrap();
+
+        let detail = get_transaction_detail(&connection, "family", "portable").unwrap();
+        assert_eq!(detail.source_evidence.len(), 1);
+        assert_eq!(
+            detail.source_evidence[0].source_record_id,
+            "portable-record"
+        );
+        assert_eq!(detail.source_evidence[0].source_document_id, "portable-doc");
+        assert_eq!(detail.source_evidence[0].original_filename, "portable.csv");
+        let actual_links: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM transaction_sources WHERE transaction_id='portable'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(actual_links, 0);
     }
 
     #[test]

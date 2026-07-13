@@ -375,7 +375,18 @@ html[data-theme='dark'] .goal-editor { border-color: var(--line); }
 .change-package-conflicts .primary-btn,.change-package-ready .primary-btn { justify-self: start; }
 .change-package-ready { border-color: #d5e2d1; background: #f3f8f0; }
 .change-package-applied,.change-package-notice { margin: 0; padding: 10px 12px; border-radius: 8px; color: #52614d; background: #eef4ea; font-size: 9px; }
+.portable-evidence-bundle { display: grid; gap: 14px; margin-top: 15px; }
+.evidence-bundle-scope { margin: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); background: var(--surface-muted); font-size: 9px; line-height: 1.65; }
+.evidence-bundle-controls { display: grid; grid-template-columns: minmax(180px, 360px) 1fr; gap: 7px 14px; align-items: end; }
+.evidence-bundle-controls > label { grid-column: 1; color: var(--muted); font-size: 9px; font-weight: 700; }
+.evidence-bundle-controls > input { grid-column: 1; min-height: 38px; }
+.evidence-bundle-controls > .change-package-actions { grid-column: 2; grid-row: 1 / span 2; align-self: end; }
+.evidence-bundle-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 0; }
+.evidence-bundle-summary > div { padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: #f7f9f5; }
+.evidence-bundle-summary dt { color: var(--muted); font-size: 8px; }
+.evidence-bundle-summary dd { margin: 4px 0 0; font-size: 14px; font-weight: 800; }
 html[data-theme='dark'] .change-package-summary > div,
+html[data-theme='dark'] .evidence-bundle-summary > div,
 html[data-theme='dark'] .change-package-conflicts,
 html[data-theme='dark'] .change-package-ready,
 html[data-theme='dark'] .change-package-conflicts fieldset { border-color: var(--line); background: #252f28; }
@@ -388,5 +399,8 @@ html[data-theme='dark'] .change-package-conflicts fieldset { border-color: var(-
   .local-sync-grid { grid-template-columns: 1fr; }
   .principal-binding-row { align-items: stretch; flex-direction: column; }
   .change-package-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .evidence-bundle-controls { grid-template-columns: 1fr; }
+  .evidence-bundle-controls > .change-package-actions { grid-column: 1; grid-row: auto; }
+  .evidence-bundle-summary { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .change-package-actions > button { width: 100%; }
 }
