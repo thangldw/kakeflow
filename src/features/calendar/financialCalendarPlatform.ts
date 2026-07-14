@@ -190,6 +190,12 @@ export interface AnnualReviewXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface AnnualReviewPdfSavedDto {
+  readonly fileName: string
+  readonly pageCount: number
+  readonly byteSize: number
+}
+
 export interface MonthlyReviewXlsxSavedDto {
   readonly fileName: string
   readonly rowCount: number
@@ -229,6 +235,10 @@ export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke 
     saveAnnualReviewXlsx: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewXlsxSavedDto | null> => {
       const value = await invoke('annual_household_review_xlsx_save', { request })
       return value === null ? null : parseAnnualReviewXlsxSaved(value)
+    },
+    saveAnnualReviewPdf: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewPdfSavedDto | null> => {
+      const value = await invoke('annual_household_review_pdf_save', { request })
+      return value === null ? null : parseAnnualReviewPdfSaved(value)
     },
   }
 }
@@ -507,6 +517,17 @@ function parseAnnualReviewXlsxSaved(value: unknown): AnnualReviewXlsxSavedDto {
   if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved annual review XLSX filename')
   if ((item.rowCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved annual review XLSX')
   return item as unknown as AnnualReviewXlsxSavedDto
+}
+
+function parseAnnualReviewPdfSaved(value: unknown): AnnualReviewPdfSavedDto {
+  const item = record(value, 'saved annual review PDF')
+  stringValue(item.fileName, 'saved annual review PDF filename')
+  nonNegativeInteger(item.pageCount, 'saved annual review PDF pages')
+  nonNegativeInteger(item.byteSize, 'saved annual review PDF bytes')
+  const fileName = item.fileName as string
+  if (fileName.length === 0 || fileName.length > 255 || !/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved annual review PDF filename')
+  if ((item.pageCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved annual review PDF')
+  return item as unknown as AnnualReviewPdfSavedDto
 }
 
 function parseMonthlyReviewXlsxSaved(value: unknown): MonthlyReviewXlsxSavedDto {

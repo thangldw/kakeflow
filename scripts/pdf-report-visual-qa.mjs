@@ -14,7 +14,7 @@ export const PDF_REPORT_TYPES = [
   'investment-performance',
   'portfolio-snapshot',
 ]
-export const V070_REQUIRED_REPORT_TYPES = ['monthly']
+export const V071_REQUIRED_REPORT_TYPES = ['monthly', 'annual']
 
 const MAX_PDF_BYTES = 32 * 1024 * 1024
 const MAX_PAGES = 40
@@ -183,10 +183,14 @@ function visualChecklist(reports) {
     '- [ ] Negative, zero, blank, currency, date, and percentage values remain distinguishable.',
     '- [ ] Long labels and multi-page tables wrap or continue without losing meaning.',
     '- [ ] Every value can be associated with the report title, period, household scope, and accounting basis.',
-    '',
-    '## Pages',
-    '',
   ]
+  if (reports.some(({ type }) => type === 'annual')) {
+    lines.push(
+      '- [ ] The annual chart keeps January-December order with legible labels and one consistent scale/color meaning.',
+      '- [ ] Partial-coverage months are distinguishable from complete or zero-activity months.',
+    )
+  }
+  lines.push('', '## Pages', '')
   for (const report of reports) {
     for (const page of report.render.pages) lines.push(`- [ ] \`${page.file}\``)
   }
@@ -198,7 +202,7 @@ export async function runPdfReportVisualQa({
   reports,
   outputDirectory,
   replace = false,
-  requiredReportTypes = V070_REQUIRED_REPORT_TYPES,
+  requiredReportTypes = V071_REQUIRED_REPORT_TYPES,
   pdfinfo = process.env.KAKEFLOW_PDFINFO || 'pdfinfo',
   pdftoppm = process.env.KAKEFLOW_PDFTOPPM || 'pdftoppm',
 } = {}) {
@@ -208,7 +212,7 @@ export async function runPdfReportVisualQa({
   if (JSON.stringify(actualTypes) !== JSON.stringify(requiredTypes)) {
     throw new Error(`Expected PDF report types ${requiredTypes.join(', ')}, received ${actualTypes.join(', ') || 'none'}`)
   }
-  const output = path.resolve(outputDirectory ?? path.join(root, 'tmp', 'pdfs', 'v070-report-qa'))
+  const output = path.resolve(outputDirectory ?? path.join(root, 'tmp', 'pdfs', 'v071-report-qa'))
   if (existsSync(output)) {
     if (!replace) throw new Error(`PDF QA output already exists: ${output}; pass replace=true to regenerate it`)
     await rm(output, { recursive: true, force: true })
@@ -243,7 +247,7 @@ function parseCliArguments(argv) {
   const reports = {}
   let outputDirectory
   let replace = false
-  let requiredReportTypes = V070_REQUIRED_REPORT_TYPES
+  let requiredReportTypes = V071_REQUIRED_REPORT_TYPES
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
     if (argument === '--output') {

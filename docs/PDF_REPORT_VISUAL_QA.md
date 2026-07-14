@@ -2,41 +2,47 @@
 
 ## Release acceptance scope
 
-KakeFlow v0.70 implements one PDF export: the source-backed Monthly Household
-Review. Therefore the v0.70 PDF release gate requires exactly the `monthly`
-fixture report and must not claim annual, investment-performance, or
-portfolio-snapshot PDF coverage.
+KakeFlow v0.71 implements two PDF exports: the source-backed Monthly Household
+Review and Annual Household Review. Therefore the v0.71 PDF release gate
+requires exactly the `monthly` and `annual` fixture reports. It must not claim
+investment-performance or portfolio-snapshot PDF coverage.
 
-The monthly PDF must be generated from the same fixed synthetic household
-fixture used by its report contract test. The selected household, month,
-accounting basis, account scope, and source coverage must be visible in the
-report. The PDF is an export of the already validated monthly review DTO; it
-must not perform a second financial calculation.
+Each PDF must be generated from the fixed synthetic household fixture used by
+its report contract test. The selected household, reporting period, accounting
+basis, account scope, and source coverage must be visible in the report. Each
+PDF is an export of its already validated review DTO and must not perform a
+second financial calculation.
 
-The fixture should exercise Japanese text, a long merchant or category name,
+The fixtures should exercise Japanese text, a long merchant or category name,
 positive and negative amounts, zero, a nullable value, at least two categories,
-and enough rows to cross a page boundary in the monthly report. If the report
-supports empty-state export, that is a separate test and is not a substitute for
-the populated visual fixture.
+and enough rows to cross a page boundary. The annual fixture must cover all 12
+ordered calendar months and include at least one partial-coverage month. If a
+report supports empty-state export, that is a separate test and is not a
+substitute for the populated visual fixture.
 
 ## Reproducible render command
 
-Generate the monthly fixture PDF from its Rust contract test in a clean
-checkout:
+Generate the monthly and annual fixture PDFs from their Rust contract tests in
+a clean checkout:
 
 ```sh
 KAKEFLOW_MONTHLY_REVIEW_PDF_FIXTURE="$PWD/tmp/pdfs/monthly-review.pdf" \
   cargo test --manifest-path src-tauri/Cargo.toml \
   monthly_review_pdf::tests::pdf_is_deterministic_extractable_japanese_and_complete \
   --lib -- --exact
+
+KAKEFLOW_ANNUAL_PDF_FIXTURE="$PWD/tmp/pdfs/annual-review.pdf" \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  annual_review_pdf --lib
 ```
 
 Then render and validate it:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --output tmp/pdfs/v070-report-qa \
-  monthly=/absolute/path/monthly-review.pdf
+  --output tmp/pdfs/v071-report-qa \
+  monthly="$PWD/tmp/pdfs/monthly-review.pdf" \
+  annual="$PWD/tmp/pdfs/annual-review.pdf"
 ```
 
 Use `--replace` only when intentionally regenerating the same review directory.
@@ -44,17 +50,17 @@ The command requires Poppler's `pdfinfo` and `pdftoppm`. The Codex bundled PDF
 runtime provides both commands; local macOS environments can install Poppler
 with `brew install poppler`.
 
-The harness already recognizes `annual`, `investment-performance`, and
-`portfolio-snapshot` as reserved future report types, but they are not v0.70
-gates. A later release can opt in only after the corresponding PDF export and
-contract tests exist:
+The harness also recognizes `investment-performance` and `portfolio-snapshot`
+as reserved future report types, but they are not v0.71 gates. A later release
+can opt in only after the corresponding PDF export and contract tests exist:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --require monthly,annual \
+  --require monthly,annual,investment-performance \
   --output tmp/pdfs/future-report-qa \
   monthly=/absolute/path/monthly-review.pdf \
-  annual=/absolute/path/annual-review.pdf
+  annual=/absolute/path/annual-review.pdf \
+  investment-performance=/absolute/path/investment-performance.pdf
 ```
 
 The names supplied to `--require` and the named PDF arguments must match
@@ -78,8 +84,9 @@ correct.
 All gates fail closed; failed runs remove their staging directory and never
 publish partial QA evidence.
 
-- The current required report set is present exactly once. For v0.70 that set is
-  exactly `monthly`; future sets must be selected explicitly with `--require`.
+- The current required report set is present exactly once. For v0.71 that set is
+  exactly `monthly,annual`; future sets must be selected explicitly with
+  `--require`.
 - Every input is a regular, non-empty `%PDF-` file no larger than 32 MiB.
 - `pdfinfo` succeeds, reports PDF version, reports 1-40 pages, and reports a
   page size between 200 and 2,000 points on each axis.
@@ -121,6 +128,10 @@ generated checklist. Acceptance requires all of the following:
   generation context are readable.
 - Charts and tables agree with the fixed fixture assertions; a visually polished
   but numerically different report fails.
+- The annual 12-month chart preserves January-December order, labels all months
+  legibly, and uses the same scale and color semantics for the entire year.
+- A partial-coverage month is visibly distinguishable from a complete month and
+  is never presented as a zero-activity or fully covered month.
 
 The reviewer records name, date, and `PASS` in `VISUAL_REVIEW.md`. An unchecked
 or unsigned checklist is not release evidence.
@@ -147,8 +158,8 @@ alone.
 
 Archive these files with the locally verified release evidence:
 
-- every fixture PDF in the explicitly required report set (only the monthly
-  review PDF for v0.70);
+- every fixture PDF in the explicitly required report set (monthly and annual
+  review PDFs for v0.71);
 - `manifest.json`;
 - every normalized PNG page;
 - the completed `VISUAL_REVIEW.md`;

@@ -76,18 +76,26 @@ describe('PDF report visual QA', () => {
     try {
       await writeFile(fixture, minimalPdf())
       const result = await runPdfReportVisualQa({
-        reports: { monthly: fixture },
+        reports: { monthly: fixture, annual: fixture },
         outputDirectory: output,
       })
       expect(result).toMatchObject({ status: 'automated-pass', visualReview: 'required' })
-      expect(result.reports[0]).toMatchObject({ pages: 1, type: 'monthly' })
+      expect(result.reportTypes).toEqual(['monthly', 'annual'])
+      expect(result.reports).toEqual([
+        expect.objectContaining({ pages: 1, type: 'monthly' }),
+        expect.objectContaining({ pages: 1, type: 'annual' }),
+      ])
       const manifest = JSON.parse(await readFile(path.join(output, 'manifest.json'), 'utf8'))
       expect(manifest.reports[0].render.pages[0]).toMatchObject({ page: 1, width: 1190, height: 1684 })
-      expect(await readFile(path.join(output, 'VISUAL_REVIEW.md'), 'utf8')).toContain('- [ ] `monthly/page-0001.png`')
+      const checklist = await readFile(path.join(output, 'VISUAL_REVIEW.md'), 'utf8')
+      expect(checklist).toContain('- [ ] `monthly/page-0001.png`')
+      expect(checklist).toContain('- [ ] `annual/page-0001.png`')
+      expect(checklist).toContain('annual chart keeps January-December order')
+      expect(checklist).toContain('Partial-coverage months are distinguishable')
       await expect(runPdfReportVisualQa({
-        reports: { annual: fixture },
+        reports: { monthly: fixture },
         outputDirectory: path.join(temporaryRoot, 'wrong-release-scope'),
-      })).rejects.toThrow(/Expected PDF report types monthly/)
+      })).rejects.toThrow(/Expected PDF report types annual, monthly/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
