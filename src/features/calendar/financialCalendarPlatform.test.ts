@@ -112,6 +112,25 @@ describe('financial calendar platform boundary', () => {
     }
   })
 
+  it('saves the exact monthly scope as PDF and validates the native summary', async () => {
+    const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, month: '2026-07', asOf: '2026-07-31' }
+    const saved = { fileName: 'kakeflow-monthly-review-2026-07.pdf', pageCount: 4, byteSize: 12_000, rendererVersion: 1 }
+    const invoke = vi.fn(async () => saved) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(invoke).saveMonthlyReviewPdf(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('monthly_household_review_pdf_save', { request })
+
+    await expect(createFinancialCalendarPlatform(async () => null).saveMonthlyReviewPdf(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'monthly.xlsx', pageCount: 4, byteSize: 12_000 },
+      { fileName: '../monthly.pdf', pageCount: 4, byteSize: 12_000 },
+      { fileName: 'monthly.pdf', pageCount: 0, byteSize: 12_000 },
+      { fileName: 'monthly.pdf', pageCount: 4, byteSize: 0 },
+      { fileName: 'monthly.pdf', pageCount: 1.5, byteSize: 12_000 },
+    ]) {
+      await expect(createFinancialCalendarPlatform(async () => response).saveMonthlyReviewPdf(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('rejects malformed financial responses at the desktop boundary', async () => {
     const invoke = vi.fn(async () => ({ month: '2026-07', asOf: '2026-07-31', days: [{ events: [{ kind: 'UNKNOWN' }] }], budget, goals, dataQuality })) as unknown as FinancialCalendarInvoke
     await expect(createFinancialCalendarPlatform(invoke).getCalendar({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' })).rejects.toThrow(TypeError)

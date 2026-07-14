@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.70.0 — 2026-07-14
+
+- Export the source-backed Monthly Household Review as a deterministic four-page PDF using the same validated household, month, account-group, member-attribution, and data-quality `asOf` scope as the visible report and monthly workbook.
+- Lead with an Executive Summary, current/prior-month/prior-year KPI comparison, exact-value bars, and action-oriented follow-ups while retaining budget, goals, import health, card reconciliation, and double-counting disclosures.
+- Embed the pinned Noto Sans JP font under the SIL Open Font License so Japanese text remains searchable and visually stable without host-font discovery.
+- Keep PDF bytes in the native process, return only saved-file metadata over IPC, and treat save-dialog cancellation as a non-error.
+- Add bounded structural checks plus reproducible Poppler rendering, page hashes, and a mandatory page-by-page visual-review checklist for the released monthly report.
+
 ## 0.69.0 — 2026-07-14
 
 - Export one explicitly selected securities portfolio snapshot as a native four-sheet `.xlsx` workbook without silently substituting the latest snapshot.

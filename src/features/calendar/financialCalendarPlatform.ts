@@ -196,6 +196,12 @@ export interface MonthlyReviewXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface MonthlyReviewPdfSavedDto {
+  readonly fileName: string
+  readonly pageCount: number
+  readonly byteSize: number
+}
+
 export type FinancialCalendarInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke = tauriInvoke) {
@@ -207,6 +213,10 @@ export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke 
     saveMonthlyReviewXlsx: async (request: MonthlyFinancialReportRequest): Promise<MonthlyReviewXlsxSavedDto | null> => {
       const value = await invoke('monthly_household_review_xlsx_save', { request })
       return value === null ? null : parseMonthlyReviewXlsxSaved(value)
+    },
+    saveMonthlyReviewPdf: async (request: MonthlyFinancialReportRequest): Promise<MonthlyReviewPdfSavedDto | null> => {
+      const value = await invoke('monthly_household_review_pdf_save', { request })
+      return value === null ? null : parseMonthlyReviewPdfSaved(value)
     },
     getYearlyReport: async (request: YearlyFinancialReportRequest): Promise<YearlyFinancialReportDto> =>
       parseYearlyReport(await invoke('financial_report_yearly_query', { request })),
@@ -508,4 +518,15 @@ function parseMonthlyReviewXlsxSaved(value: unknown): MonthlyReviewXlsxSavedDto 
   if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved monthly review XLSX filename')
   if ((item.rowCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved monthly review XLSX')
   return item as unknown as MonthlyReviewXlsxSavedDto
+}
+
+function parseMonthlyReviewPdfSaved(value: unknown): MonthlyReviewPdfSavedDto {
+  const item = record(value, 'saved monthly review PDF')
+  stringValue(item.fileName, 'saved monthly review PDF filename')
+  nonNegativeInteger(item.pageCount, 'saved monthly review PDF pages')
+  nonNegativeInteger(item.byteSize, 'saved monthly review PDF bytes')
+  const fileName = item.fileName as string
+  if (fileName.length === 0 || fileName.length > 255 || !/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved monthly review PDF filename')
+  if ((item.pageCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved monthly review PDF')
+  return item as unknown as MonthlyReviewPdfSavedDto
 }
