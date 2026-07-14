@@ -179,6 +179,11 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 
 ## Current capabilities
 
+- Local [RFC 5322 email attachment import](docs/EMAIL_ATTACHMENT_IMPORT.md) that
+  stores the exact `.eml` as immutable evidence and qualifies rows from its one
+  selected CSV/TSV/XLSX attachment with `sourcePart`. Multiple importable
+  attachments, unsupported schemas, and ambiguous selection fail closed; this
+  is not mailbox OAuth or background email polling.
 - Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
   for the official Shift_JIS business-account record family, with exact
   header/detail/footer/final validation, totals and running-balance
@@ -271,7 +276,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
+2. Add direct data connectors: Google Drive OAuth folder sync, direct mailbox API ingestion beyond the local `.eml` path, and a contracted read-only Japanese bank/card aggregation provider. Native iCloud folder selection is available through the durable local inbox.
 3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
 4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
 5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.

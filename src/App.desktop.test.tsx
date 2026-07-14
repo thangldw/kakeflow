@@ -1564,6 +1564,35 @@ describe('KakeFlow desktop read models', () => {
     }), expect.any(Uint8Array)))
   })
 
+  it('stages one email attachment while retaining the exact RFC 5322 message as source evidence', async () => {
+    const csv = '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n2026/07/27,ラクテンカードサービス,,204987,,100000,,,出'
+    const boundary = 'desktop-email-boundary'
+    const source = [
+      'From: bank@example.test', 'To: family@example.test', 'Subject: statement', 'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`,
+      'Content-Type: text/csv; name="bank.csv"', 'Content-Disposition: attachment; filename="bank.csv"',
+      'Content-Transfer-Encoding: base64', '', Buffer.from(csv).toString('base64'), `--${boundary}--`, '',
+    ].join('\r\n')
+    const original = new TextEncoder().encode(source)
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    fireEvent.change(input, { target: { files: [new File([original], 'statement.eml', { type: 'message/rfc822' })] } })
+
+    expect(await screen.findByText(/添付 bank\.csv/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('statement.emlの取込先銀行口座'), { target: { value: 'family-bank' } })
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledTimes(1))
+    const [request, bytes] = desktop.startImport.mock.calls[0]
+    expect(request).toMatchObject({
+      originalFilename: 'statement.eml', mediaType: 'message/rfc822', adapterId: 'japanese-bank-ledger-v1',
+      candidates: [expect.objectContaining({ accountId: 'family-bank' })],
+    })
+    expect(JSON.parse(request.records[0].payloadJson)).toMatchObject({ sourcePart: 'bank.csv', sourceRow: 2 })
+    expect(Array.from(bytes)).toEqual(Array.from(original))
+  })
+
   it.each([
     {
       provider: 'SBI',

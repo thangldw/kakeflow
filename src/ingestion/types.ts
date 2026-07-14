@@ -33,6 +33,8 @@ export interface SourceLineage {
   sourceRow: number
   sourceRowEnd: number
   rawFields: readonly string[]
+  /** Named part inside an immutable container source, such as an email attachment. */
+  sourcePart?: string
 }
 
 export interface ImportInput {

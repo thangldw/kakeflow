@@ -134,7 +134,13 @@ interface MappingContext {
 }
 
 function lineagePayload(lineage: SourceLineage, namedFields?: Readonly<Record<string, string>>): string {
-  return JSON.stringify({ sourceRow: lineage.sourceRow, sourceRowEnd: lineage.sourceRowEnd, rawFields: lineage.rawFields, ...(namedFields ? { fields: namedFields } : {}) })
+  return JSON.stringify({
+    sourceRow: lineage.sourceRow,
+    sourceRowEnd: lineage.sourceRowEnd,
+    rawFields: lineage.rawFields,
+    ...(lineage.sourcePart ? { sourcePart: lineage.sourcePart } : {}),
+    ...(namedFields ? { fields: namedFields } : {}),
+  })
 }
 
 async function sourceRecord(context: MappingContext, lineage: SourceLineage, namedFields?: Readonly<Record<string, string>>): Promise<StartImportSourceRecord | null> {

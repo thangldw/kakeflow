@@ -4,6 +4,37 @@ import { zipSync } from 'fflate'
 import { excelRowsToCsv, previewImportFile, previewImportFiles } from './importService'
 
 describe('import preview service', () => {
+  it('keeps an RFC 5322 email immutable while parsing its one supported attachment', async () => {
+    const csv = '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n2026/07/27,ラクテンカードサービス,,204987,,100000,,,出'
+    const boundary = 'kakeflow-email-boundary'
+    const source = [
+      'From: bank@example.test', 'To: family@example.test', 'Subject: statement', 'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`,
+      'Content-Type: text/csv; name="bank.csv"', 'Content-Disposition: attachment; filename="bank.csv"',
+      'Content-Transfer-Encoding: base64', '', Buffer.from(csv).toString('base64'), `--${boundary}--`, '',
+    ].join('\r\n')
+    const original = new TextEncoder().encode(source)
+    const result = await previewImportFile(new File([original], 'statement.eml', { type: 'message/rfc822', lastModified: 1_700_000_000_000 }))
+
+    expect(result).toMatchObject({
+      filename: 'statement.eml', emailAttachmentName: 'bank.csv', adapterId: 'japanese-bank-ledger-v1',
+      mediaType: 'message/rfc822', encoding: 'eml / utf-8', recordCount: 1, status: 'ready',
+      sourceModifiedAt: '2023-11-14T22:13:20.000Z',
+    })
+    expect(Array.from(result.fileBytes ?? [])).toEqual(Array.from(original))
+    expect((result.parsed?.records[0] as { lineage: { sourcePart?: string } }).lineage.sourcePart).toBe('bank.csv')
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'EMAIL_ATTACHMENT_SELECTED', severity: 'warning' }))
+  })
+
+  it('blocks an email with multiple importable attachments instead of choosing one', async () => {
+    const boundary = 'multi'
+    const attachment = (name: string) => [`--${boundary}`, `Content-Type: text/csv; name="${name}"`, `Content-Disposition: attachment; filename="${name}"`, '', 'a,b'].join('\r\n')
+    const source = ['MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${boundary}"`, '', attachment('bank.csv'), attachment('card.csv'), `--${boundary}--`, ''].join('\r\n')
+    const result = await previewImportFile(new File([source], 'multiple.eml', { type: 'message/rfc822' }))
+    expect(result).toMatchObject({ filename: 'multiple.eml', status: 'error', mediaType: 'message/rfc822' })
+    expect(result.issues[0].code).toBe('EMAIL_MULTIPLE_SUPPORTED_ATTACHMENTS')
+  })
+
   it('detects and parses a Japanese bank CSV file', async () => {
     const file = new File([
       '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n' +
