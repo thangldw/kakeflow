@@ -6,7 +6,7 @@ import { PdfPreviewAccessError } from './sourcePdfPagePreviewPlatform'
 
 const evidence: DocumentEvidenceReadModel = {
   sourceRecordId: 'record-1', evidenceVersion: 2, method: 'OCR', text: 'スーパー\n牛乳 238', confidenceBps: 9100, issues: ['LOW_CONTRAST'],
-  pages: [{ pageNumber: 1, regions: [{ pageNumber: 1, coordinateSpace: 'PIXELS', boundingBox: { left: 20, top: 30, width: 80, height: 14 }, text: '牛乳 238', confidenceBps: 9200, provenance: 'TESSERACT_WORD' }] }],
+  pages: [{ pageNumber: 1, widthPixels: 1224, heightPixels: 1584, confidenceBps: 9200, issues: [], regions: [{ pageNumber: 1, coordinateSpace: 'PIXELS', boundingBox: { left: 20, top: 30, width: 80, height: 14 }, text: '牛乳 238', confidenceBps: 9200, provenance: 'TESSERACT_WORD' }] }],
   receipt: { merchant: 'スーパー', occurredOn: '2026-07-12', totalAmountJpy: 238, items: [{ description: '牛乳', amountJpy: 238, quantity: 1, confidenceBps: 8000, provenance: { lineNumber: 2, regionIndexes: [0], method: 'TEXT_PATTERN' } }], taxes: [{ ratePercent: 8, taxAmountJpy: 17, taxableAmountJpy: null, confidenceBps: 8500, provenance: { lineNumber: 3, regionIndexes: [1], method: 'TEXT_PATTERN' } }], couponAmountJpy: 10, pointsUsedJpy: 20 },
 }
 
@@ -20,6 +20,10 @@ describe('DocumentEvidenceViewer', () => {
     expect(screen.getByText('ポイント利用')).toBeInTheDocument()
     expect(screen.getByText('px: x 20, y 30, w 80, h 14')).toBeInTheDocument()
     expect(screen.getByText('TESSERACT_WORD')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({
+      left: `${20 / 1224 * 100}%`,
+      top: `${30 / 1584 * 100}%`,
+    })
   })
 
   it('routes region selection with page and provenance', () => {

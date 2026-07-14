@@ -150,6 +150,17 @@ impl OfflineOcrProvider {
     }
 
     pub fn recognize(&self, image_path: &Path) -> Result<OcrResult, OcrError> {
+        self.recognize_with_timeout(image_path, self.config.timeout)
+    }
+
+    pub fn recognize_with_timeout(
+        &self,
+        image_path: &Path,
+        timeout: Duration,
+    ) -> Result<OcrResult, OcrError> {
+        if timeout.is_zero() || timeout > self.config.timeout {
+            return Err(OcrError::InvalidConfig);
+        }
         validate_image(
             image_path,
             self.config.max_input_bytes,
@@ -171,7 +182,7 @@ impl OfflineOcrProvider {
         let output = run_bounded(
             &self.executable,
             &args,
-            self.config.timeout,
+            timeout,
             self.config.max_output_bytes,
         )?;
         if !output.success {
@@ -329,11 +340,7 @@ pub fn parse_tsv(tsv: &str) -> Result<OcrResult, OcrError> {
             height: parse_u32(columns[9])?,
         });
     }
-    let text = words
-        .iter()
-        .map(|word| word.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
+    let text = reconstruct_text(&words);
     let mean_confidence = if words.is_empty() {
         None
     } else {
@@ -344,6 +351,29 @@ pub fn parse_tsv(tsv: &str) -> Result<OcrResult, OcrError> {
         words,
         mean_confidence,
     })
+}
+
+/// Rebuilds the reading order that Tesseract exposes in TSV instead of
+/// flattening a receipt into one space-separated line. The hierarchy tuple is
+/// also what downstream evidence uses to form line-level provenance regions.
+pub fn reconstruct_text(words: &[OcrWord]) -> String {
+    let mut text = String::new();
+    let mut previous: Option<(u32, u32, u32, u32)> = None;
+    for word in words {
+        let key = (word.page, word.block, word.paragraph, word.line);
+        if let Some(prior) = previous {
+            if prior.0 != key.0 {
+                text.push_str("\n\u{000c}\n");
+            } else if prior != key {
+                text.push('\n');
+            } else {
+                text.push(' ');
+            }
+        }
+        text.push_str(&word.text);
+        previous = Some(key);
+    }
+    text
 }
 
 fn parse_u32(value: &str) -> Result<u32, OcrError> {
@@ -497,6 +527,17 @@ mod tests {
         assert_eq!(result.words.len(), 2);
         assert!((result.mean_confidence.unwrap() - 0.8975).abs() < 0.0001);
         assert_eq!(result.words[0].left, 10);
+    }
+
+    #[test]
+    fn preserves_tesseract_lines_and_pages_in_reading_order() {
+        let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
+                   5\t1\t1\t1\t1\t1\t10\t20\t30\t12\t90\tSTORE\n\
+                   5\t1\t1\t1\t2\t1\t10\t40\t30\t12\t80\tTOTAL\n\
+                   5\t1\t1\t1\t2\t2\t45\t40\t25\t12\t70\t1200\n\
+                   5\t2\t1\t1\t1\t1\t10\t20\t30\t12\t60\tSECOND";
+        let result = parse_tsv(tsv).unwrap();
+        assert_eq!(result.text, "STORE\nTOTAL 1200\n\u{000c}\nSECOND");
     }
 
     #[test]

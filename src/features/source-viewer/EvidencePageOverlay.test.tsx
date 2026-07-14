@@ -22,6 +22,17 @@ describe('EvidencePageOverlay', () => {
     expect(screen.getByRole('status', { name: 'ズーム率' })).toHaveTextContent('125%')
   })
 
+  it('uses persisted page dimensions when the original preview is unavailable', () => {
+    render(<EvidencePageOverlay pageNumber={1} regions={regions} widthPixels={1000} heightPixels={2000} />)
+
+    expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({
+      left: '10%',
+      top: '10%',
+      width: '30%',
+      height: '2%',
+    })
+  })
+
   it('maps PDF-point boxes against page points instead of rendered pixels', () => {
     const pdfRegions = [{ ...regions[0], coordinateSpace: 'PDF_POINTS' as const, boundingBox: { left: 306, top: 396, width: 61, height: 79 } }]
     render(<EvidencePageOverlay pageNumber={1} regions={pdfRegions} image={{ src: 'data:image/png;base64,AA==', width: 1224, height: 1584, pageWidthPoints: 612, pageHeightPoints: 792, alt: 'statement' }} />)

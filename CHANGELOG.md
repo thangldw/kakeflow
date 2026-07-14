@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.62.0 — 2026-07-14
+
+- Add bounded offline OCR for image-only and hybrid PDFs with explicit password, engine/model, page/pixel limit, timeout, and no-text outcomes.
+- Render at most 32 PDF pages through the same deterministic dimensions used by the authenticated source viewer, then retain ordered page outcomes plus line/word confidence and pixel geometry.
+- Preserve a multi-page PDF as one immutable full-document source record while creating separate candidates only for pages that independently parse as non-statement receipts; blank and statement pages create no expense.
+- Link every page candidate to page-specific primary evidence and the complete document as supporting evidence, and retain zero-candidate multi-page documents as source-only reviewable imports.
+- Require explicit review before posting every OCR candidate, keep passwords ephemeral, and clear stale password prompts after unrelated OCR failures.
+- Validate stored OCR page/region geometry on both IPC paths and use persisted page dimensions when an original preview is temporarily unavailable.
+- Reject cumulative render budgets before retaining additional page pixels and require a complete executable, Japanese/English models, and TSV configuration before treating a bundled OCR runtime as ready.
+- Stage the macOS OCR runtime from a pinned static Tesseract 5.5.2 vcpkg build, verify resource hashes and a clean-`PATH` Japanese/English TSV smoke, and keep Windows OCR outside the release claim until it is independently built and tested on Windows.
+
 ## 0.61.0 — 2026-07-14
 
 - Add a dedicated `monex-us-stock-trade-history-v1` importer with an exact 16-field allowlist derived from the current Monex U.S.-stock Trade History detail screen, detected from normalized fields rather than a filename.

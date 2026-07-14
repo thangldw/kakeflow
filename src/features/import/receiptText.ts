@@ -38,6 +38,12 @@ export interface ReceiptTaxEvidence {
   readonly provenance: ReceiptEvidenceProvenance
 }
 
+export interface ReceiptPageResult {
+  readonly pageNumber: number
+  readonly fields: ReceiptTextFields
+  readonly candidateCreated: boolean
+}
+
 function isoDate(year: string, month: string, day: string): string | null {
   const value = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
   const parsed = new Date(`${value}T00:00:00Z`)
@@ -140,43 +146,119 @@ export async function buildReceiptImport(
   },
   id: () => string,
   hash: (value: string) => Promise<string>,
-): Promise<{ request: StartImportDto | null; fields: ReceiptTextFields }> {
-  const fields = parseReceiptText(extracted.text)
-  if (!fields.occurredOn || !fields.amountJpy || fields.issues.includes('STATEMENT_LIKELY')) return { request: null, fields }
-  const regionIndexesForLine = (lineNumber: number) => (extracted.regions ?? [])
-    .map((region, index) => ({ region, index }))
-    .filter(({ region }) => region.text.trim() === extracted.text.split(/\r?\n/)[lineNumber - 1]?.trim())
-    .map(({ index }) => index)
-  const receipt = {
-    ...fields,
-    items: fields.items.map((item) => ({ ...item, provenance: { ...item.provenance, regionIndexes: regionIndexesForLine(item.provenance.lineNumber) } })),
-    taxes: fields.taxes.map((tax) => ({ ...tax, provenance: { ...tax.provenance, regionIndexes: regionIndexesForLine(tax.provenance.lineNumber) } })),
+): Promise<{ request: StartImportDto | null; fields: ReceiptTextFields; pageResults: readonly ReceiptPageResult[] }> {
+  const parsedFields = parseReceiptText(extracted.text)
+  const isMultiPageDocument = (extracted.pageCount ?? 1) > 1
+  const fields: ReceiptTextFields = isMultiPageDocument
+    ? { ...parsedFields, issues: [...parsedFields.issues, 'MULTI_PAGE_DOCUMENT'] }
+    : parsedFields
+  const pageText = (pageNumber: number) => {
+    const regions = (extracted.regions ?? []).filter((region) => region.pageNumber === pageNumber)
+    const lines = regions.filter((region) => region.provenance === 'TESSERACT_LINE')
+    const preferred = lines.length > 0 ? lines : regions.filter((region) => region.provenance !== 'TESSERACT_WORD')
+    return preferred.map((region) => region.text.trim()).filter(Boolean).join('\n')
   }
-  const payloadJson = JSON.stringify({ evidenceVersion: 2, extraction: { ...extracted, regions: extracted.regions ?? [] }, receipt })
-  const recordId = id()
+  const pageResults: ReceiptPageResult[] = isMultiPageDocument
+    ? Array.from({ length: extracted.pageCount ?? 0 }, (_, index) => {
+      const pageNumber = index + 1
+      const pageFields = parseReceiptText(pageText(pageNumber))
+      return {
+        pageNumber,
+        fields: pageFields,
+        candidateCreated: Boolean(pageFields.occurredOn && pageFields.amountJpy && !pageFields.issues.includes('STATEMENT_LIKELY')),
+      }
+    })
+    : [{
+      pageNumber: 1,
+      fields,
+      candidateCreated: Boolean(fields.occurredOn && fields.amountJpy && !fields.issues.includes('STATEMENT_LIKELY')),
+    }]
+  if (!isMultiPageDocument && !pageResults[0].candidateCreated) return { request: null, fields, pageResults }
+  const regionIndexesForLine = (document: ExtractedDocumentDto, lineNumber: number) => {
+    const matches = (document.regions ?? [])
+    .map((region, index) => ({ region, index }))
+    .filter(({ region }) => region.text.trim() === document.text.split(/\r?\n/)[lineNumber - 1]?.trim())
+    const lines = matches.filter(({ region }) => region.provenance === 'TESSERACT_LINE')
+    return (lines.length ? lines : matches).map(({ index }) => index)
+  }
+  const receiptEvidence = (document: ExtractedDocumentDto, receiptFields: ReceiptTextFields) => ({
+    ...receiptFields,
+    items: receiptFields.items.map((item) => ({ ...item, provenance: { ...item.provenance, regionIndexes: regionIndexesForLine(document, item.provenance.lineNumber) } })),
+    taxes: receiptFields.taxes.map((tax) => ({ ...tax, provenance: { ...tax.provenance, regionIndexes: regionIndexesForLine(document, tax.provenance.lineNumber) } })),
+  })
+  const receiptPages = pageResults.map((pageResult) => {
+    const regions = (extracted.regions ?? []).filter((region) => region.pageNumber === pageResult.pageNumber)
+    const page = extracted.pages?.find((value) => value.pageNumber === pageResult.pageNumber)
+    const document: ExtractedDocumentDto = {
+      method: extracted.method,
+      text: pageText(pageResult.pageNumber),
+      confidenceBps: page?.confidenceBps ?? extracted.confidenceBps,
+      issues: page?.issues ?? [],
+      regions,
+      pageCount: 1,
+      pages: page ? [{ ...page, pageNumber: 1 }] : [],
+    }
+    return { pageNumber: pageResult.pageNumber, candidateCreated: pageResult.candidateCreated, receipt: receiptEvidence(document, pageResult.fields) }
+  })
+  const primaryReceipt = isMultiPageDocument
+    ? receiptPages.find((page) => page.candidateCreated)?.receipt ?? null
+    : receiptEvidence(extracted, fields)
+  const documentPayloadJson = JSON.stringify({
+    evidenceVersion: 4,
+    extraction: { ...extracted, regions: extracted.regions ?? [], pages: extracted.pages ?? [] },
+    receipt: isMultiPageDocument ? null : primaryReceipt,
+    receiptPages,
+    documentClassification: isMultiPageDocument ? 'PAGE_WISE_RECEIPT_REVIEW' : 'SINGLE_RECEIPT',
+  })
+  const documentRecordId = id()
   const audienceVisibility = file.audienceVisibility ?? 'SHARED'
   const audienceMemberId = audienceVisibility === 'PERSONAL' ? file.audienceMemberId ?? null : null
   const attributionKind = file.attributionKind ?? 'HOUSEHOLD'
   const attributedMemberId = attributionKind === 'MEMBER' ? file.attributedMemberId ?? null : null
+  const candidatePages = pageResults.filter((page) => page.candidateCreated).map((page) => {
+    if (!isMultiPageDocument) return { page, recordId: documentRecordId, payloadJson: documentPayloadJson }
+    const pageOutcome = extracted.pages?.find((value) => value.pageNumber === page.pageNumber)
+    const pageExtraction = {
+      method: extracted.method,
+      text: pageText(page.pageNumber),
+      confidenceBps: pageOutcome?.confidenceBps ?? extracted.confidenceBps,
+      issues: pageOutcome?.issues ?? [],
+      regions: (extracted.regions ?? []).filter((region) => region.pageNumber === page.pageNumber),
+      pageCount: 1,
+      pages: pageOutcome ? [pageOutcome] : [],
+    }
+    return {
+      page,
+      recordId: id(),
+      payloadJson: JSON.stringify({ evidenceVersion: 4, extraction: pageExtraction, receipt: receiptPages.find((value) => value.pageNumber === page.pageNumber)?.receipt ?? null, documentPageNumber: page.pageNumber }),
+    }
+  })
+  const candidates = candidatePages.map(({ page, recordId }) => ({
+      id: id(), accountId: file.accountId, occurredOn: page.fields.occurredOn!, postedOn: null,
+      amountJpy: page.fields.amountJpy!, direction: 'OUT' as const,
+      descriptionRaw: isMultiPageDocument ? `Receipt document page ${page.pageNumber}` : 'Receipt document', merchantRaw: page.fields.merchant,
+      externalTransactionId: null, extractionConfidenceBps: extracted.pages?.find((value) => value.pageNumber === page.pageNumber)?.confidenceBps ?? extracted.confidenceBps,
+      externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+      institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
+      normalizationConfidenceBps: page.fields.confidenceBps,
+      attributionKind, attributedMemberId, audienceVisibility, audienceMemberId,
+      reviewStatus: Math.min(extracted.pages?.find((value) => value.pageNumber === page.pageNumber)?.confidenceBps ?? extracted.confidenceBps, page.fields.confidenceBps) >= 7500 ? 'READY' as const : 'PENDING' as const,
+      evidence: isMultiPageDocument
+        ? [{ sourceRecordId: recordId, role: 'PRIMARY' as const }, { sourceRecordId: documentRecordId, role: 'SUPPORTING' as const }]
+        : [{ sourceRecordId: documentRecordId, role: 'PRIMARY' as const }],
+    }))
+  const records = await Promise.all([
+    { id: documentRecordId, rowNumber: 1, payloadJson: documentPayloadJson },
+    ...candidatePages.filter(() => isMultiPageDocument).map(({ recordId, payloadJson, page }) => ({ id: recordId, rowNumber: page.pageNumber + 1, payloadJson })),
+  ].map(async (record) => ({ ...record, recordHash: await hash(record.payloadJson) })))
   return {
-    fields,
+    fields, pageResults,
     request: {
       runId: id(), documentId: id(), householdId: file.householdId, sourceType: file.sourceType ?? 'MANUAL_UPLOAD',
       originalFilename: file.filename, mediaType: file.mediaType, byteSize: file.byteSize, sha256: file.sha256,
       sourceModifiedAt: file.sourceModifiedAt, adapterId: 'receipt-text-v2', adapterVersion: '2',
       audienceVisibility, audienceMemberId,
-      records: [{ id: recordId, rowNumber: 1, recordHash: await hash(payloadJson), payloadJson }],
-      candidates: [{
-        id: id(), accountId: file.accountId, occurredOn: fields.occurredOn, postedOn: null,
-        amountJpy: fields.amountJpy, direction: 'OUT', descriptionRaw: 'Receipt document', merchantRaw: fields.merchant,
-        externalTransactionId: null, extractionConfidenceBps: extracted.confidenceBps,
-        externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
-        institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
-        normalizationConfidenceBps: fields.confidenceBps,
-        attributionKind, attributedMemberId, audienceVisibility, audienceMemberId,
-        reviewStatus: Math.min(extracted.confidenceBps, fields.confidenceBps) >= 7500 ? 'READY' : 'PENDING',
-        evidence: [{ sourceRecordId: recordId, role: 'PRIMARY' }],
-      }],
+      records, candidates,
       cardStatements: [],
     },
   }

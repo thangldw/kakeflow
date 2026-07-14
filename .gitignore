@@ -5,3 +5,5 @@ dist/
 *.log
 .vite/
 release-artifacts/
+src-tauri/generated-resources/ocr/*
+!src-tauri/generated-resources/ocr/.gitkeep

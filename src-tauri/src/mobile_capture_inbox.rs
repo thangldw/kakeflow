@@ -398,6 +398,18 @@ fn decode_document(json: &str) -> Result<ExtractedDocument> {
         confidence_bps,
         issues,
         regions,
+        page_count: 1,
+        pages: vec![crate::document_extract::ExtractedPage {
+            page_number: 1,
+            width_pixels: None,
+            height_pixels: None,
+            confidence_bps,
+            issues: if confidence_bps < 7_500 {
+                vec!["LOW_OCR_CONFIDENCE"]
+            } else {
+                Vec::new()
+            },
+        }],
     })
 }
 
@@ -676,6 +688,14 @@ mod tests {
             confidence_bps: 9000,
             issues: vec![],
             regions: vec![],
+            page_count: 1,
+            pages: vec![crate::document_extract::ExtractedPage {
+                page_number: 1,
+                width_pixels: None,
+                height_pixels: None,
+                confidence_bps: 9000,
+                issues: vec![],
+            }],
         };
         let extraction_id = state
             .with_connection(|c| Ok(record_extraction(c, "family", "artifact-1", &document)))

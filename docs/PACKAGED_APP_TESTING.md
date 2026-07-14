@@ -44,7 +44,25 @@ directory before cleanup.
 
 ## Local use
 
-Build the unsigned artifact for the current platform, then launch it through
+Stage and verify the pinned offline OCR runtime before producing a distributable
+macOS artifact. The staging command builds Tesseract 5.5.2 from the pinned vcpkg
+baseline with static third-party libraries, downloads checksum-pinned `eng` and
+`jpn` models, writes a file-level manifest, and rejects non-system dynamic links:
+
+```sh
+npm run ocr:stage:mac
+npm run ocr:verify
+```
+
+Generated OCR binaries and models are intentionally excluded from Git. The
+resource manifest is generated alongside them, and Tauri maps that staged tree
+to `Contents/Resources/ocr` in the application bundle. A release must not be
+built from a clean checkout until the staging and verification commands pass.
+The current reproducible resource build targets native Apple Silicon macOS 12+
+only. It does not claim a Windows OCR artifact; Windows must be built and tested
+on Windows with its own pinned static triplet before such a release is advertised.
+
+Then build the unsigned artifact for the current platform and launch it through
 the harness:
 
 ```sh
@@ -76,6 +94,9 @@ app. On macOS it:
   bundle identifier `app.kakeflow.desktop`, and executable `kakeflow`;
 - verifies the executable is a non-empty executable file whose resolved path
   remains inside the mounted volume;
+- verifies the bundled OCR manifest and every file hash, rejects non-system
+  Tesseract dependencies, loads both language models, and executes TSV OCR from
+  the read-only mounted resource tree with a minimal `PATH`;
 - verifies the bundle Resources directory and validates the bundle's complete
   code-signature structure with `codesign --verify --deep --strict`; and
 - detaches the volume in a `finally` path on both success and failure.

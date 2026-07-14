@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "kakeflow-packaged-ocr",
+  "version-string": "5.5.2",
+  "builtin-baseline": "b5229343b4b80264ed51e89c6a7dcd0cbe85e9cc",
+  "dependencies": [
+    {
+      "name": "tesseract",
+      "default-features": false
+    }
+  ]
+}

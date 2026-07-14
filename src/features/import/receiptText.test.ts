@@ -18,6 +18,75 @@ describe('receipt text normalization', () => {
     expect(result.fields.issues).toContain('STATEMENT_LIKELY')
   })
 
+  it('preserves a multi-page OCR document and creates candidates only for independently parseable receipt pages', async () => {
+    const lines = (pageNumber: number, text: string) => text.split('\n').map((line) => ({
+      pageNumber, coordinateSpace: 'PIXELS' as const, boundingBox: { left: 0, top: 0, width: 100, height: 20 },
+      text: line, confidenceBps: 9000, provenance: 'TESSERACT_LINE',
+    }))
+    const extracted = {
+      method: 'OCR' as const,
+      confidenceBps: 8600,
+      issues: [],
+      text: 'スーパーA\n2026/07/12\n合計 1,200\nCARD STATEMENT\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000\nOCRできないページ',
+      pageCount: 3,
+      pages: [
+        { pageNumber: 1, widthPixels: 1000, heightPixels: 1400, confidenceBps: 9200, issues: [] },
+        { pageNumber: 2, widthPixels: 1000, heightPixels: 1400, confidenceBps: 8700, issues: [] },
+        { pageNumber: 3, widthPixels: 1000, heightPixels: 1400, confidenceBps: 3000, issues: ['NO_TEXT'] },
+      ],
+      regions: [
+        ...lines(1, 'スーパーA\n2026/07/12\n合計 1,200'),
+        ...lines(2, 'CARD STATEMENT\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000'),
+        ...lines(3, 'OCRできないページ'),
+      ],
+    }
+    let sequence = 0
+    const result = await buildReceiptImport(extracted, {
+      householdId: 'family', filename: 'mixed.pdf', mediaType: 'application/pdf', byteSize: 100,
+      sha256: 'a'.repeat(64), sourceModifiedAt: null, accountId: 'family-cash',
+    }, () => `id-${++sequence}`, async () => 'b'.repeat(64))
+
+    expect(result.request).not.toBeNull()
+    expect(result.request?.records).toHaveLength(2)
+    expect(result.request?.candidates).toEqual([
+      expect.objectContaining({ occurredOn: '2026-07-12', amountJpy: 1200, merchantRaw: 'スーパーA', descriptionRaw: 'Receipt document page 1' }),
+    ])
+    expect(result.pageResults.map(({ pageNumber, candidateCreated }) => ({ pageNumber, candidateCreated }))).toEqual([
+      { pageNumber: 1, candidateCreated: true },
+      { pageNumber: 2, candidateCreated: false },
+      { pageNumber: 3, candidateCreated: false },
+    ])
+    const payload = JSON.parse(result.request!.records[0].payloadJson)
+    expect(payload).toMatchObject({ evidenceVersion: 4, documentClassification: 'PAGE_WISE_RECEIPT_REVIEW' })
+    expect(payload.extraction.pages).toHaveLength(3)
+    expect(payload.receiptPages).toHaveLength(3)
+    const pagePayload = JSON.parse(result.request!.records[1].payloadJson)
+    expect(pagePayload).toMatchObject({ documentPageNumber: 1, receipt: { amountJpy: 1200 } })
+    expect(result.request?.candidates[0].evidence).toEqual([
+      { sourceRecordId: result.request?.records[1].id, role: 'PRIMARY' },
+      { sourceRecordId: result.request?.records[0].id, role: 'SUPPORTING' },
+    ])
+  })
+
+  it('preserves a multi-page statement OCR as source evidence without creating an aggregate expense', async () => {
+    const statement = 'CARD STATEMENT\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000'
+    const result = await buildReceiptImport({
+      method: 'OCR', text: statement, confidenceBps: 9000, issues: [], pageCount: 2,
+      pages: [
+        { pageNumber: 1, widthPixels: 1000, heightPixels: 1400, confidenceBps: 9000, issues: [] },
+        { pageNumber: 2, widthPixels: 1000, heightPixels: 1400, confidenceBps: 0, issues: ['NO_TEXT'] },
+      ],
+      regions: statement.split('\n').map((text) => ({ pageNumber: 1, coordinateSpace: 'PIXELS', boundingBox: null, text, confidenceBps: 9000, provenance: 'TESSERACT_LINE' })),
+    }, {
+      householdId: 'family', filename: 'statement.pdf', mediaType: 'application/pdf', byteSize: 100,
+      sha256: 'a'.repeat(64), sourceModifiedAt: null, accountId: 'family-cash',
+    }, () => globalThis.crypto.randomUUID(), async () => 'b'.repeat(64))
+
+    expect(result.request?.records).toHaveLength(1)
+    expect(result.request?.candidates).toEqual([])
+    expect(result.pageResults.every((page) => !page.candidateCreated)).toBe(true)
+  })
+
   it('keeps a complete but low-confidence OCR result pending for human review', async () => {
     const extracted = { method: 'OCR' as const, confidenceBps: 6200, issues: ['LOW_CONFIDENCE'], text: 'セブンイレブン\n2026/07/12\n合計 1,480' }
     const result = await buildReceiptImport(extracted, {

@@ -81,8 +81,8 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
     if (isPdf) {
       return {
-        id, filename: file.name, adapterId: 'pdf-embedded-text-v1', encoding: 'binary', recordCount: 0,
-        issues: [{ code: 'DOCUMENT_EXTRACTION_REQUIRED', message: 'PDFの埋め込みテキストをローカルで抽出します。', severity: 'warning' }],
+        id, filename: file.name, adapterId: 'pdf-local-extraction-v2', encoding: 'binary', recordCount: 0,
+        issues: [{ code: 'DOCUMENT_EXTRACTION_REQUIRED', message: 'PDFをローカルで解析し、画像PDFの場合は明示操作後にOCRします。', severity: 'warning' }],
         status: 'extractable', parsedAt: new Date().toISOString(), fileBytes: bytes,
         mediaType: 'application/pdf', sourceModifiedAt: new Date(file.lastModified).toISOString(),
       }

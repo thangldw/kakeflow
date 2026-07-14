@@ -4,6 +4,8 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
+Version 0.62 adds bounded [scanned and hybrid PDF OCR](docs/SCANNED_PDF_OCR.md). The complete PDF remains immutable evidence, page outcomes and OCR boxes stay aligned with the source viewer, and only pages that independently parse as receipts create review-required candidates. Statement and blank pages never become expenses; a source-only import preserves a multi-page document when no page is eligible. The macOS bundle stages a pinned static Tesseract 5.5.2 runtime with Japanese and English models and verifies it without relying on the host `PATH`.
+
 Version 0.61 adds a dedicated [Monex U.S.-stock Trade History import](docs/MONEX_US_STOCK_IMPORT.md). It recognizes the complete screen-derived 16-field family without relying on a filename, supports explicit post-renewal U.S.-dollar spot buys and sells, preserves exported gross/settlement/fee values and physical-row evidence, and requires the user to choose an existing securities account. Yen settlement and non-spot activity remain blocking because the public documentation does not establish safe dual-currency or event-specific settlement semantics; the included fixture is explicitly synthetic rather than claimed as a Monex-issued sample.
 
 Version 0.60 makes encrypted family delivery recover correctly when relay membership keys change. KakeFlow first replays the exact persisted `KFE1` bytes, resets an envelope only after the relay returns the exact pre-storage `RECIPIENT_SET_CHANGED` rejection, and then reseals on the next explicit Send. Ambiguous failures retain their immutable retry bytes, mixed upload outcomes are reconciled independently, and interrupted sends recover after restart without automatic delivery or Apply. See [recipient-set recovery](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
@@ -135,7 +137,7 @@ src-tauri/         Tauri shell, SQLCipher ledger, encrypted vault, PDF/OCR, back
 
 KakeFlow never stores the database key in its database, logs, application bundle, or process environment. A portable v2 backup encrypts the ledger, source-document vault, and a cross-device key capsule with a user passphrase. Backup destinations are selected by the native backend; restore is authenticated, staged, semantically validated, confirmed in a native OS dialog, and activated through a restart-safe journal.
 
-Receipt OCR is offline. Development builds use `tesseract` from `PATH` and require the `jpn` and `eng` language models. Release bundles may instead provide `ocr/tesseract` (or `tesseract.exe`) and `ocr/tessdata` in the Tauri resource directory; if neither source is complete, the app reports OCR as unavailable and does not upload the image anywhere.
+Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from `PATH` and require the `jpn` and `eng` language models. Release bundles may instead provide `ocr/tesseract` (or `tesseract.exe`), both models, and `tessdata/configs/tsv` in the Tauri resource directory; if neither source is complete, the app reports OCR as unavailable and does not upload the document anywhere.
 
 ## Data and release safety
 

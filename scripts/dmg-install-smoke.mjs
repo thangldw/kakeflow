@@ -104,6 +104,10 @@ export async function runDmgInstallSmoke({
     const resources = path.join(app, 'Contents', 'Resources')
     const resourcesStat = await stat(resources)
     if (!resourcesStat.isDirectory()) throw new Error('Mounted KakeFlow resources are missing')
+    await execFile(process.execPath, [path.join(root, 'scripts', 'verify-ocr-resources.mjs')], {
+      cwd: root,
+      env: { ...process.env, KAKEFLOW_OCR_RESOURCE_ROOT: path.join(resources, 'ocr') },
+    })
     await execFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
     result = {
       status: 'ok',
@@ -115,6 +119,7 @@ export async function runDmgInstallSmoke({
       executable: metadata.executable,
       executableBytes: executableStat.size,
       resourcesPresent: true,
+      packagedOcrVerified: true,
       codeSignatureValid: true,
       packagedUiGate: 'separate-app-bundle-smoke',
     }
