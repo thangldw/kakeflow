@@ -44,6 +44,7 @@ pub struct GoogleDriveConnectionDto {
     pub drive_id: Option<String>,
     pub root_folder_id: Option<String>,
     pub root_folder_name: Option<String>,
+    pub root_resource_key: Option<String>,
     pub status: String,
     pub start_page_token: Option<String>,
     pub change_page_token: Option<String>,
@@ -156,7 +157,8 @@ pub fn begin_connection(
          ON CONFLICT(id) DO UPDATE SET
              client_id_fingerprint=excluded.client_id_fingerprint,
              google_account_id=NULL,account_email=NULL,drive_id=NULL,
-             root_folder_id=NULL,root_folder_name=NULL,status='AUTHORIZING',
+             root_folder_id=NULL,root_folder_name=NULL,root_resource_key=NULL,
+             status='AUTHORIZING',
              start_page_token=NULL,change_page_token=NULL,
              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE google_drive_connections.household_id=excluded.household_id
@@ -197,6 +199,7 @@ pub fn mark_authorized(
 
 /// Commits the selected root only after the caller has obtained a start page
 /// token. Initial crawling can then run against a stable change baseline.
+#[allow(clippy::too_many_arguments)]
 pub fn select_root_with_baseline(
     connection: &Connection,
     household_id: &str,
@@ -204,17 +207,20 @@ pub fn select_root_with_baseline(
     drive_id: Option<&str>,
     root_folder_id: &str,
     root_folder_name: &str,
+    root_resource_key: Option<&str>,
     start_page_token: &str,
 ) -> Result<GoogleDriveConnectionDto> {
     validate_scoped_ids(household_id, connection_id)?;
     validate_optional_text(drive_id, 256)?;
     validate_text(root_folder_id, 256)?;
     validate_text(root_folder_name, 255)?;
+    validate_optional_drive_resource_key(root_resource_key)?;
     validate_cursor(start_page_token)?;
     let changed = connection.execute(
         "UPDATE google_drive_connections SET
              drive_id=?3,root_folder_id=?4,root_folder_name=?5,
-             start_page_token=?6,change_page_token=?6,status='CONNECTED',
+             root_resource_key=?6,start_page_token=?7,change_page_token=?7,
+             status='CONNECTED',
              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id=?2 AND household_id=?1 AND status='SELECTING_FOLDER'",
         params![
@@ -223,6 +229,7 @@ pub fn select_root_with_baseline(
             drive_id,
             root_folder_id,
             root_folder_name,
+            root_resource_key,
             start_page_token
         ],
     )?;
@@ -287,7 +294,7 @@ pub fn load_connection(
         .query_row(
             "SELECT id,household_id,google_account_id,account_email,
                     client_id_fingerprint,drive_id,root_folder_id,root_folder_name,
-                    status,start_page_token,change_page_token,last_full_scan_at,
+                    root_resource_key,status,start_page_token,change_page_token,last_full_scan_at,
                     last_change_at,created_at,updated_at
              FROM google_drive_connections WHERE id=?2 AND household_id=?1",
             params![household_id, connection_id],
@@ -301,13 +308,14 @@ pub fn load_connection(
                     drive_id: row.get(5)?,
                     root_folder_id: row.get(6)?,
                     root_folder_name: row.get(7)?,
-                    status: row.get(8)?,
-                    start_page_token: row.get(9)?,
-                    change_page_token: row.get(10)?,
-                    last_full_scan_at: row.get(11)?,
-                    last_change_at: row.get(12)?,
-                    created_at: row.get(13)?,
-                    updated_at: row.get(14)?,
+                    root_resource_key: row.get(8)?,
+                    status: row.get(9)?,
+                    start_page_token: row.get(10)?,
+                    change_page_token: row.get(11)?,
+                    last_full_scan_at: row.get(12)?,
+                    last_change_at: row.get(13)?,
+                    created_at: row.get(14)?,
+                    updated_at: row.get(15)?,
                 })
             },
         )
@@ -1178,6 +1186,20 @@ fn validate_text(value: &str, max: usize) -> Result<()> {
 fn validate_optional_text(value: Option<&str>, max: usize) -> Result<()> {
     if let Some(value) = value {
         validate_text(value, max)?;
+    }
+    Ok(())
+}
+
+fn validate_optional_drive_resource_key(value: Option<&str>) -> Result<()> {
+    if let Some(value) = value {
+        if value.is_empty()
+            || value.len() > 256
+            || !value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        {
+            return Err(GoogleDriveStoreError::InvalidInput);
+        }
     }
     Ok(())
 }

@@ -19,6 +19,11 @@ fn database() -> Connection {
         .execute_batch(include_str!("../migrations/0054_google_drive_inbox.sql"))
         .unwrap();
     connection
+        .execute_batch(include_str!(
+            "../migrations/0055_google_drive_root_resource_key.sql"
+        ))
+        .unwrap();
+    connection
         .execute("INSERT INTO households(id,name) VALUES('home','Home')", [])
         .unwrap();
     connection
@@ -47,6 +52,7 @@ fn connected(connection: &Connection) {
         None,
         "folder",
         "KakeFlow Inbox",
+        None,
         "start-token",
     )
     .unwrap();
@@ -89,6 +95,7 @@ fn lifecycle_requires_order_and_is_household_scoped() {
             None,
             "folder",
             "Inbox",
+            None,
             "token"
         ),
         Err(GoogleDriveStoreError::Conflict)
@@ -112,11 +119,13 @@ fn lifecycle_requires_order_and_is_household_scoped() {
         Some("shared-drive"),
         "folder",
         "Inbox",
+        Some("0-Key_123"),
         "token",
     )
     .unwrap();
     assert_eq!(dto.status, "CONNECTED");
     assert_eq!(dto.change_page_token.as_deref(), Some("token"));
+    assert_eq!(dto.root_resource_key.as_deref(), Some("0-Key_123"));
 }
 
 #[test]

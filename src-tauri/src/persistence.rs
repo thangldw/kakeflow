@@ -133,6 +133,9 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0053_google_drive_connections.sql"
     )),
     M::up(include_str!("../migrations/0054_google_drive_inbox.sql")),
+    M::up(include_str!(
+        "../migrations/0055_google_drive_root_resource_key.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1612,6 +1615,17 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 55 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM google_drive_connections c
+             WHERE c.root_resource_key IS NOT NULL AND (
+                 c.root_folder_id IS NULL
+                 OR length(c.root_resource_key) NOT BETWEEN 1 AND 256
+                 OR c.root_resource_key GLOB '*[^0-9A-Za-z_-]*'
+             ) LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -1804,6 +1818,79 @@ mod tests {
             )
             .is_err());
         assert!(validate_restored_semantics(&connection, 54).is_ok());
+    }
+
+    #[test]
+    fn migration_55_preserves_a_bounded_root_resource_key() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..54].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO google_drive_connections
+                   (id,household_id,google_account_id,client_id_fingerprint,
+                    root_folder_id,root_folder_name,status,start_page_token,change_page_token)
+                 VALUES('drive','family','user',
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'root','Root','CONNECTED','start','change');",
+            )
+            .unwrap();
+
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE google_drive_connections
+                 SET root_resource_key='0-Key_123' WHERE id='drive'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT root_resource_key FROM google_drive_connections WHERE id='drive'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "0-Key_123"
+        );
+        assert!(connection
+            .execute(
+                "UPDATE google_drive_connections SET root_resource_key='bad key' WHERE id='drive'",
+                [],
+            )
+            .is_err());
+        assert!(validate_restored_semantics(&connection, 55).is_ok());
+    }
+
+    #[test]
+    fn restored_semantics_reject_invalid_google_drive_root_resource_key() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO google_drive_connections
+                       (id,household_id,google_account_id,client_id_fingerprint,
+                        root_folder_id,root_folder_name,status,start_page_token,change_page_token,
+                        root_resource_key)
+                     VALUES('drive','family','user',
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                        'root','Root','CONNECTED','start','change','0-Key_123');
+                     PRAGMA ignore_check_constraints=ON;
+                     UPDATE google_drive_connections
+                     SET root_resource_key='invalid resource key' WHERE id='drive';
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 55).is_err());
+                Ok(())
+            })
+            .expect("restore semantic audit should execute");
     }
 
     #[test]
