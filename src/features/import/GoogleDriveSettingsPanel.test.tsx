@@ -18,14 +18,12 @@ import { GoogleDriveSettingsPanel } from './GoogleDriveSettingsPanel'
 
 const timestamp = '2026-07-15T00:00:00Z'
 const selecting = {
-  id: 'drive-1', householdId: 'family', googleAccountId: 'google-1', accountEmail: 'taro@example.com',
-  clientIdFingerprint: 'a'.repeat(64), driveId: null, rootFolderId: null, rootFolderName: null, rootResourceKey: null,
-  status: 'SELECTING_FOLDER' as const, startPageToken: null, changePageToken: null, lastFullScanAt: null, lastChangeAt: null,
+  id: 'drive-1', accountEmail: 'taro@example.com', folderName: null, driveScope: null, folderBound: false,
+  status: 'SELECTING_FOLDER' as const, lastFullScanAt: null, lastChangeAt: null,
   createdAt: timestamp, updatedAt: timestamp,
 }
 const connected = {
-  ...selecting, status: 'CONNECTED' as const, rootFolderId: 'folder-1', rootFolderName: '家計簿',
-  startPageToken: '100', changePageToken: '101',
+  ...selecting, status: 'CONNECTED' as const, folderName: '家計簿', driveScope: 'MY_DRIVE' as const, folderBound: true,
 }
 const schedule = {
   connectionId: 'drive-1', enabled: true, intervalMinutes: 30 as const, nextDueAt: timestamp, running: false, leaseExpiresAt: null,

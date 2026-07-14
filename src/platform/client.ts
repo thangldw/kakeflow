@@ -1920,20 +1920,18 @@ function parseGoogleDriveAvailability(value: unknown): GoogleDriveAvailabilityDt
 function parseGoogleDriveConnection(value: unknown): GoogleDriveConnectionDto {
   const record = asRecord(value)
   if (!GOOGLE_DRIVE_CONNECTION_STATES.has(String(record.status))) throw new TypeError('google drive connection state')
-  const googleAccountId = asNullableString(record.googleAccountId); const accountEmail = asNullableString(record.accountEmail)
-  const driveId = asNullableString(record.driveId); const rootFolderId = asNullableString(record.rootFolderId)
-  const rootFolderName = asNullableString(record.rootFolderName); const rootResourceKey = asNullableString(record.rootResourceKey)
-  const startPageToken = asNullableString(record.startPageToken); const changePageToken = asNullableString(record.changePageToken)
+  const accountEmail = asNullableString(record.accountEmail)
+  const folderName = asNullableString(record.folderName)
+  const driveScope = record.driveScope === null ? null : asRequiredString(record.driveScope)
+  if (typeof record.folderBound !== 'boolean' || (driveScope !== null && driveScope !== 'MY_DRIVE' && driveScope !== 'SHARED_DRIVE')) throw new TypeError('google drive folder binding')
   const lastFullScanAt = record.lastFullScanAt === null ? null : asIsoTimestamp(record.lastFullScanAt)
   const lastChangeAt = record.lastChangeAt === null ? null : asIsoTimestamp(record.lastChangeAt)
-  if ((rootFolderId === null) !== (rootFolderName === null)) throw new TypeError('google drive folder binding')
-  if ((record.status === 'SELECTING_FOLDER' || record.status === 'CONNECTED') && (googleAccountId === null || accountEmail === null)) throw new TypeError('google drive account binding')
-  if (record.status === 'CONNECTED' && (rootFolderId === null || startPageToken === null || changePageToken === null)) throw new TypeError('google drive connected invariant')
-  if (changePageToken !== null && startPageToken === null) throw new TypeError('google drive cursor invariant')
+  if (record.folderBound !== (folderName !== null && driveScope !== null)) throw new TypeError('google drive folder binding invariant')
+  if ((record.status === 'SELECTING_FOLDER' || record.status === 'CONNECTED') && accountEmail === null) throw new TypeError('google drive account binding')
+  if (record.status === 'CONNECTED' && !record.folderBound) throw new TypeError('google drive connected invariant')
   return {
-    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), googleAccountId, accountEmail,
-    clientIdFingerprint: asCanonicalHash(record.clientIdFingerprint), driveId, rootFolderId, rootFolderName, rootResourceKey,
-    status: record.status as GoogleDriveConnectionDto['status'], startPageToken, changePageToken, lastFullScanAt, lastChangeAt,
+    id: asRequiredString(record.id), accountEmail, folderName, driveScope: driveScope as GoogleDriveConnectionDto['driveScope'], folderBound: record.folderBound,
+    status: record.status as GoogleDriveConnectionDto['status'], lastFullScanAt, lastChangeAt,
     createdAt: asIsoTimestamp(record.createdAt), updatedAt: asIsoTimestamp(record.updatedAt),
   }
 }

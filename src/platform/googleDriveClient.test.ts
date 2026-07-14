@@ -5,9 +5,8 @@ import type { AppCommand, Invoke } from './types'
 
 const timestamp = '2026-07-15T00:00:00Z'
 const connection = {
-  id: 'drive-1', householdId: 'family', googleAccountId: 'google-1', accountEmail: 'taro@example.com',
-  clientIdFingerprint: 'a'.repeat(64), driveId: null, rootFolderId: 'folder-1', rootFolderName: '家計簿', rootResourceKey: null,
-  status: 'CONNECTED', startPageToken: '100', changePageToken: '101', lastFullScanAt: timestamp, lastChangeAt: null,
+  id: 'drive-1', accountEmail: 'taro@example.com', folderName: '家計簿', driveScope: 'MY_DRIVE', folderBound: true,
+  status: 'CONNECTED', lastFullScanAt: timestamp, lastChangeAt: null,
   createdAt: timestamp, updatedAt: timestamp,
 } as const
 const schedule = {
@@ -71,7 +70,7 @@ describe('Google Drive platform client contract', () => {
 
   it.each([
     ['google_drive_availability', { available: true, authorizationMode: 'SYSTEM_BROWSER_LOOPBACK', scopeProfile: 'DRIVE_READONLY', unavailableReason: 'UNSUPPORTED_RUNTIME' }, (client: ReturnType<typeof createPlatformClient>) => client.getGoogleDriveAvailability()],
-    ['google_drive_connections_list', [{ ...connection, changePageToken: null }], (client: ReturnType<typeof createPlatformClient>) => client.listGoogleDriveConnections('family')],
+    ['google_drive_connections_list', [{ ...connection, folderName: null }], (client: ReturnType<typeof createPlatformClient>) => client.listGoogleDriveConnections('family')],
     ['google_drive_schedule_get', { ...schedule, intervalMinutes: 10 }, (client: ReturnType<typeof createPlatformClient>) => client.getGoogleDriveSchedule('family', 'drive-1')],
     ['google_drive_inbox_list', [{ ...inbox, state: 'STAGED', importRunId: null }], (client: ReturnType<typeof createPlatformClient>) => client.listGoogleDriveInbox('family')],
   ] as const)('rejects malformed %s DTOs at the IPC boundary', async (command, response, call) => {

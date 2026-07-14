@@ -745,13 +745,11 @@ export interface GoogleDriveAvailabilityDto {
   readonly unavailableReason: GoogleDriveUnavailableReasonDto | null
 }
 export type GoogleDriveConnectionStatusDto = 'AUTHORIZING' | 'SELECTING_FOLDER' | 'CONNECTED' | 'AUTH_REQUIRED' | 'DISCONNECTED'
+export type GoogleDriveScopeDto = 'MY_DRIVE' | 'SHARED_DRIVE'
 export interface GoogleDriveConnectionDto {
-  readonly id: string; readonly householdId: string
-  readonly googleAccountId: string | null; readonly accountEmail: string | null
-  readonly clientIdFingerprint: string; readonly driveId: string | null
-  readonly rootFolderId: string | null; readonly rootFolderName: string | null
-  readonly rootResourceKey: string | null; readonly status: GoogleDriveConnectionStatusDto
-  readonly startPageToken: string | null; readonly changePageToken: string | null
+  readonly id: string; readonly accountEmail: string | null
+  readonly folderName: string | null; readonly driveScope: GoogleDriveScopeDto | null; readonly folderBound: boolean
+  readonly status: GoogleDriveConnectionStatusDto
   readonly lastFullScanAt: string | null; readonly lastChangeAt: string | null
   readonly createdAt: string; readonly updatedAt: string
 }
