@@ -138,7 +138,9 @@ npm run capture:uploader
 Then add `http://127.0.0.1:8790` (or the TLS origin used to expose that page) to
 `KAKEFLOW_RELAY_ALLOWED_ORIGINS`. The page keeps its Bearer token only in the
 current input element and does not use cookies, local storage, or session
-storage. It is a responsive reference uploader, not an iOS/Android native app,
-offline queue, background camera integration, remote OCR service, or production
-authentication surface. Relay acceptance is not a desktop download/read
-receipt and never posts a ledger transaction.
+storage. It commits exact receipt capsule bytes to an IndexedDB queue before
+upload and can resume bounded foreground retry after reload. It is a responsive
+reference uploader, not an iOS/Android native app, operating-system background
+camera/upload integration, remote OCR service, or production authentication
+surface. Relay acceptance is not a desktop download/read receipt and never
+posts a ledger transaction.

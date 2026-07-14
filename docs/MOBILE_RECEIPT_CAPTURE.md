@@ -58,14 +58,17 @@ expense candidate.
 
 The repository includes a responsive mobile-browser reference uploader for
 testing the protocol. It uses the browser camera/file picker, keeps the relay
-token in memory, and provides explicit `世帯共有` and `自分のみ` choices. It is
-not a native iOS/Android application, an App Store build, a background upload
-service, or a production-hosted relay.
+token in memory, and provides explicit `世帯共有` and `自分のみ` choices. A
+[durable foreground queue](./DURABLE_MOBILE_CAPTURE_QUEUE.md) commits the exact
+capsule bytes to IndexedDB before upload, survives a page reload, and uses
+bounded retry without changing capture identity. It is not a native iOS/Android
+application, an App Store build, an operating-system background upload service,
+or a production-hosted relay.
 
 ## Non-claims
 
-Version 0.55 does not provide remote OCR, automatic matching, automatic
+The capture channel does not provide remote OCR, automatic matching, automatic
 categorization, automatic ledger posting, push/realtime delivery, remote
-deletion, end-to-end/zero-knowledge relay encryption, offline mobile queues, or
-native mobile distribution. Existing explicit receipt matching and balanced
-posting controls remain mandatory.
+deletion, end-to-end/zero-knowledge relay encryption, operating-system
+background delivery, or native mobile distribution. Existing explicit receipt
+matching and balanced posting controls remain mandatory.

@@ -242,6 +242,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Explainable recurring/subscription and unusual-spending detection derived locally from confirmed ledger history.
 - Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export.
 - Automatic discovery with review-gated ingestion from registered local, iCloud Drive, Google Drive, OneDrive, or NAS folders across the desktop app, including restart-safe queue state and an app-wide actionable badge.
+- Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
@@ -253,7 +254,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 2. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
 3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
-4. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
+4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
 5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.
 
 ## Family delivery boundary

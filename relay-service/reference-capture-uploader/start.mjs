@@ -9,6 +9,8 @@ const files = new Map([
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/uploader.mjs', ['uploader.mjs', 'text/javascript; charset=utf-8']],
   ['/capsule.mjs', ['capsule.mjs', 'text/javascript; charset=utf-8']],
+  ['/capture-queue.mjs', ['capture-queue.mjs', 'text/javascript; charset=utf-8']],
+  ['/capture-queue-store.mjs', ['capture-queue-store.mjs', 'text/javascript; charset=utf-8']],
 ])
 const host = '127.0.0.1'
 const port = Number(process.env.KAKEFLOW_CAPTURE_UPLOADER_PORT ?? '8790')
@@ -23,4 +25,3 @@ createServer(async (request, response) => {
     response.end(bytes)
   } catch { response.writeHead(500).end() }
 }).listen(port, host, () => process.stdout.write(`KakeFlow reference capture uploader: http://${host}:${port}\n`))
-

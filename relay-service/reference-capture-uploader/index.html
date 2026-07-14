@@ -7,7 +7,7 @@
   <style>
     :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; background:#0b1220; color:#e8eef9 }
     body { margin:0; min-height:100vh; display:grid; place-items:center; padding:20px; box-sizing:border-box }
-    main { width:min(100%, 540px); background:#121d31; border:1px solid #2b3b57; border-radius:18px; padding:24px; box-shadow:0 18px 60px #0007 }
+    main { width:min(100%, 620px); background:#121d31; border:1px solid #2b3b57; border-radius:18px; padding:24px; box-shadow:0 18px 60px #0007 }
     h1 { font-size:1.45rem; margin:0 0 8px } p { color:#b9c6da; margin:0 0 20px }
     form, .connection { display:grid; gap:16px } label, legend { font-weight:650 }
     input, select, button { width:100%; box-sizing:border-box; font:inherit; border-radius:10px; border:1px solid #40516d; padding:12px; background:#0c1627; color:inherit }
@@ -17,16 +17,27 @@
     #connect { background:#31435f } #status { min-height:48px; padding:12px; border-radius:10px; background:#0c1627 }
     #status[data-state=success] { color:#72e6a6 } #status[data-state=error] { color:#ff9d9d }
     small { display:block; color:#91a2bb; font-weight:400 }
+    .queue-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:22px 0 8px }
+    .queue-head h2 { font-size:1rem; margin:0 } #queue-count { color:#91a2bb; font-size:.85rem }
+    #queue-list { list-style:none; padding:0; margin:0 0 18px; display:grid; gap:8px }
+    #queue-list li { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:11px 12px; border:1px solid #2b3b57; border-radius:10px; background:#0c1627 }
+    #queue-list li[data-state=DELIVERED] { border-color:#286346 } #queue-list li[data-state=NEEDS_ATTENTION] { border-color:#8a4949 }
+    #queue-list .queue-empty { color:#91a2bb; justify-content:center }
+    .queue-actions { display:flex; gap:6px; flex:0 0 auto } .queue-actions button { width:auto; padding:7px 9px; font-size:.78rem; background:#31435f }
   </style>
 </head>
 <body>
 <main>
   <h1>KakeFlow レシート送信</h1>
-  <p>検証用のモバイルブラウザー uploader です。ネイティブアプリではありません。OCR と取引確認は desktop 上で行います。</p>
+  <p>検証用のモバイルブラウザー uploader です。レシートは送信前に端末内の永続キューへ保存されます。OCR と取引確認は desktop 上で行います。</p>
   <section class="connection" aria-label="Relay 接続">
     <label>Relay endpoint<input id="endpoint" type="url" inputmode="url" value="http://127.0.0.1:8787" autocomplete="off" required></label>
-    <label>Bearer token<input id="token" type="password" autocomplete="off" required><small>このページは token を保存しません。</small></label>
+    <label>Bearer token<input id="token" type="password" autocomplete="off" required><small>token は保存しません。レシート capsule のみ IndexedDB に保持します。</small></label>
     <button id="connect" type="button">メンバー情報を確認</button>
+  </section>
+  <section aria-labelledby="queue-title">
+    <div class="queue-head"><h2 id="queue-title">端末内の送信キュー</h2><span id="queue-count">0 件待ち</span></div>
+    <ul id="queue-list"></ul>
   </section>
   <hr>
   <form>
@@ -43,4 +54,3 @@
 <script type="module" src="./uploader.mjs"></script>
 </body>
 </html>
-

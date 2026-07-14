@@ -30,7 +30,7 @@
     "relay:start": "node relay-service/start.mjs",
     "relay:test": "node --test relay-service/server.test.mjs",
     "capture:uploader": "node relay-service/reference-capture-uploader/start.mjs",
-    "capture:test": "node --test relay-service/reference-capture-uploader/capsule.test.mjs"
+    "capture:test": "node --test relay-service/reference-capture-uploader/*.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
