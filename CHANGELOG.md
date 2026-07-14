@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.67.0 — 2026-07-14
+
+- Export the Monthly Household Review as a native four-sheet `.xlsx` workbook using the same validated calendar month, account-group scope, and household/member attribution scope as the desktop report.
+- Preserve typed JPY, count, and percentage values across `Summary`, `Comparisons`, `Drivers`, and `Health`, with bounded prior-month drivers and explicit household-wide goal/data-quality disclosures.
+- Keep `asOf` limited to the data-quality reference date, write workbook bytes only in the native process, and return cancellation or saved-file metadata through IPC without serializing the workbook.
+
 ## 0.66.0 — 2026-07-14
 
 - Add the strict `paypay-card-finalized-statement-v1` adapter for one exact ordered eleven-column community-derived synthetic PayPay Card contract; official material confirms finalized monthly CSV download but does not publish the literal schema.

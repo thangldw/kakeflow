@@ -190,6 +190,12 @@ export interface AnnualReviewXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface MonthlyReviewXlsxSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+}
+
 export type FinancialCalendarInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke = tauriInvoke) {
@@ -198,6 +204,10 @@ export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke 
       parseCalendar(await invoke('financial_calendar_query', { request })),
     getMonthlyReport: async (request: MonthlyFinancialReportRequest): Promise<MonthlyFinancialReportDto> =>
       parseMonthlyReport(await invoke('financial_report_monthly_query', { request })),
+    saveMonthlyReviewXlsx: async (request: MonthlyFinancialReportRequest): Promise<MonthlyReviewXlsxSavedDto | null> => {
+      const value = await invoke('monthly_household_review_xlsx_save', { request })
+      return value === null ? null : parseMonthlyReviewXlsxSaved(value)
+    },
     getYearlyReport: async (request: YearlyFinancialReportRequest): Promise<YearlyFinancialReportDto> =>
       parseYearlyReport(await invoke('financial_report_yearly_query', { request })),
     generateAnnualReviewCsv: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewCsvDto> =>
@@ -487,4 +497,15 @@ function parseAnnualReviewXlsxSaved(value: unknown): AnnualReviewXlsxSavedDto {
   if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved annual review XLSX filename')
   if ((item.rowCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved annual review XLSX')
   return item as unknown as AnnualReviewXlsxSavedDto
+}
+
+function parseMonthlyReviewXlsxSaved(value: unknown): MonthlyReviewXlsxSavedDto {
+  const item = record(value, 'saved monthly review XLSX')
+  stringValue(item.fileName, 'saved monthly review XLSX filename')
+  nonNegativeInteger(item.rowCount, 'saved monthly review XLSX rows')
+  nonNegativeInteger(item.byteSize, 'saved monthly review XLSX bytes')
+  const fileName = item.fileName as string
+  if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved monthly review XLSX filename')
+  if ((item.rowCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved monthly review XLSX')
+  return item as unknown as MonthlyReviewXlsxSavedDto
 }

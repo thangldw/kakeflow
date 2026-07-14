@@ -142,7 +142,8 @@ describe('MonthlyReportView', () => {
     const openGoals = vi.fn()
     const openImports = vi.fn()
     const openReconciliation = vi.fn()
-    render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" onComparisonChange={setComparison} onSelectDriver={selectDriver} onOpenBudget={openBudget} onOpenGoals={openGoals} onOpenImports={openImports} onOpenReconciliation={openReconciliation} />)
+    const saveXlsx = vi.fn()
+    render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" onComparisonChange={setComparison} onSelectDriver={selectDriver} onOpenBudget={openBudget} onOpenGoals={openGoals} onOpenImports={openImports} onOpenReconciliation={openReconciliation} onSaveXlsx={saveXlsx} />)
 
     fireEvent.click(screen.getByRole('button', { name: '前月比' }))
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
@@ -151,6 +152,7 @@ describe('MonthlyReportView', () => {
     fireEvent.click(screen.getByRole('button', { name: '目標を見る' }))
     fireEvent.click(screen.getByRole('button', { name: '取込状況を見る' }))
     fireEvent.click(screen.getByRole('button', { name: '照合を見る' }))
+    fireEvent.click(screen.getByRole('button', { name: '月次Excelを保存' }))
 
     expect(setComparison).toHaveBeenCalledWith('PRIOR_MONTH')
     expect(selectDriver).toHaveBeenNthCalledWith(1, 'CATEGORY', report.topCategoryDrivers[0])
@@ -159,6 +161,13 @@ describe('MonthlyReportView', () => {
     expect(openGoals).toHaveBeenCalledOnce()
     expect(openImports).toHaveBeenCalledOnce()
     expect(openReconciliation).toHaveBeenCalledOnce()
+    expect(saveXlsx).toHaveBeenCalledOnce()
     expect(screen.getByText('−¥10,000')).toBeInTheDocument()
+  })
+
+  it('shows monthly Excel progress without changing the selected comparison', () => {
+    render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" savingXlsx onComparisonChange={vi.fn()} onSaveXlsx={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Excelを作成中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '前年同月比' })).toHaveAttribute('aria-pressed', 'true')
   })
 })

@@ -128,12 +128,14 @@ export interface FinancialCalendarViewProps {
 export interface MonthlyReportViewProps {
   readonly data: MonthlyReportDto
   readonly comparison?: 'PRIOR_MONTH' | 'PRIOR_YEAR'
+  readonly savingXlsx?: boolean
   readonly onComparisonChange?: (comparison: 'PRIOR_MONTH' | 'PRIOR_YEAR') => void
   readonly onSelectDriver?: (kind: 'CATEGORY' | 'MERCHANT', driver: MonthlyDriverDto) => void
   readonly onOpenBudget?: () => void
   readonly onOpenGoals?: () => void
   readonly onOpenImports?: () => void
   readonly onOpenReconciliation?: () => void
+  readonly onSaveXlsx?: () => void
 }
 
 const weekdays = ['日', '月', '火', '水', '木', '金', '土'] as const
@@ -232,14 +234,14 @@ function DriverTable({ title, kind, rows, onSelect }: { readonly title: string; 
   })}</tbody></table></div>}</section>
 }
 
-export function MonthlyReportView({ data, comparison = 'PRIOR_MONTH', onComparisonChange, onSelectDriver, onOpenBudget, onOpenGoals, onOpenImports, onOpenReconciliation }: MonthlyReportViewProps) {
+export function MonthlyReportView({ data, comparison = 'PRIOR_MONTH', savingXlsx = false, onComparisonChange, onSelectDriver, onOpenBudget, onOpenGoals, onOpenImports, onOpenReconciliation, onSaveXlsx }: MonthlyReportViewProps) {
   const delta = comparison === 'PRIOR_MONTH' ? data.vsPriorMonth : data.vsPriorYear
   const comparisonLabel = comparison === 'PRIOR_MONTH' ? '前月比' : '前年同月比'
   const goalProgress = data.goals.targetJpy > 0 ? Math.round(data.goals.savedJpy / data.goals.targetJpy * 10_000) : 0
   const reconciledBps = data.reconciliation.totalStatements > 0 ? Math.round(data.reconciliation.fullyReconciled / data.reconciliation.totalStatements * 10_000) : 0
 
   return <div className="report-view monthly-report-view">
-    <header className="report-view-head"><div><p>Monthly Review</p><h2>{monthLabel(data.period)}</h2><span>{data.current.postedTransactionCount}件の計算対象の確定取引（集計対象外を除く）</span></div><div className="report-segmented" aria-label="レポートの比較期間"><button type="button" aria-pressed={comparison === 'PRIOR_MONTH'} onClick={() => onComparisonChange?.('PRIOR_MONTH')}>前月比</button><button type="button" aria-pressed={comparison === 'PRIOR_YEAR'} onClick={() => onComparisonChange?.('PRIOR_YEAR')}>前年同月比</button></div></header>
+    <header className="report-view-head"><div><p>Monthly Review</p><h2>{monthLabel(data.period)}</h2><span>{data.current.postedTransactionCount}件の計算対象の確定取引（集計対象外を除く）</span></div><div className="monthly-review-head-actions"><div className="report-segmented" aria-label="レポートの比較期間"><button type="button" aria-pressed={comparison === 'PRIOR_MONTH'} onClick={() => onComparisonChange?.('PRIOR_MONTH')}>前月比</button><button type="button" aria-pressed={comparison === 'PRIOR_YEAR'} onClick={() => onComparisonChange?.('PRIOR_YEAR')}>前年同月比</button></div>{onSaveXlsx && <button type="button" className="primary-btn" disabled={savingXlsx} onClick={onSaveXlsx}>{savingXlsx ? 'Excelを作成中…' : '月次Excelを保存'}</button>}</div></header>
     <DataQualityWarning quality={data.dataQuality} onOpenImports={onOpenImports} />
     <section className="report-kpi-grid" aria-label="月次KPI">
       <article><span>収入</span><strong>{yen(data.current.incomeJpy)}</strong><Delta delta={delta.income} /></article>

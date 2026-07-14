@@ -1770,6 +1770,8 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
   const [view, setView] = useState<ReportView>(initialView)
   const [calendar, setCalendar] = useState<FinancialCalendarDto | null>(null)
   const [monthlyReport, setMonthlyReport] = useState<MonthlyFinancialReportDto | null>(null)
+  const [monthlyXlsxSaving, setMonthlyXlsxSaving] = useState(false)
+  const [monthlyExportNotice, setMonthlyExportNotice] = useState('')
   const [annualReport, setAnnualReport] = useState<YearlyFinancialReportDto | null>(null)
   const [annualNotice, setAnnualNotice] = useState('')
   const [annualCsvSaving, setAnnualCsvSaving] = useState(false)
@@ -1783,10 +1785,19 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
     let active = true
     const request = { householdId, accountGroupId, attributionScope, month, asOf: periodFromMonth(month).toDate }
     void Promise.all([financialCalendarPlatform.getCalendar(request), financialCalendarPlatform.getMonthlyReport(request), forecastActionPlatform.query({ householdId, accountGroupId, attributionScope, asOf: request.asOf })])
-      .then(([nextCalendar, nextReport, nextForecast]) => { if (active) { setCalendar(nextCalendar); setMonthlyReport(nextReport); setForecast(nextForecast); setNotice('') } })
+      .then(([nextCalendar, nextReport, nextForecast]) => { if (active) { setCalendar(nextCalendar); setMonthlyReport(nextReport); setForecast(nextForecast); setNotice(''); setMonthlyExportNotice('') } })
       .catch(() => { if (active) { setCalendar(null); setMonthlyReport(null); setForecast(null); setNotice('家計レビューを読み込めませんでした。') } })
     return () => { active = false }
   }, [accountGroupId, attributionScope, householdId, month, revision])
+  const saveMonthlyXlsx = async () => {
+    if (!householdId) return
+    setMonthlyXlsxSaving(true); setMonthlyExportNotice('')
+    try {
+      const saved = await financialCalendarPlatform.saveMonthlyReviewXlsx({ householdId, accountGroupId, attributionScope, month, asOf: periodFromMonth(month).toDate })
+      setMonthlyExportNotice(saved ? `${saved.fileName}（${saved.rowCount}行）を保存しました。` : '月次Excelエクスポートをキャンセルしました。')
+    } catch { setMonthlyExportNotice('月次Excelを書き出せませんでした。対象月とスコープを確認してください。') }
+    finally { setMonthlyXlsxSaving(false) }
+  }
   useEffect(() => {
     if (view !== 'ANNUAL' || !householdId || platformClient.runtime !== 'tauri') return
     let active = true
@@ -1818,7 +1829,7 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
   const reportBody = view === 'CALENDAR'
     ? calendar ? <FinancialCalendarView data={calendar} basis={basis} onBasisChange={setBasis} onSelectDate={() => openPage('transactions')} onSelectEvent={() => openPage('transactions')} onOpenImports={() => openPage('import')} /> : <section className="panel report-loading"><CalendarDays size={28} /><p>{notice || '日次カレンダーを読み込んでいます…'}</p></section>
     : view === 'MONTHLY'
-      ? monthlyReport ? <MonthlyReportView data={monthlyReport} comparison={comparison} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} /> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
+      ? monthlyReport ? <><MonthlyReportView data={monthlyReport} comparison={comparison} savingXlsx={monthlyXlsxSaving} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveXlsx={() => void saveMonthlyXlsx()} />{monthlyExportNotice && <p role="status">{monthlyExportNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
       : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} savingCsv={annualCsvSaving} savingXlsx={annualXlsxSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} onSaveXlsx={() => void saveAnnualXlsx()} />{annualNotice && <p role="status">{annualNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || '前年同期間と年次推移を比較しています…'}</p></section>
       : view === 'FORECAST' ? forecast ? <ForecastActionViews data={forecast} onAction={(action: ActionItemDto) => openPage(pageForAction(action))} /> : <section className="panel report-loading"><TrendingUp size={28} /><p>{notice || '予測とアクションを読み込んでいます…'}</p></section>
         : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
