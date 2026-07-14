@@ -231,32 +231,32 @@ impl<'a> GoogleDriveInitialStore<'a> {
         let rows = statement.query_map(
             params![self.connection_id, root_id, self.root_folder_id],
             |row| {
-            let byte_size = row
-                .get::<_, Option<i64>>(5)?
-                .map(u64::try_from)
-                .transpose()
-                .map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        5,
-                        rusqlite::types::Type::Integer,
-                        Box::new(error),
-                    )
-                })?;
-            Ok(RemoteNode {
-                file_id: row.get(0)?,
-                parent_file_id: row.get(1)?,
-                name: row.get(2)?,
-                mime_type: row.get(3)?,
-                modified_time: row.get(4)?,
-                byte_size,
-                md5_checksum: row.get(6)?,
-                drive_version: row.get(7)?,
-                is_folder: row.get(8)?,
-                can_download: row.get(9)?,
-                is_in_selected_tree: false,
-                is_trashed: row.get(10)?,
-                disposition: DiscoveryDisposition::Unsupported,
-            })
+                let byte_size = row
+                    .get::<_, Option<i64>>(5)?
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            5,
+                            rusqlite::types::Type::Integer,
+                            Box::new(error),
+                        )
+                    })?;
+                Ok(RemoteNode {
+                    file_id: row.get(0)?,
+                    parent_file_id: row.get(1)?,
+                    name: row.get(2)?,
+                    mime_type: row.get(3)?,
+                    modified_time: row.get(4)?,
+                    byte_size,
+                    md5_checksum: row.get(6)?,
+                    drive_version: row.get(7)?,
+                    is_folder: row.get(8)?,
+                    can_download: row.get(9)?,
+                    is_in_selected_tree: false,
+                    is_trashed: row.get(10)?,
+                    disposition: DiscoveryDisposition::Unsupported,
+                })
             },
         )?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
