@@ -1284,7 +1284,8 @@ describe('KakeFlow desktop read models', () => {
       { id: 'snapshot-jul', accountId: 'broker', accountName: '証券口座', sourceDocumentId: 'doc-jul', asOf: '2026-07-31T15:00:00+09:00', marketValueJpy: 520_000, cashValueJpy: 100_000, unrealizedPnlJpy: 30_000, realizedPnlJpy: null, positionCount: 1, fxRateCount: 1 },
       { id: 'snapshot-jun', accountId: 'broker', accountName: '証券口座', sourceDocumentId: 'doc-jun', asOf: '2026-06-30T15:00:00+09:00', marketValueJpy: 500_000, cashValueJpy: 90_000, unrealizedPnlJpy: 25_000, realizedPnlJpy: null, positionCount: 1, fxRateCount: 1 },
     ]
-    let saveOutcome: 'SUCCESS' | 'CANCEL' | 'ERROR' = 'SUCCESS'
+    let saveOutcome: 'SUCCESS' | 'CANCEL' | 'ERROR' | 'PENDING' = 'SUCCESS'
+    let finishPdf: ((value: { fileName: string; pageCount: number; byteSize: number }) => void) | undefined
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
       if (command === 'portfolio_snapshots_list') return summaries
       if (command === 'portfolio_snapshot_get') {
@@ -1296,6 +1297,13 @@ describe('KakeFlow desktop read models', () => {
         if (saveOutcome === 'ERROR') throw new Error('save failed')
         const snapshotId = (args?.request as { snapshotId: string }).snapshotId
         return { fileName: `kakeflow-${snapshotId}.xlsx`, rowCount: 12, byteSize: 6_000, sheetCount: 4 }
+      }
+      if (command === 'portfolio_snapshot_pdf_save') {
+        if (saveOutcome === 'CANCEL') return null
+        if (saveOutcome === 'ERROR') throw new Error('save failed')
+        const snapshotId = (args?.request as { snapshotId: string }).snapshotId
+        if (saveOutcome === 'PENDING') return new Promise((resolve) => { finishPdf = resolve })
+        return { fileName: `kakeflow-${snapshotId}.pdf`, pageCount: 5, byteSize: 14_000, rendererVersion: 1 }
       }
       return fallback(command, args)
     })
@@ -1321,6 +1329,20 @@ describe('KakeFlow desktop read models', () => {
     expect(selectedRequest).not.toHaveProperty('asOf')
     expect(await screen.findByText('kakeflow-snapshot-jun.xlsx（12行）を保存しました。')).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高PDFを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('portfolio_snapshot_pdf_save', { request: selectedRequest }))
+    const pdfRequest = nativeInvoke.mock.calls.find(([command]) => command === 'portfolio_snapshot_pdf_save')?.[1]?.request
+    const xlsxRequest = nativeInvoke.mock.calls.filter(([command]) => command === 'portfolio_snapshot_xlsx_save').at(-1)?.[1]?.request
+    expect(pdfRequest).toEqual(xlsxRequest)
+    expect(await screen.findByText('kakeflow-snapshot-jun.pdf（5ページ）を保存しました。')).toBeInTheDocument()
+
+    saveOutcome = 'PENDING'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高PDFを保存' }))
+    expect(screen.getByRole('button', { name: 'PDFを作成中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '選択中の残高Excelを保存' })).toBeDisabled()
+    finishPdf?.({ fileName: 'kakeflow-snapshot-jun.pdf', pageCount: 5, byteSize: 14_000 })
+    await waitFor(() => expect(screen.getByRole('button', { name: '選択中の残高PDFを保存' })).toBeEnabled())
+
     saveOutcome = 'CANCEL'
     fireEvent.click(screen.getByRole('button', { name: '選択中の残高Excelを保存' }))
     expect(await screen.findByText('資産スナップショットExcelエクスポートをキャンセルしました。')).toBeInTheDocument()
@@ -1329,6 +1351,16 @@ describe('KakeFlow desktop read models', () => {
     saveOutcome = 'ERROR'
     fireEvent.click(screen.getByRole('button', { name: '選択中の残高Excelを保存' }))
     expect(await screen.findByText('資産スナップショットExcelを書き出せませんでした。選択中のスナップショットを確認してください。')).toBeInTheDocument()
+    expect(juneSnapshot).toHaveClass('active')
+
+    saveOutcome = 'CANCEL'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高PDFを保存' }))
+    expect(await screen.findByText('資産スナップショットPDFエクスポートをキャンセルしました。')).toBeInTheDocument()
+    expect(juneSnapshot).toHaveClass('active')
+
+    saveOutcome = 'ERROR'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高PDFを保存' }))
+    expect(await screen.findByText('資産スナップショットPDFを書き出せませんでした。選択中のスナップショットを確認してください。')).toBeInTheDocument()
     expect(juneSnapshot).toHaveClass('active')
   })
 

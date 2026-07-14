@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.73.0 — 2026-07-15
+
+- Export the exact securities Portfolio Snapshot selected in the investment workspace as a deterministic Japanese PDF using the same household and snapshot request as the screen and native workbook; never substitute a newer snapshot.
+- Preserve the source-provided `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX rows, nullable values, and Source Document/Row lineage without deriving missing values or applying hidden conversions.
+- Keep event-based FIFO performance, live/current valuation beyond persisted snapshot values, multi-snapshot trends, ROI, TWR, IRR, benchmark return, and forecasts explicitly outside this point-in-time report.
+- Keep PDF bytes and filesystem writes in the native process, return only saved-file metadata over IPC, treat save-dialog cancellation as a non-error, and prevent overlapping Portfolio Snapshot XLSX/PDF exports.
+- Complete the reproducible Poppler release gate for all four source-backed PDF reports: monthly, annual, investment performance, and portfolio snapshot.
+
 ## 0.72.0 — 2026-07-15
 
 - Export the source-auditable annual Investment Performance report as a deterministic Japanese PDF using the same household, optional securities-account, inclusive year, FIFO engine, and native-currency DTO as the visible report and workbook.

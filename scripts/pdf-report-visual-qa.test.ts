@@ -76,15 +76,21 @@ describe('PDF report visual QA', () => {
     try {
       await writeFile(fixture, minimalPdf())
       const result = await runPdfReportVisualQa({
-        reports: { monthly: fixture, annual: fixture, 'investment-performance': fixture },
+        reports: {
+          monthly: fixture,
+          annual: fixture,
+          'investment-performance': fixture,
+          'portfolio-snapshot': fixture,
+        },
         outputDirectory: output,
       })
       expect(result).toMatchObject({ status: 'automated-pass', visualReview: 'required' })
-      expect(result.reportTypes).toEqual(['monthly', 'annual', 'investment-performance'])
+      expect(result.reportTypes).toEqual(['monthly', 'annual', 'investment-performance', 'portfolio-snapshot'])
       expect(result.reports).toEqual([
         expect.objectContaining({ pages: 1, type: 'monthly' }),
         expect.objectContaining({ pages: 1, type: 'annual' }),
         expect.objectContaining({ pages: 1, type: 'investment-performance' }),
+        expect.objectContaining({ pages: 1, type: 'portfolio-snapshot' }),
       ])
       const manifest = JSON.parse(await readFile(path.join(output, 'manifest.json'), 'utf8'))
       expect(manifest.reports[0].render.pages[0]).toMatchObject({ page: 1, width: 1190, height: 1684 })
@@ -92,16 +98,22 @@ describe('PDF report visual QA', () => {
       expect(checklist).toContain('- [ ] `monthly/page-0001.png`')
       expect(checklist).toContain('- [ ] `annual/page-0001.png`')
       expect(checklist).toContain('- [ ] `investment-performance/page-0001.png`')
+      expect(checklist).toContain('- [ ] `portfolio-snapshot/page-0001.png`')
       expect(checklist).toContain('annual chart keeps January-December order')
       expect(checklist).toContain('Partial-coverage months are distinguishable')
       expect(checklist).toContain('separated and visibly labeled by native currency')
       expect(checklist).toContain('No consolidated return, ROI, TWR, IRR')
       expect(checklist).toContain('remain visible as exceptions')
       expect(checklist).toContain('unavailable lineage stays explicitly unavailable')
+      expect(checklist).toContain('matches the selected snapshot ID')
+      expect(checklist).toContain('explicit source FX rows remain separate')
+      expect(checklist).toContain('remain blank or unavailable instead of becoming zero')
+      expect(checklist).toContain('snapshot source document plus positive source row')
+      expect(checklist).toContain('No performance, return, trend, current quote, or live valuation')
       await expect(runPdfReportVisualQa({
-        reports: { monthly: fixture, annual: fixture },
+        reports: { monthly: fixture, annual: fixture, 'investment-performance': fixture },
         outputDirectory: path.join(temporaryRoot, 'wrong-release-scope'),
-      })).rejects.toThrow(/Expected PDF report types annual, investment-performance, monthly/)
+      })).rejects.toThrow(/Expected PDF report types annual, investment-performance, monthly, portfolio-snapshot/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }

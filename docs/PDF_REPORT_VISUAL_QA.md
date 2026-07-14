@@ -2,17 +2,18 @@
 
 ## Release acceptance scope
 
-KakeFlow v0.72 implements three PDF exports: the source-backed Monthly Household
-Review, Annual Household Review, and Investment Performance report. Therefore
-the v0.72 PDF release gate requires exactly the `monthly`, `annual`, and
-`investment-performance` fixture reports. Portfolio Snapshot PDF remains
-unreleased and must not be claimed as coverage.
+KakeFlow v0.73 implements four PDF exports: the source-backed Monthly Household
+Review, Annual Household Review, Investment Performance report, and one
+explicit Portfolio Snapshot. Therefore the v0.73 PDF release gate requires
+exactly the `monthly`, `annual`, `investment-performance`, and
+`portfolio-snapshot` fixture reports.
 
 Each PDF must be generated from the fixed synthetic household fixture used by
 its report contract test. The selected household, reporting period, accounting
-basis, account scope, and source coverage must be visible in the report. Each
-PDF is an export of its already validated review DTO and must not perform a
-second financial calculation.
+basis where defined, account scope, and source coverage must be visible in the
+report. The Portfolio Snapshot instead displays its exact selected snapshot
+identity and `asOf` time. Each PDF is an export of its already validated DTO and
+must not perform a second financial calculation.
 
 The fixtures should exercise Japanese text, a long merchant or category name,
 positive and negative amounts, zero, a nullable value, at least two categories,
@@ -27,9 +28,16 @@ uncovered sale, one skipped event, and one corporate-action event without a
 matching allocation. This makes currency isolation, exception disclosure, and
 available-versus-unavailable lineage observable rather than theoretical.
 
+The portfolio fixture must identify one selected snapshot, account, source
+document, and source-provided `asOf` time. It must include multiple position
+currencies, explicit source FX rows quoted in JPY, at least one nullable
+position measure, an asset-class row, and positive source row numbers. The
+fixture must make it possible to prove that the PDF reports the selected
+point-in-time snapshot without choosing a latest snapshot or current quote.
+
 ## Reproducible render command
 
-Generate all three fixture PDFs from their Rust contract tests in a clean
+Generate all four fixture PDFs from their Rust contract tests in a clean
 checkout:
 
 ```sh
@@ -45,16 +53,21 @@ KAKEFLOW_ANNUAL_PDF_FIXTURE="$PWD/tmp/pdfs/annual-review.pdf" \
 KAKEFLOW_INVESTMENT_PERFORMANCE_PDF_FIXTURE="$PWD/tmp/pdfs/investment-performance.pdf" \
   cargo test --manifest-path src-tauri/Cargo.toml \
   investment_performance_pdf --lib
+
+KAKEFLOW_PORTFOLIO_SNAPSHOT_PDF_FIXTURE="$PWD/tmp/pdfs/portfolio-snapshot.pdf" \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  portfolio_snapshot_pdf --lib
 ```
 
 Then render and validate it:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --output tmp/pdfs/v072-report-qa \
+  --output tmp/pdfs/v073-report-qa \
   monthly="$PWD/tmp/pdfs/monthly-review.pdf" \
   annual="$PWD/tmp/pdfs/annual-review.pdf" \
-  investment-performance="$PWD/tmp/pdfs/investment-performance.pdf"
+  investment-performance="$PWD/tmp/pdfs/investment-performance.pdf" \
+  portfolio-snapshot="$PWD/tmp/pdfs/portfolio-snapshot.pdf"
 ```
 
 Use `--replace` only when intentionally regenerating the same review directory.
@@ -62,14 +75,13 @@ The command requires Poppler's `pdfinfo` and `pdftoppm`. The Codex bundled PDF
 runtime provides both commands; local macOS environments can install Poppler
 with `brew install poppler`.
 
-The harness recognizes `portfolio-snapshot` only as a reserved future report
-type. It is not a v0.72 gate. A later release can opt in only after the Portfolio
-Snapshot PDF export and contract tests exist:
+The release command may state the required set explicitly, but doing so does not
+change the v0.73 acceptance scope:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
   --require monthly,annual,investment-performance,portfolio-snapshot \
-  --output tmp/pdfs/future-report-qa \
+  --output tmp/pdfs/v073-report-qa \
   monthly=/absolute/path/monthly-review.pdf \
   annual=/absolute/path/annual-review.pdf \
   investment-performance=/absolute/path/investment-performance.pdf \
@@ -77,8 +89,8 @@ node scripts/pdf-report-visual-qa.mjs \
 ```
 
 The names supplied to `--require` and the named PDF arguments must match
-exactly, preventing a future release from accidentally omitting a promised
-report or treating an unreleased report as current coverage.
+exactly. A subset is useful for local diagnosis, but it is not complete v0.73
+release evidence.
 
 The workflow calls `pdfinfo -box` for structural evidence and renders every page
 with:
@@ -97,9 +109,8 @@ correct.
 All gates fail closed; failed runs remove their staging directory and never
 publish partial QA evidence.
 
-- The current required report set is present exactly once. For v0.72 that set is
-  exactly `monthly,annual,investment-performance`; future sets must be selected
-  explicitly with `--require`.
+- The current required report set is present exactly once. For v0.73 that set is
+  exactly `monthly,annual,investment-performance,portfolio-snapshot`.
 - Every input is a regular, non-empty `%PDF-` file no larger than 32 MiB.
 - `pdfinfo` succeeds, reports PDF version, reports 1-40 pages, and reports a
   page size between 200 and 2,000 points on each axis.
@@ -157,6 +168,21 @@ generated checklist. Acceptance requires all of the following:
   row available in the DTO. When skipped or unmatched event lineage is absent
   from the DTO, the PDF says that it is unavailable; it does not display zero,
   a guessed row, or provenance copied from another event.
+- The Portfolio Snapshot title and summary display the exact selected snapshot
+  ID, account ID/name, source document ID, and source-provided `asOf` time. The
+  PDF must not silently select the latest snapshot for an account.
+- Position native currencies remain attached to their source quantities, costs,
+  and prices. Source FX observations remain a separate table with explicit base
+  currency, `JPY` quote currency, rate, and source row; they are not silently
+  applied to fill or convert a position value.
+- Nullable position quantity, average cost, market price, JPY market value, and
+  realized/unrealized P&L remain blank or explicitly unavailable. Blank never
+  becomes zero and no missing value is derived from other columns.
+- Asset-class, position, and FX rows retain `sourceDocumentId + sourceRow`
+  lineage, with each source row shown as a positive integer.
+- A point-in-time Portfolio Snapshot PDF does not infer performance, return,
+  ROI, TWR, IRR, multi-snapshot trend, latest quote, or a current/live valuation
+  beyond the source values stored at the selected `asOf` time.
 
 The reviewer records name, date, and `PASS` in `VISUAL_REVIEW.md`. An unchecked
 or unsigned checklist is not release evidence.
@@ -183,8 +209,8 @@ alone.
 
 Archive these files with the locally verified release evidence:
 
-- every fixture PDF in the explicitly required report set (monthly, annual, and
-  investment-performance PDFs for v0.72);
+- every fixture PDF in the explicitly required report set (monthly, annual,
+  investment-performance, and portfolio-snapshot PDFs for v0.73);
 - `manifest.json`;
 - every normalized PNG page;
 - the completed `VISUAL_REVIEW.md`;
