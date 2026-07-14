@@ -124,7 +124,20 @@ export function parseReceiptText(text: string): ReceiptTextFields {
 
 export async function buildReceiptImport(
   extracted: ExtractedDocumentDto,
-  file: { householdId: string; filename: string; mediaType: string; byteSize: number; sha256: string; sourceModifiedAt: string | null; accountId: string; sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' },
+  file: {
+    householdId: string
+    filename: string
+    mediaType: string
+    byteSize: number
+    sha256: string
+    sourceModifiedAt: string | null
+    accountId: string
+    sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' | 'CAMERA_SCAN'
+    audienceVisibility?: 'SHARED' | 'PERSONAL'
+    audienceMemberId?: string | null
+    attributionKind?: 'HOUSEHOLD' | 'MEMBER'
+    attributedMemberId?: string | null
+  },
   id: () => string,
   hash: (value: string) => Promise<string>,
 ): Promise<{ request: StartImportDto | null; fields: ReceiptTextFields }> {
@@ -141,13 +154,17 @@ export async function buildReceiptImport(
   }
   const payloadJson = JSON.stringify({ evidenceVersion: 2, extraction: { ...extracted, regions: extracted.regions ?? [] }, receipt })
   const recordId = id()
+  const audienceVisibility = file.audienceVisibility ?? 'SHARED'
+  const audienceMemberId = audienceVisibility === 'PERSONAL' ? file.audienceMemberId ?? null : null
+  const attributionKind = file.attributionKind ?? 'HOUSEHOLD'
+  const attributedMemberId = attributionKind === 'MEMBER' ? file.attributedMemberId ?? null : null
   return {
     fields,
     request: {
       runId: id(), documentId: id(), householdId: file.householdId, sourceType: file.sourceType ?? 'MANUAL_UPLOAD',
       originalFilename: file.filename, mediaType: file.mediaType, byteSize: file.byteSize, sha256: file.sha256,
       sourceModifiedAt: file.sourceModifiedAt, adapterId: 'receipt-text-v2', adapterVersion: '2',
-      audienceVisibility: 'SHARED', audienceMemberId: null,
+      audienceVisibility, audienceMemberId,
       records: [{ id: recordId, rowNumber: 1, recordHash: await hash(payloadJson), payloadJson }],
       candidates: [{
         id: id(), accountId: file.accountId, occurredOn: fields.occurredOn, postedOn: null,
@@ -156,7 +173,7 @@ export async function buildReceiptImport(
         externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
         institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
         normalizationConfidenceBps: fields.confidenceBps,
-        attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
+        attributionKind, attributedMemberId, audienceVisibility, audienceMemberId,
         reviewStatus: Math.min(extracted.confidenceBps, fields.confidenceBps) >= 7500 ? 'READY' : 'PENDING',
         evidence: [{ sourceRecordId: recordId, role: 'PRIMARY' }],
       }],

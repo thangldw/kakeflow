@@ -6,7 +6,7 @@ packages for users. It verifies all of the following before the process exits:
 - the native process and `main` WebView window boot;
 - frontend-to-Rust IPC can invoke `app_bootstrap`;
 - the real onboarding form creates an isolated smoke household through IPC;
-- the packaged WebView visits all ten top-level workspaces in canonical order,
+- the packaged WebView visits all eleven top-level workspaces in canonical order,
   with each exact heading, active navigation state, and usable dimensions;
 - SQLCipher opens an isolated database and every migration applies;
 - SQLite's integrity check succeeds;
@@ -90,7 +90,7 @@ can select a specific compatible image for local diagnosis.
 This is a deterministic launch/IPC/onboarding/top-level-navigation test, not a complete
 pixel-diff UI suite. DOM evidence proves that the packaged WebView rendered and
 responded to real interaction, but it cannot detect every CSS or GPU artifact.
-macOS and Windows produce the same DOM interaction evidence. It covers the ten
+macOS and Windows produce the same DOM interaction evidence. It covers the eleven
 top-level workspace shells, but not report subtabs, entity drill-downs, financial
 mutations, or pixel-level rendering. This harness also does
 not claim a screenshot: Tauri does not expose a stable window-capture API, while

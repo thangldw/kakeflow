@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KakeFlow reference receipt uploader</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; background:#0b1220; color:#e8eef9 }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:20px; box-sizing:border-box }
+    main { width:min(100%, 540px); background:#121d31; border:1px solid #2b3b57; border-radius:18px; padding:24px; box-shadow:0 18px 60px #0007 }
+    h1 { font-size:1.45rem; margin:0 0 8px } p { color:#b9c6da; margin:0 0 20px }
+    form, .connection { display:grid; gap:16px } label, legend { font-weight:650 }
+    input, select, button { width:100%; box-sizing:border-box; font:inherit; border-radius:10px; border:1px solid #40516d; padding:12px; background:#0c1627; color:inherit }
+    input[type=radio] { width:auto } .choice { display:flex; gap:10px; align-items:flex-start; font-weight:500 }
+    fieldset { border:1px solid #40516d; border-radius:12px; display:grid; gap:10px; padding:14px }
+    button { border:0; background:#4e7eff; color:white; font-weight:750; cursor:pointer } button:disabled { opacity:.5; cursor:not-allowed }
+    #connect { background:#31435f } #status { min-height:48px; padding:12px; border-radius:10px; background:#0c1627 }
+    #status[data-state=success] { color:#72e6a6 } #status[data-state=error] { color:#ff9d9d }
+    small { display:block; color:#91a2bb; font-weight:400 }
+  </style>
+</head>
+<body>
+<main>
+  <h1>KakeFlow レシート送信</h1>
+  <p>検証用のモバイルブラウザー uploader です。ネイティブアプリではありません。OCR と取引確認は desktop 上で行います。</p>
+  <section class="connection" aria-label="Relay 接続">
+    <label>Relay endpoint<input id="endpoint" type="url" inputmode="url" value="http://127.0.0.1:8787" autocomplete="off" required></label>
+    <label>Bearer token<input id="token" type="password" autocomplete="off" required><small>このページは token を保存しません。</small></label>
+    <button id="connect" type="button">メンバー情報を確認</button>
+  </section>
+  <hr>
+  <form>
+    <label>家族スペース<select id="household" disabled required></select></label>
+    <fieldset id="audience" disabled><legend>配信範囲</legend>
+      <label class="choice"><input type="radio" name="visibility" value="SHARED" checked><span>世帯共有<small>配信中の家族メンバーに届きます。</small></span></label>
+      <label class="choice"><input type="radio" name="visibility" value="PERSONAL"><span>自分のみ<small>同じ本人に紐づく別の端末だけに届きます。</small></span></label>
+    </fieldset>
+    <label>レシート画像<input id="receipt" type="file" accept="image/jpeg,image/png" capture="environment" required><small>JPEG/PNG、最大 20 MiB</small></label>
+    <button id="send" type="submit" disabled>Capture Inbox へ送信</button>
+  </form>
+  <div id="status" role="status" aria-live="polite">Relay に接続してください。</div>
+</main>
+<script type="module" src="./uploader.mjs"></script>
+</body>
+</html>
+

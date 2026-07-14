@@ -19,6 +19,8 @@ pub mod investment_fx;
 pub mod investment_market;
 pub mod investment_performance;
 mod key_store;
+pub mod mobile_capture_capsule;
+pub mod mobile_capture_inbox;
 pub mod ocr;
 mod parser_profiles;
 pub mod pending_import_bundle;
@@ -614,6 +616,92 @@ fn family_delivery_result<T>(
             operation(connection).map_err(|_| rusqlite::Error::InvalidQuery.into())
         })
         .map_err(|_| "Family delivery operation could not be completed".to_owned())
+}
+
+fn mobile_capture_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> mobile_capture_inbox::Result<T>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| {
+            operation(connection).map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Mobile capture operation could not be completed".to_owned())
+}
+
+#[tauri::command]
+fn mobile_capture_status(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<mobile_capture_inbox::MobileCaptureStatusDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::status(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_inbox_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<mobile_capture_inbox::MobileCaptureInboxItemDto>, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::list(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_cursor_update(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    next_cursor: u64,
+) -> Result<mobile_capture_inbox::MobileCaptureStatusDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::update_cursor(connection, &household_id, next_cursor)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_ingest(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    input: mobile_capture_inbox::IngestMobileCaptureInput,
+) -> Result<mobile_capture_inbox::MobileCaptureInboxItemDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::ingest(connection, &vault, &input)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_image_preview(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+    artifact_id: String,
+) -> Result<mobile_capture_inbox::MobileCaptureImagePreviewDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::image_preview(connection, &vault, &household_id, &artifact_id)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_mark_ocr_review_required(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    artifact_id: String,
+) -> Result<mobile_capture_inbox::MobileCaptureInboxItemDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::mark_ocr_review_required(connection, &household_id, &artifact_id)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_promote(
+    state: tauri::State<'_, AppState>,
+    input: mobile_capture_inbox::PromoteMobileCaptureInput,
+) -> Result<mobile_capture_inbox::MobileCapturePromotionDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::promote(connection, &input)
+    })
 }
 
 #[tauri::command]
@@ -1213,10 +1301,11 @@ fn packaged_smoke_progress(stage: String) -> Result<(), String> {
     writeln!(file, "{stage}").map_err(|_| "Packaged smoke progress could not be written".to_owned())
 }
 
-const PACKAGED_SMOKE_REQUIRED_PAGES: [(&str, &str); 10] = [
+const PACKAGED_SMOKE_REQUIRED_PAGES: [(&str, &str); 11] = [
     ("ホーム", "Packaged Smoke Householdの家計"),
     ("取引", "すべての取引"),
     ("インポート", "インポート Inbox"),
+    ("撮影 Inbox", "撮影 Inbox"),
     ("カード照合", "カード引落・支払余力"),
     ("資産・投資", "資産・投資"),
     ("カレンダー・レポート", "カレンダー・レポート"),
@@ -1275,6 +1364,7 @@ mod packaged_smoke_visual_evidence_tests {
                 "ホーム",
                 "取引",
                 "インポート",
+                "撮影 Inbox",
                 "カード照合",
                 "資産・投資",
                 "カレンダー・レポート",
@@ -1299,7 +1389,7 @@ mod packaged_smoke_visual_evidence_tests {
                     rendered_text_length: 100,
                 })
                 .collect(),
-            interaction_count: 11,
+            interaction_count: 12,
             viewport_width: 1280,
             viewport_height: 800,
             device_pixel_ratio: 2.0,
@@ -2781,6 +2871,14 @@ fn document_ocr(
     file_bytes: Vec<u8>,
     media_type: String,
 ) -> Result<document_extract::ExtractedDocument, String> {
+    run_local_ocr(&paths, file_bytes, media_type)
+}
+
+fn run_local_ocr(
+    paths: &OcrPaths,
+    file_bytes: Vec<u8>,
+    media_type: String,
+) -> Result<document_extract::ExtractedDocument, String> {
     const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
     let extension = match media_type.as_str() {
         "image/png" => "png",
@@ -2848,6 +2946,40 @@ fn document_ocr(
                 provenance: "TESSERACT_WORD".to_owned(),
             })
             .collect(),
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_ocr(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    paths: tauri::State<'_, OcrPaths>,
+    household_id: String,
+    artifact_id: String,
+) -> Result<mobile_capture_inbox::MobileCaptureOcrDto, String> {
+    if let Some((extraction_id, document)) = mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::latest_extraction(connection, &household_id, &artifact_id)
+    })? {
+        let item = mobile_capture_result(&state, |connection| {
+            mobile_capture_inbox::get(connection, &household_id, &artifact_id)
+        })?;
+        return Ok(mobile_capture_inbox::MobileCaptureOcrDto {
+            item,
+            extraction_id,
+            document,
+        });
+    }
+    let (bytes, media_type) = mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::image(connection, &vault, &household_id, &artifact_id)
+    })?;
+    let document = run_local_ocr(&paths, bytes, media_type)?;
+    let (extraction_id, item) = mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::record_extraction(connection, &household_id, &artifact_id, &document)
+    })?;
+    Ok(mobile_capture_inbox::MobileCaptureOcrDto {
+        item,
+        extraction_id,
+        document,
     })
 }
 
@@ -3016,6 +3148,14 @@ pub fn run() {
             family_snapshot_resolve,
             family_snapshot_apply,
             family_snapshot_discard,
+            mobile_capture_status,
+            mobile_capture_inbox_list,
+            mobile_capture_cursor_update,
+            mobile_capture_ingest,
+            mobile_capture_image_preview,
+            mobile_capture_ocr,
+            mobile_capture_mark_ocr_review_required,
+            mobile_capture_promote,
             change_package_export_save,
             change_package_pick_and_stage,
             change_package_active_review,

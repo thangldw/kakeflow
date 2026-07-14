@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   CircleDollarSign,
   CalendarDays,
+  Camera,
   Bell,
   CreditCard,
   FileCheck2,
@@ -92,6 +93,7 @@ import { PortableEvidenceBundlePanel } from './features/sync/PortableEvidenceBun
 import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
 import { CustomParserRescueDialog } from './features/parser-profiles/CustomParserRescueDialog'
 import { PendingImportHandoffPanel } from './features/import/PendingImportHandoffPanel'
+import { CaptureInboxWorkspace } from './features/capture/CaptureInboxWorkspace'
 import { delimitedParserProfilePlatform } from './features/parser-profiles/delimitedParserProfilePlatform'
 import type { DelimitedParserProfileDto } from './features/parser-profiles/delimitedParserProfilePlatform'
 import { parseCustomDelimitedBytes } from './ingestion'
@@ -270,6 +272,7 @@ const navigation: NavigationItem[] = [
   { id: 'overview', label: 'ホーム', icon: Home },
   { id: 'transactions', label: '取引', icon: WalletCards },
   { id: 'import', label: 'インポート', icon: Import },
+  { id: 'capture', label: '撮影 Inbox', icon: Camera },
   { id: 'cards', label: 'カード照合', icon: CreditCard },
   { id: 'investments', label: '資産・投資', icon: TrendingUp },
   { id: 'reports', label: 'カレンダー・レポート', icon: CalendarDays },
@@ -2365,6 +2368,7 @@ function App() {
     overview: <Overview setPage={navigateToPage} openAllActions={openAllActions} householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} members={householdMembers} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
+    capture: <CaptureInboxWorkspace householdId={activeHouseholdId} accounts={accounts} onOpenImport={() => setPage('import')} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} initialView={reportsInitialView} openPage={navigateToPage} />,
