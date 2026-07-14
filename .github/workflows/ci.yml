@@ -121,6 +121,12 @@ jobs:
           KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/${{ matrix.name }}
         run: npm run test:packaged
 
+      - name: Install, launch, and uninstall Windows NSIS package
+        if: runner.os == 'Windows'
+        env:
+          KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/${{ matrix.name }}
+        run: npm run test:windows-installer
+
       - name: Mount and validate macOS DMG
         if: runner.os == 'macOS'
         env:

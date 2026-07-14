@@ -77,10 +77,42 @@ npm run test:dmg
 # Windows
 npm run desktop:build:windows
 npm run test:packaged
+npm run test:windows-installer
 ```
 
 Set `KAKEFLOW_KEEP_SMOKE_DATA=1` only while debugging to retain the temporary
 directory. `KAKEFLOW_SMOKE_EXECUTABLE` can point at another compatible build.
+The packaged smoke command accepts that override on both platforms; the Windows
+installer harness uses it internally to launch the executable from the isolated
+installation directory rather than the build-tree executable.
+
+## Windows NSIS acceptance
+
+`npm run test:windows-installer` is a Windows-only acceptance gate for the
+unsigned NSIS artifact. It does not run, skip, or create success evidence on
+macOS or Linux. On Windows it:
+
+- silently installs the versioned `KakeFlow_VERSION_x64-setup.exe` into an
+  isolated current-user temporary directory without requiring an administrator;
+- requires a non-empty installed `kakeflow.exe`, matching Windows product
+  version, the bundled font-license resources, and a silent uninstaller;
+- launches the installed executable through the existing isolated packaged
+  WebView smoke, including onboarding, IPC, migrations, database integrity, and
+  all eleven top-level workspaces;
+- silently uninstalls the application and requires the isolated installation
+  directory to be removed; and
+- writes `windows-installer-smoke-win32.json` plus the packaged WebView evidence
+  when `KAKEFLOW_SMOKE_ARTIFACT_DIR` is configured.
+
+`KAKEFLOW_WINDOWS_INSTALLER_PATH` may select a specific compatible NSIS
+artifact. `KAKEFLOW_SMOKE_EXECUTABLE` remains the lower-level packaged-app
+override and is not needed when running the installer harness.
+
+This gate validates an unsigned per-user installation lifecycle. It does not
+validate Authenticode, SmartScreen reputation, elevation or all-users install,
+MSI behavior, automatic updates, or a Windows OCR runtime. Those remain separate
+release requirements. A passing helper test on macOS is not Windows installer
+evidence; the acceptance JSON is valid only when produced by the Windows harness.
 
 ## macOS DMG validation
 
@@ -116,8 +148,7 @@ top-level workspace shells, but not report subtabs, entity drill-downs, financia
 mutations, or pixel-level rendering. This harness also does
 not claim a screenshot: Tauri does not expose a stable window-capture API, while
 OS screen capture is permission-gated on macOS and unreliable on unattended CI.
-It also does not exercise OS file-picker dialogs, install the NSIS
-package, or validate signing,
+It also does not exercise OS file-picker dialogs or validate signing,
 notarization, Gatekeeper, and SmartScreen behavior. Those checks need signed
 release credentials and/or a dedicated interactive runner.
 
@@ -126,4 +157,6 @@ does not launch from the read-only volume: macOS LaunchServices and Tauri startu
 from a mounted unsigned CI image are not deterministic on unattended runners.
 Launch/UI behavior remains enforced by the separate packaged app-bundle smoke.
 The DMG gate also does not write to `/Applications`, bypass Gatekeeper, or claim
-Windows NSIS/MSI installation coverage.
+Windows MSI installation coverage. The separate Windows-only NSIS acceptance
+harness covers an isolated unsigned per-user install, installed-app launch, and
+silent uninstall, but not the production-signing behaviors above.
