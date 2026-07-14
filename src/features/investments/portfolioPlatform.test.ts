@@ -32,6 +32,25 @@ describe('portfolio platform boundary', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'portfolio_snapshot_get', { householdId: 'home', snapshotId: 'snap-1' })
   })
 
+  it('saves the exact selected snapshot and strictly validates the native XLSX summary', async () => {
+    const request = { householdId: 'home', snapshotId: 'snap-2' }
+    const saved = { fileName: 'kakeflow-portfolio-snapshot-2026-06-30.xlsx', rowCount: 18, byteSize: 7_000, sheetCount: 4 }
+    const invoke = vi.fn(async () => saved) as unknown as PortfolioInvoke
+    await expect(createPortfolioPlatform(invoke).saveSnapshotXlsx(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('portfolio_snapshot_xlsx_save', { request })
+
+    await expect(createPortfolioPlatform(async () => null).saveSnapshotXlsx(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'snapshot.csv', rowCount: 18, byteSize: 7_000 },
+      { fileName: '../snapshot.xlsx', rowCount: 18, byteSize: 7_000 },
+      { fileName: 'snapshot.xlsx', rowCount: 0, byteSize: 7_000 },
+      { fileName: 'snapshot.xlsx', rowCount: 18, byteSize: 0 },
+      { fileName: 'snapshot.xlsx', rowCount: 1.5, byteSize: 7_000 },
+    ]) {
+      await expect(createPortfolioPlatform(async () => response).saveSnapshotXlsx(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('rejects snapshots without a reliable total or timestamp', () => {
     expect(() => mapPortfolioSnapshotImport({ ...candidate, asOf: null }, { snapshotId: 'x', householdId: 'h', accountId: 'a', sourceDocumentId: 'd' })).toThrow()
     expect(() => mapPortfolioSnapshotImport({ ...candidate, marketValueJpy: null }, { snapshotId: 'x', householdId: 'h', accountId: 'a', sourceDocumentId: 'd' })).toThrow()

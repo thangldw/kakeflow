@@ -37,6 +37,7 @@ mod parser_profiles;
 pub mod pending_import_bundle;
 mod persistence;
 pub mod portfolio;
+pub mod portfolio_snapshot_xlsx;
 mod private_fs;
 mod read_model;
 pub mod receipt_matching;
@@ -2827,6 +2828,38 @@ async fn investment_performance_xlsx_save(
 }
 
 #[tauri::command]
+async fn portfolio_snapshot_xlsx_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: portfolio_snapshot_xlsx::PortfolioSnapshotXlsxRequest,
+) -> Result<Option<portfolio_snapshot_xlsx::PortfolioSnapshotXlsxSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(portfolio_snapshot_xlsx::generate_portfolio_snapshot_xlsx(
+            connection, &request,
+        ))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("Portfolio snapshot workbook is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("Excel workbook", &["xlsx"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected portfolio snapshot destination is unavailable".to_owned())?;
+    portfolio_snapshot_xlsx::save_portfolio_snapshot_xlsx_document(&document, Some(&destination))
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 fn classification_rules_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -3906,6 +3939,7 @@ pub fn run() {
             annual_household_review_xlsx_save,
             monthly_household_review_xlsx_save,
             investment_performance_xlsx_save,
+            portfolio_snapshot_xlsx_save,
             classification_rules_list,
             classification_rule_create,
             classification_rule_update,

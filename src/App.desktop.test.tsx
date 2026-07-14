@@ -1221,6 +1221,60 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByText('実現損益 ¥40,000')).toBeInTheDocument()
   })
 
+  it('exports the explicitly selected portfolio snapshot and preserves selection on cancel or failure', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    const summaries = [
+      { id: 'snapshot-jul', accountId: 'broker', accountName: '証券口座', sourceDocumentId: 'doc-jul', asOf: '2026-07-31T15:00:00+09:00', marketValueJpy: 520_000, cashValueJpy: 100_000, unrealizedPnlJpy: 30_000, realizedPnlJpy: null, positionCount: 1, fxRateCount: 1 },
+      { id: 'snapshot-jun', accountId: 'broker', accountName: '証券口座', sourceDocumentId: 'doc-jun', asOf: '2026-06-30T15:00:00+09:00', marketValueJpy: 500_000, cashValueJpy: 90_000, unrealizedPnlJpy: 25_000, realizedPnlJpy: null, positionCount: 1, fxRateCount: 1 },
+    ]
+    let saveOutcome: 'SUCCESS' | 'CANCEL' | 'ERROR' = 'SUCCESS'
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'portfolio_snapshots_list') return summaries
+      if (command === 'portfolio_snapshot_get') {
+        const selected = summaries.find((item) => item.id === args?.snapshotId) ?? summaries[0]
+        return { ...selected, assetClasses: [], positions: [], fxRates: [] }
+      }
+      if (command === 'portfolio_snapshot_xlsx_save') {
+        if (saveOutcome === 'CANCEL') return null
+        if (saveOutcome === 'ERROR') throw new Error('save failed')
+        const snapshotId = (args?.request as { snapshotId: string }).snapshotId
+        return { fileName: `kakeflow-${snapshotId}.xlsx`, rowCount: 12, byteSize: 6_000, sheetCount: 4 }
+      }
+      return fallback(command, args)
+    })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.change(screen.getByLabelText('家族集計範囲'), { target: { value: 'MEMBER:taro' } })
+    fireEvent.click(screen.getByRole('button', { name: '資産・投資' }))
+    const exportButton = await screen.findByRole('button', { name: '選択中の残高Excelを保存' })
+
+    fireEvent.click(exportButton)
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('portfolio_snapshot_xlsx_save', { request: { householdId: 'family', snapshotId: 'snapshot-jul' } }))
+    expect(await screen.findByText('kakeflow-snapshot-jul.xlsx（12行）を保存しました。')).toBeInTheDocument()
+
+    const juneSnapshot = screen.getByRole('button', { name: /2026-06-30.*証券口座.*¥500,000/ })
+    fireEvent.click(juneSnapshot)
+    await waitFor(() => expect(juneSnapshot).toHaveClass('active'))
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高Excelを保存' }))
+    const selectedRequest = { householdId: 'family', snapshotId: 'snapshot-jun' }
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('portfolio_snapshot_xlsx_save', { request: selectedRequest }))
+    expect(selectedRequest).not.toHaveProperty('accountGroupId')
+    expect(selectedRequest).not.toHaveProperty('attributionScope')
+    expect(selectedRequest).not.toHaveProperty('asOf')
+    expect(await screen.findByText('kakeflow-snapshot-jun.xlsx（12行）を保存しました。')).toBeInTheDocument()
+
+    saveOutcome = 'CANCEL'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高Excelを保存' }))
+    expect(await screen.findByText('資産スナップショットExcelエクスポートをキャンセルしました。')).toBeInTheDocument()
+    expect(juneSnapshot).toHaveClass('active')
+
+    saveOutcome = 'ERROR'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高Excelを保存' }))
+    expect(await screen.findByText('資産スナップショットExcelを書き出せませんでした。選択中のスナップショットを確認してください。')).toBeInTheDocument()
+    expect(juneSnapshot).toHaveClass('active')
+  })
+
   it('delegates restore selection and destructive confirmation to the native backend', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')

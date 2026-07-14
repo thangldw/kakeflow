@@ -4,6 +4,8 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
+Version 0.69 adds [Portfolio Snapshot XLSX export](docs/PORTFOLIO_SNAPSHOT_XLSX.md). The native workbook exports the exact securities snapshot selected in the investment workspace, including its JPY summary, asset classes, positions, snapshot-local FX rates, nullable values, and source-row lineage. It never silently replaces the selection with the latest snapshot and does not mix event-based FIFO performance, live valuation, Money Forward aggregate history, or multi-snapshot trends into the snapshot grain.
+
 Version 0.68 adds [Investment Performance XLSX export](docs/INVESTMENT_PERFORMANCE_XLSX.md). The native workbook reuses the exact annual FIFO performance request shown in the investment workspace, keeps every source currency separate, and exposes realized allocations, corporate actions, uncovered sales, skipped events, and source-row evidence where the validated report provides it. It intentionally excludes current holdings valuation, FX conversion, portfolio snapshots, aggregate asset history, and invented ROI/TWR/IRR metrics.
 
 Version 0.67 adds [Monthly Household Review XLSX export](docs/MONTHLY_REVIEW_XLSX.md). The native four-sheet workbook preserves the selected calendar month, account group, and household/member attribution scope while clearly keeping goals and data quality household-wide. It includes current KPIs, prior-month and prior-year comparisons, bounded category and merchant drivers, budget, reconciliation, and import-health disclosures; `asOf` remains a data-quality reference date and workbook bytes never cross WebView IPC.
@@ -240,7 +242,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 
 ## Remaining product milestones
 
-1. Add source-backed portfolio-snapshot XLSX where an explicit snapshot can be selected, then add PDF reports with deterministic Japanese font embedding and visual QA.
+1. Add PDF reports with deterministic Japanese font embedding and visual QA for monthly, annual, investment-performance, and portfolio-snapshot views.
 2. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 3. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
 4. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
