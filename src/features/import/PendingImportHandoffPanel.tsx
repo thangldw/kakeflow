@@ -25,6 +25,7 @@ const UNSUPPORTED_HANDOFF_ADAPTERS = new Set([
   'japanese-brokerage-transactions-v1',
   'sbi-securities-trade-history-v1',
   'rakuten-securities-domestic-trade-history-v1',
+  'monex-us-stock-trade-history-v1',
   'money-forward-me-asset-trend-v1',
 ])
 

@@ -871,7 +871,8 @@ fn pending_review_completion_state(
         Some(
             "japanese-brokerage-transactions-v1"
             | "sbi-securities-trade-history-v1"
-            | "rakuten-securities-domestic-trade-history-v1",
+            | "rakuten-securities-domestic-trade-history-v1"
+            | "monex-us-stock-trade-history-v1",
         ) => has_brokerage,
         Some("money-forward-me-asset-trend-v1") => has_aggregate_assets,
         _ => true,
@@ -2293,6 +2294,12 @@ mod tests {
                 "rakuten-securities-domestic-trade-history-v1",
             ),
             (
+                "monex-brokerage",
+                "monex-brokerage-doc",
+                '7',
+                "monex-us-stock-trade-history-v1",
+            ),
+            (
                 "aggregate",
                 "aggregate-doc",
                 'd',
@@ -2328,6 +2335,13 @@ mod tests {
             .unwrap();
         connection
             .execute(
+                "INSERT INTO brokerage_events(id,household_id,source_document_id) \
+                 VALUES('monex-event','household','monex-brokerage-doc')",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
                 "INSERT INTO aggregate_asset_snapshots(id,household_id,source_document_id) \
                  VALUES('aggregate-snapshot','household','aggregate-doc')",
                 [],
@@ -2349,6 +2363,7 @@ mod tests {
         assert_eq!(state("brokerage"), "SOURCE_READY");
         assert_eq!(state("sbi-brokerage"), "SOURCE_READY");
         assert_eq!(state("rakuten-brokerage"), "SOURCE_READY");
+        assert_eq!(state("monex-brokerage"), "SOURCE_READY");
         assert_eq!(state("aggregate"), "SOURCE_READY");
 
         connection

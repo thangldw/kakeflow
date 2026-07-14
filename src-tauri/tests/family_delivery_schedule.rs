@@ -1,4 +1,5 @@
 #[path = "../src/family_delivery_schedule.rs"]
+#[allow(dead_code)]
 mod schedule;
 
 use rusqlite::Connection;

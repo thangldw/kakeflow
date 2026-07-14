@@ -232,7 +232,7 @@ pub fn query_history(
     validate_history_request(request)?;
     if let Some(account_id) = &request.account_id {
         let valid: Option<i64> = connection.query_row(
-            "SELECT 1 FROM accounts WHERE id = ?1 AND household_id = ?2 AND account_subtype = 'SECURITIES'",
+            "SELECT 1 FROM accounts WHERE id = ?1 AND household_id = ?2 AND account_kind = 'ASSET' AND account_subtype = 'SECURITIES'",
             params![account_id, request.household_id], |row| row.get(0),
         ).optional().map_err(db_error)?;
         if valid.is_none() {
@@ -765,7 +765,7 @@ fn validate_scope(
     input: &ImportBrokerageEventsInput,
 ) -> Result<(), BrokerageError> {
     let account: Option<i64> = connection.query_row(
-        "SELECT 1 FROM accounts WHERE id = ?1 AND household_id = ?2 AND account_subtype = 'SECURITIES' AND is_archived = 0",
+        "SELECT 1 FROM accounts WHERE id = ?1 AND household_id = ?2 AND account_kind = 'ASSET' AND account_subtype = 'SECURITIES' AND is_archived = 0",
         params![input.account_id, input.household_id], |row| row.get(0),
     ).optional().map_err(db_error)?;
     let document: Option<i64> = connection
@@ -1005,6 +1005,44 @@ mod tests {
         assert_eq!(history.totals_by_currency[0].buy_gross, 10000.0);
         assert_eq!(history.totals_by_currency[0].fees, 100.0);
         assert_eq!(history.totals_by_currency[0].net_cash_movement, -10100.0);
+    }
+
+    #[test]
+    fn import_and_history_require_an_asset_securities_account() {
+        let connection = connection();
+        connection.execute(
+            "INSERT INTO accounts (id,household_id,name,account_kind,account_subtype) \
+             VALUES ('expense-securities','home','Invalid securities account','EXPENSE','SECURITIES')",
+            [],
+        ).unwrap();
+        let invalid = ImportBrokerageEventsInput {
+            household_id: "home".into(),
+            account_id: "expense-securities".into(),
+            source_document_id: "doc".into(),
+            events: vec![event("invalid-account", 2, "BUY")],
+        };
+        assert!(matches!(
+            import_events(&connection, &invalid),
+            Err(BrokerageError::Scope)
+        ));
+        let count: i64 = connection
+            .query_row("SELECT count(*) FROM brokerage_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(matches!(
+            query_history(
+                &connection,
+                &BrokerageHistoryRequest {
+                    household_id: "home".into(),
+                    account_id: Some("expense-securities".into()),
+                    date_from: None,
+                    date_to: None,
+                }
+            ),
+            Err(BrokerageError::Scope)
+        ));
     }
 
     #[test]

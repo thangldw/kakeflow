@@ -589,10 +589,12 @@ mod tests {
     use super::*;
     use std::{collections::VecDeque, sync::Mutex};
 
+    type RecordedRequest = (HttpMethod, String, Option<Vec<u8>>);
+
     #[derive(Debug)]
     struct FakeTransport {
         responses: Mutex<VecDeque<Result<HttpResponse, FamilyDeliveryHttpError>>>,
-        requests: Mutex<Vec<(HttpMethod, String, Option<Vec<u8>>)>>,
+        requests: Mutex<Vec<RecordedRequest>>,
     }
 
     impl FakeTransport {

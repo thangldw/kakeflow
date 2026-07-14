@@ -2150,6 +2150,14 @@ mod tests {
         },
     };
 
+    type CachedEnvelopeColumns = (
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Vec<u8>>,
+    );
+
     fn setup(key: u8) -> AppState {
         let state = AppState::in_memory(&[key; 32]).unwrap();
         initialize_state(&state);
@@ -2445,8 +2453,7 @@ mod tests {
                 // Simulate the first IPC response being lost. The retry sees
                 // an already-cleared FAILED_RETRYABLE row and is a safe no-op.
                 reset_rejected_outbound_envelopes(connection, &rejected).unwrap();
-                let cleared: (String, Option<String>, Option<String>, Option<String>, Option<Vec<u8>>) =
-                    connection.query_row(
+                let cleared: CachedEnvelopeColumns = connection.query_row(
                         "SELECT state,envelope_schema,transport_sha256,recipient_set_digest,envelope_bytes
                          FROM family_delivery_deliveries WHERE delivery_id=?1",
                         [&prepared.delivery_id],
@@ -2547,7 +2554,12 @@ mod tests {
                 .remove(0);
                 let cached = cache_test_envelope(connection, &prepared, "ambiguous");
 
-                mark_failed(connection, "family", &[prepared.delivery_id.clone()]).unwrap();
+                mark_failed(
+                    connection,
+                    "family",
+                    std::slice::from_ref(&prepared.delivery_id),
+                )
+                .unwrap();
 
                 let retried = load_cached_outbound_envelope(
                     connection,
