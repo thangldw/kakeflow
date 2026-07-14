@@ -30,6 +30,7 @@ import type {
   FamilyDeliveryScheduleStatusDto,
   FamilyEnvelopePublicIdentityDto,
   SealFamilyEnvelopeOutputDto,
+  PreparedFamilyEnvelopeOutputDto,
   OpenFamilyEnvelopeOutputDto,
   FamilySnapshotReviewDto,
   ImportPreviewDto,
@@ -162,11 +163,13 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       registerFamilyDeliveryRemoteState: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_remote_state_register') },
       prepareFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_send_prepare') },
       prepareEncryptedFamilyEnvelope: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_envelope_prepare') },
+      getCachedFamilyDeliveryEnvelope: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_envelope_cached_get') },
       getFamilyEnvelopeIdentity: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_envelope_identity_get') },
       sealFamilyEnvelope: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_envelope_seal') },
       openFamilyEnvelope: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_envelope_open') },
       acceptFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_send_accept') },
       failFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_send_failed') },
+      resetFamilyDeliveryRecipientSetChanged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_envelope_recipient_set_changed') },
       registerFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_inbound_register') },
       stageFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_inbound_stage') },
       stageEncryptedFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_encrypted_inbound_stage') },
@@ -291,12 +294,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     disconnectFamilyDelivery: (householdId) => invokeValidated(invoke, 'family_delivery_disconnect', parseFamilyDeliveryStatus, { householdId }),
     registerFamilyDeliveryRemoteState: (input) => invokeValidated(invoke, 'family_delivery_remote_state_register', parseFamilyDeliveryStatus, { input }),
     prepareFamilyDelivery: (input) => invokeValidated(invoke, 'family_delivery_send_prepare', parseFamilyPreparedArtifacts, { input }),
-    prepareEncryptedFamilyEnvelope: (input) => invokeValidated(invoke, 'family_delivery_envelope_prepare', parseSealedFamilyEnvelope, { input }),
+    prepareEncryptedFamilyEnvelope: (input) => invokeValidated(invoke, 'family_delivery_envelope_prepare', parsePreparedFamilyEnvelope, { input }),
+    getCachedFamilyDeliveryEnvelope: (input) => invokeValidated(invoke, 'family_delivery_envelope_cached_get', parseNullablePreparedFamilyEnvelope, { input }),
     getFamilyEnvelopeIdentity: () => invokeValidated(invoke, 'family_envelope_identity_get', parseFamilyEnvelopeIdentity),
     sealFamilyEnvelope: (input) => invokeValidated(invoke, 'family_envelope_seal', parseSealedFamilyEnvelope, { input }),
     openFamilyEnvelope: (input) => invokeValidated(invoke, 'family_envelope_open', parseOpenedFamilyEnvelope, { input }),
     acceptFamilyDelivery: (input) => invokeValidated(invoke, 'family_delivery_send_accept', parseFamilyDeliveryStatus, { input }),
     failFamilyDelivery: (householdId, deliveryIds) => invokeValidated(invoke, 'family_delivery_send_failed', parseFamilyDeliveryStatus, { householdId, deliveryIds }),
+    resetFamilyDeliveryRecipientSetChanged: (householdId, deliveries) => invokeValidated(invoke, 'family_delivery_envelope_recipient_set_changed', parseFamilyDeliveryStatus, { householdId, deliveries }),
     registerFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_inbound_register', parseFamilyDeliveryStatus, { input }),
     stageFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_inbound_stage', parseFamilyDeliveryStatus, { input }),
     stageEncryptedFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_encrypted_inbound_stage', parseFamilyDeliveryStatus, { input }),
@@ -697,6 +702,22 @@ function parseSealedFamilyEnvelope(value: unknown): SealFamilyEnvelopeOutputDto 
   const recipientCount = asSafeInteger(record.recipientCount)
   if (recipientCount < 1 || recipientCount > 64) throw new TypeError('sealed family envelope recipients')
   return { envelopeBytes, envelopeSha256: asCanonicalHash(record.envelopeSha256), envelopeByteSize: envelopeBytes.length, recipientCount }
+}
+
+function parsePreparedFamilyEnvelope(value: unknown): PreparedFamilyEnvelopeOutputDto {
+  const sealed = parseSealedFamilyEnvelope(value)
+  const record = asRecord(value)
+  if (!['EXACT_CACHE', 'STALE_CACHE_REUSED', 'NEWLY_SEALED'].includes(String(record.cacheDisposition))) {
+    throw new TypeError('prepared family envelope cache disposition')
+  }
+  return {
+    ...sealed, recipientSetDigest: asCanonicalHash(record.recipientSetDigest),
+    cacheDisposition: record.cacheDisposition as PreparedFamilyEnvelopeOutputDto['cacheDisposition'],
+  }
+}
+
+function parseNullablePreparedFamilyEnvelope(value: unknown): PreparedFamilyEnvelopeOutputDto | null {
+  return value === null ? null : parsePreparedFamilyEnvelope(value)
 }
 
 function parseOpenedFamilyEnvelope(value: unknown): OpenFamilyEnvelopeOutputDto {

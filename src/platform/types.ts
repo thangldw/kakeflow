@@ -326,6 +326,10 @@ export interface SealFamilyEnvelopeOutputDto {
   readonly envelopeBytes: readonly number[]; readonly envelopeSha256: string
   readonly envelopeByteSize: number; readonly recipientCount: number
 }
+export interface PreparedFamilyEnvelopeOutputDto extends SealFamilyEnvelopeOutputDto {
+  readonly recipientSetDigest: string
+  readonly cacheDisposition: 'EXACT_CACHE' | 'STALE_CACHE_REUSED' | 'NEWLY_SEALED'
+}
 export interface OpenFamilyEnvelopeInputDto {
   readonly expectedMetadata: FamilyEnvelopeMetadataDto; readonly envelopeBytes: readonly number[]
   readonly localMembershipId: string
@@ -336,6 +340,9 @@ export interface OpenFamilyEnvelopeOutputDto {
 export interface PrepareFamilyDeliveryInputDto { readonly householdId: string; readonly audienceKeys: readonly string[] }
 export interface AcceptFamilyDeliveryInputDto {
   readonly householdId: string; readonly receipts: readonly { readonly deliveryId: string; readonly artifactId: string; readonly digest: string; readonly acceptedAt: string }[]
+}
+export interface FamilyDeliveryRecipientSetChangedDto {
+  readonly deliveryId: string; readonly transportSha256: string; readonly recipientSetDigest: string
 }
 export interface FamilyDeliveryRemoteArtifactDto {
   readonly sequence: number; readonly artifactId: string; readonly digest: string; readonly createdAt: string
@@ -762,11 +769,13 @@ export type AppCommand =
   | 'family_delivery_remote_state_register'
   | 'family_delivery_send_prepare'
   | 'family_delivery_envelope_prepare'
+  | 'family_delivery_envelope_cached_get'
   | 'family_envelope_identity_get'
   | 'family_envelope_seal'
   | 'family_envelope_open'
   | 'family_delivery_send_accept'
   | 'family_delivery_send_failed'
+  | 'family_delivery_envelope_recipient_set_changed'
   | 'family_delivery_inbound_register'
   | 'family_delivery_inbound_stage'
   | 'family_delivery_encrypted_inbound_stage'
@@ -891,12 +900,14 @@ export interface PlatformClient {
   disconnectFamilyDelivery(householdId: string): Promise<FamilyDeliveryStatusDto>
   registerFamilyDeliveryRemoteState(input: RegisterFamilyDeliveryRemoteStateInputDto): Promise<FamilyDeliveryStatusDto>
   prepareFamilyDelivery(input: PrepareFamilyDeliveryInputDto): Promise<readonly FamilyDeliveryPreparedArtifactDto[]>
-  prepareEncryptedFamilyEnvelope(input: PrepareEncryptedFamilyEnvelopeInputDto): Promise<SealFamilyEnvelopeOutputDto>
+  prepareEncryptedFamilyEnvelope(input: PrepareEncryptedFamilyEnvelopeInputDto): Promise<PreparedFamilyEnvelopeOutputDto>
+  getCachedFamilyDeliveryEnvelope(input: Pick<PrepareEncryptedFamilyEnvelopeInputDto, 'deliveryId' | 'metadata'>): Promise<PreparedFamilyEnvelopeOutputDto | null>
   getFamilyEnvelopeIdentity(): Promise<FamilyEnvelopePublicIdentityDto>
   sealFamilyEnvelope(input: SealFamilyEnvelopeInputDto): Promise<SealFamilyEnvelopeOutputDto>
   openFamilyEnvelope(input: OpenFamilyEnvelopeInputDto): Promise<OpenFamilyEnvelopeOutputDto>
   acceptFamilyDelivery(input: AcceptFamilyDeliveryInputDto): Promise<FamilyDeliveryStatusDto>
   failFamilyDelivery(householdId: string, deliveryIds: readonly string[]): Promise<FamilyDeliveryStatusDto>
+  resetFamilyDeliveryRecipientSetChanged(householdId: string, deliveries: readonly FamilyDeliveryRecipientSetChangedDto[]): Promise<FamilyDeliveryStatusDto>
   registerFamilyDeliveryInbound(input: RegisterFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
   stageFamilyDeliveryInbound(input: StageFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
   stageEncryptedFamilyDeliveryInbound(input: StageEncryptedFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>

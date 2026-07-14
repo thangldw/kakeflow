@@ -488,6 +488,49 @@ describe('platform client', () => {
     await expect(invalid.sealFamilyEnvelope({} as never)).rejects.toMatchObject({ command: 'family_envelope_seal', code: 'INVALID_RESPONSE' })
   })
 
+  it('routes exact recipient-set change metadata to the native envelope reset command', async () => {
+    const status = {
+      householdId: 'family', connectionState: 'CONNECTED', endpoint: 'https://relay.example', remotePrincipalId: 'principal-1',
+      localDeviceId: 'device-1', inboundCursor: 0, localMemberId: 'member-1', localMemberName: 'Taro', memberships: [],
+      outbound: [], withheldChangeCount: 0, inbound: [],
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      invokeSpy(command, args); return status as T
+    } })
+    const deliveries = [{ deliveryId: 'delivery-1', transportSha256: 'a'.repeat(64), recipientSetDigest: 'b'.repeat(64) }]
+    await expect(client.resetFamilyDeliveryRecipientSetChanged('family', deliveries)).resolves.toEqual(status)
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_envelope_recipient_set_changed', { householdId: 'family', deliveries })
+  })
+
+  it('validates and routes prepared and cached family envelope metadata independently of generic sealing', async () => {
+    const prepared = {
+      envelopeBytes: [75, 70, 69, 49], envelopeSha256: 'a'.repeat(64), envelopeByteSize: 4, recipientCount: 2,
+      recipientSetDigest: 'b'.repeat(64), cacheDisposition: 'STALE_CACHE_REUSED',
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      invokeSpy(command, args)
+      return (command === 'family_delivery_envelope_cached_get' ? prepared : { ...prepared, cacheDisposition: 'NEWLY_SEALED' }) as T
+    } })
+    const metadata = { householdId: 'family', publicationId: 'artifact', originInstallationId: 'device', artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V3' as const, innerSha256: 'c'.repeat(64) }
+    const cachedInput = { deliveryId: 'delivery-1', metadata }
+    await expect(client.getCachedFamilyDeliveryEnvelope(cachedInput)).resolves.toEqual(prepared)
+    await expect(client.prepareEncryptedFamilyEnvelope({ ...cachedInput, recipients: [{ membershipId: 'membership-2', keyId: 'd'.repeat(64), publicKey: 'A'.repeat(43), generation: 1 }], recipientSetDigest: 'b'.repeat(64) }))
+      .resolves.toMatchObject({ cacheDisposition: 'NEWLY_SEALED', recipientSetDigest: 'b'.repeat(64) })
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_envelope_cached_get', { input: cachedInput })
+
+    const absent = createPlatformClient({ tauri: true, invoke: async <T>() => null as T })
+    await expect(absent.getCachedFamilyDeliveryEnvelope(cachedInput)).resolves.toBeNull()
+    for (const invalid of [
+      { ...prepared, recipientSetDigest: 'not-a-hash' },
+      { ...prepared, cacheDisposition: 'UNKNOWN' },
+    ]) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => invalid as T })
+      await expect(invalidClient.getCachedFamilyDeliveryEnvelope(cachedInput)).rejects.toMatchObject({ command: 'family_delivery_envelope_cached_get', code: 'INVALID_RESPONSE' })
+    }
+  })
+
   it('validates and routes opt-in background family discovery commands', async () => {
     const schedule = {
       householdId: 'family', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-14T02:00:00.000Z',

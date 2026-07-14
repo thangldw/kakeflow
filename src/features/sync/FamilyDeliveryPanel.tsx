@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CloudDownload, CloudUpload, Copy, Link2Off, RefreshCw, UserPlus, X } from 'lucide-react'
 
 import { platformClient } from '../../platform'
-import type { FamilyDeliveryMembershipDto, FamilyDeliveryRemoteArtifactDto, FamilyDeliveryScheduleStatusDto, FamilyDeliveryStatusDto, HouseholdMemberDto } from '../../platform'
+import type { FamilyDeliveryMembershipDto, FamilyDeliveryRecipientSetChangedDto, FamilyDeliveryRemoteArtifactDto, FamilyDeliveryScheduleStatusDto, FamilyDeliveryStatusDto, HouseholdMemberDto } from '../../platform'
 import {
   cancelFamilyInvitation, createFamilyInvitation, downloadFamilyArtifact, FamilyDeliveryHttpError,
   createFamilyHousehold, getFamilyRemoteState, listFamilyArtifacts, previewFamilyInvitation, redeemFamilyInvitation,
@@ -82,6 +82,7 @@ function errorCopy(error: unknown): string {
     AUDIENCE_DENIED: 'このデータは現在のメンバーへの配信対象ではありません。台帳は変更されていません。',
     INVALID_ARTIFACT: '内容を検証できないため受信しませんでした。台帳は変更されていません。',
     RECIPIENT_UNAVAILABLE: '配信先が有効ではないため保留しました。家族スペースで対応付けを確認してください。',
+    RECIPIENT_SET_CHANGED: '配信先が変更されたため、この範囲の送信を保留しました。再送信すると現在の配信先に封印し直します。',
     INVALID_ENDPOINT: 'HTTPSの配信サービスURLを確認してください。',
     INVALID_RESPONSE: '配信サービスの応答を確認できませんでした。台帳は変更されていません。',
     REJECTED: '配信サービスが操作を受け付けませんでした。接続と家族メンバーの状態を確認してください。',
@@ -103,6 +104,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
   const [notice, setNotice] = useState<Notice>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
   const request = useRef(0)
+  const pendingRecipientSetChanges = useRef<readonly FamilyDeliveryRecipientSetChangedDto[]>([])
+  const sendInFlight = useRef(false)
 
   const load = async () => {
     if (!householdId || platformClient.runtime !== 'tauri') { setStatus(null); return }
@@ -120,7 +123,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     } catch { if (id === request.current) setNotice({ kind: 'error', text: '家族配信の状態を確認できませんでした。' }) }
     finally { if (id === request.current) setBusy('') }
   }
-  useEffect(() => { setStatus(null); setSchedule(null); setToken(''); setInviteCode(''); setDialog(null); void load(); return () => { request.current += 1 } }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setStatus(null); setSchedule(null); setToken(''); setInviteCode(''); setDialog(null); pendingRecipientSetChanges.current = []; void load(); return () => { request.current += 1 } }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setSelected((current) => status?.outbound.filter((part) => part.pendingChangeCount > 0 && ['READY', 'FAILED_RETRYABLE'].includes(part.state))
       .map((part) => part.audienceKey).filter((key) => current.length === 0 || current.includes(key)) ?? [])
@@ -208,38 +211,82 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     finally { setBusy('') }
   }
   const send = async () => {
-    if (!householdId || !status?.endpoint || !token || selected.length === 0) return
+    if (!householdId || !status?.endpoint || !token || selected.length === 0 || sendInFlight.current) return
+    sendInFlight.current = true
     let prepared: Awaited<ReturnType<typeof platformClient.prepareFamilyDelivery>> = []
     let encrypted: readonly FamilyEncryptedArtifactUpload[] = []
     setBusy('SEND'); setNotice({ kind: 'status', text: '選択した配信範囲を送信しています…' })
     try {
+      if (pendingRecipientSetChanges.current.length > 0) {
+        const pending = pendingRecipientSetChanges.current
+        setStatus(await platformClient.resetFamilyDeliveryRecipientSetChanged(householdId, pending))
+        pendingRecipientSetChanges.current = []
+      }
       const remote = await ensureEncryptionIdentity(status.endpoint, await getFamilyRemoteState(status.endpoint, token, householdId))
       await registerRemote(remote)
       prepared = await platformClient.prepareFamilyDelivery({ householdId, audienceKeys: selected })
       encrypted = await Promise.all(prepared.map(async (artifact): Promise<FamilyEncryptedArtifactUpload> => {
-        const recipients = encryptedRecipients(remote, artifact)
-        const recipientSetDigest = await familyRecipientSetDigest(recipients)
-        const sealed = await platformClient.prepareEncryptedFamilyEnvelope({
-          deliveryId: artifact.deliveryId,
-          metadata: { householdId, publicationId: artifact.artifactId, originInstallationId: artifact.originDeviceId, artifactSchema: artifact.artifactSchema, innerSha256: artifact.digest },
-          recipients: recipients.map((membership) => ({ membershipId: membership.membershipId, keyId: membership.encryptionKeyId!, publicKey: membership.encryptionPublicKey!, generation: membership.encryptionKeyGeneration })),
-          recipientSetDigest,
-        })
-        if (sealed.recipientCount !== recipients.length) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
-        return { ...artifact, envelopeSchema: 'FAMILY_ENCRYPTED_ENVELOPE_V1', envelopeBytes: sealed.envelopeBytes, transportDigest: sealed.envelopeSha256, innerDigest: artifact.digest, recipientSetDigest }
+        const metadata = { householdId, publicationId: artifact.artifactId, originInstallationId: artifact.originDeviceId, artifactSchema: artifact.artifactSchema, innerSha256: artifact.digest }
+        let sealed = await platformClient.getCachedFamilyDeliveryEnvelope({ deliveryId: artifact.deliveryId, metadata })
+        if (!sealed) {
+          const recipients = encryptedRecipients(remote, artifact)
+          const recipientSetDigest = await familyRecipientSetDigest(recipients)
+          sealed = await platformClient.prepareEncryptedFamilyEnvelope({
+            deliveryId: artifact.deliveryId, metadata,
+            recipients: recipients.map((membership) => ({ membershipId: membership.membershipId, keyId: membership.encryptionKeyId!, publicKey: membership.encryptionPublicKey!, generation: membership.encryptionKeyGeneration })),
+            recipientSetDigest,
+          })
+          if (sealed.cacheDisposition !== 'STALE_CACHE_REUSED'
+            && (sealed.recipientCount !== recipients.length || sealed.recipientSetDigest !== recipientSetDigest)) {
+            throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+          }
+        }
+        return { ...artifact, envelopeSchema: 'FAMILY_ENCRYPTED_ENVELOPE_V1', envelopeBytes: sealed.envelopeBytes, transportDigest: sealed.envelopeSha256, innerDigest: artifact.digest, recipientSetDigest: sealed.recipientSetDigest }
       }))
-      const receipts = await Promise.all(encrypted.map((artifact) => uploadFamilyArtifact(status.endpoint!, token, artifact)))
-      for (const receipt of receipts) {
-        const source = encrypted.find((item) => item.deliveryId === receipt.deliveryId)
-        if (!source || source.artifactId !== receipt.artifactId || source.transportDigest !== receipt.digest) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+      const uploads = await Promise.allSettled(encrypted.map((artifact) => uploadFamilyArtifact(status.endpoint!, token, artifact)))
+      const receipts = uploads.flatMap((result, index) => {
+        if (result.status !== 'fulfilled') return []
+        const source = encrypted[index]
+        if (source.artifactId !== result.value.artifactId || source.transportDigest !== result.value.digest || source.deliveryId !== result.value.deliveryId) {
+          return []
+        }
+        return [result.value]
+      })
+      const invalidAcceptanceIds = uploads.flatMap((result, index) => result.status === 'fulfilled'
+        && !receipts.some((receipt) => receipt.deliveryId === encrypted[index].deliveryId) ? [encrypted[index].deliveryId] : [])
+      const changed = uploads.flatMap((result, index) => result.status === 'rejected'
+        && result.reason instanceof FamilyDeliveryHttpError && result.reason.code === 'RECIPIENT_SET_CHANGED'
+        ? [{ deliveryId: encrypted[index].deliveryId, transportSha256: encrypted[index].transportDigest, recipientSetDigest: encrypted[index].recipientSetDigest }]
+        : [])
+      const retryable = uploads.flatMap((result, index) => result.status === 'rejected'
+        && !(result.reason instanceof FamilyDeliveryHttpError && result.reason.code === 'RECIPIENT_SET_CHANGED')
+        ? [encrypted[index].deliveryId] : [])
+      if (changed.length > 0) pendingRecipientSetChanges.current = changed
+      if (receipts.length > 0) setStatus(await platformClient.acceptFamilyDelivery({ householdId, receipts }))
+      if (changed.length > 0) {
+        let resetError: unknown
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            setStatus(await platformClient.resetFamilyDeliveryRecipientSetChanged(householdId, changed))
+            pendingRecipientSetChanges.current = []
+            resetError = undefined
+            break
+          } catch (error) { resetError = error }
+        }
+        if (resetError) throw resetError
       }
-      setStatus(await platformClient.acceptFamilyDelivery({ householdId, receipts }))
+      if (retryable.length > 0 || invalidAcceptanceIds.length > 0) {
+        setStatus(await platformClient.failFamilyDelivery(householdId, [...retryable, ...invalidAcceptanceIds]))
+      }
+      const rejected = uploads.find((result) => result.status === 'rejected')
+      if (rejected?.status === 'rejected') throw rejected.reason
+      if (invalidAcceptanceIds.length > 0) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
       const sent = status.outbound.filter((part) => selected.includes(part.audienceKey)).map((part) => part.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${part.audienceMemberName}`).join('、')
       setNotice({ kind: 'status', text: `${sent}をリレーが受理しました。受信・反映完了ではありません。` })
     } catch (error) {
-      if (prepared.length > 0) try { setStatus(await platformClient.failFamilyDelivery(householdId, prepared.map((item) => item.deliveryId))) } catch { /* preserve last status */ }
+      if (prepared.length > 0 && encrypted.length === 0) try { setStatus(await platformClient.failFamilyDelivery(householdId, prepared.map((item) => item.deliveryId))) } catch { /* preserve last status */ }
       setNotice({ kind: 'error', text: errorCopy(error) })
-    } finally { setBusy('') }
+    } finally { sendInFlight.current = false; setBusy('') }
   }
   const stage = async (artifactId: string) => {
     if (!householdId || !status?.endpoint || !token) return

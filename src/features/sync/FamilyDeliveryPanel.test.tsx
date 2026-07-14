@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const family = vi.hoisted(() => ({
-  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), registerRemote: vi.fn(), prepare: vi.fn(), envelopePrepare: vi.fn(), identity: vi.fn(), accept: vi.fn(), fail: vi.fn(), registerInbound: vi.fn(), stage: vi.fn(), encryptedStage: vi.fn(), backgroundStatus: vi.fn(), backgroundEnable: vi.fn(), backgroundDisable: vi.fn(), backgroundNow: vi.fn(),
+  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), registerRemote: vi.fn(), prepare: vi.fn(), envelopePrepare: vi.fn(), cachedEnvelope: vi.fn(), identity: vi.fn(), accept: vi.fn(), fail: vi.fn(), recipientChanged: vi.fn(), registerInbound: vi.fn(), stage: vi.fn(), encryptedStage: vi.fn(), backgroundStatus: vi.fn(), backgroundEnable: vi.fn(), backgroundDisable: vi.fn(), backgroundNow: vi.fn(),
   remote: vi.fn(), registerKey: vi.fn(), recipientDigest: vi.fn(), createHousehold: vi.fn(), previewInvite: vi.fn(), createInvite: vi.fn(), cancelInvite: vi.fn(), redeem: vi.fn(), revoke: vi.fn(), upload: vi.fn(), list: vi.fn(), download: vi.fn(),
 }))
 vi.mock('../../platform', () => ({ platformClient: {
@@ -10,7 +10,9 @@ vi.mock('../../platform', () => ({ platformClient: {
   saveFamilyDeliveryConnection: (...args: unknown[]) => family.save(...args), disconnectFamilyDelivery: (...args: unknown[]) => family.disconnect(...args),
   registerFamilyDeliveryRemoteState: (...args: unknown[]) => family.registerRemote(...args), prepareFamilyDelivery: (...args: unknown[]) => family.prepare(...args),
   prepareEncryptedFamilyEnvelope: (...args: unknown[]) => family.envelopePrepare(...args), getFamilyEnvelopeIdentity: (...args: unknown[]) => family.identity(...args),
+  getCachedFamilyDeliveryEnvelope: (...args: unknown[]) => family.cachedEnvelope(...args),
   acceptFamilyDelivery: (...args: unknown[]) => family.accept(...args), failFamilyDelivery: (...args: unknown[]) => family.fail(...args),
+  resetFamilyDeliveryRecipientSetChanged: (...args: unknown[]) => family.recipientChanged(...args),
   registerFamilyDeliveryInbound: (...args: unknown[]) => family.registerInbound(...args), stageFamilyDeliveryInbound: (...args: unknown[]) => family.stage(...args),
   stageEncryptedFamilyDeliveryInbound: (...args: unknown[]) => family.encryptedStage(...args),
   getFamilyDeliveryBackgroundStatus: (...args: unknown[]) => family.backgroundStatus(...args),
@@ -30,6 +32,7 @@ vi.mock('./familyDeliveryHttp', () => ({
 }))
 
 import { FamilyDeliveryPanel } from './FamilyDeliveryPanel'
+import { FamilyDeliveryHttpError } from './familyDeliveryHttp'
 import type { FamilyDeliveryStatusDto, HouseholdMemberDto } from '../../platform/types'
 
 const members: readonly HouseholdMemberDto[] = [
@@ -57,6 +60,14 @@ const connected: FamilyDeliveryStatusDto = {
   ],
   withheldChangeCount: 6,
 }
+const connectedWithTwoReady: FamilyDeliveryStatusDto = {
+  ...connected,
+  outbound: connected.outbound.map((item) => item.audienceKey === 'PERSONAL:member-hanako'
+    ? { ...item, recipientNames: ['花子'], state: 'READY' as const, withheldReason: null }
+    : item),
+}
+const preparedShared = { deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'a'.repeat(64), householdId: 'family', originDeviceId: 'device-local', audienceKey: 'SHARED', audienceVisibility: 'SHARED' as const, audienceMemberId: null, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1' as const, packageBytes: [1] }
+const preparedPersonal = { deliveryId: 'delivery-2', artifactId: 'publication-2', digest: 'b'.repeat(64), householdId: 'family', originDeviceId: 'device-local', audienceKey: 'PERSONAL:member-hanako', audienceVisibility: 'PERSONAL' as const, audienceMemberId: 'member-hanako', artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1' as const, packageBytes: [2] }
 const disabledSchedule = {
   householdId: 'family', enabled: false, intervalMinutes: 30, nextDueAt: null, running: false, leaseExpiresAt: null,
   lastAttemptAt: null, lastSuccessAt: null, lastResult: 'DISABLED' as const, lastDiscoveredCount: 0,
@@ -76,9 +87,11 @@ describe('FamilyDeliveryPanel', () => {
     family.backgroundStatus.mockResolvedValue(disabledSchedule); family.backgroundEnable.mockResolvedValue(enabledSchedule)
     family.backgroundDisable.mockResolvedValue(disabledSchedule); family.backgroundNow.mockResolvedValue({ ...enabledSchedule, lastResult: 'DISCOVERED', lastDiscoveredCount: 2 })
     family.prepare.mockResolvedValue([{ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'a'.repeat(64), householdId: 'family', originDeviceId: 'device-local', audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1', packageBytes: [1] }])
-    family.envelopePrepare.mockResolvedValue({ envelopeBytes: [9, 8], envelopeSha256: 'c'.repeat(64), envelopeByteSize: 2, recipientCount: 1 })
+    family.cachedEnvelope.mockResolvedValue(null)
+    family.envelopePrepare.mockResolvedValue({ envelopeBytes: [9, 8], envelopeSha256: 'c'.repeat(64), envelopeByteSize: 2, recipientCount: 1, recipientSetDigest: 'd'.repeat(64), cacheDisposition: 'NEWLY_SEALED' })
     family.upload.mockResolvedValue({ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'c'.repeat(64), acceptedAt: '2026-07-14T01:00:00Z' })
     family.accept.mockResolvedValue({ ...connected, outbound: connected.outbound.map((item) => item.audienceKey === 'SHARED' ? { ...item, pendingChangeCount: 0, state: 'RELAY_ACCEPTED' as const } : item) })
+    family.fail.mockResolvedValue(connected); family.recipientChanged.mockResolvedValue(connected)
     family.list.mockResolvedValue({ artifacts: [], nextCursor: 0 }); family.registerInbound.mockResolvedValue(connected)
   })
 
@@ -118,6 +131,146 @@ describe('FamilyDeliveryPanel', () => {
     await waitFor(() => expect(family.prepare).toHaveBeenCalledWith({ householdId: 'family', audienceKeys: ['SHARED'] }))
     expect(family.upload).toHaveBeenCalledWith('https://relay.example', 'session-secret', expect.objectContaining({ audienceVisibility: 'SHARED' }))
     expect(await screen.findByText(/受信・反映完了ではありません/)).toBeInTheDocument()
+  })
+
+  it('coalesces immediate duplicate send gestures into one upload attempt per delivery', async () => {
+    family.status.mockResolvedValue(connected)
+    let releaseUpload!: () => void
+    family.upload.mockImplementation(() => new Promise((resolve) => {
+      releaseUpload = () => resolve({ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'c'.repeat(64), acceptedAt: '2026-07-14T01:00:00Z' })
+    }))
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    await screen.findByText('世帯共有 → 花子')
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    const sendButton = screen.getByRole('button', { name: '選択した範囲を送信' })
+    fireEvent.click(sendButton)
+    fireEvent.click(sendButton)
+    await waitFor(() => expect(family.upload).toHaveBeenCalledTimes(1))
+    expect(family.prepare).toHaveBeenCalledTimes(1)
+    releaseUpload()
+    await screen.findByText(/受信・反映完了ではありません/)
+  })
+
+  it('replays a validated cached envelope before evaluating the current recipient set', async () => {
+    const localOnly = { ...remote, memberships: [membership] }
+    family.status.mockResolvedValue(connected)
+    family.remote.mockResolvedValue(localOnly)
+    family.cachedEnvelope.mockResolvedValue({
+      envelopeBytes: [7, 7], envelopeSha256: 'f'.repeat(64), envelopeByteSize: 2, recipientCount: 1,
+      recipientSetDigest: '9'.repeat(64), cacheDisposition: 'STALE_CACHE_REUSED',
+    })
+    family.upload.mockResolvedValue({ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'f'.repeat(64), acceptedAt: '2026-07-14T01:00:00Z' })
+
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    await screen.findByText('世帯共有 → 花子')
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
+
+    await waitFor(() => expect(family.cachedEnvelope).toHaveBeenCalledWith({
+      deliveryId: 'delivery-1', metadata: expect.objectContaining({ householdId: 'family', publicationId: 'publication-1' }),
+    }))
+    expect(family.envelopePrepare).not.toHaveBeenCalled()
+    expect(family.recipientDigest).not.toHaveBeenCalled()
+    expect(family.upload).toHaveBeenCalledWith('https://relay.example', 'session-secret', expect.objectContaining({
+      transportDigest: 'f'.repeat(64), recipientSetDigest: '9'.repeat(64), envelopeBytes: [7, 7],
+    }))
+    expect(await screen.findByText(/受信・反映完了ではありません/)).toBeInTheDocument()
+  })
+
+  it('accepts successful uploads and resets only the delivery rejected for an exact recipient-set change', async () => {
+    family.status.mockResolvedValue(connectedWithTwoReady)
+    family.registerRemote.mockResolvedValue(connectedWithTwoReady)
+    family.prepare.mockResolvedValue([preparedShared, preparedPersonal])
+    family.accept.mockResolvedValue(connectedWithTwoReady)
+    family.recipientChanged.mockResolvedValue(connectedWithTwoReady)
+    family.envelopePrepare.mockImplementation(async (input: { deliveryId: string }) => ({
+      envelopeBytes: input.deliveryId === 'delivery-1' ? [1, 1] : [2, 2],
+      envelopeSha256: (input.deliveryId === 'delivery-1' ? 'c' : 'd').repeat(64), envelopeByteSize: 2, recipientCount: 1,
+      recipientSetDigest: 'd'.repeat(64), cacheDisposition: 'NEWLY_SEALED',
+    }))
+    let personalAttempts = 0
+    family.upload.mockImplementation(async (_endpoint: string, _token: string, artifact: { deliveryId: string; artifactId: string; transportDigest: string }) => {
+      if (artifact.deliveryId === 'delivery-2' && personalAttempts++ === 0) throw new FamilyDeliveryHttpError('RECIPIENT_SET_CHANGED')
+      return { deliveryId: artifact.deliveryId, artifactId: artifact.artifactId, digest: artifact.transportDigest, acceptedAt: '2026-07-14T01:00:00Z' }
+    })
+
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    await screen.findByText('世帯共有 → 花子')
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
+
+    await waitFor(() => expect(family.recipientChanged).toHaveBeenCalledWith('family', [{
+      deliveryId: 'delivery-2', transportSha256: 'd'.repeat(64), recipientSetDigest: 'd'.repeat(64),
+    }]))
+    expect(family.accept).toHaveBeenCalledWith({ householdId: 'family', receipts: [expect.objectContaining({ deliveryId: 'delivery-1' })] })
+    expect(family.accept.mock.invocationCallOrder[0]).toBeLessThan(family.recipientChanged.mock.invocationCallOrder[0])
+    expect(family.fail).not.toHaveBeenCalled()
+    expect(await screen.findByText(/現在の配信先に封印し直します/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
+    await waitFor(() => expect(family.accept).toHaveBeenLastCalledWith({ householdId: 'family', receipts: [
+      expect.objectContaining({ deliveryId: 'delivery-1' }), expect.objectContaining({ deliveryId: 'delivery-2' }),
+    ] }))
+    expect(family.envelopePrepare.mock.calls.filter(([input]) => input.deliveryId === 'delivery-2')).toHaveLength(2)
+  })
+
+  it('accepts a partial success but retains cached envelope metadata for ambiguous retryable failures', async () => {
+    family.status.mockResolvedValue(connectedWithTwoReady)
+    family.registerRemote.mockResolvedValue(connectedWithTwoReady)
+    family.prepare.mockResolvedValue([preparedShared, preparedPersonal])
+    family.accept.mockResolvedValue(connectedWithTwoReady)
+    family.fail.mockResolvedValue(connectedWithTwoReady)
+    family.envelopePrepare.mockImplementation(async (input: { deliveryId: string }) => ({
+      envelopeBytes: [1, 2], envelopeSha256: (input.deliveryId === 'delivery-1' ? 'c' : 'd').repeat(64), envelopeByteSize: 2, recipientCount: 1,
+      recipientSetDigest: 'd'.repeat(64), cacheDisposition: 'NEWLY_SEALED',
+    }))
+    family.upload.mockImplementation(async (_endpoint: string, _token: string, artifact: { deliveryId: string; artifactId: string; transportDigest: string }) => {
+      if (artifact.deliveryId === 'delivery-2') throw new FamilyDeliveryHttpError('NETWORK_RETRYABLE')
+      return { deliveryId: artifact.deliveryId, artifactId: artifact.artifactId, digest: artifact.transportDigest, acceptedAt: '2026-07-14T01:00:00Z' }
+    })
+
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    await screen.findByText('世帯共有 → 花子')
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
+
+    await waitFor(() => expect(family.fail).toHaveBeenCalledWith('family', ['delivery-2']))
+    expect(family.accept).toHaveBeenCalledWith({ householdId: 'family', receipts: [expect.objectContaining({ deliveryId: 'delivery-1' })] })
+    expect(family.recipientChanged).not.toHaveBeenCalled()
+    expect(await screen.findByText(/配信サービスに接続できません/)).toBeInTheDocument()
+  })
+
+  it('retries an exact reset and drains a pending reset before resealing after a native reset failure', async () => {
+    family.status.mockResolvedValue(connectedWithTwoReady)
+    family.registerRemote.mockResolvedValue(connectedWithTwoReady)
+    family.prepare.mockResolvedValue([preparedShared, preparedPersonal])
+    family.accept.mockResolvedValue(connectedWithTwoReady)
+    family.recipientChanged.mockRejectedValueOnce(new Error('ipc unavailable'))
+      .mockRejectedValueOnce(new Error('ipc unavailable')).mockResolvedValue(connectedWithTwoReady)
+    family.envelopePrepare.mockImplementation(async (input: { deliveryId: string }) => ({
+      envelopeBytes: [1, 2], envelopeSha256: (input.deliveryId === 'delivery-1' ? 'c' : 'd').repeat(64), envelopeByteSize: 2, recipientCount: 1,
+      recipientSetDigest: 'd'.repeat(64), cacheDisposition: 'NEWLY_SEALED',
+    }))
+    let personalAttempts = 0
+    family.upload.mockImplementation(async (_endpoint: string, _token: string, artifact: { deliveryId: string; artifactId: string; transportDigest: string }) => {
+      if (artifact.deliveryId === 'delivery-2' && personalAttempts++ === 0) throw new FamilyDeliveryHttpError('RECIPIENT_SET_CHANGED')
+      return { deliveryId: artifact.deliveryId, artifactId: artifact.artifactId, digest: artifact.transportDigest, acceptedAt: '2026-07-14T01:00:00Z' }
+    })
+
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    await screen.findByText('世帯共有 → 花子')
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
+    await waitFor(() => expect(family.recipientChanged).toHaveBeenCalledTimes(2))
+    expect(family.accept).toHaveBeenCalledWith({ householdId: 'family', receipts: [expect.objectContaining({ deliveryId: 'delivery-1' })] })
+    expect(await screen.findByText(/操作を完了できませんでした/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
+    await waitFor(() => expect(family.recipientChanged).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(family.accept).toHaveBeenCalledWith({ householdId: 'family', receipts: [
+      expect.objectContaining({ deliveryId: 'delivery-1' }), expect.objectContaining({ deliveryId: 'delivery-2' }),
+    ] }))
+    expect(family.envelopePrepare.mock.calls.filter(([input]) => input.deliveryId === 'delivery-2')).toHaveLength(2)
   })
 
   it('uses an accessible confirmation before creating a member-bound invitation', async () => {
