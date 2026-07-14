@@ -1496,6 +1496,15 @@ describe('KakeFlow desktop read models', () => {
 
   it.each([
     {
+      name: 'MUFG BizSTATION deposit/withdrawal',
+      filename: 'mufg-transactions.csv',
+      accountLabel: 'mufg-transactions.csvの取込先銀行口座',
+      accountId: 'family-bank',
+      missing: '三菱UFJ銀行 BizSTATION 入出金明細CSVの取込先銀行口座を選択してください。',
+      adapterId: 'mufg-bizstation-deposit-withdrawal-v1',
+      csv: '金融機関コード,金融機関名,支店コード,支店名,科目,口座番号,口座名,取引日,入払区分,取引区分,取引金額,内他店券金額,手形・小切手区分,手形・小切手番号,振込依頼人番号,振込依頼人名,仕向金融機関名,仕向支店名,摘要,EDI情報\n0005,ﾐﾂﾋﾞｼﾕ-ｴﾌｼﾞｴｲ,123,ﾄｳｷﾖ,1,0001234567,ｶｹﾌﾛｳ,080701,1,11,000000300000,000000000000,,,,ｶﾌﾞｼｷｶﾞｲｼﾔ,ﾃｽﾄｷﾞﾝｺｳ,ﾎﾝﾃﾝ,給与,',
+    },
+    {
       name: 'MUFG BizSTATION',
       filename: 'mufg-bizstation.csv',
       accountLabel: 'mufg-bizstation.csvの取込先銀行口座',
