@@ -1174,6 +1174,10 @@ describe('KakeFlow desktop read models', () => {
       name: 'SMBC Vpass', filename: 'vpass.csv', accountLabel: 'vpass.csvの取込先カード口座', accountId: 'family-card', missing: '三井住友カード（Vpass）明細の取込先カード口座を選択してください。', adapterId: 'smbc-vpass-statement-v1',
       csv: 'VPASSガイド 様,****1234,三井住友カード NL\n2026/06/12,架空ストア,1200,1,1,1200,,,,,\n,,,,,1200,,,,,',
     },
+    {
+      name: 'AEON Card', filename: 'aeon-card.csv', accountLabel: 'aeon-card.csvの取込先カード口座', accountId: 'family-card', missing: 'イオンカード確定明細の取込先カード口座を選択してください。', adapterId: 'aeon-card-finalized-statement-v1',
+      csv: 'イオンカードご利用明細,2026年7月ご請求分\nカード会員名,架空 太郎\nカード番号,4987-****-****-1234\nご利用日,ご利用先,ご利用金額(円),支払区分,今回ご請求額(円),カード利用者,備考\n2026/06/12,架空ストア,1200,一括,1200,本人,\nお支払い合計,,,,1200,,',
+    },
   ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv }) => {
     const { container } = render(<App />)
     await screen.findByText('生協')

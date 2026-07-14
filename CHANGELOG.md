@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.63.0 — 2026-07-14
+
+- Add the strict `aeon-card-finalized-statement-v1` adapter for one screen-derived synthetic AEON Card finalized-statement contract; AEON confirms CSV/PDF export but does not publish the literal consumer CSV schema, so unfamiliar layouts fail closed.
+- Detect from an AEON content marker plus exact named statement fields, dated details, and one explicit total instead of trusting filenames.
+- Preserve negative refunds, quoted multiline physical-row provenance, masked-card metadata, and complete raw source fields while excluding the total row from purchases and requiring its exact agreement with detail amounts.
+- Block revolving, installment, bonus, carried, skipped, partially billed, ambiguous-refund, unsafe-card-number, multi-section, malformed, and total-mismatch files rather than creating an incorrect expense or liability.
+- Require explicit selection of an active `LIABILITY / CREDIT_CARD` account, retain issuer `AEON_CARD` through statement mapping, and keep every candidate behind the existing review/post boundary.
+
 ## 0.62.0 — 2026-07-14
 
 - Add bounded offline OCR for image-only and hybrid PDFs with explicit password, engine/model, page/pixel limit, timeout, and no-text outcomes.
