@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.69.0 — 2026-07-14
+
+- Export one explicitly selected securities portfolio snapshot as a native four-sheet `.xlsx` workbook without silently substituting the latest snapshot.
+- Preserve snapshot summary, asset classes, positions, snapshot-local FX rates, nullable values, and original source-row lineage using typed workbook cells.
+- Keep event-based FIFO performance, live valuation queries, Money Forward aggregate asset history, and multi-snapshot trends outside this snapshot-grain export.
+
 ## 0.68.0 — 2026-07-14
 
 - Export the annual Investment Performance report as a native four-sheet `.xlsx` workbook using the same household, inclusive year window, and FIFO performance query as the visible desktop report.
