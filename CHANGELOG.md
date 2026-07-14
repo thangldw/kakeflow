@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.72.0 — 2026-07-15
+
+- Export the source-auditable annual Investment Performance report as a deterministic Japanese PDF using the same household, optional securities-account, inclusive year, FIFO engine, and native-currency DTO as the visible report and workbook.
+- Keep JPY, USD, and every other source currency separate with within-currency purchase/sale scales and exact native values; do not manufacture FX-consolidated totals, ROI, TWR, IRR, current valuation, unrealized P&L, asset allocation, investment return, or forecast metrics.
+- Preserve realized FIFO allocations, corporate-action allocations, uncovered sales, skipped events, unallocated corporate actions, and available Source Document/Row provenance together with completeness caveats.
+- Keep PDF bytes in the native process, return only saved-file metadata over IPC, and treat save-dialog cancellation as a non-error while preventing overlapping Excel/PDF exports.
+- Extend the reproducible Poppler release gate to require page-by-page visual evidence for monthly, annual, and investment-performance PDFs; portfolio-snapshot PDF remains unreleased.
+
 ## 0.71.0 — 2026-07-14
 
 - Export the source-backed Annual Household Review as a deterministic Japanese PDF using the exact year, account-group, member-attribution, and `asOf` scope shared by the visible annual review and its CSV/XLSX exports.

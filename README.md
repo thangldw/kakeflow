@@ -4,7 +4,9 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
-Version 0.71 adds a source-backed Annual Household Review PDF using the exact validated year, account-group, member-attribution, and as-of scope shared by the screen and annual CSV/XLSX exports. Its Executive Summary combines comparable-period KPIs with a status-aware 12-month trend, then retains drivers, budget, goals, import health, card reconciliation, actions, and accounting caveats. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for both monthly and annual PDFs before release.
+Version 0.72 adds a source-auditable Investment Performance PDF using the same annual period, optional securities-account scope, FIFO engine, native-currency totals, allocations, and exceptions as the screen and [investment workbook](docs/INVESTMENT_PERFORMANCE_XLSX.md). It keeps JPY, USD, and other currencies separate, carries available Source Document/Row lineage, and explicitly avoids invented FX totals, ROI/TWR/IRR, valuation, unrealized, allocation, return, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for monthly, annual, and investment-performance PDFs before release.
+
+Version 0.71 added a source-backed Annual Household Review PDF using the exact validated year, account-group, member-attribution, and as-of scope shared by the screen and annual CSV/XLSX exports. Its Executive Summary combines comparable-period KPIs with a status-aware 12-month trend, then retains drivers, budget, goals, import health, card reconciliation, actions, and accounting caveats.
 
 Version 0.70 added the source-backed Monthly Household Review PDF using the same validated scope and DTO as the on-screen review and [monthly workbook](docs/MONTHLY_REVIEW_XLSX.md). The native four-page report embeds pinned Noto Sans JP, opens with an Executive Summary, KPI cards and exact-value comparison bars, and preserves budget, goals, import-health, card-reconciliation, action, and double-counting disclosures.
 
@@ -246,7 +248,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 
 ## Remaining product milestones
 
-1. Extend the released deterministic Japanese PDF and visual-QA foundation from monthly and annual household reviews to investment-performance and portfolio-snapshot views.
+1. Extend the released deterministic Japanese PDF and visual-QA foundation from household and investment-performance reports to the portfolio-snapshot view.
 2. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 3. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
 4. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.

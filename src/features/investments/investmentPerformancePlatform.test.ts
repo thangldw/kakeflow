@@ -63,6 +63,25 @@ describe('investment performance platform boundary', () => {
     }
   })
 
+  it('saves the exact annual performance request as PDF and validates the native summary', async () => {
+    const request = { householdId: 'home', dateFrom: '2026-01-01', dateTo: '2026-12-31' }
+    const saved = { fileName: 'kakeflow-investment-performance-2026.pdf', pageCount: 6, byteSize: 18_000, rendererVersion: 1 }
+    const invoke = vi.fn(async () => saved) as unknown as InvestmentPerformanceInvoke
+    await expect(createInvestmentPerformancePlatform(invoke).savePerformancePdf(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('investment_performance_pdf_save', { request })
+
+    await expect(createInvestmentPerformancePlatform(async () => null).savePerformancePdf(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'investment.xlsx', pageCount: 6, byteSize: 18_000 },
+      { fileName: '../investment.pdf', pageCount: 6, byteSize: 18_000 },
+      { fileName: 'investment.pdf', pageCount: 0, byteSize: 18_000 },
+      { fileName: 'investment.pdf', pageCount: 6, byteSize: 0 },
+      { fileName: 'investment.pdf', pageCount: 1.5, byteSize: 18_000 },
+    ]) {
+      await expect(createInvestmentPerformancePlatform(async () => response).savePerformancePdf(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('rejects malformed native responses instead of coercing them', async () => {
     const invoke = vi.fn(async () => ({ asOf: '2026-12-31', costBasisMethod: 'AVERAGE', positions: [], openLots: [], realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [] })) as unknown as InvestmentPerformanceInvoke
     await expect(createInvestmentPerformancePlatform(invoke).queryHoldings({ householdId: 'home', asOf: '2026-12-31' })).rejects.toThrow('costBasisMethod')

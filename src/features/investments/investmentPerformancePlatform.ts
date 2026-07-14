@@ -135,6 +135,12 @@ export interface InvestmentPerformanceXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface InvestmentPerformancePdfSavedDto {
+  readonly fileName: string
+  readonly pageCount: number
+  readonly byteSize: number
+}
+
 export type InvestmentPerformanceInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createInvestmentPerformancePlatform(invoke: InvestmentPerformanceInvoke = tauriInvoke) {
@@ -146,6 +152,10 @@ export function createInvestmentPerformancePlatform(invoke: InvestmentPerformanc
     savePerformanceXlsx: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformanceXlsxSavedDto | null> => {
       const value = await invoke('investment_performance_xlsx_save', { request })
       return value === null ? null : parsePerformanceXlsxSaved(value)
+    },
+    savePerformancePdf: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformancePdfSavedDto | null> => {
+      const value = await invoke('investment_performance_pdf_save', { request })
+      return value === null ? null : parsePerformancePdfSaved(value)
     },
   }
 }
@@ -159,6 +169,17 @@ function parsePerformanceXlsxSaved(value: unknown): InvestmentPerformanceXlsxSav
   if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('Invalid saved investment performance XLSX filename')
   if (item.rowCount <= 0 || item.byteSize <= 0) throw new TypeError('Invalid saved investment performance XLSX')
   return item as unknown as InvestmentPerformanceXlsxSavedDto
+}
+
+function parsePerformancePdfSaved(value: unknown): InvestmentPerformancePdfSavedDto {
+  const item = record(value, 'saved investment performance PDF')
+  string(item.fileName, 'saved investment performance PDF filename')
+  safeInteger(item.pageCount, 'saved investment performance PDF pages')
+  safeInteger(item.byteSize, 'saved investment performance PDF bytes')
+  const fileName = item.fileName
+  if (fileName.length === 0 || fileName.length > 255 || !/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('Invalid saved investment performance PDF filename')
+  if (item.pageCount <= 0 || item.byteSize <= 0) throw new TypeError('Invalid saved investment performance PDF')
+  return item as unknown as InvestmentPerformancePdfSavedDto
 }
 
 function parseHoldings(value: unknown): InvestmentHoldingsDto {
