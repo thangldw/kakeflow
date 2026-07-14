@@ -1,0 +1,49 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const api = vi.hoisted(() => ({ active: vi.fn(), resolve: vi.fn(), apply: vi.fn(), discard: vi.fn() }))
+vi.mock('../../platform', () => ({ platformClient: {
+  runtime: 'tauri', getActiveFamilySnapshotReview: (...args: unknown[]) => api.active(...args),
+  resolveFamilySnapshot: (...args: unknown[]) => api.resolve(...args), applyFamilySnapshot: (...args: unknown[]) => api.apply(...args),
+  discardFamilySnapshot: (...args: unknown[]) => api.discard(...args),
+} }))
+
+import { FamilySnapshotReviewPanel } from './FamilySnapshotReviewPanel'
+
+const review = {
+  packageId: 'family-package-1', householdId: 'family', senderMemberName: '花子', audienceVisibility: 'SHARED' as const, audienceMemberName: null,
+  state: 'REVIEW_REQUIRED' as const, recordCount: 2, createCount: 0, updateCount: 1, deleteCount: 1, conflictCount: 2,
+  records: [
+    { recordOrder: 0, entityKind: 'TRANSACTION', entityId: 'tx-1', entityLabel: '食費・スーパー', operation: 'UPSERT' as const, reviewState: 'CONFLICT' as const, resolution: 'PENDING' as const, localSummary: '¥4,800・食費', incomingSummary: '¥5,000・食費' },
+    { recordOrder: 1, entityKind: 'TRANSACTION', entityId: 'tx-2', entityLabel: '交通費・電車', operation: 'DELETE' as const, reviewState: 'DELETE' as const, resolution: 'PENDING' as const, localSummary: '¥1,200・交通費', incomingSummary: '削除候補' },
+  ],
+}
+
+describe('FamilySnapshotReviewPanel', () => {
+  beforeEach(() => { api.active.mockReset().mockResolvedValue(review); api.resolve.mockReset(); api.apply.mockReset(); api.discard.mockReset() })
+
+  it('states the partition boundary and requires an explicit choice for every risky record', async () => {
+    api.resolve.mockResolvedValue({ ...review, state: 'READY', records: review.records.map((record) => ({ ...record, resolution: 'APPLY_INCOMING' })) })
+    render(<FamilySnapshotReviewPanel householdId="family" />)
+    expect(await screen.findByText('花子さんから・世帯共有')).toBeInTheDocument()
+    expect(screen.getByText(/含まれない個人データは削除・変更しません/)).toBeInTheDocument()
+    expect(screen.getByText('¥4,800・食費')).toBeInTheDocument(); expect(screen.getByText('¥5,000・食費')).toBeInTheDocument()
+    const confirm = screen.getByRole('button', { name: '選択内容を確定' }); expect(confirm).toBeDisabled()
+    const incoming = screen.getAllByRole('radio', { name: /受信/ }); fireEvent.click(incoming[0]); fireEvent.click(incoming[1]); fireEvent.click(confirm)
+    await waitFor(() => expect(api.resolve).toHaveBeenCalledWith('family-package-1', [
+      { entityKind: 'TRANSACTION', entityId: 'tx-1', resolution: 'APPLY_INCOMING' },
+      { entityKind: 'TRANSACTION', entityId: 'tx-2', resolution: 'APPLY_INCOMING' },
+    ]))
+    expect(await screen.findByRole('button', { name: 'この端末の台帳に反映' })).toBeInTheDocument()
+  })
+
+  it('keeps final apply separate and never claims synchronization', async () => {
+    const ready = { ...review, state: 'READY' as const, records: review.records.map((record) => ({ ...record, resolution: 'KEEP_LOCAL' as const })) }
+    api.active.mockResolvedValue(ready); api.apply.mockResolvedValue({ ...ready, state: 'APPLIED' })
+    render(<FamilySnapshotReviewPanel householdId="family" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'この端末の台帳に反映' }))
+    await waitFor(() => expect(api.apply).toHaveBeenCalledWith('family-package-1'))
+    expect(await screen.findByText('2件をこの端末へ反映しました。')).toBeInTheDocument()
+    expect(screen.queryByText(/同期済み/)).not.toBeInTheDocument()
+  })
+})

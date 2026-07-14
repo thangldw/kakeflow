@@ -16,8 +16,83 @@ KAKEFLOW_RELAY_DATA_DIR=/var/lib/kakeflow-relay \
 npm run relay:start
 ```
 
-The API exposes `GET /v1/whoami`, `POST /v1/artifacts`,
+The personal-device API exposes `GET /v1/whoami`, `POST /v1/artifacts`,
 `GET /v1/artifacts?...`, and `GET /v1/artifacts/:id`. Uploads are limited to
 64 MiB, verified against `x-kakeflow-digest`, and immutable for each
-principal/artifact ID pair. The durable index and artifact files survive a
+principal/artifact ID pair.
+
+## Authenticated family relay
+
+The `/v2` API adds durable household membership and audience-partitioned
+publications. Authentication always determines the principal. The service does
+not accept sender or recipient principal IDs from a client.
+
+```text
+GET    /v2/whoami
+POST   /v2/households
+GET    /v2/households
+GET    /v2/households/:householdId/members
+POST   /v2/households/:householdId/invites
+GET    /v2/households/:householdId/invites
+DELETE /v2/households/:householdId/invites/:inviteId
+POST   /v2/invites/preview
+POST   /v2/invites/redeem
+DELETE /v2/households/:householdId/members/:membershipId
+POST   /v2/households/:householdId/publications
+GET    /v2/households/:householdId/publications?after=0
+GET    /v2/households/:householdId/publications/:publicationId
+```
+
+Create a family binding with a stable local household/member identity:
+
+```json
+{
+  "householdId": "family",
+  "domainMemberId": "family-member-primary",
+  "idempotencyKey": "create-family-20260714"
+}
+```
+
+An owner can create a one-use, expiring invite for a `domainMemberId`. Redeeming
+it creates a new immutable membership generation for the authenticated
+principal. Revocation makes that generation ineligible for both publication
+listing and direct byte download. Reinviting the same principal creates a new
+generation and does not restore access to publications addressed to an older
+generation. Invite codes are returned by create/retry responses but omitted
+from invite listings. An authenticated client can preview an active code before
+redeeming it; preview returns only `householdId`, `domainMemberId`, `role`, and
+`expiresAt`, and does not consume or echo the code.
+
+Family publication uploads use these headers:
+
+```text
+X-KakeFlow-Publication-Id: <stable retry id>
+X-KakeFlow-Digest: <sha256 of exact bytes>
+X-KakeFlow-Origin-Device-Id: <local device id>
+X-KakeFlow-Audience-Visibility: SHARED | PERSONAL
+X-KakeFlow-Audience-Member-Id: <required only for PERSONAL>
+X-KakeFlow-Artifact-Schema: FAMILY_AUDIENCE_PARTITION_V1
+```
+
+For `SHARED`, the relay snapshots every other active household membership as a
+recipient. For `PERSONAL`, the member header must equal the authenticated
+sender membership's `domainMemberId`; only other active membership generations
+for that exact member are recipients. There is no fallback from `PERSONAL` to
+the household audience. An upload with no eligible recipient is rejected.
+
+A publication ID is immutable within its household. Retrying the same ID and
+exact metadata/bytes is idempotent; changing its digest, sender generation,
+origin, schema, or audience is a conflict. A new publication ID may publish the
+same bytes again, which lets a newly joined generation receive a fresh current
+snapshot. Cursors are ordered server sequences, while direct downloads repeat
+the same live membership-generation authorization used by listing.
+
+Relay acceptance means only that the publication and its recipient snapshot
+were stored durably. It is not evidence that another desktop downloaded,
+reviewed, or applied the data. Revocation blocks future relay access but cannot
+erase copies already downloaded. The reference relay does not inspect the
+opaque artifact to prove its contents match the declared audience, does not
+provide local desktop user authorization, and is not end-to-end encrypted.
+
+The versioned personal and family indexes and all artifact files survive a
 process restart.

@@ -97,18 +97,19 @@ KakeFlow 0.53 does not claim:
   local copies;
 - remote OCR, mobile capture, bank connectivity, or payment initiation.
 
-Family Space audience remains a local organization label. A whole-household
-schema-v4 package may contain personal facts for more than one member, so it
-must not be used for cross-member delivery. A future family relay requires
-audience-partitioned payloads and backend-derived recipients before it can make
-an access-control claim.
+Family Space audience remains a local organization label inside schema-v4. A
+whole-household schema-v4 package may contain personal facts for more than one
+member, so it must not be used for cross-member delivery. KakeFlow v0.54 adds a
+separate family protocol whose relay derives recipients from authenticated
+membership; this does not change or widen the personal-relay contract.
 
 ## Sequenced roadmap
 
-- **0.54:** introduce authenticated household membership and
-  audience-partitioned `SHARED` and `PERSONAL(member)` relay artifacts before
-  enabling cross-principal family delivery. Unpartitioned schema-v4 snapshots
-  remain personal-relay-only.
+- **0.54:** authenticated household membership and audience-partitioned
+  `SHARED` and `PERSONAL(member)` family artifacts are available for the
+  initial household/member/account/transaction graph. Unpartitioned schema-v4
+  snapshots remain personal-relay-only; evidence-dependent aggregates remain
+  withheld from family delivery.
 - **0.55:** add a separate mobile receipt-capture capsule and desktop Capture
   Inbox. A mobile image enters as immutable pending source evidence, runs
   through desktop-local OCR and matching, and still requires explicit user

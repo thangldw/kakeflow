@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.54.0 — 2026-07-14
+
+- Add a separate `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema-v1 protocol for cross-principal family delivery without changing the byte or deletion semantics of same-principal schema-v4 personal packages.
+- Partition the initial confirmed household graph into `SHARED` and publisher-bound `PERSONAL(member)` artifacts for household, member, account, and transaction records; withhold mixed-member, unsupported, and evidence-dependent investment records instead of widening or silently dropping them.
+- Strip local source links from family transactions, carry only hashed SHARED account-audience dependencies needed by PERSONAL journals, and require those dependencies to exist with matching scope before review.
+- Add partition-keyed revision/entity lineage so omission deletion can affect only an exact previously accepted source and audience head whose local payload is still unchanged.
+- Add a separately operated relay-v2 reference service with authenticated household creation, invite preview/redeem/revoke, membership generations, server-derived SHARED/PERSONAL recipients, immutable publications, restart-safe storage, and current-membership checks on list and direct download.
+- Add the desktop Family Delivery workspace with session-only Bearer tokens, explicit audience/recipient previews, withheld-data disclosure, durable cursors and retry bytes, invite and revocation flows, and a dedicated partial-snapshot review/resolve/apply/discard boundary.
+- Keep delivery claims bounded: no remote action writes the ledger automatically; there is no E2E encryption, background/realtime delivery, evidence or investment transport, remote erasure, production signing/notarization, or Windows installer artifact in this release.
+
 ## 0.53.0 — 2026-07-14
 
 - Add an optional authenticated personal desktop relay for manually moving schema-v4 local change packages between installations using the same remote principal derived from a Bearer token.

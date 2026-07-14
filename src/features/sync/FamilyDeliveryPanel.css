@@ -1,0 +1,48 @@
+.family-delivery { display: grid; gap: 16px; }
+.family-delivery .panel-head p,.family-delivery p,.family-delivery label,.family-delivery button,.family-delivery dt,.family-delivery dd,.family-delivery small { font-size: 12px; line-height: 1.5; }
+.family-delivery-state,.family-inbound-state,.family-delivery-member span { display: inline-flex; align-items: center; min-height: 28px; padding: 4px 9px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 700; }
+.family-delivery-state.state-CONNECTED,.membership-ACTIVE { color: #315a3d !important; background: #e5f1e7 !important; }
+.family-delivery-state.state-AUTH_EXPIRED,.family-delivery-state.state-NETWORK_UNAVAILABLE,.membership-INVITED { color: #805a24 !important; background: #fff0d5 !important; }
+.family-delivery-state.state-MEMBERSHIP_REVOKED,.membership-REVOKED,.membership-ARCHIVED_BLOCKED { color: #7b3535 !important; background: #f8e7e7 !important; }
+.family-delivery-boundary,.family-withheld,.family-revocation-warning,.family-delivery-notice,.family-delivery-error { margin: 0; padding: 12px 14px; border-radius: 9px; background: var(--soft); color: var(--muted); }
+.family-delivery-error { color: #7b3535; background: #fff0f0; border: 1px solid #e7bcbc; }
+.family-withheld,.family-revocation-warning { color: #805a24; background: #fff6e6; }
+.family-connection-form { display: grid; grid-template-columns: minmax(220px,1fr) minmax(220px,1fr) minmax(180px,.8fr) auto; align-items: end; gap: 12px; }
+.family-connection-form label,.family-join-row label { display: grid; gap: 6px; color: var(--muted); font-weight: 600; }
+.family-connection-form input,.family-connection-form select,.family-join-row input { min-width: 0; }
+.family-connection-form button,.family-join-row button,.family-delivery-actions button,.family-inbound-section button,.family-delivery-member button,.family-dialog button { min-height: 40px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.family-join-row { display: grid; grid-template-columns: minmax(240px,1fr) auto; align-items: end; gap: 12px; padding-top: 4px; }
+.family-identity-summary { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 0; }
+.family-identity-summary div { padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.family-identity-summary dt { color: var(--muted); }
+.family-identity-summary dd { margin: 4px 0 0; font-weight: 700; }
+.family-membership-section,.family-outbound-section,.family-inbound-section { display: grid; gap: 10px; }
+.family-membership-section h3,.family-outbound-section h3,.family-inbound-section h3 { margin: 0; font-size: 15px; }
+.family-delivery-member,.family-inbound-section article { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.family-delivery-member > div,.family-inbound-section article > div { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 10px; min-width: 0; }
+.family-delivery-member small,.family-inbound-section small { grid-column: 1 / -1; color: var(--muted); }
+.family-section-head p { margin: 3px 0 0; color: var(--muted); }
+.family-partition { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+.family-partition input { width: 18px; height: 18px; margin-top: 2px; }
+.family-partition span { display: grid; gap: 3px; }
+.family-partition small { color: var(--muted); }
+.family-partition.blocked { background: var(--soft); cursor: not-allowed; }
+.family-delivery-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.family-inbound-section article { grid-template-columns: minmax(0,1fr) auto auto; }
+.family-revocation-warning { grid-column: 1 / -1; display: block; border-radius: 7px; }
+.family-dialog-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 24px; background: rgb(21 27 24 / 54%); }
+.family-dialog { width: min(520px,100%); display: grid; gap: 16px; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 22px 70px rgb(0 0 0 / 24%); }
+.family-dialog p { margin: 0; font-size: 14px; line-height: 1.65; }
+.family-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.family-dialog-head h3 { margin: 0; font-size: 18px; }
+.family-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.family-invite-code { padding: 14px !important; border: 1px dashed var(--line); border-radius: 9px; background: var(--soft); font-family: ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap: anywhere; }
+.family-redeem-summary { display: grid; gap: 9px; margin: 0; }
+.family-redeem-summary div { padding: 10px; border-radius: 8px; background: var(--soft); }
+.family-redeem-summary dd { margin: 3px 0 0; font-weight: 700; }
+@media (max-width: 1180px) { .family-connection-form { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 760px) {
+  .family-connection-form,.family-join-row,.family-identity-summary { grid-template-columns: 1fr; }
+  .family-delivery-member,.family-inbound-section article { grid-template-columns: 1fr; align-items: stretch; }
+  .family-dialog-actions { flex-direction: column-reverse; }
+}
