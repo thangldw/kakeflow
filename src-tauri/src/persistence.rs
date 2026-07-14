@@ -129,6 +129,10 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0052_mobile_capture_background.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0053_google_drive_connections.sql"
+    )),
+    M::up(include_str!("../migrations/0054_google_drive_inbox.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -364,6 +368,9 @@ pub fn clear_restored_device_local_state(
         transaction.execute("DELETE FROM watched_folders", [])?;
         if version >= 31 {
             transaction.execute("DELETE FROM local_sync_contexts", [])?;
+        }
+        if version >= 53 {
+            transaction.execute("DELETE FROM google_drive_connections", [])?;
         }
         transaction.commit()?;
         connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
@@ -1547,6 +1554,64 @@ fn validate_restored_semantics(
                 OR record.id IS NULL LIMIT 1",
         )?;
     }
+    if schema_version >= 53 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM google_drive_connections c
+             LEFT JOIN households h ON h.id=c.household_id
+             WHERE h.id IS NULL
+                OR c.oauth_scope!='https://www.googleapis.com/auth/drive.readonly'
+                OR (c.change_page_token IS NOT NULL AND c.start_page_token IS NULL)
+                OR ((c.root_folder_id IS NULL)!=(c.root_folder_name IS NULL))
+                OR (c.status IN ('SELECTING_FOLDER','CONNECTED') AND c.google_account_id IS NULL)
+                OR (c.status='CONNECTED' AND (c.root_folder_id IS NULL
+                    OR c.change_page_token IS NULL))
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM google_drive_nodes n
+             LEFT JOIN google_drive_connections c ON c.id=n.connection_id
+             WHERE c.id IS NULL
+                OR ((n.mime_type='application/vnd.google-apps.folder')!=n.is_folder)
+                OR (n.is_folder=1 AND (n.byte_size IS NOT NULL
+                    OR n.md5_checksum IS NOT NULL OR n.can_download!=0))
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM google_drive_sync_schedules s
+             LEFT JOIN google_drive_connections c ON c.id=s.connection_id
+             WHERE c.id IS NULL
+                OR ((s.last_result='RUNNING')!=(s.lease_token IS NOT NULL))
+                OR ((s.lease_token IS NULL)!=(s.lease_expires_at IS NULL))
+             LIMIT 1",
+        )?;
+    }
+    if schema_version >= 54 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM google_drive_inbox i
+             LEFT JOIN google_drive_connections c ON c.id=i.connection_id
+             LEFT JOIN google_drive_nodes n
+               ON n.connection_id=i.connection_id AND n.file_id=i.file_id
+             LEFT JOIN import_runs r ON r.id=i.import_run_id
+             WHERE c.id IS NULL OR c.household_id!=i.household_id
+                OR n.file_id IS NULL OR n.is_folder!=0
+                OR (i.import_run_id IS NOT NULL AND r.household_id!=i.household_id)
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM google_drive_source_links l
+             LEFT JOIN google_drive_inbox i ON i.id=l.inbox_id
+             LEFT JOIN source_documents d ON d.id=l.source_document_id
+             WHERE i.id IS NULL OR d.id IS NULL OR i.household_id!=d.household_id
+                OR i.state!='STAGED' OR i.import_run_id!=d.import_run_id
+                OR i.content_sha256 IS NULL OR i.content_sha256!=d.sha256
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -1661,6 +1726,110 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn migrations_53_and_54_support_authorization_then_bounded_remote_inbox() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..52].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO households(id,name) VALUES('family','Family')",
+                [],
+            )
+            .unwrap();
+
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO google_drive_connections
+               (id,household_id,client_id_fingerprint,status)
+             VALUES('drive','family','{hash}','AUTHORIZING');
+             UPDATE google_drive_connections
+             SET google_account_id='google-user',root_folder_id='root',
+                 root_folder_name='KakeFlow',status='SELECTING_FOLDER';
+             UPDATE google_drive_connections
+             SET start_page_token='start',change_page_token='change',status='CONNECTED';
+             INSERT INTO google_drive_nodes
+               (connection_id,file_id,parent_file_id,name,mime_type,byte_size,
+                md5_checksum,drive_version,generation_fingerprint,is_folder,can_download)
+             VALUES('drive','file','root','statement.csv','text/csv',123,
+               'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','7','{hash}',0,1);
+             INSERT INTO google_drive_inbox
+               (id,household_id,connection_id,file_id,generation_fingerprint,
+                file_name,media_type,remote_byte_size,state)
+             VALUES('{hash}','family','drive','file','{hash}',
+               'statement.csv','text/csv',123,'DISCOVERED');"
+            ))
+            .unwrap();
+
+        assert!(connection
+            .execute(
+                "UPDATE google_drive_connections SET root_folder_name=NULL WHERE id='drive'",
+                [],
+            )
+            .is_err());
+        let second = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        connection.execute(
+            "UPDATE google_drive_nodes
+             SET generation_fingerprint=?1,drive_version='8' WHERE connection_id='drive' AND file_id='file'",
+            [second],
+        ).unwrap();
+        connection
+            .execute(
+                "INSERT INTO google_drive_inbox
+               (id,household_id,connection_id,file_id,generation_fingerprint,
+                file_name,media_type,state)
+             VALUES(?1,'family','drive','file',?1,'statement.csv','text/csv','DISCOVERED')",
+                [second],
+            )
+            .unwrap();
+        assert_eq!(connection.query_row(
+            "SELECT count(*) FROM google_drive_inbox WHERE connection_id='drive' AND file_id='file'",
+            [], |row| row.get::<_, i64>(0),
+        ).unwrap(), 2);
+        assert!(connection
+            .execute(
+                "INSERT INTO google_drive_inbox
+                   (id,household_id,connection_id,file_id,generation_fingerprint,
+                    file_name,media_type,state)
+                 VALUES(?1,'family','drive','file',?1,'old.csv','text/csv','DISCOVERED')",
+                ["cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],
+            )
+            .is_err());
+        assert!(validate_restored_semantics(&connection, 54).is_ok());
+    }
+
+    #[test]
+    fn restored_semantics_reject_google_drive_cross_household_inbox_scope() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state.with_connection(|connection| {
+            let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            connection.execute_batch(&format!(
+                "INSERT INTO households(id,name) VALUES('family','Family'),('other','Other');
+                 INSERT INTO google_drive_connections
+                   (id,household_id,google_account_id,client_id_fingerprint,
+                    root_folder_id,root_folder_name,status,start_page_token,change_page_token)
+                 VALUES('drive','family','user','{hash}','root','Root','CONNECTED','start','change');
+                 INSERT INTO google_drive_nodes
+                   (connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download)
+                 VALUES('drive','file','statement.csv','text/csv','{hash}',0,1);
+                 INSERT INTO google_drive_inbox
+                   (id,household_id,connection_id,file_id,generation_fingerprint,
+                    file_name,media_type,state)
+                 VALUES('{hash}','family','drive','file','{hash}','statement.csv','text/csv','DISCOVERED');
+                 DROP TRIGGER trg_google_drive_inbox_scope_update;
+                 UPDATE google_drive_inbox SET household_id='other' WHERE id='{hash}';"
+            ))?;
+            assert!(validate_restored_semantics(connection, 54).is_err());
+            Ok(())
+        }).expect("restore semantic audit should execute");
     }
 
     #[test]
@@ -3997,7 +4166,7 @@ mod tests {
     }
 
     #[test]
-    fn portable_restore_clears_device_local_watched_folder_grants() {
+    fn portable_restore_clears_device_local_folder_and_google_drive_grants() {
         let test_directory = std::env::temp_dir().join(format!(
             "kakeflow-device-state-test-{}-{}",
             std::process::id(),
@@ -4016,6 +4185,12 @@ mod tests {
                     "INSERT INTO watched_folders (id, household_id, label, canonical_path) VALUES ('folder', 'family', 'Inbox', '/device/private/inbox')",
                     [],
                 )?;
+                connection.execute(
+                    "INSERT INTO google_drive_connections
+                       (id,household_id,client_id_fingerprint,status)
+                     VALUES('drive','family',?1,'AUTHORIZING')",
+                    ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                )?;
                 Ok(())
             })
             .expect("seed watched folder");
@@ -4029,6 +4204,12 @@ mod tests {
             .query_row("SELECT count(*) FROM watched_folders", [], |row| row.get(0))
             .expect("count watched folders");
         assert_eq!(count, 0);
+        let drive_count: i64 = connection
+            .query_row("SELECT count(*) FROM google_drive_connections", [], |row| {
+                row.get(0)
+            })
+            .expect("count Google Drive connections");
+        assert_eq!(drive_count, 0);
         drop(connection);
         let _ = fs::remove_dir_all(test_directory);
     }
