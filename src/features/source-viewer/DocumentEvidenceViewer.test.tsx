@@ -7,7 +7,15 @@ import { PdfPreviewAccessError } from './sourcePdfPagePreviewPlatform'
 const evidence: DocumentEvidenceReadModel = {
   sourceRecordId: 'record-1', evidenceVersion: 2, method: 'OCR', text: 'スーパー\n牛乳 238', confidenceBps: 9100, issues: ['LOW_CONTRAST'],
   pages: [{ pageNumber: 1, widthPixels: 1224, heightPixels: 1584, confidenceBps: 9200, issues: [], regions: [{ pageNumber: 1, coordinateSpace: 'PIXELS', boundingBox: { left: 20, top: 30, width: 80, height: 14 }, text: '牛乳 238', confidenceBps: 9200, provenance: 'TESSERACT_WORD' }] }],
-  receipt: { merchant: 'スーパー', occurredOn: '2026-07-12', totalAmountJpy: 238, items: [{ description: '牛乳', amountJpy: 238, quantity: 1, confidenceBps: 8000, provenance: { lineNumber: 2, regionIndexes: [0], method: 'TEXT_PATTERN' } }], taxes: [{ ratePercent: 8, taxAmountJpy: 17, taxableAmountJpy: null, confidenceBps: 8500, provenance: { lineNumber: 3, regionIndexes: [1], method: 'TEXT_PATTERN' } }], couponAmountJpy: 10, pointsUsedJpy: 20 },
+  receipt: {
+    merchant: 'スーパー', occurredOn: '2026-07-12', totalAmountJpy: 238,
+    items: [{ description: '牛乳', amountJpy: 238, quantity: 1, taxRatePercent: 8, confidenceBps: 8000, provenance: { lineNumber: 2, regionIndexes: [0], method: 'TEXT_PATTERN' } }],
+    taxes: [{ ratePercent: 8, taxAmountJpy: 17, taxableAmountJpy: null, confidenceBps: 8500, provenance: { lineNumber: 3, regionIndexes: [1], method: 'TEXT_PATTERN' } }],
+    couponEvidence: [{ amountJpy: 10, confidenceBps: 8500, provenance: { lineNumber: 4, regionIndexes: [], method: 'TEXT_PATTERN' } }],
+    pointsUsedEvidence: [{ amountJpy: 20, confidenceBps: 8500, provenance: { lineNumber: 5, regionIndexes: [], method: 'TEXT_PATTERN' } }],
+    couponAmountJpy: 10, pointsUsedJpy: 20,
+    reconciliation: { status: 'EXACT', itemTotalJpy: 238, totalAmountJpy: 238, deltaJpy: 0 },
+  },
 }
 
 describe('DocumentEvidenceViewer', () => {
@@ -18,6 +26,10 @@ describe('DocumentEvidenceViewer', () => {
     expect(screen.getByText('消費税 8%')).toBeInTheDocument()
     expect(screen.getByText('クーポン・値引')).toBeInTheDocument()
     expect(screen.getByText('ポイント利用')).toBeInTheDocument()
+    expect(screen.getByText('品目合計一致')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '税率' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '8%' })).toBeInTheDocument()
+    expect(screen.getByText('line 4 · 85%')).toBeInTheDocument()
     expect(screen.getByText('px: x 20, y 30, w 80, h 14')).toBeInTheDocument()
     expect(screen.getByText('TESSERACT_WORD')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({

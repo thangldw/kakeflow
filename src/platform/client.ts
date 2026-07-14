@@ -42,6 +42,7 @@ import type {
   MonthlyCategoryBudgetDto,
   PlatformClient,
   PreviewCandidateDto,
+  ReceiptReviewDto,
   TransactionPageDto,
   TransactionDetailDto,
   SourceDocumentViewDto,
@@ -1100,6 +1101,82 @@ function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
     ...attribution, ...audience,
     reviewStatus: record.reviewStatus as PreviewCandidateDto['reviewStatus'],
     evidenceCount: asSafeInteger(record.evidenceCount), evidenceRoles: record.evidenceRoles, issues: record.issues,
+    receiptReview: parseReceiptReview(record.receiptReview),
+  }
+}
+
+function parseReceiptFieldProvenance(value: unknown) {
+  const record = asRecord(value)
+  const lineNumber = asSafeInteger(record.lineNumber)
+  if (lineNumber < 1 || record.method !== 'TEXT_PATTERN' || !Array.isArray(record.regionIndexes) || record.regionIndexes.length > 64) throw new TypeError('receipt provenance')
+  const regionIndexes = record.regionIndexes.map(asSafeInteger)
+  if (regionIndexes.some((index) => index < 0)) throw new TypeError('receipt provenance')
+  return { lineNumber, regionIndexes, method: 'TEXT_PATTERN' as const }
+}
+
+function parseReceiptReview(value: unknown): ReceiptReviewDto | null {
+  if (value == null) return null
+  const record = asRecord(value)
+  const boundedText = (input: unknown): string | null => {
+    if (input == null) return null
+    const text = asRequiredString(input)
+    if (text.length > 512) throw new TypeError('receipt text')
+    return text
+  }
+  const jpy = (input: unknown, positive = false) => {
+    const amount = asSafeInteger(input)
+    if (amount < (positive ? 1 : 0)) throw new TypeError('receipt amount')
+    return amount
+  }
+  const nullableJpy = (input: unknown) => input == null ? null : jpy(input)
+  if (!Array.isArray(record.items) || record.items.length > 100 || !Array.isArray(record.taxes) || record.taxes.length > 16) throw new TypeError('receipt arrays')
+  const items = record.items.map((value) => {
+    const item = asRecord(value); const taxRatePercent = item.taxRatePercent
+    if (taxRatePercent != null && taxRatePercent !== 8 && taxRatePercent !== 10) throw new TypeError('receipt item tax rate')
+    const quantity = item.quantity == null ? null : asSafeInteger(item.quantity)
+    const confidenceBps = asSafeInteger(item.confidenceBps)
+    if ((quantity != null && (quantity < 1 || quantity > 10_000)) || confidenceBps > 10_000) throw new TypeError('receipt item')
+    return { description: boundedText(item.description) ?? (() => { throw new TypeError('receipt item description') })(), quantity, amountJpy: jpy(item.amountJpy, true), taxRatePercent: taxRatePercent as 8 | 10 | null, confidenceBps, provenance: parseReceiptFieldProvenance(item.provenance) }
+  })
+  const taxes = record.taxes.map((value) => {
+    const tax = asRecord(value); const ratePercent = tax.ratePercent; const confidenceBps = asSafeInteger(tax.confidenceBps)
+    if ((ratePercent !== 8 && ratePercent !== 10) || confidenceBps > 10_000) throw new TypeError('receipt tax')
+    return { ratePercent: ratePercent as 8 | 10, taxAmountJpy: nullableJpy(tax.taxAmountJpy), taxableAmountJpy: nullableJpy(tax.taxableAmountJpy), confidenceBps, provenance: parseReceiptFieldProvenance(tax.provenance) }
+  })
+  const adjustmentList = (input: unknown) => {
+    if (typeof input === 'undefined') return []
+    if (!Array.isArray(input) || input.length > 16) throw new TypeError('receipt adjustments')
+    return input.map((value) => {
+      const adjustment = asRecord(value); const confidenceBps = asSafeInteger(adjustment.confidenceBps)
+      if (confidenceBps > 10_000) throw new TypeError('receipt adjustment')
+      return { amountJpy: adjustment.amountJpy == null ? null : jpy(adjustment.amountJpy, true), confidenceBps, provenance: parseReceiptFieldProvenance(adjustment.provenance) }
+    })
+  }
+  const totalAmountJpy = jpy(record.totalAmountJpy, true)
+  const reconciliation = record.reconciliation == null ? null : (() => {
+    const input = asRecord(record.reconciliation)
+    if (input.status !== 'EXACT' && input.status !== 'DELTA' && input.status !== 'NO_ITEMS') throw new TypeError('receipt reconciliation')
+    const itemTotalJpy = input.itemTotalJpy == null ? null : jpy(input.itemTotalJpy)
+    const reconciledTotal = input.totalAmountJpy == null ? null : jpy(input.totalAmountJpy, true)
+    const deltaJpy = input.deltaJpy == null ? null : asSafeInteger(input.deltaJpy)
+    const numericMismatch = itemTotalJpy != null && reconciledTotal != null && deltaJpy != null
+      ? itemTotalJpy - reconciledTotal !== deltaJpy
+      : input.status !== 'NO_ITEMS' || itemTotalJpy !== null || deltaJpy !== null
+    if ((reconciledTotal != null && reconciledTotal !== totalAmountJpy) || numericMismatch || (input.status === 'EXACT' && deltaJpy !== 0) || (input.status === 'NO_ITEMS' && items.length !== 0)) throw new TypeError('receipt reconciliation')
+    return { status: input.status as 'EXACT' | 'DELTA' | 'NO_ITEMS', itemTotalJpy, totalAmountJpy: reconciledTotal, deltaJpy }
+  })()
+  const taxMode = record.taxMode
+  if (taxMode != null && taxMode !== 'INCLUDED' && taxMode !== 'EXCLUDED' && taxMode !== 'MIXED') throw new TypeError('receipt tax mode')
+  const provenance = asRecord(record.provenance); const sourceRowNumber = asSafeInteger(provenance.sourceRowNumber)
+  const documentPageNumber = provenance.documentPageNumber == null ? null : asSafeInteger(provenance.documentPageNumber)
+  if (sourceRowNumber < 1 || (documentPageNumber != null && documentPageNumber < 1)) throw new TypeError('receipt source provenance')
+  return {
+    merchant: boundedText(record.merchant), occurredOn: record.occurredOn == null ? null : asIsoDate(record.occurredOn), totalAmountJpy,
+    items, taxes, couponAmountJpy: nullableJpy(record.couponAmountJpy), pointsUsedJpy: nullableJpy(record.pointsUsedJpy),
+    couponEvidence: adjustmentList(record.couponEvidence), pointsUsedEvidence: adjustmentList(record.pointsUsedEvidence),
+    subtotalJpy: nullableJpy(record.subtotalJpy), changeJpy: nullableJpy(record.changeJpy), paymentMethod: boundedText(record.paymentMethod),
+    taxMode: taxMode as ReceiptReviewDto['taxMode'], reconciliation,
+    provenance: { sourceRecordId: asRequiredString(provenance.sourceRecordId), sourceRowNumber, documentPageNumber },
   }
 }
 

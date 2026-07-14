@@ -175,6 +175,17 @@ describe('platform client', () => {
           institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
           attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null,
           reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
+          receiptReview: {
+            merchant: 'STORE', occurredOn: '2026-07-12', totalAmountJpy: 1200,
+            items: [{ description: '牛乳', quantity: 1, amountJpy: 1200, taxRatePercent: 8, confidenceBps: 8500, provenance: { lineNumber: 4, regionIndexes: [1], method: 'TEXT_PATTERN' } }],
+            taxes: [{ ratePercent: 8, taxAmountJpy: 88, taxableAmountJpy: 1112, confidenceBps: 8000, provenance: { lineNumber: 5, regionIndexes: [2], method: 'TEXT_PATTERN' } }],
+            couponAmountJpy: 50, pointsUsedJpy: null,
+            couponEvidence: [{ amountJpy: 50, confidenceBps: 8000, provenance: { lineNumber: 6, regionIndexes: [], method: 'TEXT_PATTERN' } }],
+            pointsUsedEvidence: [{ amountJpy: null, confidenceBps: 4000, provenance: { lineNumber: 7, regionIndexes: [], method: 'TEXT_PATTERN' } }],
+            subtotalJpy: 1200, changeJpy: null, paymentMethod: 'PayPay', taxMode: 'INCLUDED',
+            reconciliation: { status: 'EXACT', itemTotalJpy: 1200, totalAmountJpy: 1200, deltaJpy: 0 },
+            provenance: { sourceRecordId: 'record-1', sourceRowNumber: 1, documentPageNumber: 2 },
+          },
         }],
       },
       import_commit: { runId: 'run-1', postedCount: 1 },
@@ -752,6 +763,44 @@ describe('platform client', () => {
 
     await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+  })
+
+  it('sanitizes receipt review DTOs and rejects malformed structured evidence', async () => {
+    const candidate = {
+      id: 'candidate', accountId: 'bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT',
+      descriptionRaw: null, merchantRaw: null, externalTransactionId: null, externalSource: null, externalFactHash: null,
+      calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
+      extractionConfidenceBps: 9000, normalizationConfidenceBps: 9000, attributionKind: 'HOUSEHOLD', attributedMemberId: null,
+      audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
+      receiptReview: {
+        merchant: 'STORE', occurredOn: '2026-07-12', totalAmountJpy: 1200,
+        items: [], taxes: [], couponAmountJpy: null, pointsUsedJpy: null, couponEvidence: [],
+        pointsUsedEvidence: [{ amountJpy: null, confidenceBps: 4000, provenance: { lineNumber: 2, regionIndexes: [], method: 'TEXT_PATTERN' } }],
+        subtotalJpy: null, changeJpy: null, paymentMethod: null, taxMode: null,
+        reconciliation: { status: 'NO_ITEMS', itemTotalJpy: null, totalAmountJpy: 1200, deltaJpy: null },
+        provenance: { sourceRecordId: 'record', sourceRowNumber: 1, documentPageNumber: null },
+        extraction: { text: 'RAW OCR MUST NOT SURVIVE' },
+      },
+    }
+    const response = (override: Record<string, unknown> = {}) => ({
+      summary: { runId: 'run', documentId: 'doc', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 1, sha256: 'a'.repeat(64), audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{ ...candidate, receiptReview: { ...candidate.receiptReview, ...override } }],
+    })
+    const client = createPlatformClient({ tauri: true, invoke: async <T>() => response() as T })
+    const parsed = await client.previewImport('run')
+    expect(parsed.candidates[0].receiptReview?.pointsUsedEvidence[0].amountJpy).toBeNull()
+    expect(parsed.candidates[0].receiptReview).not.toHaveProperty('extraction')
+    expect(JSON.stringify(parsed)).not.toContain('RAW OCR')
+
+    for (const malformed of [
+      { items: Array.from({ length: 101 }, () => ({})) },
+      { reconciliation: { status: 'DELTA', itemTotalJpy: 1300, totalAmountJpy: 1200, deltaJpy: -100 } },
+      { pointsUsedEvidence: [{ amountJpy: -1, confidenceBps: 4000, provenance: { lineNumber: 2, regionIndexes: [], method: 'TEXT_PATTERN' } }] },
+    ]) {
+      const invalid = createPlatformClient({ tauri: true, invoke: async <T>() => response(malformed) as T })
+      await expect(invalid.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+    }
   })
 
   it('strictly validates desktop relay DTOs and keeps bearer tokens outside IPC', async () => {

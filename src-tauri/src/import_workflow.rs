@@ -18,6 +18,11 @@ const MAX_EVIDENCE_PER_CANDIDATE: usize = 128;
 const MAX_JSON_BYTES: usize = 1_048_576;
 const MAX_TEXT_BYTES: usize = 16_384;
 const MAX_PENDING_REVIEW_RUNS: usize = 200;
+const MAX_SAFE_JSON_INTEGER: i64 = 9_007_199_254_740_991;
+const MAX_RECEIPT_ITEMS: usize = 100;
+const MAX_RECEIPT_TAXES: usize = 16;
+const MAX_RECEIPT_REGION_INDEXES: usize = 64;
+const MAX_RECEIPT_TEXT_BYTES: usize = 512;
 
 #[derive(Debug, Error)]
 pub enum ImportWorkflowError {
@@ -36,6 +41,306 @@ pub enum ImportWorkflowError {
 }
 
 pub type Result<T> = std::result::Result<T, ImportWorkflowError>;
+
+fn bounded_receipt_text(value: Option<&serde_json::Value>) -> Option<Option<String>> {
+    match value {
+        None | Some(serde_json::Value::Null) => Some(None),
+        Some(serde_json::Value::String(value))
+            if !value.trim().is_empty() && value.len() <= MAX_RECEIPT_TEXT_BYTES =>
+        {
+            Some(Some(value.clone()))
+        }
+        _ => None,
+    }
+}
+
+fn safe_nonnegative_jpy(value: Option<&serde_json::Value>) -> Option<i64> {
+    value?
+        .as_i64()
+        .filter(|amount| (0..=MAX_SAFE_JSON_INTEGER).contains(amount))
+}
+
+fn safe_positive_jpy(value: Option<&serde_json::Value>) -> Option<i64> {
+    safe_nonnegative_jpy(value).filter(|amount| *amount > 0)
+}
+
+fn optional_nonnegative_jpy(value: Option<&serde_json::Value>) -> Option<Option<i64>> {
+    match value {
+        None | Some(serde_json::Value::Null) => Some(None),
+        value => safe_nonnegative_jpy(value).map(Some),
+    }
+}
+
+fn valid_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    let parse = |slice: &[u8]| {
+        slice.iter().try_fold(0_u32, |value, byte| {
+            byte.is_ascii_digit()
+                .then_some(value * 10 + u32::from(byte - b'0'))
+        })
+    };
+    let (Some(year), Some(month), Some(day)) = (
+        parse(&bytes[0..4]),
+        parse(&bytes[5..7]),
+        parse(&bytes[8..10]),
+    ) else {
+        return false;
+    };
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (2000..=2999).contains(&year) && (1..=days).contains(&day)
+}
+
+fn receipt_field_provenance(value: &serde_json::Value) -> Option<ReceiptFieldProvenance> {
+    let object = value.as_object()?;
+    let line_number = object
+        .get("lineNumber")?
+        .as_i64()
+        .filter(|value| *value > 0)?;
+    let indexes = object.get("regionIndexes")?.as_array()?;
+    if indexes.len() > MAX_RECEIPT_REGION_INDEXES {
+        return None;
+    }
+    let region_indexes = indexes
+        .iter()
+        .map(|value| value.as_i64().filter(|value| *value >= 0))
+        .collect::<Option<Vec<_>>>()?;
+    (object.get("method")?.as_str()? == "TEXT_PATTERN").then(|| ReceiptFieldProvenance {
+        line_number,
+        region_indexes,
+        method: "TEXT_PATTERN".into(),
+    })
+}
+
+fn receipt_review_from_primary(
+    connection: &Connection,
+    candidate_id: &str,
+    import_run_id: &str,
+) -> rusqlite::Result<Option<ReceiptReview>> {
+    let mut statement = connection.prepare(
+        "SELECT sr.id, sr.row_number, sr.raw_payload_json
+         FROM candidate_sources cs JOIN source_records sr ON sr.id=cs.source_record_id
+         JOIN source_documents sd ON sd.id=sr.source_document_id
+         WHERE cs.candidate_id=?1 AND cs.evidence_role='PRIMARY' AND sd.import_run_id=?2
+         ORDER BY sr.id LIMIT 2",
+    )?;
+    let rows = statement
+        .query_map([candidate_id, import_run_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if rows.len() != 1 {
+        return Ok(None);
+    }
+    let (source_record_id, source_row_number, payload_json) = &rows[0];
+    let Some(payload) = serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+    else {
+        return Ok(None);
+    };
+    if !payload
+        .get("evidenceVersion")
+        .and_then(serde_json::Value::as_i64)
+        .is_some_and(|version| (1..=5).contains(&version))
+    {
+        return Ok(None);
+    }
+    let evidence_version = payload
+        .get("evidenceVersion")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_default();
+    let Some(receipt) = payload
+        .get("receipt")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(None);
+    };
+    let parsed = (|| {
+        let merchant = bounded_receipt_text(receipt.get("merchant"))?;
+        let occurred_on = match receipt.get("occurredOn") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(value)) if valid_iso_date(value) => Some(value.clone()),
+            _ => return None,
+        };
+        let total_amount_jpy = safe_positive_jpy(receipt.get("amountJpy"))?;
+        let item_values = receipt.get("items")?.as_array()?;
+        let tax_values = receipt.get("taxes")?.as_array()?;
+        if item_values.len() > MAX_RECEIPT_ITEMS || tax_values.len() > MAX_RECEIPT_TAXES {
+            return None;
+        }
+        let items = item_values
+            .iter()
+            .map(|value| {
+                let item = value.as_object()?;
+                let description = bounded_receipt_text(item.get("description"))??;
+                let quantity = match item.get("quantity") {
+                    None | Some(serde_json::Value::Null) => None,
+                    Some(value) => Some(
+                        value
+                            .as_i64()
+                            .filter(|value| *value > 0 && *value <= 10_000)?,
+                    ),
+                };
+                let confidence_bps = item
+                    .get("confidenceBps")?
+                    .as_i64()
+                    .filter(|value| (0..=10_000).contains(value))?;
+                Some(ReceiptReviewItem {
+                    description,
+                    quantity,
+                    amount_jpy: safe_positive_jpy(item.get("amountJpy"))?,
+                    tax_rate_percent: match item.get("taxRatePercent") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(value) => {
+                            Some(value.as_i64().filter(|rate| *rate == 8 || *rate == 10)?)
+                        }
+                    },
+                    confidence_bps,
+                    provenance: receipt_field_provenance(item.get("provenance")?)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let adjustments = |field: &str| -> Option<Vec<ReceiptReviewAdjustment>> {
+            let Some(values) = receipt.get(field) else {
+                return (evidence_version < 5).then(Vec::new);
+            };
+            let values = values.as_array()?;
+            if values.len() > MAX_RECEIPT_TAXES {
+                return None;
+            }
+            values
+                .iter()
+                .map(|value| {
+                    let adjustment = value.as_object()?;
+                    Some(ReceiptReviewAdjustment {
+                        amount_jpy: match adjustment.get("amountJpy") {
+                            None | Some(serde_json::Value::Null) => None,
+                            value => Some(safe_positive_jpy(value)?),
+                        },
+                        confidence_bps: adjustment
+                            .get("confidenceBps")?
+                            .as_i64()
+                            .filter(|value| (0..=10_000).contains(value))?,
+                        provenance: receipt_field_provenance(adjustment.get("provenance")?)?,
+                    })
+                })
+                .collect()
+        };
+        let reconciliation = match receipt.get("reconciliation") {
+            None if evidence_version < 5 => None,
+            None => return None,
+            Some(value) => {
+                let value = value.as_object()?;
+                let status = value.get("status")?.as_str()?;
+                if !matches!(status, "EXACT" | "DELTA" | "NO_ITEMS") {
+                    return None;
+                }
+                let item_total_jpy = optional_nonnegative_jpy(value.get("itemTotalJpy"))?;
+                let reconciled_total = match value.get("totalAmountJpy") {
+                    None | Some(serde_json::Value::Null) => None,
+                    value => Some(safe_positive_jpy(value)?),
+                };
+                let delta_jpy =
+                    match value.get("deltaJpy") {
+                        None | Some(serde_json::Value::Null) => None,
+                        Some(value) => Some(value.as_i64().filter(|value| {
+                            value.unsigned_abs() <= MAX_SAFE_JSON_INTEGER as u64
+                        })?),
+                    };
+                if reconciled_total.is_some_and(|value| value != total_amount_jpy)
+                    || match (item_total_jpy, reconciled_total, delta_jpy) {
+                        (Some(items), Some(total), Some(delta)) => {
+                            i128::from(items) - i128::from(total) != i128::from(delta)
+                        }
+                        (None, _, None) if status == "NO_ITEMS" => false,
+                        _ => true,
+                    }
+                    || (status == "EXACT" && delta_jpy != Some(0))
+                    || (status == "NO_ITEMS" && !items.is_empty())
+                {
+                    return None;
+                }
+                Some(ReceiptReviewReconciliation {
+                    status: status.into(),
+                    item_total_jpy,
+                    total_amount_jpy: reconciled_total,
+                    delta_jpy,
+                })
+            }
+        };
+        let taxes = tax_values
+            .iter()
+            .map(|value| {
+                let tax = value.as_object()?;
+                let rate_percent = tax.get("ratePercent")?.as_i64()?;
+                if rate_percent != 8 && rate_percent != 10 {
+                    return None;
+                }
+                let confidence_bps = tax
+                    .get("confidenceBps")?
+                    .as_i64()
+                    .filter(|value| (0..=10_000).contains(value))?;
+                Some(ReceiptReviewTax {
+                    rate_percent,
+                    tax_amount_jpy: optional_nonnegative_jpy(tax.get("taxAmountJpy"))?,
+                    taxable_amount_jpy: optional_nonnegative_jpy(tax.get("taxableAmountJpy"))?,
+                    confidence_bps,
+                    provenance: receipt_field_provenance(tax.get("provenance")?)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let payment_method = bounded_receipt_text(receipt.get("paymentMethod"))?;
+        let tax_mode = match receipt.get("taxMode") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(serde_json::Value::String(value))
+                if matches!(value.as_str(), "INCLUDED" | "EXCLUDED" | "MIXED") =>
+            {
+                Some(value.clone())
+            }
+            _ => return None,
+        };
+        let document_page_number = match payload.get("documentPageNumber") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(value.as_i64().filter(|page| (1..=10_000).contains(page))?),
+        };
+        Some(ReceiptReview {
+            merchant,
+            occurred_on,
+            total_amount_jpy,
+            items,
+            taxes,
+            coupon_amount_jpy: optional_nonnegative_jpy(receipt.get("couponAmountJpy"))?,
+            points_used_jpy: optional_nonnegative_jpy(receipt.get("pointsUsedJpy"))?,
+            coupon_evidence: adjustments("couponEvidence")?,
+            points_used_evidence: adjustments("pointsUsedEvidence")?,
+            subtotal_jpy: optional_nonnegative_jpy(receipt.get("subtotalJpy"))?,
+            change_jpy: optional_nonnegative_jpy(receipt.get("changeJpy"))?,
+            payment_method,
+            tax_mode,
+            reconciliation,
+            provenance: ReceiptReviewProvenance {
+                source_record_id: source_record_id.clone(),
+                source_row_number: *source_row_number,
+                document_page_number,
+            },
+        })
+    })();
+    Ok(parsed)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -232,6 +537,84 @@ pub struct PreviewCandidate {
     pub attributed_member_id: Option<String>,
     pub audience_visibility: String,
     pub audience_member_id: Option<String>,
+    /// A deliberately small, structured projection of the PRIMARY receipt
+    /// evidence. Raw OCR text, extraction regions and the original payload
+    /// never cross the Import Inbox preview boundary.
+    pub receipt_review: Option<ReceiptReview>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptReview {
+    pub merchant: Option<String>,
+    pub occurred_on: Option<String>,
+    pub total_amount_jpy: i64,
+    pub items: Vec<ReceiptReviewItem>,
+    pub taxes: Vec<ReceiptReviewTax>,
+    pub coupon_amount_jpy: Option<i64>,
+    pub points_used_jpy: Option<i64>,
+    pub coupon_evidence: Vec<ReceiptReviewAdjustment>,
+    pub points_used_evidence: Vec<ReceiptReviewAdjustment>,
+    pub subtotal_jpy: Option<i64>,
+    pub change_jpy: Option<i64>,
+    pub payment_method: Option<String>,
+    pub tax_mode: Option<String>,
+    pub reconciliation: Option<ReceiptReviewReconciliation>,
+    pub provenance: ReceiptReviewProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptReviewItem {
+    pub description: String,
+    pub quantity: Option<i64>,
+    pub amount_jpy: i64,
+    pub tax_rate_percent: Option<i64>,
+    pub confidence_bps: i64,
+    pub provenance: ReceiptFieldProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptReviewAdjustment {
+    pub amount_jpy: Option<i64>,
+    pub confidence_bps: i64,
+    pub provenance: ReceiptFieldProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptReviewReconciliation {
+    pub status: String,
+    pub item_total_jpy: Option<i64>,
+    pub total_amount_jpy: Option<i64>,
+    pub delta_jpy: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptReviewTax {
+    pub rate_percent: i64,
+    pub tax_amount_jpy: Option<i64>,
+    pub taxable_amount_jpy: Option<i64>,
+    pub confidence_bps: i64,
+    pub provenance: ReceiptFieldProvenance,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptFieldProvenance {
+    pub line_number: i64,
+    pub region_indexes: Vec<i64>,
+    pub method: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReceiptReviewProvenance {
+    pub source_record_id: String,
+    pub source_row_number: i64,
+    pub document_page_number: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -706,6 +1089,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
         if normalization.is_some_and(|value| value < 8_000) {
             issues.push("LOW_NORMALIZATION_CONFIDENCE".into());
         }
+        let receipt_review = receipt_review_from_primary(connection, &id, run_id)?;
         candidates.push(PreviewCandidate {
             id,
             account_id,
@@ -734,6 +1118,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             attributed_member_id,
             audience_visibility,
             audience_member_id,
+            receipt_review,
         });
     }
     Ok(ImportPreview {
@@ -2537,6 +2922,107 @@ mod tests {
             preview.candidates[0].evidence_roles,
             vec!["PRIMARY", "SUPPORTING"]
         );
+        assert_eq!(preview.candidates[0].receipt_review, None);
+    }
+
+    fn receipt_payload(version: i64, merchant: &str) -> String {
+        serde_json::json!({
+            "evidenceVersion": version,
+            "documentPageNumber": 2,
+            "extraction": { "text": "RAW OCR SECRET MUST NEVER LEAK", "regions": [{"text":"SECRET"}] },
+            "receipt": {
+                "merchant": merchant, "occurredOn": "2026-07-12", "amountJpy": 1200,
+                "items": [{
+                    "description": "牛乳", "quantity": 2, "amountJpy": 1200,
+                    "taxRatePercent": 8, "confidenceBps": 8500,
+                    "provenance": {"lineNumber": 4, "regionIndexes": [1, 2], "method": "TEXT_PATTERN"}
+                }],
+                "taxes": [{
+                    "ratePercent": 8, "taxAmountJpy": 88, "taxableAmountJpy": 1112,
+                    "confidenceBps": 8000,
+                    "provenance": {"lineNumber": 5, "regionIndexes": [3], "method": "TEXT_PATTERN"}
+                }],
+                "couponAmountJpy": 50, "pointsUsedJpy": 20,
+                "couponEvidence": [{"amountJpy": 50, "confidenceBps": 8000, "provenance": {"lineNumber": 6, "regionIndexes": [], "method": "TEXT_PATTERN"}}],
+                "pointsUsedEvidence": [{"amountJpy": null, "confidenceBps": 4000, "provenance": {"lineNumber": 7, "regionIndexes": [], "method": "TEXT_PATTERN"}}],
+                "subtotalJpy": 1180, "changeJpy": 100, "paymentMethod": "PayPay", "taxMode": "INCLUDED",
+                "reconciliation": {"status": "EXACT", "itemTotalJpy": 1200, "totalAmountJpy": 1200, "deltaJpy": 0}
+            }
+        }).to_string()
+    }
+
+    #[test]
+    fn preview_exposes_only_bounded_primary_receipt_review_and_recovers_after_restart() {
+        let connection = database();
+        let mut input = request("receipt-run", "receipt-doc", '7');
+        input.records[0].payload_json = receipt_payload(5, "PRIMARY STORE");
+        input.records[1].payload_json = receipt_payload(5, "SUPPORTING SECRET STORE");
+        start_import(&connection, &input, "vault://receipt-secret").unwrap();
+
+        let preview = preview_import(&connection, "receipt-run").unwrap();
+        let receipt = preview.candidates[0].receipt_review.as_ref().unwrap();
+        assert_eq!(receipt.merchant.as_deref(), Some("PRIMARY STORE"));
+        assert_eq!(receipt.total_amount_jpy, 1200);
+        assert_eq!(receipt.items[0].tax_rate_percent, Some(8));
+        assert_eq!(receipt.coupon_evidence[0].amount_jpy, Some(50));
+        assert_eq!(receipt.points_used_evidence[0].amount_jpy, None);
+        assert_eq!(receipt.reconciliation.as_ref().unwrap().status, "EXACT");
+        assert_eq!(receipt.provenance.source_record_id, "receipt-run-row-1");
+        assert_eq!(receipt.provenance.document_page_number, Some(2));
+        let serialized = serde_json::to_string(&preview).unwrap();
+        assert!(!serialized.contains("RAW OCR"));
+        assert!(!serialized.contains("SECRET"));
+        assert!(!serialized.contains("\"extraction\":"));
+        assert!(!serialized.contains("regions"));
+
+        let temp = tempfile::tempdir().unwrap();
+        let database_path = temp.path().join("recovered.sqlite3");
+        connection
+            .execute("VACUUM INTO ?1", [database_path.to_string_lossy().as_ref()])
+            .unwrap();
+        drop(connection);
+        let recovered = Connection::open(database_path).unwrap();
+        let recovered = preview_import(&recovered, "receipt-run").unwrap();
+        assert_eq!(
+            recovered.candidates[0].receipt_review,
+            preview.candidates[0].receipt_review
+        );
+        assert_eq!(serde_json::to_string(&recovered).unwrap(), serialized);
+    }
+
+    #[test]
+    fn malformed_receipt_payload_fails_closed_and_v4_remains_reviewable() {
+        let connection = database();
+        let mut malformed = request("malformed", "malformed-doc", '6');
+        malformed.records[0].payload_json = receipt_payload(5, "BROKEN");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&malformed.records[0].payload_json).unwrap();
+        value["receipt"]["items"][0]["amountJpy"] = serde_json::json!(-1);
+        malformed.records[0].payload_json = value.to_string();
+        start_import(&connection, &malformed, "vault://malformed").unwrap();
+        assert_eq!(
+            preview_import(&connection, "malformed").unwrap().candidates[0].receipt_review,
+            None
+        );
+
+        let mut legacy = request("legacy-receipt", "legacy-receipt-doc", '5');
+        let mut value: serde_json::Value =
+            serde_json::from_str(&receipt_payload(4, "LEGACY")).unwrap();
+        let receipt = value["receipt"].as_object_mut().unwrap();
+        receipt.remove("couponEvidence");
+        receipt.remove("pointsUsedEvidence");
+        receipt.remove("reconciliation");
+        receipt["items"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("taxRatePercent");
+        legacy.records[0].payload_json = value.to_string();
+        start_import(&connection, &legacy, "vault://legacy").unwrap();
+        let legacy = preview_import(&connection, "legacy-receipt").unwrap();
+        let review = legacy.candidates[0].receipt_review.as_ref().unwrap();
+        assert_eq!(review.items[0].tax_rate_percent, None);
+        assert!(review.coupon_evidence.is_empty());
+        assert_eq!(review.reconciliation, None);
     }
 
     #[test]
@@ -2573,6 +3059,180 @@ mod tests {
                 })
                 .unwrap(),
             "POSTED"
+        );
+    }
+
+    #[test]
+    fn receipt_split_commit_posts_one_balanced_transaction_and_links_each_evidence_once() {
+        let connection = database();
+        connection
+            .execute(
+                "INSERT INTO accounts(id, household_id, name, account_kind, account_subtype) \
+                 VALUES('expense-household', 'household', 'Household', 'EXPENSE', 'OTHER')",
+                [],
+            )
+            .unwrap();
+        let mut input = request("receipt-split", "receipt-split-doc", '7');
+        input.records[0].payload_json = receipt_payload(5, "SPLIT STORE");
+        input.candidates[0].amount_jpy = 1_200;
+        start_import(&connection, &input, "vault://receipt-split").unwrap();
+
+        let mut posting = decision("receipt-split", 1_200);
+        posting.entries = vec![
+            JournalEntryDecision {
+                id: "receipt-split-food-debit".into(),
+                account_id: "expense".into(),
+                side: "DEBIT".into(),
+                amount_jpy: 700,
+            },
+            JournalEntryDecision {
+                id: "receipt-split-household-debit".into(),
+                account_id: "expense-household".into(),
+                side: "DEBIT".into(),
+                amount_jpy: 500,
+            },
+            JournalEntryDecision {
+                id: "receipt-split-payment-credit".into(),
+                account_id: "bank".into(),
+                side: "CREDIT".into(),
+                amount_jpy: 1_200,
+            },
+        ];
+
+        let result = commit_import(&connection, "receipt-split", &[posting]).unwrap();
+        assert_eq!(result.posted_count, 1);
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        let (debit_total, credit_total): (i64, i64) = connection
+            .query_row(
+                "SELECT COALESCE(SUM(CASE WHEN entry_side='DEBIT' THEN amount_jpy END), 0), \
+                        COALESCE(SUM(CASE WHEN entry_side='CREDIT' THEN amount_jpy END), 0) \
+                 FROM journal_entries WHERE transaction_id='receipt-split-transaction'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let candidate_total: i64 = connection
+            .query_row(
+                "SELECT amount_jpy FROM transaction_candidates WHERE id='receipt-split-candidate'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            (debit_total, credit_total, candidate_total),
+            (1_200, 1_200, 1_200)
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM transaction_sources \
+                     WHERE transaction_id='receipt-split-transaction'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(DISTINCT source_record_id) FROM transaction_sources \
+                     WHERE transaction_id='receipt-split-transaction'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT review_status FROM transaction_candidates \
+                     WHERE id='receipt-split-candidate'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "POSTED"
+        );
+    }
+
+    #[test]
+    fn receipt_split_candidate_total_mismatch_rolls_back_every_posting_write() {
+        let connection = database();
+        connection
+            .execute(
+                "INSERT INTO accounts(id, household_id, name, account_kind, account_subtype) \
+                 VALUES('expense-household', 'household', 'Household', 'EXPENSE', 'OTHER')",
+                [],
+            )
+            .unwrap();
+        let mut input = request("bad-receipt-split", "bad-receipt-split-doc", '8');
+        input.records[0].payload_json = receipt_payload(5, "BAD SPLIT STORE");
+        input.candidates[0].amount_jpy = 1_200;
+        start_import(&connection, &input, "vault://bad-receipt-split").unwrap();
+
+        let mut posting = decision("bad-receipt-split", 1_199);
+        posting.entries = vec![
+            JournalEntryDecision {
+                id: "bad-receipt-split-food-debit".into(),
+                account_id: "expense".into(),
+                side: "DEBIT".into(),
+                amount_jpy: 700,
+            },
+            JournalEntryDecision {
+                id: "bad-receipt-split-household-debit".into(),
+                account_id: "expense-household".into(),
+                side: "DEBIT".into(),
+                amount_jpy: 499,
+            },
+            JournalEntryDecision {
+                id: "bad-receipt-split-payment-credit".into(),
+                account_id: "bank".into(),
+                side: "CREDIT".into(),
+                amount_jpy: 1_199,
+            },
+        ];
+
+        assert!(matches!(
+            commit_import(&connection, "bad-receipt-split", &[posting]),
+            Err(ImportWorkflowError::UnbalancedJournal(candidate))
+                if candidate == "bad-receipt-split-candidate"
+        ));
+        for table in ["transactions", "journal_entries", "transaction_sources"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} must be rolled back");
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT review_status FROM transaction_candidates \
+                     WHERE id='bad-receipt-split-candidate'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "READY"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT status FROM import_runs WHERE id='bad-receipt-split'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "REVIEW_REQUIRED"
         );
     }
 

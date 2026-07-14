@@ -109,7 +109,21 @@ export interface StartImportCardStatementDto {
   readonly lines: readonly { readonly candidateId: string; readonly statementLineNumber: number; readonly billedAmountJpy: number }[]
 }
 export interface ImportSummaryDto { readonly runId: string; readonly documentId: string; readonly status: string; readonly recordCount: number; readonly candidateCount: number; readonly reusedExisting: boolean }
-export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evidence'> { readonly evidenceCount: number; readonly evidenceRoles: readonly string[]; readonly issues: readonly string[] }
+export interface ReceiptReviewProvenanceDto { readonly lineNumber: number; readonly regionIndexes: readonly number[]; readonly method: 'TEXT_PATTERN' }
+export interface ReceiptReviewItemDto { readonly description: string; readonly quantity: number | null; readonly amountJpy: number; readonly taxRatePercent: 8 | 10 | null; readonly confidenceBps: number; readonly provenance: ReceiptReviewProvenanceDto }
+export interface ReceiptReviewTaxDto { readonly ratePercent: 8 | 10; readonly taxAmountJpy: number | null; readonly taxableAmountJpy: number | null; readonly confidenceBps: number; readonly provenance: ReceiptReviewProvenanceDto }
+export interface ReceiptReviewAdjustmentDto { readonly amountJpy: number | null; readonly confidenceBps: number; readonly provenance: ReceiptReviewProvenanceDto }
+export interface ReceiptReviewDto {
+  readonly merchant: string | null; readonly occurredOn: string | null; readonly totalAmountJpy: number
+  readonly items: readonly ReceiptReviewItemDto[]; readonly taxes: readonly ReceiptReviewTaxDto[]
+  readonly couponAmountJpy: number | null; readonly pointsUsedJpy: number | null
+  readonly couponEvidence: readonly ReceiptReviewAdjustmentDto[]; readonly pointsUsedEvidence: readonly ReceiptReviewAdjustmentDto[]
+  readonly subtotalJpy: number | null; readonly changeJpy: number | null; readonly paymentMethod: string | null
+  readonly taxMode: 'INCLUDED' | 'EXCLUDED' | 'MIXED' | null
+  readonly reconciliation: { readonly status: 'EXACT' | 'DELTA' | 'NO_ITEMS'; readonly itemTotalJpy: number | null; readonly totalAmountJpy: number | null; readonly deltaJpy: number | null } | null
+  readonly provenance: { readonly sourceRecordId: string; readonly sourceRowNumber: number; readonly documentPageNumber: number | null }
+}
+export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evidence'> { readonly evidenceCount: number; readonly evidenceRoles: readonly string[]; readonly issues: readonly string[]; readonly receiptReview: ReceiptReviewDto | null }
 export interface ImportPreviewDto {
   readonly summary: ImportSummaryDto
   readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }

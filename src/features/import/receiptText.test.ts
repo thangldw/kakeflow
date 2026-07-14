@@ -57,7 +57,7 @@ describe('receipt text normalization', () => {
       { pageNumber: 3, candidateCreated: false },
     ])
     const payload = JSON.parse(result.request!.records[0].payloadJson)
-    expect(payload).toMatchObject({ evidenceVersion: 4, documentClassification: 'PAGE_WISE_RECEIPT_REVIEW' })
+    expect(payload).toMatchObject({ evidenceVersion: 5, documentClassification: 'PAGE_WISE_RECEIPT_REVIEW' })
     expect(payload.extraction.pages).toHaveLength(3)
     expect(payload.receiptPages).toHaveLength(3)
     const pagePayload = JSON.parse(result.request!.records[1].payloadJson)
@@ -144,6 +144,13 @@ describe('receipt text normalization', () => {
       expect.objectContaining({ ratePercent: 10, taxAmountJpy: 69, provenance: expect.objectContaining({ lineNumber: 6 }) }),
     ])
     expect(receipt).toMatchObject({ couponAmountJpy: 100, pointsUsedJpy: 41 })
+    expect(receipt.couponEvidence).toEqual([
+      expect.objectContaining({ amountJpy: 100, confidenceBps: 8500, provenance: expect.objectContaining({ lineNumber: 7 }) }),
+    ])
+    expect(receipt.pointsUsedEvidence).toEqual([
+      expect.objectContaining({ amountJpy: 41, confidenceBps: 8500, provenance: expect.objectContaining({ lineNumber: 8 }) }),
+    ])
+    expect(receipt.reconciliation).toEqual({ status: 'DELTA', itemTotalJpy: 998, totalAmountJpy: 926, deltaJpy: 72 })
   })
 
   it('separates quantity, subtotal, payment and change lines from Japanese items', () => {
@@ -178,5 +185,48 @@ describe('receipt text normalization', () => {
 
     expect(receipt).toMatchObject({ occurredOn: '2026-07-13', amountJpy: 320, paymentMethod: 'Suica', taxMode: 'INCLUDED' })
     expect(receipt.items).toEqual([expect.objectContaining({ description: 'おにぎり', quantity: 2, amountJpy: 320 })])
+    expect(receipt.reconciliation).toEqual({ status: 'EXACT', itemTotalJpy: 320, totalAmountJpy: 320, deltaJpy: 0 })
+  })
+
+  it('assigns tax rates only from explicit percentages, light-tax markers, or a marker legend', () => {
+    const receipt = parseReceiptText([
+      'スーパー東京店',
+      '2026/07/14',
+      '牛乳※ 238',
+      '洗剤 10% 760',
+      'パン 軽 200',
+      '雑貨 * 100',
+      '※は軽減税率対象商品',
+      '合計 1,298',
+    ].join('\n'))
+
+    expect(receipt.items).toEqual([
+      expect.objectContaining({ description: '牛乳', amountJpy: 238, taxRatePercent: 8 }),
+      expect.objectContaining({ description: '洗剤', amountJpy: 760, taxRatePercent: 10 }),
+      expect.objectContaining({ description: 'パン', amountJpy: 200, taxRatePercent: 8 }),
+      expect.objectContaining({ description: '雑貨', amountJpy: 100, taxRatePercent: null }),
+    ])
+    expect(receipt.reconciliation).toEqual({ status: 'EXACT', itemTotalJpy: 1298, totalAmountJpy: 1298, deltaJpy: 0 })
+  })
+
+  it('retains every coupon and point line as evidence and sums only known amounts', () => {
+    const receipt = parseReceiptText([
+      'スーパー東京店',
+      '2026/07/14',
+      'クーポン -100',
+      '会員値引 -20',
+      'ポイント利用 41',
+      'ポイント使用 読取不能',
+      '合計 839',
+    ].join('\n'))
+
+    expect(receipt.couponAmountJpy).toBe(120)
+    expect(receipt.pointsUsedJpy).toBe(41)
+    expect(receipt.couponEvidence.map((item) => item.amountJpy)).toEqual([100, 20])
+    expect(receipt.pointsUsedEvidence).toEqual([
+      expect.objectContaining({ amountJpy: 41, confidenceBps: 8500, provenance: expect.objectContaining({ lineNumber: 5 }) }),
+      expect.objectContaining({ amountJpy: null, confidenceBps: 5000, provenance: expect.objectContaining({ lineNumber: 6 }) }),
+    ])
+    expect(receipt.reconciliation).toEqual({ status: 'NO_ITEMS', itemTotalJpy: null, totalAmountJpy: 839, deltaJpy: null })
   })
 })

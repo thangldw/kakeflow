@@ -1,5 +1,5 @@
 import type { ExtractedRegionDto, SourceRecordViewDto } from '../../platform'
-import type { ReceiptItemEvidence, ReceiptTaxEvidence } from '../import/receiptText'
+import type { ReceiptAdjustmentEvidence, ReceiptItemEvidence, ReceiptReconciliationEvidence, ReceiptTaxEvidence } from '../import/receiptText'
 
 export interface DocumentEvidenceReadModel {
   readonly sourceRecordId: string
@@ -22,12 +22,15 @@ export interface DocumentEvidenceReadModel {
     readonly totalAmountJpy: number | null
     readonly items: readonly ReceiptItemEvidence[]
     readonly taxes: readonly ReceiptTaxEvidence[]
+    readonly couponEvidence: readonly ReceiptAdjustmentEvidence[]
+    readonly pointsUsedEvidence: readonly ReceiptAdjustmentEvidence[]
     readonly couponAmountJpy: number | null
     readonly pointsUsedJpy: number | null
     readonly subtotalJpy?: number | null
     readonly changeJpy?: number | null
     readonly paymentMethod?: string | null
     readonly taxMode?: 'INCLUDED' | 'EXCLUDED' | 'MIXED' | null
+    readonly reconciliation: ReceiptReconciliationEvidence
   } | null
 }
 
@@ -72,7 +75,37 @@ function item(value: unknown): ReceiptItemEvidence | null {
   const amountJpy = input && integer(input.amountJpy)
   const confidenceBps = input && integer(input.confidenceBps, 0, 10_000)
   if (!input || !source || !description || amountJpy === null || confidenceBps === null) return null
-  return { description, amountJpy, confidenceBps, quantity: input.quantity === null ? null : integer(input.quantity, 1), provenance: source }
+  const taxRatePercent = input.taxRatePercent === 8 || input.taxRatePercent === 10 ? input.taxRatePercent : null
+  return { description, amountJpy, confidenceBps, quantity: input.quantity === null ? null : integer(input.quantity, 1), taxRatePercent, provenance: source }
+}
+
+function adjustment(value: unknown): ReceiptAdjustmentEvidence | null {
+  const input = object(value)
+  const source = input && provenance(input.provenance)
+  const confidenceBps = input && integer(input.confidenceBps, 0, 10_000)
+  const amountJpy = input?.amountJpy === null ? null : integer(input?.amountJpy)
+  if (!input || !source || confidenceBps === null || (input.amountJpy !== null && amountJpy === null)) return null
+  return { amountJpy, confidenceBps, provenance: source }
+}
+
+function adjustmentTotal(evidence: readonly ReceiptAdjustmentEvidence[]): number | null {
+  const values = evidence.flatMap((item) => item.amountJpy === null ? [] : [item.amountJpy])
+  if (values.length === 0) return null
+  const total = values.reduce((sum, value) => sum + value, 0)
+  return Number.isSafeInteger(total) ? total : null
+}
+
+function reconciliation(items: readonly ReceiptItemEvidence[], totalAmountJpy: number | null): ReceiptReconciliationEvidence {
+  if (items.length === 0) return { status: 'NO_ITEMS', itemTotalJpy: null, totalAmountJpy, deltaJpy: null }
+  const itemTotalJpy = items.reduce((sum, item) => sum + item.amountJpy, 0)
+  if (!Number.isSafeInteger(itemTotalJpy)) return { status: 'DELTA', itemTotalJpy: null, totalAmountJpy, deltaJpy: null }
+  const deltaJpy = totalAmountJpy === null ? null : itemTotalJpy - totalAmountJpy
+  return {
+    status: deltaJpy === 0 ? 'EXACT' : 'DELTA',
+    itemTotalJpy,
+    totalAmountJpy,
+    deltaJpy: Number.isSafeInteger(deltaJpy) ? deltaJpy : null,
+  }
 }
 
 function tax(value: unknown): ReceiptTaxEvidence | null {
@@ -115,6 +148,10 @@ export function buildDocumentEvidence(record: SourceRecordViewDto): DocumentEvid
   }) : []
   const pageNumbers = [...new Set([...outcomes.map((item) => item.pageNumber), ...regions.map((item) => item.pageNumber)])].sort((left, right) => left - right)
   const receipt = object(payload.receipt)
+  const receiptItems = receipt && Array.isArray(receipt.items) ? receipt.items.map(item).filter((value): value is ReceiptItemEvidence => value !== null) : []
+  const couponEvidence = receipt && Array.isArray(receipt.couponEvidence) ? receipt.couponEvidence.map(adjustment).filter((value): value is ReceiptAdjustmentEvidence => value !== null) : []
+  const pointsUsedEvidence = receipt && Array.isArray(receipt.pointsUsedEvidence) ? receipt.pointsUsedEvidence.map(adjustment).filter((value): value is ReceiptAdjustmentEvidence => value !== null) : []
+  const totalAmountJpy = receipt ? integer(receipt.amountJpy) : null
   return {
     sourceRecordId: record.id,
     evidenceVersion: integer(payload.evidenceVersion, 1, 100) ?? 1,
@@ -136,15 +173,18 @@ export function buildDocumentEvidence(record: SourceRecordViewDto): DocumentEvid
     receipt: receipt ? {
       merchant: text(receipt.merchant),
       occurredOn: text(receipt.occurredOn),
-      totalAmountJpy: integer(receipt.amountJpy),
-      items: Array.isArray(receipt.items) ? receipt.items.map(item).filter((value): value is ReceiptItemEvidence => value !== null) : [],
+      totalAmountJpy,
+      items: receiptItems,
       taxes: Array.isArray(receipt.taxes) ? receipt.taxes.map(tax).filter((value): value is ReceiptTaxEvidence => value !== null) : [],
-      couponAmountJpy: integer(receipt.couponAmountJpy),
-      pointsUsedJpy: integer(receipt.pointsUsedJpy),
+      couponEvidence,
+      pointsUsedEvidence,
+      couponAmountJpy: integer(receipt.couponAmountJpy) ?? adjustmentTotal(couponEvidence),
+      pointsUsedJpy: integer(receipt.pointsUsedJpy) ?? adjustmentTotal(pointsUsedEvidence),
       subtotalJpy: integer(receipt.subtotalJpy),
       changeJpy: integer(receipt.changeJpy),
       paymentMethod: text(receipt.paymentMethod),
       taxMode: receipt.taxMode === 'INCLUDED' || receipt.taxMode === 'EXCLUDED' || receipt.taxMode === 'MIXED' ? receipt.taxMode : null,
+      reconciliation: reconciliation(receiptItems, totalAmountJpy),
     } : null,
   }
 }

@@ -20,6 +20,7 @@ export interface DocumentEvidenceViewerProps {
 }
 
 const yen = (value: number) => `¥${value.toLocaleString('ja-JP')}`
+const signedYen = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${yen(Math.abs(value))}`
 const confidence = (value: number) => `${(value / 100).toFixed(0)}%`
 const methodLabels = { EMBEDDED_TEXT: '埋込テキスト', OCR: 'OCR', UNKNOWN: '不明' } as const
 
@@ -96,13 +97,14 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
       <div className="receipt-adjustments" aria-label="税・値引・ポイント">
         {receipt.subtotalJpy != null && <span><b>小計</b>{yen(receipt.subtotalJpy)}</span>}
         {receipt.taxes.map((tax, index) => <span key={`${tax.ratePercent}-${index}`}><b>消費税 {tax.ratePercent}%</b>{tax.taxAmountJpy != null ? yen(tax.taxAmountJpy) : '税額不明'}<small>line {tax.provenance.lineNumber} · {confidence(tax.confidenceBps)}</small></span>)}
-        {receipt.couponAmountJpy != null && <span><b>クーポン・値引</b>−{yen(receipt.couponAmountJpy)}</span>}
-        {receipt.pointsUsedJpy != null && <span><b>ポイント利用</b>−{yen(receipt.pointsUsedJpy)}</span>}
+        {receipt.couponEvidence.length > 0 ? receipt.couponEvidence.map((item, index) => <span key={`coupon-${item.provenance.lineNumber}-${index}`}><b>クーポン・値引</b>{item.amountJpy === null ? '金額不明' : `−${yen(item.amountJpy)}`}<small>line {item.provenance.lineNumber} · {confidence(item.confidenceBps)}</small></span>) : receipt.couponAmountJpy != null && <span><b>クーポン・値引</b>−{yen(receipt.couponAmountJpy)}</span>}
+        {receipt.pointsUsedEvidence.length > 0 ? receipt.pointsUsedEvidence.map((item, index) => <span key={`points-${item.provenance.lineNumber}-${index}`}><b>ポイント利用</b>{item.amountJpy === null ? '金額不明' : `−${yen(item.amountJpy)}`}<small>line {item.provenance.lineNumber} · {confidence(item.confidenceBps)}</small></span>) : receipt.pointsUsedJpy != null && <span><b>ポイント利用</b>−{yen(receipt.pointsUsedJpy)}</span>}
         {receipt.changeJpy != null && <span><b>お釣り</b>{yen(receipt.changeJpy)}</span>}
         {receipt.paymentMethod && <span><b>支払方法</b>{receipt.paymentMethod}</span>}
         {receipt.taxMode && <span><b>税方式</b>{receipt.taxMode === 'INCLUDED' ? '内税' : receipt.taxMode === 'EXCLUDED' ? '外税' : '内税・外税混在'}</span>}
+        <span><b>品目照合</b>{receipt.reconciliation.status === 'EXACT' ? '品目合計一致' : receipt.reconciliation.status === 'NO_ITEMS' ? '品目明細なし' : receipt.reconciliation.deltaJpy === null ? '差額未計算' : `差額 ${signedYen(receipt.reconciliation.deltaJpy)}`}<small>税・値引・ポイントは自動配分しません</small></span>
       </div>
-      {receipt.items.length > 0 && <div className="receipt-items-wrap"><table className="receipt-items"><caption>レシート明細と抽出元</caption><thead><tr><th scope="col">品目</th><th scope="col">数量</th><th scope="col">金額</th><th scope="col">根拠</th></tr></thead><tbody>{receipt.items.map((item, index) => <tr key={`${item.description}-${index}`}><th scope="row">{item.description}</th><td>{item.quantity ?? '—'}</td><td>{yen(item.amountJpy)}</td><td>line {item.provenance.lineNumber} · region {item.provenance.regionIndexes.length ? item.provenance.regionIndexes.join(', ') : '—'} · {confidence(item.confidenceBps)}</td></tr>)}</tbody></table></div>}
+      {receipt.items.length > 0 && <div className="receipt-items-wrap"><table className="receipt-items"><caption>レシート明細と抽出元</caption><thead><tr><th scope="col">品目</th><th scope="col">数量</th><th scope="col">税率</th><th scope="col">金額</th><th scope="col">根拠</th></tr></thead><tbody>{receipt.items.map((item, index) => <tr key={`${item.description}-${index}`}><th scope="row">{item.description}</th><td>{item.quantity ?? '—'}</td><td>{item.taxRatePercent === null ? '未確認' : `${item.taxRatePercent}%`}</td><td>{yen(item.amountJpy)}</td><td>line {item.provenance.lineNumber} · region {item.provenance.regionIndexes.length ? item.provenance.regionIndexes.join(', ') : '—'} · {confidence(item.confidenceBps)}</td></tr>)}</tbody></table></div>}
     </section>}
 
     <section className="evidence-pages" aria-labelledby="evidence-pages-title"><header><div><p>Located evidence</p><h3 id="evidence-pages-title">ページ・領域</h3></div><span>{evidence.pages.length}ページ</span></header>

@@ -829,6 +829,59 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('1件の取引を台帳へ反映しました。')).toBeInTheDocument()
   })
 
+  it('recovers receipt item evidence and commits an exact three-entry split', async () => {
+    const receiptReview = {
+      merchant: '生協', occurredOn: '2026-07-12', totalAmountJpy: 1200,
+      items: [
+        { description: '牛乳', quantity: 2, amountJpy: 400, taxRatePercent: 8, confidenceBps: 9400, provenance: { lineNumber: 3, regionIndexes: [0], method: 'TEXT_PATTERN' } },
+        { description: '洗剤', quantity: 1, amountJpy: 800, taxRatePercent: 10, confidenceBps: 9200, provenance: { lineNumber: 4, regionIndexes: [1], method: 'TEXT_PATTERN' } },
+      ],
+      taxes: [{ ratePercent: 8, taxAmountJpy: 30, taxableAmountJpy: 370, confidenceBps: 9000, provenance: { lineNumber: 5, regionIndexes: [2], method: 'TEXT_PATTERN' } }],
+      couponAmountJpy: null, pointsUsedJpy: null, couponEvidence: [], pointsUsedEvidence: [], subtotalJpy: 1200, changeJpy: null, paymentMethod: 'カード', taxMode: 'INCLUDED',
+      reconciliation: { status: 'EXACT', itemTotalJpy: 1200, totalAmountJpy: 1200, deltaJpy: 0 }, provenance: { sourceRecordId: 'record', sourceRowNumber: 1, documentPageNumber: 1 },
+    }
+    desktop.listPendingReviews.mockResolvedValueOnce({ householdId: 'family', runs: [{ runId: 'receipt-run', documentId: 'receipt-document', status: 'REVIEW_REQUIRED', adapterId: 'receipt-image-ocr-v2', adapterVersion: '2', startedAt: '2026-07-13T00:00:00Z', sourceType: 'CAMERA_SCAN', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW' }] }).mockResolvedValue({ householdId: 'family', runs: [] })
+    desktop.previewImport.mockResolvedValueOnce({
+      summary: { runId: 'receipt-run', documentId: 'receipt-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'CAMERA_SCAN', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 42, sha256: 'receipt-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{ id: 'receipt-candidate', accountId: 'family-card', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: '生協', merchantRaw: '生協', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9300, normalizationConfidenceBps: 9300, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview }],
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: '品目から分割' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: '生協を承認' }))
+    fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
+
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('receipt-run', [expect.objectContaining({
+      candidateId: 'receipt-candidate', transactionType: 'CARD_PURCHASE', entries: [
+        expect.objectContaining({ side: 'DEBIT', amountJpy: 400 }),
+        expect.objectContaining({ side: 'DEBIT', amountJpy: 800 }),
+        expect.objectContaining({ side: 'CREDIT', accountId: 'family-card', amountJpy: 1200 }),
+      ],
+    })]))
+  })
+
+  it('keeps a delta receipt manual and blocks commit while its edited journal is invalid', async () => {
+    desktop.listPendingReviews.mockResolvedValueOnce({ householdId: 'family', runs: [{ runId: 'delta-run', documentId: 'delta-document', status: 'REVIEW_REQUIRED', adapterId: 'receipt-text-v2', adapterVersion: '2', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'delta.txt', mediaType: 'text/plain', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW' }] }).mockResolvedValue({ householdId: 'family', runs: [] })
+    desktop.previewImport.mockResolvedValueOnce({
+      summary: { runId: 'delta-run', documentId: 'delta-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'delta.txt', mediaType: 'text/plain', byteSize: 42, sha256: 'delta-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{ id: 'delta-candidate', accountId: 'family-card', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9000, normalizationConfidenceBps: 9000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview: { merchant: 'STORE', occurredOn: '2026-07-12', totalAmountJpy: 1200, items: [{ description: '読取品目', quantity: 1, amountJpy: 1100, taxRatePercent: null, confidenceBps: 8000, provenance: { lineNumber: 2, regionIndexes: [], method: 'TEXT_PATTERN' } }], taxes: [], couponAmountJpy: null, pointsUsedJpy: null, couponEvidence: [], pointsUsedEvidence: [], subtotalJpy: null, changeJpy: null, paymentMethod: null, taxMode: null, reconciliation: { status: 'DELTA', itemTotalJpy: 1100, totalAmountJpy: 1200, deltaJpy: -100 }, provenance: { sourceRecordId: 'record', sourceRowNumber: 1, documentPageNumber: null } } }],
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByText(/差があるため自動配分しません/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '品目から分割' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '仕訳行を追加' }))
+    expect(screen.getByRole('checkbox', { name: 'STOREを承認' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
+
   it('recovers and finalizes a zero-candidate source run without inventing a transaction', async () => {
     desktop.listPendingReviews.mockResolvedValueOnce({ householdId: 'family', runs: [{ runId: 'run-zero', documentId: 'document-zero', status: 'REVIEW_REQUIRED', adapterId: 'securities-asset-snapshot-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 3, candidateCount: 0, completionState: 'SOURCE_READY' }] }).mockResolvedValue({ householdId: 'family', runs: [] })
     desktop.previewImport.mockResolvedValueOnce({
