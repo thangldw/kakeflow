@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.90.0 — 2026-07-15
+
+- Add a strict MUFG BizSTATION `全明細` adapter based on the official Shift_JIS header/detail/footer/final record family, including debit/deposit count and total validation plus opening, running, and closing balance reconciliation in either source order.
+- Add a separate strict MUFG BizSTATION `入出金明細` adapter for the official twenty-field business-account export, with institution, account, direction, transaction-class, padded-JPY, single-source-account, and bounded Japanese-calendar validation.
+- Require explicit existing `ASSET / BANK` mapping for both MUFG imports, preserve raw physical rows, keep account holder/number out of adapter metadata, suggest recognizable card debits as liability payments, and never post automatically.
+- Add local RFC 5322 `.eml` ingestion for exactly one CSV/TSV/XLSX attachment while retaining the complete email bytes as the encrypted immutable source document and qualifying decoded rows with their attachment `sourcePart`.
+- Bound MIME headers, nesting, attachment count, per-attachment bytes, aggregate decoded bytes, filename normalization, and multiple financial-attachment selection; malformed or ambiguous messages fail closed instead of choosing a source or account.
+- Lazy-load the MIME parser so ordinary desktop startup and non-email imports do not pay its bundle cost. Direct mailbox OAuth/polling, PDF/image attachment extraction, and personal MUFG Direct layouts remain outside this release.
+
 ## 0.80.0 — 2026-07-15
 
 - Add a provider-aware native iCloud Drive durable Inbox for user-selected, locally synchronized folders on macOS and Windows without claiming Apple API or CloudKit access.

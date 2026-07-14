@@ -4,13 +4,12 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
-Version 0.80 is the current stable desktop milestone. It adds a native
-[iCloud Drive durable inbox](docs/ICLOUD_DRIVE_INBOX.md) for explicitly selected
-locally synced folders and a crash-safe
-[mobile capture queue](docs/DURABLE_MOBILE_CAPTURE_QUEUE.md) that retains exact
-capsule bytes across bounded retries. The next development batch is 0.90;
-intermediate features are tested and pushed individually, while packaging and
-the complete release audit run once at the milestone.
+Version 0.90 is the current stable desktop milestone. It adds two strict MUFG
+BizSTATION business-account adapters based on official export specifications and
+a local [RFC 5322 email attachment path](docs/EMAIL_ATTACHMENT_IMPORT.md) that
+retains the complete `.eml` as immutable evidence. Exact account mapping and
+review remain mandatory; personal MUFG Direct layouts, direct mailbox OAuth, and
+automatic posting are not claimed.
 
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 
