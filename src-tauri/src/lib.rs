@@ -1024,12 +1024,88 @@ struct PrepareEncryptedFamilyEnvelopeInput {
     recipient_set_digest: String,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GetCachedFamilyEnvelopeInput {
+    delivery_id: String,
+    metadata: family_encrypted_envelope::FamilyEnvelopeMetadata,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrepareEncryptedFamilyEnvelopeOutput {
+    envelope_byte_size: u64,
+    envelope_bytes: Vec<u8>,
+    envelope_sha256: String,
+    recipient_count: u32,
+    recipient_set_digest: String,
+    cache_disposition: String,
+}
+
+fn cached_family_envelope_output(
+    cached: family_delivery_transport::CachedOutboundEnvelopeDto,
+    expected_metadata: &family_encrypted_envelope::FamilyEnvelopeMetadata,
+    cache_disposition: &str,
+) -> Result<PrepareEncryptedFamilyEnvelopeOutput, String> {
+    let summary = family_encrypted_envelope::inspect_family_envelope(&cached.envelope_bytes)
+        .map_err(|_| "Cached family delivery envelope is invalid".to_owned())?;
+    if summary.metadata != *expected_metadata {
+        return Err("Cached family delivery envelope metadata conflicts".to_owned());
+    }
+    let recipient_count = u32::try_from(summary.recipient_ids.len())
+        .map_err(|_| "Cached family delivery recipient count is invalid".to_owned())?;
+    Ok(PrepareEncryptedFamilyEnvelopeOutput {
+        envelope_byte_size: summary.encrypted_byte_size,
+        envelope_bytes: cached.envelope_bytes,
+        envelope_sha256: cached.transport_sha256,
+        recipient_count,
+        recipient_set_digest: cached.recipient_set_digest,
+        cache_disposition: cache_disposition.to_owned(),
+    })
+}
+
+fn artifact_matches_envelope_metadata(
+    artifact: &family_delivery_transport::PreparedFamilyArtifactDto,
+    metadata: &family_encrypted_envelope::FamilyEnvelopeMetadata,
+) -> bool {
+    artifact.digest == metadata.inner_sha256
+        && artifact.household_id == metadata.household_id
+        && artifact.artifact_id == metadata.publication_id
+        && artifact.origin_device_id == metadata.origin_installation_id
+        && artifact.artifact_schema == metadata.artifact_schema
+}
+
+#[tauri::command]
+fn family_delivery_envelope_cached_get(
+    state: tauri::State<'_, AppState>,
+    input: GetCachedFamilyEnvelopeInput,
+) -> Result<Option<PrepareEncryptedFamilyEnvelopeOutput>, String> {
+    let cached = family_delivery_result(&state, |connection| {
+        family_delivery_transport::load_any_cached_outbound_envelope(
+            connection,
+            &input.delivery_id,
+            &input.metadata.inner_sha256,
+        )
+    })?;
+    let Some(cached) = cached else {
+        return Ok(None);
+    };
+    let artifact = family_delivery_result(&state, |connection| {
+        family_delivery_transport::load_prepared_artifact(connection, &input.delivery_id)
+    })?
+    .ok_or_else(|| "Family delivery artifact is unavailable".to_owned())?;
+    if !artifact_matches_envelope_metadata(&artifact, &input.metadata) {
+        return Err("Family delivery envelope metadata conflicts".to_owned());
+    }
+    cached_family_envelope_output(cached, &input.metadata, "STALE_CACHE_REUSED").map(Some)
+}
+
 #[tauri::command]
 fn family_delivery_envelope_prepare(
     state: tauri::State<'_, AppState>,
     identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
     input: PrepareEncryptedFamilyEnvelopeInput,
-) -> Result<family_envelope_identity::SealFamilyEnvelopeOutput, String> {
+) -> Result<PrepareEncryptedFamilyEnvelopeOutput, String> {
     let cached = family_delivery_result(&state, |connection| {
         family_delivery_transport::load_cached_outbound_envelope(
             connection,
@@ -1039,24 +1115,14 @@ fn family_delivery_envelope_prepare(
         )
     })?;
     if let Some(cached) = cached {
-        return Ok(family_envelope_identity::SealFamilyEnvelopeOutput {
-            envelope_byte_size: cached.envelope_bytes.len() as u64,
-            envelope_bytes: cached.envelope_bytes,
-            envelope_sha256: cached.transport_sha256,
-            recipient_count: input.recipients.len() as u32,
-        });
+        return cached_family_envelope_output(cached, &input.metadata, "EXACT_CACHE");
     }
 
     let artifact = family_delivery_result(&state, |connection| {
         family_delivery_transport::load_prepared_artifact(connection, &input.delivery_id)
     })?
     .ok_or_else(|| "Family delivery artifact is unavailable".to_owned())?;
-    if artifact.digest != input.metadata.inner_sha256
-        || artifact.household_id != input.metadata.household_id
-        || artifact.artifact_id != input.metadata.publication_id
-        || artifact.origin_device_id != input.metadata.origin_installation_id
-        || artifact.artifact_schema != input.metadata.artifact_schema
-    {
+    if !artifact_matches_envelope_metadata(&artifact, &input.metadata) {
         return Err("Family delivery envelope metadata conflicts".to_owned());
     }
     let sealed = identity
@@ -1079,11 +1145,13 @@ fn family_delivery_envelope_prepare(
             },
         )
     })?;
-    Ok(family_envelope_identity::SealFamilyEnvelopeOutput {
+    Ok(PrepareEncryptedFamilyEnvelopeOutput {
         envelope_bytes: cached.envelope_bytes,
         envelope_sha256: cached.transport_sha256,
         envelope_byte_size: sealed.envelope_byte_size,
         recipient_count: sealed.recipient_count,
+        recipient_set_digest: cached.recipient_set_digest,
+        cache_disposition: "NEWLY_SEALED".to_owned(),
     })
 }
 
@@ -1105,6 +1173,21 @@ fn family_delivery_send_failed(
 ) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
     family_delivery_result(&state, |connection| {
         family_delivery_transport::mark_failed(connection, &household_id, &delivery_ids)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_envelope_recipient_set_changed(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    deliveries: Vec<family_delivery_transport::RejectedRecipientSetDeliveryInput>,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    let input = family_delivery_transport::ResetRejectedRecipientSetsInput {
+        household_id,
+        deliveries,
+    };
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::reset_rejected_outbound_envelopes(connection, &input)
     })
 }
 
@@ -3498,6 +3581,11 @@ pub fn run() {
             // would create a race where a disappearing keychain item could be
             // replaced while the vault still holds the original key.
             let state = AppState::open_with_key(database_path.clone(), &master_key)?;
+            state.with_connection(|connection| {
+                family_delivery_transport::recover_interrupted_sends(connection)
+                    .map(|_| ())
+                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+            })?;
             app.manage(state);
             app.manage(vault);
             app.manage(family_envelope_identity);
@@ -3551,9 +3639,11 @@ pub fn run() {
             family_delivery_background_run_now,
             family_delivery_remote_state_register,
             family_delivery_send_prepare,
+            family_delivery_envelope_cached_get,
             family_delivery_envelope_prepare,
             family_delivery_send_accept,
             family_delivery_send_failed,
+            family_delivery_envelope_recipient_set_changed,
             family_delivery_inbound_register,
             family_delivery_inbound_stage,
             family_delivery_encrypted_inbound_stage,
@@ -3704,11 +3794,18 @@ pub fn run() {
 #[cfg(test)]
 mod command_authorization_tests {
     use super::{
-        validate_import_metrics, ImportEnvelopeMetrics, RestoreCommandAuthorization,
-        MAX_IMPORT_CANDIDATES, MAX_IMPORT_CARD_LINES, MAX_IMPORT_CARD_STATEMENTS,
-        MAX_IMPORT_EVIDENCE_LINKS, MAX_IMPORT_FILE_BYTES, MAX_IMPORT_METADATA_BYTES,
-        MAX_IMPORT_RAW_PAYLOAD_BYTES, MAX_IMPORT_RECORDS,
+        cached_family_envelope_output, validate_import_metrics, ImportEnvelopeMetrics,
+        RestoreCommandAuthorization, MAX_IMPORT_CANDIDATES, MAX_IMPORT_CARD_LINES,
+        MAX_IMPORT_CARD_STATEMENTS, MAX_IMPORT_EVIDENCE_LINKS, MAX_IMPORT_FILE_BYTES,
+        MAX_IMPORT_METADATA_BYTES, MAX_IMPORT_RAW_PAYLOAD_BYTES, MAX_IMPORT_RECORDS,
     };
+    use crate::{
+        family_delivery_transport::CachedOutboundEnvelopeDto,
+        family_encrypted_envelope::{
+            seal_family_envelope, FamilyEnvelopeMetadata, RecipientKeyPair,
+        },
+    };
+    use sha2::{Digest, Sha256};
 
     #[test]
     fn restore_authorization_is_exact_match_and_one_shot() {
@@ -3788,5 +3885,52 @@ mod command_authorization_tests {
         ] {
             assert!(validate_import_metrics(oversized).is_err());
         }
+    }
+
+    #[test]
+    fn cached_family_envelope_output_reports_persisted_tuple_and_actual_recipient_count() {
+        let artifact = b"immutable-family-artifact";
+        let metadata = FamilyEnvelopeMetadata::new(
+            "family",
+            "publication",
+            "device-a",
+            "FAMILY_AUDIENCE_PARTITION_V3",
+            artifact,
+        );
+        let recipient_a = RecipientKeyPair::from_private_bytes("membership-a", [31_u8; 32])
+            .unwrap()
+            .public_key();
+        let recipient_b = RecipientKeyPair::from_private_bytes("membership-b", [32_u8; 32])
+            .unwrap()
+            .public_key();
+        let envelope =
+            seal_family_envelope(metadata.clone(), artifact, &[recipient_a, recipient_b]).unwrap();
+        let transport_sha256 = hex_sha256(&envelope);
+        let recipient_set_digest = hex_sha256(b"persisted-recipient-set");
+        let output = cached_family_envelope_output(
+            CachedOutboundEnvelopeDto {
+                delivery_id: "delivery".into(),
+                envelope_schema: "FAMILY_ENCRYPTED_ENVELOPE_V1".into(),
+                transport_sha256: transport_sha256.clone(),
+                inner_sha256: metadata.inner_sha256.clone(),
+                recipient_set_digest: recipient_set_digest.clone(),
+                envelope_bytes: envelope.clone(),
+            },
+            &metadata,
+            "STALE_CACHE_REUSED",
+        )
+        .unwrap();
+        assert_eq!(output.envelope_bytes, envelope);
+        assert_eq!(output.envelope_sha256, transport_sha256);
+        assert_eq!(output.recipient_set_digest, recipient_set_digest);
+        assert_eq!(output.recipient_count, 2);
+        assert_eq!(output.cache_disposition, "STALE_CACHE_REUSED");
+    }
+
+    fn hex_sha256(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
     }
 }

@@ -265,6 +265,89 @@ test('registers generation-safe recipient keys and stores encrypted family envel
   assert.equal(joined.membership.domainMemberId, 'family-member-b')
 })
 
+test('keeps an accepted encrypted publication idempotent after the recipient key rotates', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const recipientKey = await registerEncryptionKey(base, 'token-b', 'family', encryptionKey(31))
+  const bytes = Buffer.from('KFE1 immutable envelope before key rotation')
+  const innerDigest = digest(Buffer.from('KFF3 immutable inner artifact'))
+  const envelope = { recipientSetDigest: recipientSetDigest([recipientKey]), innerDigest }
+
+  const accepted = await publish(base, { id: 'key-rotation-retry', bytes, envelope })
+  assert.equal(accepted.status, 201)
+  assert.equal((await accepted.json()).created, true)
+
+  const rotated = await registerEncryptionKey(base, 'token-b', 'family', {
+    ...encryptionKey(32), generation: 2,
+  })
+  assert.equal(rotated.encryptionKeyGeneration, 2)
+  assert.notEqual(recipientSetDigest([rotated]), envelope.recipientSetDigest)
+
+  const retry = await publish(base, { id: 'key-rotation-retry', bytes, envelope })
+  assert.equal(retry.status, 200)
+  const retried = await retry.json()
+  assert.equal(retried.created, false)
+  assert.equal(retried.publication.digest, digest(bytes))
+  assert.equal(retried.publication.recipientSetDigest, envelope.recipientSetDigest)
+})
+
+test('rejects a stale recipient set before storage and accepts a current envelope under the same publication ID', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const recipientKey = await registerEncryptionKey(base, 'token-b', 'family', encryptionKey(41))
+  const bytes = Buffer.from('KFE1 envelope resealed for current recipients')
+  const innerDigest = digest(Buffer.from('KFF3 stable inner artifact'))
+  const id = 'recipient-set-recovery'
+
+  const stale = await publish(base, {
+    id, bytes,
+    envelope: { recipientSetDigest: '0'.repeat(64), innerDigest },
+  })
+  assert.equal(stale.status, 409)
+  assert.equal((await stale.json()).error, 'RECIPIENT_SET_CHANGED')
+  assert.equal((await fetch(`${base}/v2/households/family/publications/${id}`, { headers: auth() })).status, 404)
+  const before = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(before.publications, [])
+
+  const currentEnvelope = { recipientSetDigest: recipientSetDigest([recipientKey]), innerDigest }
+  const current = await publish(base, { id, bytes, envelope: currentEnvelope })
+  assert.equal(current.status, 201)
+  assert.equal((await current.json()).created, true)
+  const after = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(after.publications.map((item) => item.publicationId), [id])
+  assert.equal(after.publications[0].recipientSetDigest, currentEnvelope.recipientSetDigest)
+})
+
+test('replays the exact accepted envelope after a lost response even when household recipients later change', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const recipientKey = await registerEncryptionKey(base, 'token-b', 'family', encryptionKey(51))
+  const bytes = Buffer.from('KFE1 response-loss retry envelope')
+  const innerDigest = digest(Buffer.from('KFF3 response-loss inner artifact'))
+  const envelope = { recipientSetDigest: recipientSetDigest([recipientKey]), innerDigest }
+
+  const responseWhoseBodyIsLost = await publish(base, { id: 'response-loss-retry', bytes, envelope })
+  assert.equal(responseWhoseBodyIsLost.status, 201)
+
+  await inviteAndRedeem(base, {
+    domainMemberId: 'family-member-c', memberToken: 'token-c', key: 'response-loss-add-c',
+  })
+  await registerEncryptionKey(base, 'token-c', 'family', encryptionKey(52))
+
+  const retry = await publish(base, { id: 'response-loss-retry', bytes, envelope })
+  assert.equal(retry.status, 200)
+  const retried = await retry.json()
+  assert.equal(retried.created, false)
+  assert.equal(retried.publication.recipientSetDigest, envelope.recipientSetDigest)
+  const originalRecipient = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(originalRecipient.publications.map((item) => item.publicationId), ['response-loss-retry'])
+  const laterRecipient = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-c') })).json()
+  assert.deepEqual(laterRecipient.publications, [])
+})
+
 test('routes shared publications only to server-snapshotted active memberships', async () => {
   const { base } = await fixture()
   await createFamily(base)

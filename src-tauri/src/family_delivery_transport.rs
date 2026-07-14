@@ -197,6 +197,21 @@ pub struct CacheOutboundEnvelopeInput {
     pub envelope_bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RejectedRecipientSetDeliveryInput {
+    pub delivery_id: String,
+    pub transport_sha256: String,
+    pub recipient_set_digest: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResetRejectedRecipientSetsInput {
+    pub household_id: String,
+    pub deliveries: Vec<RejectedRecipientSetDeliveryInput>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct InboundTransportMetadataDto {
@@ -1034,6 +1049,34 @@ pub fn load_cached_outbound_envelope(
     }))
 }
 
+pub fn load_any_cached_outbound_envelope(
+    connection: &Connection,
+    delivery_id: &str,
+    inner_sha256: &str,
+) -> Result<Option<CachedOutboundEnvelopeDto>> {
+    if !valid_id(delivery_id) || !valid_digest(inner_sha256) {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    let recipient_set_digest = connection
+        .query_row(
+            "SELECT recipient_set_digest FROM family_delivery_deliveries
+             WHERE delivery_id=?1 AND package_sha256=?2
+               AND state IN ('SENDING','FAILED_RETRYABLE')
+               AND envelope_bytes IS NOT NULL",
+            params![delivery_id, inner_sha256],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten();
+    let Some(recipient_set_digest) = recipient_set_digest else {
+        return Ok(None);
+    };
+    if !valid_digest(&recipient_set_digest) {
+        return Err(FamilyDeliveryError::Conflict);
+    }
+    load_cached_outbound_envelope(connection, delivery_id, inner_sha256, &recipient_set_digest)
+}
+
 pub fn cache_outbound_envelope(
     connection: &Connection,
     input: &CacheOutboundEnvelopeInput,
@@ -1115,6 +1158,113 @@ pub fn cache_outbound_envelope(
         &input.recipient_set_digest,
     )?
     .ok_or(FamilyDeliveryError::Conflict)
+}
+
+/// Clears an encrypted envelope only after the relay has explicitly rejected
+/// the exact transport/recipient-set tuple that is still cached locally.
+///
+/// This is intentionally separate from `mark_failed`: ambiguous transport
+/// failures must keep the exact envelope bytes for an idempotent retry. The
+/// immutable inner package and outbound lineage are never changed here.
+pub fn reset_rejected_outbound_envelopes(
+    connection: &Connection,
+    input: &ResetRejectedRecipientSetsInput,
+) -> Result<FamilyDeliveryStatusDto> {
+    if !valid_id(&input.household_id)
+        || input.deliveries.is_empty()
+        || input.deliveries.len() > 2
+        || input.deliveries.iter().any(|delivery| {
+            !valid_id(&delivery.delivery_id)
+                || !valid_digest(&delivery.transport_sha256)
+                || !valid_digest(&delivery.recipient_set_digest)
+        })
+        || input
+            .deliveries
+            .iter()
+            .map(|delivery| delivery.delivery_id.as_str())
+            .collect::<BTreeSet<_>>()
+            .len()
+            != input.deliveries.len()
+    {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+
+    let transaction = connection.unchecked_transaction()?;
+    let mut needs_reset = Vec::with_capacity(input.deliveries.len());
+    for rejected in &input.deliveries {
+        let current = transaction
+            .query_row(
+                "SELECT state,package_sha256,package_bytes,envelope_schema,transport_sha256,
+                        recipient_set_digest,envelope_bytes
+                 FROM family_delivery_deliveries
+                 WHERE household_id=?1 AND delivery_id=?2",
+                params![input.household_id, rejected.delivery_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<Vec<u8>>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, Option<Vec<u8>>>(6)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(FamilyDeliveryError::Conflict)?;
+        let Some(package) = current.2 else {
+            return Err(FamilyDeliveryError::Conflict);
+        };
+        if current.1 != digest(&package) {
+            return Err(FamilyDeliveryError::Conflict);
+        }
+        match (current.3, current.4, current.5, current.6) {
+            (None, None, None, None) if current.0 == "FAILED_RETRYABLE" => {
+                // The exact reset may already have committed even when its IPC
+                // response was lost. Repeating it is a safe, non-destructive
+                // success while no replacement tuple has been cached.
+                needs_reset.push(false);
+            }
+            (Some(schema), Some(transport), Some(recipient_set), Some(envelope))
+                if matches!(current.0.as_str(), "SENDING" | "FAILED_RETRYABLE")
+                    && valid_id(&schema)
+                    && transport == rejected.transport_sha256
+                    && recipient_set == rejected.recipient_set_digest
+                    && transport == digest(&envelope) =>
+            {
+                needs_reset.push(true);
+            }
+            _ => return Err(FamilyDeliveryError::Conflict),
+        }
+    }
+
+    for (rejected, should_reset) in input.deliveries.iter().zip(needs_reset) {
+        if !should_reset {
+            continue;
+        }
+        let changed = transaction.execute(
+            "UPDATE family_delivery_deliveries
+             SET state='FAILED_RETRYABLE',accepted_at=NULL,envelope_schema=NULL,
+                 transport_sha256=NULL,recipient_set_digest=NULL,envelope_bytes=NULL
+             WHERE household_id=?1 AND delivery_id=?2
+               AND state IN ('SENDING','FAILED_RETRYABLE')
+               AND transport_sha256=?3 AND recipient_set_digest=?4
+               AND package_bytes IS NOT NULL AND envelope_schema IS NOT NULL
+               AND envelope_bytes IS NOT NULL",
+            params![
+                input.household_id,
+                rejected.delivery_id,
+                rejected.transport_sha256,
+                rejected.recipient_set_digest
+            ],
+        )?;
+        if changed != 1 {
+            return Err(FamilyDeliveryError::Conflict);
+        }
+    }
+    transaction.commit()?;
+    status(connection, &input.household_id)
 }
 
 pub fn load_inbound_transport_metadata(
@@ -1316,6 +1466,19 @@ fn mark_v2_outbound_lineage_tracked(
         )?;
     }
     Ok(())
+}
+
+/// Recovers sends interrupted by process termination. `SENDING` is only an
+/// in-process ownership marker; after a fresh process starts no sender can
+/// still own it. Exact package and encrypted-envelope bytes remain untouched
+/// so the next attempt is an idempotent resend.
+pub fn recover_interrupted_sends(connection: &Connection) -> Result<u64> {
+    Ok(connection.execute(
+        "UPDATE family_delivery_deliveries
+         SET state='FAILED_RETRYABLE',accepted_at=NULL
+         WHERE state='SENDING'",
+        [],
+    )? as u64)
 }
 
 pub fn mark_failed(
@@ -1989,6 +2152,11 @@ mod tests {
 
     fn setup(key: u8) -> AppState {
         let state = AppState::in_memory(&[key; 32]).unwrap();
+        initialize_state(&state);
+        state
+    }
+
+    fn initialize_state(state: &AppState) {
         state
             .with_connection(|connection| {
                 create_household(
@@ -2026,7 +2194,6 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        state
     }
     fn memberships() -> Vec<FamilyMembershipDto> {
         vec![FamilyMembershipDto {
@@ -2055,6 +2222,24 @@ mod tests {
         .unwrap();
     }
 
+    fn cache_test_envelope(
+        connection: &Connection,
+        prepared: &PreparedFamilyArtifactDto,
+        label: &str,
+    ) -> CacheOutboundEnvelopeInput {
+        let envelope_bytes = format!("encrypted-envelope-{label}").into_bytes();
+        let input = CacheOutboundEnvelopeInput {
+            delivery_id: prepared.delivery_id.clone(),
+            envelope_schema: "FAMILY_ENCRYPTED_ENVELOPE_V1".into(),
+            transport_sha256: digest(&envelope_bytes),
+            inner_sha256: prepared.digest.clone(),
+            recipient_set_digest: digest(format!("recipient-set-{label}").as_bytes()),
+            envelope_bytes,
+        };
+        cache_outbound_envelope(connection, &input).unwrap();
+        input
+    }
+
     #[test]
     fn failed_delivery_retries_exact_partition_bytes() {
         let state = setup(1);
@@ -2079,6 +2264,57 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(first, retry);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn startup_recovery_after_reopen_keeps_exact_cached_sending_envelope() {
+        let root = tempfile::tempdir().unwrap();
+        let database = root.path().join("kakeflow.db");
+        let key = [25_u8; 32];
+        let (prepared, cached) = {
+            let state = AppState::open_with_key(database.clone(), &key).unwrap();
+            initialize_state(&state);
+            state
+                .with_connection(|connection| {
+                    connect(connection);
+                    let prepared = prepare_send(
+                        connection,
+                        &PrepareFamilyDeliveryInput {
+                            household_id: "family".into(),
+                            audience_keys: vec!["SHARED".into()],
+                        },
+                    )
+                    .unwrap()
+                    .remove(0);
+                    let cached = cache_test_envelope(connection, &prepared, "before-crash");
+                    Ok((prepared, cached))
+                })
+                .unwrap()
+        };
+
+        let reopened = AppState::open_with_key(database, &key).unwrap();
+        reopened
+            .with_connection(|connection| {
+                assert_eq!(recover_interrupted_sends(connection).unwrap(), 1);
+                let state: String = connection.query_row(
+                    "SELECT state FROM family_delivery_deliveries WHERE delivery_id=?1",
+                    [&prepared.delivery_id],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(state, "FAILED_RETRYABLE");
+                let recovered = load_any_cached_outbound_envelope(
+                    connection,
+                    &prepared.delivery_id,
+                    &prepared.digest,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(recovered.transport_sha256, cached.transport_sha256);
+                assert_eq!(recovered.recipient_set_digest, cached.recipient_set_digest);
+                assert_eq!(recovered.envelope_bytes, cached.envelope_bytes);
                 Ok(())
             })
             .unwrap();
@@ -2160,6 +2396,276 @@ mod tests {
                     retained,
                     (Some(transport_sha256), Some(recipient_set_digest), 1)
                 );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn exact_recipient_set_rejection_preserves_inner_package_and_allows_resealing() {
+        let state = setup(21);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let prepared = prepare_send(
+                    connection,
+                    &PrepareFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        audience_keys: vec!["SHARED".into()],
+                    },
+                )
+                .unwrap()
+                .remove(0);
+                let old = cache_test_envelope(connection, &prepared, "old");
+                let immutable_before: (String, String, String, String, Option<Vec<u8>>) = connection
+                    .query_row(
+                        "SELECT artifact_id,package_sha256,origin_device_id,audience_key,package_bytes
+                         FROM family_delivery_deliveries WHERE delivery_id=?1",
+                        [&prepared.delivery_id],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                            ))
+                        },
+                    )?;
+
+                let rejected = ResetRejectedRecipientSetsInput {
+                    household_id: "family".into(),
+                    deliveries: vec![RejectedRecipientSetDeliveryInput {
+                        delivery_id: prepared.delivery_id.clone(),
+                        transport_sha256: old.transport_sha256.clone(),
+                        recipient_set_digest: old.recipient_set_digest.clone(),
+                    }],
+                };
+                reset_rejected_outbound_envelopes(connection, &rejected).unwrap();
+                // Simulate the first IPC response being lost. The retry sees
+                // an already-cleared FAILED_RETRYABLE row and is a safe no-op.
+                reset_rejected_outbound_envelopes(connection, &rejected).unwrap();
+                let cleared: (String, Option<String>, Option<String>, Option<String>, Option<Vec<u8>>) =
+                    connection.query_row(
+                        "SELECT state,envelope_schema,transport_sha256,recipient_set_digest,envelope_bytes
+                         FROM family_delivery_deliveries WHERE delivery_id=?1",
+                        [&prepared.delivery_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    )?;
+                assert_eq!(
+                    cleared,
+                    ("FAILED_RETRYABLE".into(), None, None, None, None)
+                );
+                let immutable_after: (String, String, String, String, Option<Vec<u8>>) = connection
+                    .query_row(
+                        "SELECT artifact_id,package_sha256,origin_device_id,audience_key,package_bytes
+                         FROM family_delivery_deliveries WHERE delivery_id=?1",
+                        [&prepared.delivery_id],
+                        |row| {
+                            Ok((
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                            ))
+                        },
+                    )?;
+                assert_eq!(immutable_before, immutable_after);
+
+                let replacement = cache_test_envelope(connection, &prepared, "new-members");
+                assert_ne!(replacement.recipient_set_digest, old.recipient_set_digest);
+                assert!(matches!(
+                    reset_rejected_outbound_envelopes(connection, &rejected),
+                    Err(FamilyDeliveryError::Conflict)
+                ));
+                assert_eq!(
+                    load_cached_outbound_envelope(
+                        connection,
+                        &prepared.delivery_id,
+                        &prepared.digest,
+                        &replacement.recipient_set_digest,
+                    )
+                    .unwrap()
+                    .unwrap()
+                    .envelope_bytes,
+                    replacement.envelope_bytes
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn recipient_set_rejection_cannot_clear_an_unsealed_sending_delivery() {
+        let state = setup(26);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let prepared = prepare_send(
+                    connection,
+                    &PrepareFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        audience_keys: vec!["SHARED".into()],
+                    },
+                )
+                .unwrap()
+                .remove(0);
+                assert!(matches!(
+                    reset_rejected_outbound_envelopes(
+                        connection,
+                        &ResetRejectedRecipientSetsInput {
+                            household_id: "family".into(),
+                            deliveries: vec![RejectedRecipientSetDeliveryInput {
+                                delivery_id: prepared.delivery_id,
+                                transport_sha256: digest(b"never-cached-envelope"),
+                                recipient_set_digest: digest(b"never-cached-recipients"),
+                            }],
+                        }
+                    ),
+                    Err(FamilyDeliveryError::Conflict)
+                ));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn ambiguous_send_failure_preserves_exact_encrypted_envelope() {
+        let state = setup(22);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let prepared = prepare_send(
+                    connection,
+                    &PrepareFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        audience_keys: vec!["SHARED".into()],
+                    },
+                )
+                .unwrap()
+                .remove(0);
+                let cached = cache_test_envelope(connection, &prepared, "ambiguous");
+
+                mark_failed(connection, "family", &[prepared.delivery_id.clone()]).unwrap();
+
+                let retried = load_cached_outbound_envelope(
+                    connection,
+                    &prepared.delivery_id,
+                    &prepared.digest,
+                    &cached.recipient_set_digest,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(retried.transport_sha256, cached.transport_sha256);
+                assert_eq!(retried.envelope_bytes, cached.envelope_bytes);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn accepted_or_stale_recipient_set_rejections_cannot_reset_delivery() {
+        let state = setup(23);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let prepared = prepare_send(
+                    connection,
+                    &PrepareFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        audience_keys: vec!["SHARED".into()],
+                    },
+                )
+                .unwrap()
+                .remove(0);
+                let cached = cache_test_envelope(connection, &prepared, "accepted");
+                let reset = ResetRejectedRecipientSetsInput {
+                    household_id: "family".into(),
+                    deliveries: vec![RejectedRecipientSetDeliveryInput {
+                        delivery_id: prepared.delivery_id.clone(),
+                        transport_sha256: cached.transport_sha256.clone(),
+                        recipient_set_digest: cached.recipient_set_digest.clone(),
+                    }],
+                };
+                mark_accepted(
+                    connection,
+                    &AcceptFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        receipts: vec![AcceptanceReceiptInput {
+                            delivery_id: prepared.delivery_id.clone(),
+                            artifact_id: prepared.artifact_id,
+                            digest: cached.transport_sha256,
+                            accepted_at: "2026-07-14T12:00:00Z".into(),
+                        }],
+                    },
+                )
+                .unwrap();
+                assert!(matches!(
+                    reset_rejected_outbound_envelopes(connection, &reset),
+                    Err(FamilyDeliveryError::Conflict)
+                ));
+                let accepted: (String, Option<Vec<u8>>) = connection.query_row(
+                    "SELECT state,envelope_bytes FROM family_delivery_deliveries WHERE delivery_id=?1",
+                    [&prepared.delivery_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert_eq!(accepted, ("RELAY_ACCEPTED".into(), None));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn multi_delivery_recipient_set_reset_is_atomic_on_tuple_mismatch() {
+        let state = setup(24);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let prepared = prepare_send(
+                    connection,
+                    &PrepareFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        audience_keys: vec!["SHARED".into(), "PERSONAL:member-a".into()],
+                    },
+                )
+                .unwrap();
+                assert_eq!(prepared.len(), 2);
+                let first = cache_test_envelope(connection, &prepared[0], "atomic-first");
+                let second = cache_test_envelope(connection, &prepared[1], "atomic-second");
+                let input = ResetRejectedRecipientSetsInput {
+                    household_id: "family".into(),
+                    deliveries: vec![
+                        RejectedRecipientSetDeliveryInput {
+                            delivery_id: prepared[0].delivery_id.clone(),
+                            transport_sha256: first.transport_sha256.clone(),
+                            recipient_set_digest: first.recipient_set_digest.clone(),
+                        },
+                        RejectedRecipientSetDeliveryInput {
+                            delivery_id: prepared[1].delivery_id.clone(),
+                            transport_sha256: digest(b"stale-transport"),
+                            recipient_set_digest: second.recipient_set_digest.clone(),
+                        },
+                    ],
+                };
+                assert!(matches!(
+                    reset_rejected_outbound_envelopes(connection, &input),
+                    Err(FamilyDeliveryError::Conflict)
+                ));
+                for (artifact, cached) in prepared.iter().zip([first, second]) {
+                    assert_eq!(
+                        load_cached_outbound_envelope(
+                            connection,
+                            &artifact.delivery_id,
+                            &artifact.digest,
+                            &cached.recipient_set_digest,
+                        )
+                        .unwrap()
+                        .unwrap()
+                        .envelope_bytes,
+                        cached.envelope_bytes
+                    );
+                }
                 Ok(())
             })
             .unwrap();

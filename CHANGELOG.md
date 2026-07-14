@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.60.0 — 2026-07-14
+
+- Replay the exact persisted `KFE1` envelope before deriving the current recipient set, so a lost relay response remains idempotent even after membership keys change.
+- Treat only relay HTTP 409 with the exact `RECIPIENT_SET_CHANGED` code as permission to discard a stale encrypted envelope; network, malformed-response, and other ambiguous failures retain the immutable retry bytes.
+- Reset only the rejected delivery tuple in one native transaction, preserve its inner family artifact and lineage, and reseal it against the refreshed recipients on the next explicit Send.
+- Reconcile mixed upload outcomes independently: accepted publications are acknowledged first, exact stale-recipient rejections are reset, and unrelated retryable deliveries remain cached.
+- Recover interrupted native `SENDING` rows as retryable at startup without changing their package or envelope bytes, including the response-loss case where the relay already accepted the publication.
+- Add a synchronous send guard plus frontend, native, and relay regressions for double clicks, partial success, key rotation, pre-storage rejection, crash recovery, and byte-identical accepted replay.
+- Keep the manual boundary unchanged: this release does not automatically send, download, decrypt, stage, review, or apply family data.
+
 ## 0.59.0 — 2026-07-14
 
 - Add an explicit opt-in native schedule for checking family-delivery publication metadata every 15, 30, or 60 minutes while the KakeFlow desktop process is open, plus an immediate check control and persisted status.
