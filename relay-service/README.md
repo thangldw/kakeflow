@@ -6,7 +6,9 @@ are never accepted. It is a reference transport, not a hosted service, login
 provider, synchronization engine, or end-to-end encrypted store.
 
 Run it behind a TLS reverse proxy with request-size limits. The service itself
-speaks plain HTTP and stores artifact bytes on disk exactly as received.
+speaks plain HTTP and stores artifact bytes on disk exactly as received. Its
+WebView CORS allowlist defaults to KakeFlow's packaged origins and local Vite;
+set `KAKEFLOW_RELAY_ALLOWED_ORIGINS` to a comma-separated replacement list.
 
 ```sh
 KAKEFLOW_RELAY_TOKENS_JSON='{"replace-with-long-token":"principal-family-a"}' \

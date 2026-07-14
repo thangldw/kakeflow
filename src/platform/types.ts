@@ -591,6 +591,7 @@ export type AppCommand =
   | 'relay_disconnect'
   | 'relay_send_prepare'
   | 'relay_send_accept'
+  | 'relay_send_failed'
   | 'relay_inbound_register'
   | 'relay_inbound_stage'
   | 'change_package_export_save'
@@ -690,6 +691,7 @@ export interface PlatformClient {
   disconnectDesktopRelay(householdId: string): Promise<DesktopRelayStatusDto>
   prepareDesktopRelaySend(householdId: string): Promise<DesktopRelayPreparedDeliveryDto>
   acceptDesktopRelaySend(input: AcceptDesktopRelayDeliveryInputDto): Promise<DesktopRelayStatusDto>
+  failDesktopRelaySend(householdId: string, deliveryId: string): Promise<DesktopRelayStatusDto>
   registerDesktopRelayInbound(input: RegisterDesktopRelayInboundInputDto): Promise<DesktopRelayStatusDto>
   stageDesktopRelayInbound(input: StageDesktopRelayInboundInputDto): Promise<DesktopRelayStatusDto>
   exportChangePackage(householdId: string): Promise<string | null>

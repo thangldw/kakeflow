@@ -90,8 +90,8 @@ async function receiveArtifact(request, temporary, maximum) {
   return { tooLarge: false, size, digest: hash.digest('hex') }
 }
 
-export async function createRelayServer({ dataDirectory, tokens, maxArtifactBytes = MAX_ARTIFACT_BYTES } = {}) {
-  if (!dataDirectory || !(tokens instanceof Map) || tokens.size === 0 || !Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) throw new Error('relay configuration is invalid')
+export async function createRelayServer({ dataDirectory, tokens, allowedOrigins = new Set(), maxArtifactBytes = MAX_ARTIFACT_BYTES } = {}) {
+  if (!dataDirectory || !(tokens instanceof Map) || tokens.size === 0 || !(allowedOrigins instanceof Set) || !Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) throw new Error('relay configuration is invalid')
   for (const [token, principal] of tokens) {
     if (!token || typeof principal !== 'string' || !ID.test(principal)) throw new Error('relay token mapping is invalid')
   }
@@ -111,6 +111,20 @@ export async function createRelayServer({ dataDirectory, tokens, maxArtifactByte
 
   const server = createServer(async (request, response) => {
     try {
+      const origin = request.headers.origin
+      if (origin != null) {
+        if (!allowedOrigins.has(origin)) return failure(response, 403, 'ORIGIN_NOT_ALLOWED')
+        response.setHeader('access-control-allow-origin', origin)
+        response.setHeader('vary', 'Origin')
+      }
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204, {
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'Authorization, Content-Type, X-KakeFlow-Artifact-Id, X-KakeFlow-Digest, X-KakeFlow-Household-Id, X-KakeFlow-Origin-Device-Id',
+          'access-control-max-age': '600',
+        })
+        return response.end()
+      }
       const principalId = bearer(request, tokens)
       if (!principalId) return failure(response, 401, 'AUTHENTICATION_REQUIRED')
       const url = new URL(request.url ?? '/', 'http://relay.invalid')

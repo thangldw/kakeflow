@@ -459,7 +459,13 @@ fn validate_restored_semantics(
             "SELECT 1 FROM relay_delivery_envelopes de
              JOIN relay_deliveries d ON d.delivery_id=de.delivery_id
              JOIN sync_change_envelopes e ON e.envelope_id=de.envelope_id
-             WHERE d.household_id!=e.household_id LIMIT 1",
+             JOIN local_sync_contexts c ON c.household_id=d.household_id
+             JOIN sync_outbox o ON o.envelope_id=e.envelope_id
+             WHERE d.household_id!=e.household_id
+                OR e.origin_device_id!=c.device_id
+                OR e.origin_sequence>d.snapshot_sequence
+                OR (d.state='ACCEPTED' AND o.state!='ACKNOWLEDGED')
+                OR (d.state!='ACCEPTED' AND o.state!='PENDING') LIMIT 1",
         )?;
         reject_if_exists(
             connection,

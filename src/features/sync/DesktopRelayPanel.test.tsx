@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const relay = vi.hoisted(() => ({
-  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), prepare: vi.fn(), accept: vi.fn(), register: vi.fn(), stage: vi.fn(),
+  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), prepare: vi.fn(), accept: vi.fn(), fail: vi.fn(), register: vi.fn(), stage: vi.fn(),
   identify: vi.fn(), upload: vi.fn(), list: vi.fn(), download: vi.fn(),
 }))
 
@@ -10,6 +10,7 @@ vi.mock('../../platform', () => ({ platformClient: {
   runtime: 'tauri', getDesktopRelayStatus: (...args: unknown[]) => relay.status(...args),
   saveDesktopRelayConnection: (...args: unknown[]) => relay.save(...args), disconnectDesktopRelay: (...args: unknown[]) => relay.disconnect(...args),
   prepareDesktopRelaySend: (...args: unknown[]) => relay.prepare(...args), acceptDesktopRelaySend: (...args: unknown[]) => relay.accept(...args),
+  failDesktopRelaySend: (...args: unknown[]) => relay.fail(...args),
   registerDesktopRelayInbound: (...args: unknown[]) => relay.register(...args), stageDesktopRelayInbound: (...args: unknown[]) => relay.stage(...args),
 } }))
 vi.mock('./desktopRelayHttp', () => ({
@@ -30,6 +31,7 @@ describe('DesktopRelayPanel', () => {
     relay.status.mockReset().mockResolvedValue(disconnected); relay.save.mockReset().mockResolvedValue(connected)
     relay.disconnect.mockReset().mockResolvedValue(disconnected); relay.prepare.mockReset().mockResolvedValue({ deliveryId: 'delivery', artifactId: 'artifact-out', digest: hash, householdId: 'family', originDeviceId: 'device-local', packageBytes: [1, 2, 3] })
     relay.accept.mockReset().mockResolvedValue({ ...connected, outbound: { ...connected.outbound, pendingEnvelopeCount: 0, deliveryState: 'ACCEPTED', latestAcceptedAt: '2026-07-13T00:01:00Z' } })
+    relay.fail.mockReset().mockResolvedValue({ ...connected, connectionState: 'DEGRADED', outbound: { ...connected.outbound, deliveryState: 'FAILED_RETRYABLE' } })
     relay.register.mockReset().mockResolvedValue(connected); relay.stage.mockReset().mockResolvedValue({ ...connected, inbound: [{ ...artifact, state: 'WAITING_FOR_REVIEW' }] })
     relay.identify.mockReset().mockResolvedValue('principal-remote'); relay.upload.mockReset().mockResolvedValue({ artifactId: 'artifact-out', digest: hash, acceptedAt: '2026-07-13T00:01:00Z' })
     relay.list.mockReset().mockResolvedValue([{ artifactId: artifact.artifactId, digest: artifact.digest, createdAt: artifact.createdAt, originDeviceId: artifact.originDeviceId }]); relay.download.mockReset().mockResolvedValue([1, 2, 3])
@@ -79,5 +81,29 @@ describe('DesktopRelayPanel', () => {
     finishOld({ ...disconnected, householdId: 'old' })
     await waitFor(() => expect(relay.status).toHaveBeenCalledWith('other'))
     expect(screen.getByLabelText('リレー エンドポイント')).toHaveValue('')
+  })
+
+  it('refuses transport when the session token resolves to another principal', async () => {
+    relay.status.mockResolvedValue(connected)
+    relay.identify.mockResolvedValue('principal-other')
+    render(<DesktopRelayPanel householdId="family" />)
+    await screen.findByText('接続済み')
+    fireEvent.change(screen.getByLabelText('リレー接続トークン'), { target: { value: 'wrong-session-token' } })
+    fireEvent.click(screen.getByRole('button', { name: '未送信の変更を送る' }))
+    await screen.findByText(/送信を完了できませんでした/)
+    expect(relay.prepare).not.toHaveBeenCalled()
+    expect(relay.upload).not.toHaveBeenCalled()
+  })
+
+  it('marks a prepared delivery retryable when upload does not complete', async () => {
+    relay.status.mockResolvedValue(connected)
+    relay.upload.mockRejectedValue(new Error('network'))
+    render(<DesktopRelayPanel householdId="family" />)
+    await screen.findByText('接続済み')
+    fireEvent.change(screen.getByLabelText('リレー接続トークン'), { target: { value: 'session-token' } })
+    fireEvent.click(screen.getByRole('button', { name: '未送信の変更を送る' }))
+    await waitFor(() => expect(relay.fail).toHaveBeenCalledWith('family', 'delivery'))
+    expect(await screen.findByText(/送信を完了できませんでした/)).toBeInTheDocument()
+    expect(relay.accept).not.toHaveBeenCalled()
   })
 })
