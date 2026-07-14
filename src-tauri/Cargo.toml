@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "0.69.0"
+version = "0.70.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "MIT"
@@ -39,6 +39,7 @@ notify = "8.2.0"
 hayro = "0.7.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 rust_xlsxwriter = "0.96.0"
+printpdf = { version = "0.9.1", default-features = false, features = ["text_layout"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

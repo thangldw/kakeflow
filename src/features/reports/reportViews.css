@@ -6,6 +6,7 @@
 .report-view-head span { color: #75847e; display: block; font-size: 12px; margin-top: 5px; }
 .annual-review-export-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .monthly-review-head-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.monthly-review-export-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
 .report-segmented { background: #edf1ee; border-radius: 11px; display: inline-flex; padding: 3px; }
 .report-segmented button { background: transparent; border: 0; border-radius: 8px; color: #66756f; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
 .report-segmented button[aria-pressed="true"] { background: #fff; box-shadow: 0 2px 7px rgb(31 48 42 / 9%); color: #26342f; }

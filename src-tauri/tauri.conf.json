@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "KakeFlow",
-  "version": "0.69.0",
+  "version": "0.70.0",
   "identifier": "app.kakeflow.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -31,7 +31,9 @@
     "active": true,
     "targets": "all",
     "resources": {
-      "generated-resources/ocr/": "ocr/"
+      "generated-resources/ocr/": "ocr/",
+      "generated-resources/fonts/OFL.txt": "fonts/OFL.txt",
+      "generated-resources/fonts/SOURCE.md": "fonts/SOURCE.md"
     },
     "icon": [
       "icons/32x32.png",
