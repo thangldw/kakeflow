@@ -301,6 +301,7 @@ describe('KakeFlow desktop read models', () => {
       if (command === 'export_csv_save') return { fileName: 'transactions.csv', rowCount: 1, byteSize: 100 }
       if (command === 'annual_household_review_csv_save') return { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
       if (command === 'annual_household_review_xlsx_save') return { fileName: 'kakeflow-annual-review-2026.xlsx', rowCount: 48, byteSize: 8_000 }
+      if (command === 'monthly_household_review_xlsx_save') return { fileName: 'kakeflow-monthly-review-2026-07.xlsx', rowCount: 32, byteSize: 7_000, sheetCount: 4 }
       if (command === 'aggregate_asset_history_list') return [{ id: 'aggregate-jul', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 3, asOf: '2026-07-31', totalAssetsJpy: 8700000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2100000 }, { assetClass: 'LISTED_STOCKS', officialHeader: '株式(現物)(円)', valueJpy: 3100000 }] }, { id: 'aggregate-jun', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 2, asOf: '2026-06-30', totalAssetsJpy: 8500000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2000000 }] }]
       if (command === 'aggregate_asset_history_import') {
         const input = args?.input as { snapshots: Array<Record<string, unknown>> }
@@ -561,6 +562,17 @@ describe('KakeFlow desktop read models', () => {
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
 
+    fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
+    await screen.findByText('Monthly Review')
+    fireEvent.click(screen.getByRole('button', { name: '前年同月比' }))
+    fireEvent.click(screen.getByRole('button', { name: '月次Excelを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('monthly_household_review_xlsx_save', { request: {
+      householdId: 'family', accountGroupId: null, attributionScope: memberScope, month: '2026-07', asOf: '2026-07-31',
+    } }))
+    const monthlyExportRequest = nativeInvoke.mock.calls.find(([command]) => command === 'monthly_household_review_xlsx_save')?.[1]?.request
+    expect(monthlyExportRequest).not.toHaveProperty('comparison')
+    expect(await screen.findByText(/kakeflow-monthly-review-2026-07\.xlsx（32行）を保存しました/)).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('tab', { name: /定期・異常/ }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_intelligence_query', { request: expect.objectContaining({ attributionScope: memberScope }) }))
     fireEvent.click(screen.getByRole('tab', { name: /固定費/ }))
@@ -613,6 +625,11 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
     await screen.findByText('Financial Calendar')
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', { request: expect.objectContaining({ accountGroupId: 'daily' }) }))
+    fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '月次Excelを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('monthly_household_review_xlsx_save', { request: expect.objectContaining({
+      householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, month: '2026-08', asOf: '2026-08-31',
+    }) }))
     fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
     expect(await screen.findByLabelText('エクスポートグループ')).toHaveValue('daily')
 
@@ -640,6 +657,25 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
     expect(screen.getByText('食費予算を超過')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', expect.any(Object))
+  })
+
+  it('reports canceled and failed monthly Excel saves without changing the review', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'monthly_household_review_xlsx_save' ? null : fallback(command, args))
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '月次Excelを保存' }))
+    expect(await screen.findByText('月次Excelエクスポートをキャンセルしました。')).toBeInTheDocument()
+
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'monthly_household_review_xlsx_save') throw new Error('save failed')
+      return fallback(command, args)
+    })
+    fireEvent.click(screen.getByRole('button', { name: '月次Excelを保存' }))
+    expect(await screen.findByText('月次Excelを書き出せませんでした。対象月とスコープを確認してください。')).toBeInTheDocument()
+    expect(screen.getByText('Monthly Review')).toBeInTheDocument()
   })
 
   it('re-queries the ledger when switching to cash basis', async () => {

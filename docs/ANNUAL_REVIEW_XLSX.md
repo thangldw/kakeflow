@@ -17,4 +17,4 @@ The workbook is generated and written by the native desktop process. Binary work
 
 Generation is bounded to four sheets, twelve months, a fixed driver limit, bounded cell text, an 8 MiB workbook, and integers that Excel can represent exactly. Invalid or oversized reports fail instead of silently truncating or rounding values.
 
-This release exports only the Annual Household Review to XLSX. Monthly and investment XLSX reports, and visually verified PDF reports with deterministic Japanese font embedding, remain separate milestones.
+This release exports only the Annual Household Review to XLSX. Monthly review XLSX is available from KakeFlow 0.67; investment XLSX reports and visually verified PDF reports with deterministic Japanese font embedding remain separate milestones.

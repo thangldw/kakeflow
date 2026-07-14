@@ -4,6 +4,8 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
+Version 0.67 adds [Monthly Household Review XLSX export](docs/MONTHLY_REVIEW_XLSX.md). The native four-sheet workbook preserves the selected calendar month, account group, and household/member attribution scope while clearly keeping goals and data quality household-wide. It includes current KPIs, prior-month and prior-year comparisons, bounded category and merchant drivers, budget, reconciliation, and import-health disclosures; `asOf` remains a data-quality reference date and workbook bytes never cross WebView IPC.
+
 Version 0.66 adds a strict [PayPay Card finalized-statement import](docs/PAYPAY_CARD_IMPORT.md). PayPay Card officially supports per-billing-month CSV downloads only after finalization, but does not publish a literal consumer schema; KakeFlow therefore implements one exact ordered eleven-column community-derived synthetic contract. Only safe-integer JPY one-time rows with zero fees, carry-forward, and adjustments, equal usage/total/current billed amounts, and one consistent source payment date are accepted. Deferred, ambiguous, malformed, or unfamiliar layouts fail closed and every file requires explicit credit-card liability mapping and review.
 
 Version 0.65 adds [Annual Household Review XLSX export](docs/ANNUAL_REVIEW_XLSX.md). The native workbook reuses the exact validated report, selected account group/member scope, year, and as-of date shown in KakeFlow. Its Summary, Monthly, Drivers, and Health sheets retain complete/partial/future month states, typed financial values, Japanese labels, reconciliation, and data-quality disclosures; workbook bytes never cross the WebView IPC boundary.
@@ -236,7 +238,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 
 ## Remaining product milestones
 
-1. Extend source-backed XLSX export to monthly and investment reports, then add PDF reports with deterministic Japanese font embedding and visual QA.
+1. Extend source-backed XLSX export to investment reports, then add PDF reports with deterministic Japanese font embedding and visual QA.
 2. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 3. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
 4. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.

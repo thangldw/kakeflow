@@ -91,6 +91,27 @@ describe('financial calendar platform boundary', () => {
     }
   })
 
+  it('saves the exact monthly scope, allows native summary metadata, and validates the XLSX boundary', async () => {
+    const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, month: '2026-07', asOf: '2026-07-31' }
+    const saved = { fileName: 'kakeflow-monthly-review-2026-07.xlsx', rowCount: 32, byteSize: 7_000, sheetCount: 4 }
+    const invoke = vi.fn(async () => saved) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(invoke).saveMonthlyReviewXlsx(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('monthly_household_review_xlsx_save', { request })
+
+    const canceled = vi.fn(async () => null) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(canceled).saveMonthlyReviewXlsx(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'monthly.csv', rowCount: 32, byteSize: 7_000 },
+      { fileName: '../monthly.xlsx', rowCount: 32, byteSize: 7_000 },
+      { fileName: 'monthly.xlsx', rowCount: 0, byteSize: 7_000 },
+      { fileName: 'monthly.xlsx', rowCount: 32, byteSize: 0 },
+      { fileName: 'monthly.xlsx', rowCount: 1.5, byteSize: 7_000 },
+    ]) {
+      const malformed = vi.fn(async () => response) as unknown as FinancialCalendarInvoke
+      await expect(createFinancialCalendarPlatform(malformed).saveMonthlyReviewXlsx(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('rejects malformed financial responses at the desktop boundary', async () => {
     const invoke = vi.fn(async () => ({ month: '2026-07', asOf: '2026-07-31', days: [{ events: [{ kind: 'UNKNOWN' }] }], budget, goals, dataQuality })) as unknown as FinancialCalendarInvoke
     await expect(createFinancialCalendarPlatform(invoke).getCalendar({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' })).rejects.toThrow(TypeError)
