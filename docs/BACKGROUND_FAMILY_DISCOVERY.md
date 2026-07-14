@@ -84,3 +84,8 @@ send, automatic download, automatic decryption, automatic staging, automatic
 conflict resolution, automatic apply, remote erasure, sender signatures, a
 production-hosted relay, or a background service that runs while KakeFlow is
 closed.
+
+KakeFlow v0.60 adds recovery for an explicitly initiated send whose encrypted
+recipient set becomes stale. That recovery remains separate from this
+metadata-only schedule: background discovery never retries, resets, or reseals
+an outbound delivery. See [recipient-set recovery](FAMILY_RECIPIENT_SET_RECOVERY.md).

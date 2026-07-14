@@ -2,6 +2,8 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Version 0.60 makes encrypted family delivery recover correctly when relay membership keys change. KakeFlow first replays the exact persisted `KFE1` bytes, resets an envelope only after the relay returns the exact pre-storage `RECIPIENT_SET_CHANGED` rejection, and then reseals on the next explicit Send. Ambiguous failures retain their immutable retry bytes, mixed upload outcomes are reconciled independently, and interrupted sends recover after restart without automatic delivery or Apply. See [recipient-set recovery](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
+
 Version 0.59 adds opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md). While KakeFlow is open, the native desktop process can periodically authenticate the saved relay connection, refresh membership/public-key state, and register new publication metadata as `AVAILABLE`. It never sends, downloads, decrypts, stages, reviews, or applies an artifact automatically; those actions remain explicit. The relay token is stored in the operating-system credential store only after opt-in and is removed when automatic checks are disabled or the connection is disconnected.
 
 Version 0.58 wraps unchanged family artifacts in the recipient-encrypted `KFE1` transport envelope. Each active destination membership receives its own X25519-wrapped payload key, the relay stores opaque XChaCha20-Poly1305 ciphertext, and exact encrypted bytes are retained for idempotent retry. Device private keys remain in native OS credential storage; inbound artifacts are decrypted natively and still require explicit review and Apply. This is relay-blind recipient encryption, not a sender-signature or automatic-sync claim.
@@ -215,7 +217,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
-- Authenticated cross-principal family delivery for the confirmed household graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, recipient-encrypted `KFE1` relay transport, immutable retry bytes, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling. The relay sees ciphertext; sender signatures and automatic apply are intentionally outside this release.
+- Authenticated cross-principal family delivery for the confirmed household graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, recipient-encrypted `KFE1` relay transport, exact-byte retry and recipient-set-change recovery, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling. The relay sees ciphertext; sender signatures and automatic apply are intentionally outside this release.
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
@@ -234,4 +236,5 @@ KakeFlow keeps same-principal desktop relay and cross-principal family delivery
 as separate protocols. Family delivery publishes independent `SHARED` and
 `PERSONAL(member)` artifacts, derives recipients from active relay membership,
 and still requires local review before any ledger change. See the full
-[audience-partitioned family delivery contract](docs/AUDIENCE_PARTITIONED_FAMILY_DELIVERY.md).
+[audience-partitioned family delivery contract](docs/AUDIENCE_PARTITIONED_FAMILY_DELIVERY.md)
+and its [recipient-set recovery contract](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).

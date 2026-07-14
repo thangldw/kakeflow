@@ -9,6 +9,10 @@ KakeFlow v0.56 adds schema-v2 planning/configuration aggregates without
 widening that trust boundary. See the dedicated
 [planning and configuration contract](FAMILY_PLANNING_CONFIG_DELIVERY.md).
 
+KakeFlow v0.60 adds exact-byte retry and recipient-set-change recovery without
+changing the artifact or review contracts. See the dedicated
+[recipient-set recovery contract](FAMILY_RECIPIENT_SET_RECOVERY.md).
+
 ## Trust and routing boundary
 
 The reference relay authenticates every request and owns the authoritative
