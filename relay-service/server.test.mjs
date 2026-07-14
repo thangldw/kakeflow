@@ -37,6 +37,23 @@ function jsonHeaders(token = 'token-a') { return { ...auth(token), 'content-type
 function postJson(base, path, body, token = 'token-a') {
   return fetch(`${base}${path}`, { method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(body) })
 }
+function putJson(base, path, body, token = 'token-a') {
+  return fetch(`${base}${path}`, { method: 'PUT', headers: jsonHeaders(token), body: JSON.stringify(body) })
+}
+const encryptionKey = (fill) => ({ keyId: createHash('sha256').update(`key-${fill}`).digest('hex'), publicKey: Buffer.alloc(32, fill).toString('base64url'), generation: 1 })
+const recipientSetDigest = (memberships) => {
+  const hash = createHash('sha256')
+  for (const item of [...memberships].sort((left, right) => left.membershipId.localeCompare(right.membershipId))) {
+    hash.update(item.membershipId).update('\0').update(String(item.encryptionKeyGeneration)).update('\0')
+      .update(item.encryptionKeyId).update('\0').update(item.encryptionPublicKey).update('\0')
+  }
+  return hash.digest('hex')
+}
+async function registerEncryptionKey(base, token, household, key = encryptionKey(token.charCodeAt(token.length - 1))) {
+  const response = await putJson(base, `/v2/households/${household}/members/encryption-key`, key, token)
+  assert.equal(response.status, 200)
+  return (await response.json()).membership
+}
 async function createFamily(base, household = 'family') {
   const response = await postJson(base, '/v2/households', { householdId: household, domainMemberId: `${household}-member-owner`, idempotencyKey: `create-${household}` })
   assert.equal(response.status, 201)
@@ -50,7 +67,7 @@ async function inviteAndRedeem(base, { household = 'family', domainMemberId = `$
   assert.equal(redeemResponse.status, 201)
   return { invite, membership: (await redeemResponse.json()).membership }
 }
-function publish(base, { household = 'family', token = 'token-a', id = 'publication-1', bytes = Buffer.from('shared-package'), claimedDigest = digest(bytes), device = 'device-a', visibility = 'SHARED', memberId = null, schema = 'FAMILY_AUDIENCE_PARTITION_V1', extraHeaders = {} } = {}) {
+function publish(base, { household = 'family', token = 'token-a', id = 'publication-1', bytes = Buffer.from('shared-package'), claimedDigest = digest(bytes), device = 'device-a', visibility = 'SHARED', memberId = null, schema = 'FAMILY_AUDIENCE_PARTITION_V1', envelope = null, extraHeaders = {} } = {}) {
   return fetch(`${base}/v2/households/${household}/publications`, {
     method: 'POST', headers: {
       ...auth(token), 'content-type': 'application/octet-stream',
@@ -59,6 +76,11 @@ function publish(base, { household = 'family', token = 'token-a', id = 'publicat
       'x-kakeflow-audience-visibility': visibility,
       ...(memberId == null ? {} : { 'x-kakeflow-audience-member-id': memberId }),
       'x-kakeflow-artifact-schema': schema,
+      ...(envelope == null ? {} : {
+        'x-kakeflow-envelope-schema': 'FAMILY_ENCRYPTED_ENVELOPE_V1',
+        'x-kakeflow-recipient-set-digest': envelope.recipientSetDigest,
+        'x-kakeflow-inner-digest': envelope.innerDigest,
+      }),
       ...extraHeaders,
     }, body: bytes,
   })
@@ -210,6 +232,37 @@ test('previews an active invite without redeeming it or returning the code', asy
   assert.equal((await postJson(base, '/v2/invites/redeem', { code: invite.code }, 'token-b')).status, 201)
   assert.equal((await postJson(base, '/v2/invites/preview', { code: invite.code }, 'token-b')).status, 410)
   assert.equal((await postJson(base, '/v2/invites/preview', { code: 'kfi_unknown_invitation_code_123456' }, 'token-b')).status, 404)
+})
+
+test('registers generation-safe recipient keys and stores encrypted family envelopes opaquely', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const joined = await inviteAndRedeem(base)
+  const ownerKey = await registerEncryptionKey(base, 'token-a', 'family', encryptionKey(11))
+  const recipientKey = await registerEncryptionKey(base, 'token-b', 'family', encryptionKey(22))
+  assert.equal(ownerKey.encryptionKeyGeneration, 1)
+  assert.equal(recipientKey.encryptionPublicKey, encryptionKey(22).publicKey)
+
+  const retry = await putJson(base, '/v2/households/family/members/encryption-key', encryptionKey(22), 'token-b')
+  assert.equal(retry.status, 200)
+  const conflict = await putJson(base, '/v2/households/family/members/encryption-key', { ...encryptionKey(23), generation: 1 }, 'token-b')
+  assert.equal(conflict.status, 409)
+
+  const ciphertext = Buffer.from('KFE1 opaque encrypted bytes')
+  const innerDigest = digest(Buffer.from('KFF3 private family artifact'))
+  const recipients = [recipientKey]
+  const uploaded = await publish(base, { bytes: ciphertext, envelope: { recipientSetDigest: recipientSetDigest(recipients), innerDigest } })
+  assert.equal(uploaded.status, 201)
+  const page = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.equal(page.publications[0].envelopeSchema, 'FAMILY_ENCRYPTED_ENVELOPE_V1')
+  assert.equal(page.publications[0].innerDigest, innerDigest)
+  assert.equal(page.publications[0].digest, digest(ciphertext))
+  assert.equal(await (await fetch(`${base}/v2/households/family/publications/publication-1`, { headers: auth('token-b') })).text(), ciphertext.toString())
+
+  const stale = await publish(base, { id: 'stale-envelope', bytes: ciphertext, envelope: { recipientSetDigest: '0'.repeat(64), innerDigest } })
+  assert.equal(stale.status, 409)
+  assert.equal((await stale.json()).error, 'RECIPIENT_SET_CHANGED')
+  assert.equal(joined.membership.domainMemberId, 'family-member-b')
 })
 
 test('routes shared publications only to server-snapshotted active memberships', async () => {
@@ -531,7 +584,7 @@ test('migrates a valid family index v1 and persists capture metadata and bytes a
     households: [], memberships: [], invites: [], publications: [],
   })}\n`)
   let base = await start(root)
-  assert.equal(JSON.parse(await readFile(join(root, 'family-index.json'), 'utf8')).version, 2)
+  assert.equal(JSON.parse(await readFile(join(root, 'family-index.json'), 'utf8')).version, 3)
   await createFamily(base)
   await inviteAndRedeem(base)
   assert.equal((await capture(base)).status, 201)

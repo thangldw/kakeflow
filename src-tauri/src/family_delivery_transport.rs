@@ -169,6 +169,47 @@ pub struct RemoteFamilyArtifactInput {
     pub audience_member_id: Option<String>,
     pub byte_size: u64,
     pub artifact_schema: String,
+    pub envelope_schema: Option<String>,
+    pub transport_digest: Option<String>,
+    pub inner_digest: Option<String>,
+    pub recipient_set_digest: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedOutboundEnvelopeDto {
+    pub delivery_id: String,
+    pub envelope_schema: String,
+    pub transport_sha256: String,
+    pub inner_sha256: String,
+    pub recipient_set_digest: String,
+    pub envelope_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CacheOutboundEnvelopeInput {
+    pub delivery_id: String,
+    pub envelope_schema: String,
+    pub transport_sha256: String,
+    pub inner_sha256: String,
+    pub recipient_set_digest: String,
+    pub envelope_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InboundTransportMetadataDto {
+    pub artifact_id: String,
+    pub household_id: String,
+    pub origin_device_id: String,
+    pub state: String,
+    pub envelope_schema: Option<String>,
+    pub transport_sha256: String,
+    pub inner_sha256: String,
+    pub recipient_set_digest: Option<String>,
+    pub byte_size: u64,
+    pub artifact_schema: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +292,46 @@ fn valid_timestamp(value: &str) -> bool {
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+struct RemoteTransportDigests<'a> {
+    inner: &'a str,
+    envelope_schema: Option<&'a str>,
+    transport: Option<&'a str>,
+    recipient_set: Option<&'a str>,
+}
+
+fn remote_transport_digests(
+    artifact: &RemoteFamilyArtifactInput,
+) -> Result<RemoteTransportDigests<'_>> {
+    match (
+        artifact.envelope_schema.as_deref(),
+        artifact.transport_digest.as_deref(),
+        artifact.inner_digest.as_deref(),
+        artifact.recipient_set_digest.as_deref(),
+    ) {
+        (None, None, None, None) => Ok(RemoteTransportDigests {
+            inner: &artifact.digest,
+            envelope_schema: None,
+            transport: None,
+            recipient_set: None,
+        }),
+        (Some(schema), Some(transport), Some(inner), Some(recipient_set))
+            if valid_id(schema)
+                && valid_digest(transport)
+                && valid_digest(inner)
+                && valid_digest(recipient_set)
+                && artifact.digest == transport =>
+        {
+            Ok(RemoteTransportDigests {
+                inner,
+                envelope_schema: Some(schema),
+                transport: Some(transport),
+                recipient_set: Some(recipient_set),
+            })
+        }
+        _ => Err(FamilyDeliveryError::InvalidInput),
+    }
 }
 
 fn empty_domain_counts() -> BTreeMap<String, u64> {
@@ -884,6 +965,230 @@ fn load_delivery(
     Ok(Some(delivery))
 }
 
+pub fn load_prepared_artifact(
+    connection: &Connection,
+    delivery_id: &str,
+) -> Result<Option<PreparedFamilyArtifactDto>> {
+    if !valid_id(delivery_id) {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    load_delivery(connection, delivery_id)
+}
+
+pub fn load_cached_outbound_envelope(
+    connection: &Connection,
+    delivery_id: &str,
+    inner_sha256: &str,
+    recipient_set_digest: &str,
+) -> Result<Option<CachedOutboundEnvelopeDto>> {
+    if !valid_id(delivery_id) || !valid_digest(inner_sha256) || !valid_digest(recipient_set_digest)
+    {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    let cached = connection
+        .query_row(
+            "SELECT delivery_id,envelope_schema,transport_sha256,package_sha256,
+                    recipient_set_digest,envelope_bytes,package_bytes
+             FROM family_delivery_deliveries
+             WHERE delivery_id=?1 AND package_sha256=?2 AND recipient_set_digest=?3
+               AND state IN ('SENDING','FAILED_RETRYABLE') AND envelope_bytes IS NOT NULL",
+            params![delivery_id, inner_sha256, recipient_set_digest],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<Vec<u8>>>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((delivery_id, schema, transport, inner, recipient_set, envelope, package)) = cached
+    else {
+        return Ok(None);
+    };
+    let (Some(schema), Some(transport), Some(recipient_set), Some(envelope), Some(package)) =
+        (schema, transport, recipient_set, envelope, package)
+    else {
+        return Err(FamilyDeliveryError::Conflict);
+    };
+    if !valid_id(&schema)
+        || !valid_digest(&transport)
+        || !valid_digest(&inner)
+        || !valid_digest(&recipient_set)
+        || digest(&envelope) != transport
+        || digest(&package) != inner
+    {
+        return Err(FamilyDeliveryError::Conflict);
+    }
+    Ok(Some(CachedOutboundEnvelopeDto {
+        delivery_id,
+        envelope_schema: schema,
+        transport_sha256: transport,
+        inner_sha256: inner,
+        recipient_set_digest: recipient_set,
+        envelope_bytes: envelope,
+    }))
+}
+
+pub fn cache_outbound_envelope(
+    connection: &Connection,
+    input: &CacheOutboundEnvelopeInput,
+) -> Result<CachedOutboundEnvelopeDto> {
+    if !valid_id(&input.delivery_id)
+        || !valid_id(&input.envelope_schema)
+        || !valid_digest(&input.transport_sha256)
+        || !valid_digest(&input.inner_sha256)
+        || !valid_digest(&input.recipient_set_digest)
+        || input.envelope_bytes.is_empty()
+        || input.envelope_bytes.len() > MAX_PACKAGE_BYTES
+        || digest(&input.envelope_bytes) != input.transport_sha256
+    {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    let transaction = connection.unchecked_transaction()?;
+    let delivery = transaction
+        .query_row(
+            "SELECT package_sha256,package_bytes,state,envelope_schema,transport_sha256,
+                    recipient_set_digest,envelope_bytes FROM family_delivery_deliveries
+             WHERE delivery_id=?1",
+            [&input.delivery_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<Vec<u8>>>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<Vec<u8>>>(6)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(FamilyDeliveryError::Conflict)?;
+    let package = delivery.1.as_deref().ok_or(FamilyDeliveryError::Conflict)?;
+    if delivery.0 != input.inner_sha256
+        || digest(package) != input.inner_sha256
+        || !matches!(delivery.2.as_str(), "SENDING" | "FAILED_RETRYABLE")
+    {
+        return Err(FamilyDeliveryError::Conflict);
+    }
+    match (&delivery.3, &delivery.4, &delivery.5, &delivery.6) {
+        (None, None, None, None) => {}
+        (Some(schema), Some(transport), Some(recipient_set), Some(envelope))
+            if schema == &input.envelope_schema
+                && transport == &input.transport_sha256
+                && recipient_set == &input.recipient_set_digest
+                && envelope == &input.envelope_bytes =>
+        {
+            transaction.commit()?;
+            return load_cached_outbound_envelope(
+                connection,
+                &input.delivery_id,
+                &input.inner_sha256,
+                &input.recipient_set_digest,
+            )?
+            .ok_or(FamilyDeliveryError::Conflict);
+        }
+        _ => return Err(FamilyDeliveryError::Conflict),
+    }
+    transaction.execute(
+        "UPDATE family_delivery_deliveries SET envelope_schema=?1,transport_sha256=?2,
+           recipient_set_digest=?3,envelope_bytes=?4 WHERE delivery_id=?5",
+        params![
+            input.envelope_schema,
+            input.transport_sha256,
+            input.recipient_set_digest,
+            input.envelope_bytes,
+            input.delivery_id
+        ],
+    )?;
+    transaction.commit()?;
+    load_cached_outbound_envelope(
+        connection,
+        &input.delivery_id,
+        &input.inner_sha256,
+        &input.recipient_set_digest,
+    )?
+    .ok_or(FamilyDeliveryError::Conflict)
+}
+
+pub fn load_inbound_transport_metadata(
+    connection: &Connection,
+    household_id: &str,
+    artifact_id: &str,
+) -> Result<Option<InboundTransportMetadataDto>> {
+    if !valid_id(household_id) || !valid_id(artifact_id) {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    let metadata = connection
+        .query_row(
+            "SELECT artifact_id,household_id,origin_device_id,state,envelope_schema,
+                    transport_sha256,package_sha256,recipient_set_digest,byte_size,artifact_schema
+             FROM family_delivery_inbound WHERE household_id=?1 AND artifact_id=?2
+               AND state IN ('AVAILABLE','FAILED_RETRYABLE')",
+            params![household_id, artifact_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, u64>(8)?,
+                    row.get::<_, String>(9)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        artifact_id,
+        household_id,
+        origin_device_id,
+        state,
+        schema,
+        transport,
+        inner,
+        recipient_set,
+        byte_size,
+        artifact_schema,
+    )) = metadata
+    else {
+        return Ok(None);
+    };
+    if !valid_digest(&inner) {
+        return Err(FamilyDeliveryError::Conflict);
+    }
+    let transport_sha256 = match (&schema, &transport, &recipient_set) {
+        (None, None, None) => inner.clone(),
+        (Some(schema), Some(transport), Some(recipient_set))
+            if valid_id(schema) && valid_digest(transport) && valid_digest(recipient_set) =>
+        {
+            transport.clone()
+        }
+        _ => return Err(FamilyDeliveryError::Conflict),
+    };
+    Ok(Some(InboundTransportMetadataDto {
+        artifact_id,
+        household_id,
+        origin_device_id,
+        state,
+        envelope_schema: schema,
+        transport_sha256,
+        inner_sha256: inner,
+        recipient_set_digest: recipient_set,
+        byte_size,
+        artifact_schema,
+    }))
+}
+
 pub fn mark_accepted(
     connection: &Connection,
     input: &AcceptFamilyDeliveryInput,
@@ -901,10 +1206,11 @@ pub fn mark_accepted(
             return Err(FamilyDeliveryError::InvalidInput);
         }
         let existing = transaction.query_row(
-            "SELECT audience_key,state,artifact_id,package_sha256,package_bytes FROM family_delivery_deliveries
-             WHERE household_id=?1 AND delivery_id=?2", params![input.household_id,receipt.delivery_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,Option<Vec<u8>>>(4)?)),
+            "SELECT audience_key,state,artifact_id,package_sha256,package_bytes,transport_sha256 FROM family_delivery_deliveries
+             WHERE household_id=?1 AND delivery_id=?2", params![input.household_id,receipt.delivery_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,Option<Vec<u8>>>(4)?,row.get::<_,Option<String>>(5)?)),
         ).optional()?.ok_or(FamilyDeliveryError::Conflict)?;
-        if existing.2 != receipt.artifact_id || existing.3 != receipt.digest {
+        let receipt_digest = existing.5.as_deref().unwrap_or(&existing.3);
+        if existing.2 != receipt.artifact_id || receipt_digest != receipt.digest {
             return Err(FamilyDeliveryError::Conflict);
         }
         if existing.1 != "RELAY_ACCEPTED" {
@@ -983,9 +1289,9 @@ pub fn mark_accepted(
                 &receipt.accepted_at,
                 set.schema_version,
             )?;
-            transaction.execute("UPDATE family_delivery_deliveries SET state='RELAY_ACCEPTED',accepted_at=?1,package_bytes=NULL WHERE delivery_id=?2", params![receipt.accepted_at,receipt.delivery_id])?;
+            transaction.execute("UPDATE family_delivery_deliveries SET state='RELAY_ACCEPTED',accepted_at=?1,package_bytes=NULL,envelope_bytes=NULL WHERE delivery_id=?2", params![receipt.accepted_at,receipt.delivery_id])?;
             transaction.execute("UPDATE family_delivery_partition_state SET dirty=0,last_accepted_digest=?1,last_accepted_at=?2 WHERE household_id=?3 AND audience_key=?4",
-                params![receipt.digest,receipt.accepted_at,input.household_id,existing.0])?;
+                params![existing.3,receipt.accepted_at,input.household_id,existing.0])?;
         }
     }
     transaction.execute("UPDATE family_delivery_connections SET state='CONNECTED',last_checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1", [&input.household_id])?;
@@ -1065,6 +1371,7 @@ pub fn register_inbound(
     let transaction = connection.unchecked_transaction()?;
     let mut max_sequence = 0_u64;
     for artifact in &input.artifacts {
+        let transport_digests = remote_transport_digests(artifact)?;
         if !valid_id(&artifact.artifact_id)
             || !valid_id(&artifact.origin_device_id)
             || !valid_id(&artifact.sender_membership_id)
@@ -1080,6 +1387,9 @@ pub fn register_inbound(
             || !matches!(artifact.audience_visibility.as_str(), "SHARED" | "PERSONAL")
             || ((artifact.audience_visibility == "SHARED") != artifact.audience_member_id.is_none())
         {
+            return Err(FamilyDeliveryError::InvalidInput);
+        }
+        if !valid_digest(transport_digests.inner) {
             return Err(FamilyDeliveryError::InvalidInput);
         }
         if artifact.audience_visibility == "PERSONAL"
@@ -1130,16 +1440,20 @@ fn register_one(
     revoked: bool,
     member_name: Option<&str>,
 ) -> Result<()> {
-    let existing=transaction.query_row("SELECT household_id,package_sha256,origin_device_id,sender_membership_id,visibility,member_id FROM family_delivery_inbound WHERE artifact_id=?1",[&artifact.artifact_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?))).optional()?;
+    let digests = remote_transport_digests(artifact)?;
+    let existing=transaction.query_row("SELECT household_id,package_sha256,origin_device_id,sender_membership_id,visibility,member_id,envelope_schema,transport_sha256,recipient_set_digest FROM family_delivery_inbound WHERE artifact_id=?1",[&artifact.artifact_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<String>>(7)?,r.get::<_,Option<String>>(8)?))).optional()?;
     if let Some(current) = existing {
         if current
             != (
                 household_id.to_owned(),
-                artifact.digest.clone(),
+                digests.inner.to_owned(),
                 artifact.origin_device_id.clone(),
                 artifact.sender_membership_id.clone(),
                 artifact.audience_visibility.clone(),
                 artifact.audience_member_id.clone(),
+                digests.envelope_schema.map(str::to_owned),
+                digests.transport.map(str::to_owned),
+                digests.recipient_set.map(str::to_owned),
             )
         {
             return Err(FamilyDeliveryError::Conflict);
@@ -1147,10 +1461,12 @@ fn register_one(
         return Ok(());
     }
     transaction.execute("INSERT INTO family_delivery_inbound(artifact_id,household_id,sequence,package_sha256,created_at,origin_device_id,
-       sender_membership_id,sender_member_id,sender_member_name,visibility,member_id,member_key,member_name,byte_size,artifact_schema,state,received_before_revocation)
-       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,coalesce(?11,''),?12,?13,?14,'AVAILABLE',?15)",
-       params![artifact.artifact_id,household_id,artifact.sequence,artifact.digest,artifact.created_at,artifact.origin_device_id,
-       artifact.sender_membership_id,sender_member_id,sender_name,artifact.audience_visibility,artifact.audience_member_id,member_name,artifact.byte_size,artifact.artifact_schema,if revoked{1}else{0}])?;
+       sender_membership_id,sender_member_id,sender_member_name,visibility,member_id,member_key,member_name,byte_size,artifact_schema,state,received_before_revocation,
+       envelope_schema,transport_sha256,recipient_set_digest)
+       VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,coalesce(?11,''),?12,?13,?14,'AVAILABLE',?15,?16,?17,?18)",
+       params![artifact.artifact_id,household_id,artifact.sequence,digests.inner,artifact.created_at,artifact.origin_device_id,
+       artifact.sender_membership_id,sender_member_id,sender_name,artifact.audience_visibility,artifact.audience_member_id,member_name,artifact.byte_size,artifact.artifact_schema,if revoked{1}else{0},
+       digests.envelope_schema,digests.transport,digests.recipient_set])?;
     Ok(())
 }
 
@@ -1769,6 +2085,150 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_envelope_cache_is_immutable_exact_and_cleared_on_acceptance() {
+        let state = setup(2);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let prepared = prepare_send(
+                    connection,
+                    &PrepareFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        audience_keys: vec!["SHARED".into()],
+                    },
+                )
+                .unwrap()
+                .remove(0);
+                let envelope_bytes = b"encrypted-envelope".to_vec();
+                let transport_sha256 = digest(&envelope_bytes);
+                let recipient_set_digest = digest(b"recipient-set");
+                let input = CacheOutboundEnvelopeInput {
+                    delivery_id: prepared.delivery_id.clone(),
+                    envelope_schema: "KAKEFLOW_ENCRYPTED_FAMILY_ENVELOPE".into(),
+                    transport_sha256: transport_sha256.clone(),
+                    inner_sha256: prepared.digest.clone(),
+                    recipient_set_digest: recipient_set_digest.clone(),
+                    envelope_bytes: envelope_bytes.clone(),
+                };
+                assert_eq!(
+                    cache_outbound_envelope(connection, &input).unwrap(),
+                    cache_outbound_envelope(connection, &input).unwrap()
+                );
+                assert!(load_cached_outbound_envelope(
+                    connection,
+                    &prepared.delivery_id,
+                    &prepared.digest,
+                    &digest(b"different-recipient-set")
+                )
+                .unwrap()
+                .is_none());
+                let mut changed = input.clone();
+                changed.envelope_bytes = b"different-envelope".to_vec();
+                changed.transport_sha256 = digest(&changed.envelope_bytes);
+                assert!(matches!(
+                    cache_outbound_envelope(connection, &changed),
+                    Err(FamilyDeliveryError::Conflict)
+                ));
+                mark_accepted(
+                    connection,
+                    &AcceptFamilyDeliveryInput {
+                        household_id: "family".into(),
+                        receipts: vec![AcceptanceReceiptInput {
+                            delivery_id: prepared.delivery_id.clone(),
+                            artifact_id: prepared.artifact_id,
+                            digest: transport_sha256.clone(),
+                            accepted_at: "2026-07-14T12:00:00Z".into(),
+                        }],
+                    },
+                )
+                .unwrap();
+                assert!(load_cached_outbound_envelope(
+                    connection,
+                    &prepared.delivery_id,
+                    &prepared.digest,
+                    &recipient_set_digest
+                )
+                .unwrap()
+                .is_none());
+                let retained: (Option<String>, Option<String>, i64) = connection.query_row(
+                    "SELECT transport_sha256,recipient_set_digest,envelope_bytes IS NULL
+                     FROM family_delivery_deliveries WHERE delivery_id=?1",
+                    [&prepared.delivery_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )?;
+                assert_eq!(
+                    retained,
+                    (Some(transport_sha256), Some(recipient_set_digest), 1)
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn encrypted_inbound_keeps_outer_and_inner_digests_separate() {
+        let state = setup(3);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let inner_digest = digest(b"inner-package");
+                let transport_digest = digest(b"encrypted-transport");
+                let recipient_set_digest = digest(b"recipient-set");
+                let artifact = RemoteFamilyArtifactInput {
+                    sequence: 1,
+                    artifact_id: "encrypted-artifact".into(),
+                    digest: transport_digest.clone(),
+                    created_at: "2026-07-14T12:00:00Z".into(),
+                    origin_device_id: "remote-device".into(),
+                    sender_membership_id: "membership-a-device-2".into(),
+                    audience_visibility: "SHARED".into(),
+                    audience_member_id: None,
+                    byte_size: 19,
+                    artifact_schema: ARTIFACT_SCHEMA.into(),
+                    envelope_schema: Some("KAKEFLOW_ENCRYPTED_FAMILY_ENVELOPE".into()),
+                    transport_digest: Some(transport_digest.clone()),
+                    inner_digest: Some(inner_digest.clone()),
+                    recipient_set_digest: Some(recipient_set_digest.clone()),
+                };
+                register_inbound(
+                    connection,
+                    &RegisterFamilyInboundInput {
+                        household_id: "family".into(),
+                        artifacts: vec![artifact.clone()],
+                        next_cursor: 1,
+                    },
+                )
+                .unwrap();
+                let metadata =
+                    load_inbound_transport_metadata(connection, "family", "encrypted-artifact")
+                        .unwrap()
+                        .unwrap();
+                assert_eq!(metadata.origin_device_id, "remote-device");
+                assert_eq!(metadata.state, "AVAILABLE");
+                assert_eq!(metadata.inner_sha256, inner_digest);
+                assert_eq!(metadata.transport_sha256, transport_digest);
+                assert_eq!(metadata.recipient_set_digest, Some(recipient_set_digest));
+
+                let mut partial = artifact;
+                partial.artifact_id = "partial-artifact".into();
+                partial.envelope_schema = None;
+                assert!(matches!(
+                    register_inbound(
+                        connection,
+                        &RegisterFamilyInboundInput {
+                            household_id: "family".into(),
+                            artifacts: vec![partial],
+                            next_cursor: 2,
+                        }
+                    ),
+                    Err(FamilyDeliveryError::InvalidInput)
+                ));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn accepted_v1_preserves_unknown_lineage_until_v2_is_accepted() {
         let state = setup(15);
         state
@@ -2267,6 +2727,10 @@ mod tests {
                             audience_member_id: None,
                             byte_size: prepared.package_bytes.len() as u64,
                             artifact_schema: ARTIFACT_SCHEMA.into(),
+                            envelope_schema: None,
+                            transport_digest: None,
+                            inner_digest: None,
+                            recipient_set_digest: None,
                         }],
                         next_cursor: 1,
                     },
@@ -2384,6 +2848,10 @@ mod tests {
                         audience_member_id: None,
                         byte_size: bytes.len() as u64,
                         artifact_schema: (*schema).into(),
+                        envelope_schema: None,
+                        transport_digest: None,
+                        inner_digest: None,
+                        recipient_set_digest: None,
                     })
                     .collect();
                 register_inbound(
@@ -2451,7 +2919,8 @@ mod tests {
                 artifacts: vec![RemoteFamilyArtifactInput { sequence: 1, artifact_id: prepared.artifact_id.clone(), digest: prepared.digest.clone(),
                     created_at: "2026-07-14T00:00:00Z".into(), origin_device_id: prepared.origin_device_id.clone(),
                     sender_membership_id: "membership-a".into(), audience_visibility: "PERSONAL".into(), audience_member_id: Some("member-a".into()),
-                    byte_size: prepared.package_bytes.len() as u64, artifact_schema: ARTIFACT_SCHEMA.into() }],
+                    byte_size: prepared.package_bytes.len() as u64, artifact_schema: ARTIFACT_SCHEMA.into(),
+                    envelope_schema: None, transport_digest: None, inner_digest: None, recipient_set_digest: None }],
             }).unwrap();
             assert!(matches!(stage_inbound(connection, &StageFamilyInboundInput { household_id: "family".into(), artifact_id: prepared.artifact_id.clone(), package_bytes: prepared.package_bytes.clone() }), Err(FamilyDeliveryError::AudienceDenied)));
             let staged: i64 = connection.query_row("SELECT count(*) FROM family_snapshot_sets", [], |row| row.get(0)).unwrap();

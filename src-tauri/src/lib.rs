@@ -9,6 +9,8 @@ pub mod document_extract;
 pub mod document_vault;
 pub mod evidence_bundle;
 pub mod family_delivery_transport;
+pub mod family_encrypted_envelope;
+pub mod family_envelope_identity;
 mod family_evidence;
 pub mod family_snapshot;
 pub mod financial_calendar;
@@ -757,6 +759,78 @@ fn family_delivery_send_prepare(
     })
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PrepareEncryptedFamilyEnvelopeInput {
+    delivery_id: String,
+    metadata: family_encrypted_envelope::FamilyEnvelopeMetadata,
+    recipients: Vec<family_envelope_identity::FamilyEnvelopeRecipientDto>,
+    recipient_set_digest: String,
+}
+
+#[tauri::command]
+fn family_delivery_envelope_prepare(
+    state: tauri::State<'_, AppState>,
+    identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
+    input: PrepareEncryptedFamilyEnvelopeInput,
+) -> Result<family_envelope_identity::SealFamilyEnvelopeOutput, String> {
+    let cached = family_delivery_result(&state, |connection| {
+        family_delivery_transport::load_cached_outbound_envelope(
+            connection,
+            &input.delivery_id,
+            &input.metadata.inner_sha256,
+            &input.recipient_set_digest,
+        )
+    })?;
+    if let Some(cached) = cached {
+        return Ok(family_envelope_identity::SealFamilyEnvelopeOutput {
+            envelope_byte_size: cached.envelope_bytes.len() as u64,
+            envelope_bytes: cached.envelope_bytes,
+            envelope_sha256: cached.transport_sha256,
+            recipient_count: input.recipients.len() as u32,
+        });
+    }
+
+    let artifact = family_delivery_result(&state, |connection| {
+        family_delivery_transport::load_prepared_artifact(connection, &input.delivery_id)
+    })?
+    .ok_or_else(|| "Family delivery artifact is unavailable".to_owned())?;
+    if artifact.digest != input.metadata.inner_sha256
+        || artifact.household_id != input.metadata.household_id
+        || artifact.artifact_id != input.metadata.publication_id
+        || artifact.origin_device_id != input.metadata.origin_installation_id
+        || artifact.artifact_schema != input.metadata.artifact_schema
+    {
+        return Err("Family delivery envelope metadata conflicts".to_owned());
+    }
+    let sealed = identity
+        .seal(family_envelope_identity::SealFamilyEnvelopeInput {
+            metadata: input.metadata,
+            artifact_bytes: artifact.package_bytes,
+            recipients: input.recipients,
+        })
+        .map_err(|error| error.to_string())?;
+    let cached = family_delivery_result(&state, |connection| {
+        family_delivery_transport::cache_outbound_envelope(
+            connection,
+            &family_delivery_transport::CacheOutboundEnvelopeInput {
+                delivery_id: input.delivery_id,
+                envelope_schema: "FAMILY_ENCRYPTED_ENVELOPE_V1".to_owned(),
+                transport_sha256: sealed.envelope_sha256.clone(),
+                inner_sha256: artifact.digest,
+                recipient_set_digest: input.recipient_set_digest,
+                envelope_bytes: sealed.envelope_bytes.clone(),
+            },
+        )
+    })?;
+    Ok(family_envelope_identity::SealFamilyEnvelopeOutput {
+        envelope_bytes: cached.envelope_bytes,
+        envelope_sha256: cached.transport_sha256,
+        envelope_byte_size: sealed.envelope_byte_size,
+        recipient_count: sealed.recipient_count,
+    })
+}
+
 #[tauri::command]
 fn family_delivery_send_accept(
     state: tauri::State<'_, AppState>,
@@ -798,6 +872,59 @@ fn family_delivery_inbound_stage(
     family_delivery_result(&state, |connection| {
         family_delivery_transport::stage_inbound_with_vault(connection, &vault, &input)?;
         family_delivery_transport::status(connection, &household_id)
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StageEncryptedFamilyInboundInput {
+    household_id: String,
+    artifact_id: String,
+    envelope_bytes: Vec<u8>,
+    local_membership_id: String,
+}
+
+#[tauri::command]
+fn family_delivery_encrypted_inbound_stage(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
+    input: StageEncryptedFamilyInboundInput,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    let metadata = family_delivery_result(&state, |connection| {
+        family_delivery_transport::load_inbound_transport_metadata(
+            connection,
+            &input.household_id,
+            &input.artifact_id,
+        )
+    })?
+    .ok_or_else(|| "Family delivery artifact is unavailable".to_owned())?;
+    if metadata.envelope_schema.as_deref() != Some("FAMILY_ENCRYPTED_ENVELOPE_V1")
+        || metadata.byte_size != input.envelope_bytes.len() as u64
+    {
+        return Err("Family delivery envelope metadata conflicts".to_owned());
+    }
+    let opened = identity
+        .open(family_envelope_identity::OpenFamilyEnvelopeInput {
+            expected_metadata: family_encrypted_envelope::FamilyEnvelopeMetadata {
+                household_id: input.household_id.clone(),
+                publication_id: input.artifact_id.clone(),
+                origin_installation_id: metadata.origin_device_id,
+                artifact_schema: metadata.artifact_schema,
+                inner_sha256: metadata.inner_sha256,
+            },
+            envelope_bytes: input.envelope_bytes,
+            local_membership_id: input.local_membership_id,
+        })
+        .map_err(|error| error.to_string())?;
+    let stage = family_delivery_transport::StageFamilyInboundInput {
+        household_id: input.household_id.clone(),
+        artifact_id: input.artifact_id,
+        package_bytes: opened.artifact_bytes,
+    };
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::stage_inbound_with_vault(connection, &vault, &stage)?;
+        family_delivery_transport::status(connection, &input.household_id)
     })
 }
 
@@ -3091,6 +3218,13 @@ pub fn run() {
                     key_provider.key()?
                 }
             };
+            let family_envelope_identity = if setup_smoke_config.is_some() {
+                family_envelope_identity::FamilyEnvelopeIdentityState::from_private_key(
+                    [0x46_u8; 32],
+                )?
+            } else {
+                family_envelope_identity::FamilyEnvelopeIdentityState::load_or_create_os()?
+            };
             if master_key.len() != 32 {
                 return Err(std::io::Error::other("database key has invalid length").into());
             }
@@ -3105,6 +3239,7 @@ pub fn run() {
             let state = AppState::open_with_key(database_path.clone(), &master_key)?;
             app.manage(state);
             app.manage(vault);
+            app.manage(family_envelope_identity);
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
             app.manage(RestoreCommandAuthorization::default());
@@ -3145,10 +3280,15 @@ pub fn run() {
             family_delivery_disconnect,
             family_delivery_remote_state_register,
             family_delivery_send_prepare,
+            family_delivery_envelope_prepare,
             family_delivery_send_accept,
             family_delivery_send_failed,
             family_delivery_inbound_register,
             family_delivery_inbound_stage,
+            family_delivery_encrypted_inbound_stage,
+            family_envelope_identity::family_envelope_identity_get,
+            family_envelope_identity::family_envelope_seal,
+            family_envelope_identity::family_envelope_open,
             family_snapshot_active_review,
             family_snapshot_resolve,
             family_snapshot_apply,

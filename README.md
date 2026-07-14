@@ -210,14 +210,14 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
-- Authenticated cross-principal family delivery for the confirmed household/member/account/transaction graph and complete planning/configuration aggregates, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling.
+- Authenticated cross-principal family delivery for the confirmed household graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, recipient-encrypted `KFE1` relay transport, immutable retry bytes, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling. The relay sees ciphertext; sender signatures and automatic apply are intentionally outside this release.
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 2. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
-3. Add optional encrypted multi-device synchronization while preserving the same explicit review, audience, and evidence-provenance boundaries.
+3. Extend recipient-encrypted family delivery with background scheduling and multi-device synchronization while preserving the same explicit review, audience, and evidence-provenance boundaries.
 4. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
 5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.
 

@@ -117,6 +117,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0048_origin_qualified_evidence.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0049_encrypted_family_delivery_transport.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1807,6 +1810,71 @@ mod tests {
             )
             .is_err());
         assert!(integrity_check(&connection).unwrap());
+    }
+
+    #[test]
+    fn migration_49_preserves_legacy_delivery_digests_and_enforces_transport_groups() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..48].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        let inner = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO households(id,name) VALUES('family-49','Family');
+                 INSERT INTO household_members(id,household_id,display_name,status,sort_order)
+                   VALUES('member-49','family-49','Member','ACTIVE',1);
+                 INSERT INTO family_delivery_connections(
+                   household_id,endpoint,remote_principal_id,local_member_id,local_member_name,state)
+                   VALUES('family-49','https://relay.example','principal','member-49','Member','CONNECTED');
+                 INSERT INTO family_delivery_partition_state(
+                   household_id,audience_key,visibility,member_id,member_key,dirty)
+                   VALUES('family-49','SHARED','SHARED',NULL,'',0);
+                 INSERT INTO family_delivery_deliveries(
+                   delivery_id,household_id,audience_key,artifact_id,package_sha256,
+                   origin_device_id,visibility,member_id,item_count,excluded_count,
+                   package_bytes,state,artifact_schema)
+                   VALUES('delivery-49','family-49','SHARED','artifact-49','{inner}',
+                   'origin-local','SHARED',NULL,1,0,x'01','FAILED_RETRYABLE',
+                   'FAMILY_AUDIENCE_PARTITION_V3');
+                 INSERT INTO family_delivery_inbound(
+                   artifact_id,household_id,sequence,package_sha256,created_at,
+                   origin_device_id,sender_membership_id,sender_member_id,sender_member_name,
+                   visibility,member_id,member_key,member_name,byte_size,artifact_schema,state)
+                   VALUES('inbound-49','family-49',1,'{inner}','2026-07-14T00:00:00Z',
+                   'origin-remote','membership','member-49','Member','SHARED',NULL,'',NULL,1,
+                   'FAMILY_AUDIENCE_PARTITION_V3','AVAILABLE');"
+            ))
+            .unwrap();
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        let legacy: (String, Option<String>, Option<String>, Option<String>) = connection
+            .query_row(
+                "SELECT package_sha256,envelope_schema,transport_sha256,recipient_set_digest
+                 FROM family_delivery_inbound WHERE artifact_id='inbound-49'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(legacy, (inner.into(), None, None, None));
+        assert!(connection
+            .execute(
+                "UPDATE family_delivery_inbound SET envelope_schema='KFE1'
+                 WHERE artifact_id='inbound-49'",
+                [],
+            )
+            .is_err());
+        let transport = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let recipients = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+        connection
+            .execute(
+                "UPDATE family_delivery_inbound SET envelope_schema='KFE1',
+                   transport_sha256=?1,recipient_set_digest=?2 WHERE artifact_id='inbound-49'",
+                [transport, recipients],
+            )
+            .unwrap();
     }
 
     #[test]
