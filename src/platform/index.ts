@@ -195,6 +195,7 @@ export type {
   GoogleDriveUnavailableReasonDto,
   GoogleDriveAvailabilityDto,
   GoogleDriveConnectionStatusDto,
+  GoogleDriveScopeDto,
   GoogleDriveConnectionDto,
   BindGoogleDriveFolderInputDto,
   GoogleDriveSyncResultDto,
