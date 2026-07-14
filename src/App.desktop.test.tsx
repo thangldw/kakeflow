@@ -75,6 +75,14 @@ const desktop = vi.hoisted(() => ({
   acceptDesktopRelaySend: vi.fn(),
   registerDesktopRelayInbound: vi.fn(),
   stageDesktopRelayInbound: vi.fn(),
+  getGoogleDriveAvailability: vi.fn(),
+  listGoogleDriveConnections: vi.fn(),
+  connectGoogleDrive: vi.fn(),
+  bindGoogleDriveFolder: vi.fn(),
+  disconnectGoogleDrive: vi.fn(),
+  getGoogleDriveSchedule: vi.fn(),
+  updateGoogleDriveSchedule: vi.fn(),
+  syncGoogleDriveNow: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -161,6 +169,14 @@ vi.mock('./platform', async () => {
       acceptDesktopRelaySend: desktop.acceptDesktopRelaySend,
       registerDesktopRelayInbound: desktop.registerDesktopRelayInbound,
       stageDesktopRelayInbound: desktop.stageDesktopRelayInbound,
+      getGoogleDriveAvailability: desktop.getGoogleDriveAvailability,
+      listGoogleDriveConnections: desktop.listGoogleDriveConnections,
+      connectGoogleDrive: desktop.connectGoogleDrive,
+      bindGoogleDriveFolder: desktop.bindGoogleDriveFolder,
+      disconnectGoogleDrive: desktop.disconnectGoogleDrive,
+      getGoogleDriveSchedule: desktop.getGoogleDriveSchedule,
+      updateGoogleDriveSchedule: desktop.updateGoogleDriveSchedule,
+      syncGoogleDriveNow: desktop.syncGoogleDriveNow,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -231,6 +247,14 @@ describe('KakeFlow desktop read models', () => {
     desktop.acceptDesktopRelaySend.mockReset()
     desktop.registerDesktopRelayInbound.mockReset()
     desktop.stageDesktopRelayInbound.mockReset()
+    desktop.getGoogleDriveAvailability.mockReset().mockResolvedValue({ available: true, authorizationMode: 'SYSTEM_BROWSER_LOOPBACK', scopeProfile: 'DRIVE_READONLY', unavailableReason: null })
+    desktop.listGoogleDriveConnections.mockReset().mockResolvedValue([])
+    desktop.connectGoogleDrive.mockReset()
+    desktop.bindGoogleDriveFolder.mockReset()
+    desktop.disconnectGoogleDrive.mockReset()
+    desktop.getGoogleDriveSchedule.mockReset()
+    desktop.updateGoogleDriveSchedule.mockReset()
+    desktop.syncGoogleDriveNow.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -1502,6 +1526,17 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByRole('heading', { name: 'デスクトップ リレー' })).toBeInTheDocument()
     expect(screen.getByText(/接続、送信、受信だけでは台帳を変更しません/)).toBeInTheDocument()
     expect(desktop.getDesktopRelayStatus).toHaveBeenCalledWith('family')
+  })
+
+  it('mounts Google Drive settings for the active desktop household', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(await screen.findByRole('heading', { name: 'Google Drive' })).toBeInTheDocument()
+    expect(screen.getByText(/Google Drive のファイルは自動で台帳へ記帳されません/)).toBeInTheDocument()
+    expect(desktop.getGoogleDriveAvailability).toHaveBeenCalledOnce()
+    expect(desktop.listGoogleDriveConnections).toHaveBeenCalledWith('family')
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {
