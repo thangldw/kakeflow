@@ -506,7 +506,7 @@ const FAMILY_CONNECTION_STATES = new Set(['NOT_CONFIGURED', 'CONNECTED', 'AUTH_E
 const FAMILY_MEMBERSHIP_STATES = new Set(['UNLINKED', 'INVITED', 'ACTIVE', 'REVOKED', 'ARCHIVED_BLOCKED'])
 const FAMILY_OUTBOUND_STATES = new Set(['READY', 'BLOCKED_NO_RECIPIENT', 'SENDING', 'RELAY_ACCEPTED', 'FAILED_RETRYABLE', 'MEMBERSHIP_REVOKED'])
 const FAMILY_INBOUND_STATES = new Set(['AVAILABLE', 'DOWNLOADING', 'WAITING_FOR_REVIEW', 'READY_TO_APPLY', 'APPLIED', 'DUPLICATE', 'REJECTED_INVALID', 'AUDIENCE_DENIED', 'FAILED_RETRYABLE'])
-const FAMILY_ARTIFACT_SCHEMAS = new Set(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2'])
+const FAMILY_ARTIFACT_SCHEMAS = new Set(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2', 'FAMILY_AUDIENCE_PARTITION_V3'])
 const FAMILY_DOMAINS = ['LEDGER', 'PLANNING', 'CONFIG', 'CARD', 'INVESTMENT'] as const
 
 function parseFamilyDomainCounts(value: unknown): FamilyDeliveryStatusDto['outbound'][number]['domainCounts'] {
@@ -561,17 +561,20 @@ function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
     const audienceMemberId = asNullableStrictString(item.audienceMemberId); const audienceMemberName = asNullableStrictString(item.audienceMemberName)
     if (item.audienceVisibility === 'SHARED' ? audienceMemberId !== null || audienceMemberName !== null : audienceMemberId === null || audienceMemberName === null) throw new TypeError('family outbound audience')
     const domainCounts = parseFamilyDomainCounts(item.domainCounts)
+    const withheldDomainCounts = parseFamilyDomainCounts(item.withheldDomainCounts)
     const withheldCountsByReason = parseFamilyWithheldCounts(item.withheldCountsByReason)
     const coverageState = String(item.coverageState)
     if (!['COMPLETE', 'PARTIAL'].includes(coverageState)) throw new TypeError('family coverage state')
     const withheldCount = Object.values(withheldCountsByReason).reduce((sum, count) => sum + count, 0)
-    if ((coverageState === 'COMPLETE') !== (withheldCount === 0)) throw new TypeError('family coverage state')
+    const withheldDomainCount = Object.values(withheldDomainCounts).reduce((sum, count) => sum + count, 0)
+    if (withheldCount !== withheldDomainCount || (coverageState === 'COMPLETE') !== (withheldCount === 0)) throw new TypeError('family coverage state')
     return {
       audienceKey, audienceVisibility: item.audienceVisibility as AudienceVisibilityDto,
       audienceMemberId, audienceMemberName,
       recipientNames: item.recipientNames.map(asRequiredString), pendingChangeCount: asSafeInteger(item.pendingChangeCount),
       state: item.state as FamilyDeliveryStatusDto['outbound'][number]['state'], withheldReason: asNullableStrictString(item.withheldReason),
-      domainCounts, evidenceFileCount: asSafeInteger(item.evidenceFileCount), evidenceRecordCount: asSafeInteger(item.evidenceRecordCount),
+      domainCounts, withheldDomainCounts,
+      evidenceFileCount: asSafeInteger(item.evidenceFileCount), evidenceRecordCount: asSafeInteger(item.evidenceRecordCount),
       withheldCountsByReason, coverageState: coverageState as FamilyDeliveryStatusDto['outbound'][number]['coverageState'],
     }
   })
@@ -646,7 +649,8 @@ function parseFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto {
     packageId: asRequiredString(record.packageId), householdId: asRequiredString(record.householdId), senderMemberName: asRequiredString(record.senderMemberName),
     audienceVisibility: record.audienceVisibility as AudienceVisibilityDto, audienceMemberName,
     state: record.state as FamilySnapshotReviewDto['state'], recordCount: asSafeInteger(record.recordCount),
-    createCount: asSafeInteger(record.createCount), updateCount: asSafeInteger(record.updateCount), deleteCount: asSafeInteger(record.deleteCount), conflictCount: asSafeInteger(record.conflictCount), records,
+    createCount: asSafeInteger(record.createCount), updateCount: asSafeInteger(record.updateCount), deleteCount: asSafeInteger(record.deleteCount), conflictCount: asSafeInteger(record.conflictCount),
+    evidenceFileCount: asSafeInteger(record.evidenceFileCount), evidenceRecordCount: asSafeInteger(record.evidenceRecordCount), records,
   }
   if (result.recordCount !== records.length || result.createCount + result.updateCount + result.deleteCount > result.recordCount) throw new TypeError('family snapshot counts')
   return result

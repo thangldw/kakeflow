@@ -1,7 +1,7 @@
 import type { FamilyDeliveryPreparedArtifactDto, FamilyDeliveryRemoteArtifactDto } from '../../platform'
 
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
-const ARTIFACT_SCHEMAS = new Set<FamilyDeliveryPreparedArtifactDto['artifactSchema']>(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2'])
+const ARTIFACT_SCHEMAS = new Set<FamilyDeliveryPreparedArtifactDto['artifactSchema']>(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2', 'FAMILY_AUDIENCE_PARTITION_V3'])
 
 export type FamilyDeliveryHttpErrorCode =
   | 'AUTH_EXPIRED' | 'NETWORK_RETRYABLE' | 'INVITE_EXPIRED' | 'INVITE_USED' | 'INVITE_REVOKED' | 'INVITE_UNAVAILABLE'

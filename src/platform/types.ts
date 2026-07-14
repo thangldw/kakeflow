@@ -252,7 +252,7 @@ export type FamilyDeliveryConnectionStateDto = 'NOT_CONFIGURED' | 'CONNECTED' | 
 export type FamilyMembershipStateDto = 'UNLINKED' | 'INVITED' | 'ACTIVE' | 'REVOKED' | 'ARCHIVED_BLOCKED'
 export type FamilyOutboundStateDto = 'READY' | 'BLOCKED_NO_RECIPIENT' | 'SENDING' | 'RELAY_ACCEPTED' | 'FAILED_RETRYABLE' | 'MEMBERSHIP_REVOKED'
 export type FamilyInboundStateDto = 'AVAILABLE' | 'DOWNLOADING' | 'WAITING_FOR_REVIEW' | 'READY_TO_APPLY' | 'APPLIED' | 'DUPLICATE' | 'REJECTED_INVALID' | 'AUDIENCE_DENIED' | 'FAILED_RETRYABLE'
-export type FamilyDeliveryArtifactSchemaDto = 'FAMILY_AUDIENCE_PARTITION_V1' | 'FAMILY_AUDIENCE_PARTITION_V2'
+export type FamilyDeliveryArtifactSchemaDto = 'FAMILY_AUDIENCE_PARTITION_V1' | 'FAMILY_AUDIENCE_PARTITION_V2' | 'FAMILY_AUDIENCE_PARTITION_V3'
 export type FamilyDeliveryDomainDto = 'LEDGER' | 'PLANNING' | 'CONFIG' | 'CARD' | 'INVESTMENT'
 export type FamilyDeliveryCoverageStateDto = 'COMPLETE' | 'PARTIAL'
 export type FamilyDeliveryDomainCountsDto = Readonly<Record<FamilyDeliveryDomainDto, number>>
@@ -269,6 +269,7 @@ export interface FamilyDeliveryPartitionDto {
   readonly recipientNames: readonly string[]; readonly pendingChangeCount: number
   readonly state: FamilyOutboundStateDto; readonly withheldReason: string | null
   readonly domainCounts: FamilyDeliveryDomainCountsDto
+  readonly withheldDomainCounts: FamilyDeliveryDomainCountsDto
   readonly evidenceFileCount: number; readonly evidenceRecordCount: number
   readonly withheldCountsByReason: FamilyDeliveryWithheldCountsDto
   readonly coverageState: FamilyDeliveryCoverageStateDto
@@ -329,6 +330,7 @@ export interface FamilySnapshotReviewDto {
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberName: string | null
   readonly state: 'REVIEW_REQUIRED' | 'READY' | 'APPLIED'; readonly recordCount: number
   readonly createCount: number; readonly updateCount: number; readonly deleteCount: number; readonly conflictCount: number
+  readonly evidenceFileCount: number; readonly evidenceRecordCount: number
   readonly records: readonly FamilySnapshotReviewRecordDto[]
 }
 export interface FamilySnapshotResolutionInputDto { readonly entityKind: string; readonly entityId: string; readonly resolution: Exclude<FamilySnapshotResolutionDto, 'PENDING'> }

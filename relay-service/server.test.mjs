@@ -341,6 +341,39 @@ test('routes and downloads FAMILY_AUDIENCE_PARTITION_V2 without reinterpreting i
   assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes)
 })
 
+test('routes and downloads FAMILY_AUDIENCE_PARTITION_V3 evidence bytes without reinterpreting them', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const bytes = Buffer.from([75, 70, 70, 51, 0, 255, 17, 42, 0, 128, 99])
+  const accepted = await publish(base, {
+    id: 'family-v3-evidence', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V3',
+  })
+  assert.equal(accepted.status, 201)
+  const metadata = (await accepted.json()).publication
+  assert.equal(metadata.artifactSchema, 'FAMILY_AUDIENCE_PARTITION_V3')
+  assert.equal(metadata.digest, digest(bytes))
+  const retry = await publish(base, {
+    id: 'family-v3-evidence', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V3',
+  })
+  assert.equal(retry.status, 200)
+  assert.equal((await retry.json()).created, false)
+  assert.equal((await publish(base, {
+    id: 'family-v3-evidence', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V2',
+  })).status, 409)
+  assert.equal((await publish(base, {
+    id: 'family-v3-evidence', bytes: Buffer.from('changed'), schema: 'FAMILY_AUDIENCE_PARTITION_V3',
+  })).status, 409)
+
+  const page = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.equal(page.publications[0].artifactSchema, 'FAMILY_AUDIENCE_PARTITION_V3')
+  const downloaded = await fetch(`${base}/v2/households/family/publications/family-v3-evidence`, { headers: auth('token-b') })
+  assert.equal(downloaded.status, 200)
+  assert.equal(downloaded.headers.get('x-kakeflow-artifact-schema'), 'FAMILY_AUDIENCE_PARTITION_V3')
+  assert.equal(downloaded.headers.get('x-kakeflow-digest'), digest(bytes))
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes)
+})
+
 test('keeps v2 publication identity immutable and retries byte-identically', async () => {
   const { base } = await fixture()
   await createFamily(base)
@@ -361,7 +394,7 @@ test('keeps v2 publication identity immutable and retries byte-identically', asy
     id: 'family-v2-idempotent', bytes: Buffer.from('changed'), schema: 'FAMILY_AUDIENCE_PARTITION_V2',
   })).status, 409)
   assert.equal((await publish(base, {
-    id: 'unsupported-family-schema', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V3',
+    id: 'unsupported-family-schema', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V4',
   })).status, 400)
 })
 

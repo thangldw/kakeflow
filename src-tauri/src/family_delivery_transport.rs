@@ -5,13 +5,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{family_snapshot, sync_foundation};
+use crate::{document_vault::DocumentVault, family_evidence, family_snapshot, sync_foundation};
 
 const MAX_ID: usize = 128;
 const MAX_ARTIFACTS: usize = 1_000;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 const ARTIFACT_SCHEMA_V1: &str = "FAMILY_AUDIENCE_PARTITION_V1";
-const ARTIFACT_SCHEMA: &str = "FAMILY_AUDIENCE_PARTITION_V2";
+const ARTIFACT_SCHEMA_V2: &str = "FAMILY_AUDIENCE_PARTITION_V2";
+const ARTIFACT_SCHEMA: &str = "FAMILY_AUDIENCE_PARTITION_V3";
 
 #[derive(Debug, Error)]
 pub enum FamilyDeliveryError {
@@ -58,6 +59,7 @@ pub struct FamilyPartitionStatusDto {
     pub state: String,
     pub withheld_reason: Option<String>,
     pub domain_counts: BTreeMap<String, u64>,
+    pub withheld_domain_counts: BTreeMap<String, u64>,
     pub evidence_file_count: u64,
     pub evidence_record_count: u64,
     pub withheld_counts_by_reason: BTreeMap<String, u64>,
@@ -223,6 +225,8 @@ pub struct FamilySnapshotUiReviewDto {
     pub update_count: u64,
     pub delete_count: u64,
     pub conflict_count: u64,
+    pub evidence_file_count: u64,
+    pub evidence_record_count: u64,
     pub records: Vec<FamilySnapshotUiRecordDto>,
 }
 
@@ -512,6 +516,22 @@ pub fn disconnect(connection: &Connection, household_id: &str) -> Result<FamilyD
 }
 
 pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliveryStatusDto> {
+    status_inner(connection, None, household_id)
+}
+
+pub fn status_with_vault(
+    connection: &Connection,
+    vault: &DocumentVault,
+    household_id: &str,
+) -> Result<FamilyDeliveryStatusDto> {
+    status_inner(connection, Some(vault), household_id)
+}
+
+fn status_inner(
+    connection: &Connection,
+    vault: Option<&DocumentVault>,
+    household_id: &str,
+) -> Result<FamilyDeliveryStatusDto> {
     if !valid_id(household_id) {
         return Err(FamilyDeliveryError::InvalidInput);
     }
@@ -559,14 +579,34 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
         });
     }
     let memberships = load_memberships(connection, household_id)?;
-    let preview = family_snapshot::preview_snapshot_set(connection, household_id)
-        .map_err(|_| FamilyDeliveryError::Snapshot)?;
-    let withheld_counts_by_reason = preview.excluded_counts_by_reason.clone();
-    let coverage_state = if withheld_counts_by_reason.values().sum::<u64>() == 0 {
-        "COMPLETE"
+    let (preview, withheld_by_audience, withheld_domains_by_audience) = if let Some(vault) = vault {
+        let base = family_snapshot::export_snapshot_set(connection, household_id)
+            .map_err(|_| FamilyDeliveryError::Snapshot)?;
+        let prepared = family_evidence::prepare(connection, vault, base)
+            .map_err(|_| FamilyDeliveryError::Snapshot)?;
+        (
+            prepared.set,
+            prepared.withheld_counts_by_audience,
+            prepared.withheld_domains_by_audience,
+        )
     } else {
-        "PARTIAL"
+        let preview = family_snapshot::preview_snapshot_set(connection, household_id)
+            .map_err(|_| FamilyDeliveryError::Snapshot)?;
+        let mut reasons = BTreeMap::new();
+        reasons.insert(
+            "SHARED".to_owned(),
+            preview.excluded_counts_by_reason.clone(),
+        );
+        let mut domains = BTreeMap::new();
+        let mut legacy_domains = empty_domain_counts();
+        legacy_domains.insert(
+            "LEDGER".to_owned(),
+            preview.excluded_counts_by_reason.values().sum(),
+        );
+        domains.insert("SHARED".to_owned(), legacy_domains);
+        (preview, reasons, domains)
     };
+    let withheld_counts_by_reason = preview.excluded_counts_by_reason.clone();
     let mut statement = connection.prepare(
         "SELECT audience_key,visibility,member_id,dirty FROM family_delivery_partition_state
          WHERE household_id=?1 ORDER BY CASE visibility WHEN 'SHARED' THEN 0 ELSE 1 END,audience_key")?;
@@ -587,33 +627,26 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
                 else { "READY".to_owned() };
             let prepared_before = latest.as_ref().is_some_and(|(state,_)| matches!(state.as_str(), "SENDING"|"FAILED_RETRYABLE"));
             let pending = if dirty == 0 { 0 } else if prepared_before { latest.as_ref().map(|(_,count)| (*count).max(1) as u64).unwrap_or(1) } else { 1 };
-            let domain_counts = preview.partitions.iter().find(|partition| {
+            let preview_partition = preview.partitions.iter().find(|partition| {
                 partition.audience.visibility == visibility && partition.audience.member_id == member_id
-            }).map(|partition| {
+            });
+            let domain_counts = preview_partition.map(|partition| {
                 let mut counts = empty_domain_counts();
                 for record in &partition.records {
                     *counts.entry(entity_domain(&record.entity_kind).to_owned()).or_default() += 1;
                 }
                 counts
             }).unwrap_or_else(empty_domain_counts);
-            let mut domain_counts = domain_counts;
-            domain_counts.insert(
-                "CARD".to_owned(),
-                *withheld_counts_by_reason
-                    .get("EVIDENCE_REQUIRED_CARD")
-                    .unwrap_or(&0),
-            );
-            domain_counts.insert(
-                "INVESTMENT".to_owned(),
-                *withheld_counts_by_reason
-                    .get("EVIDENCE_REQUIRED_INVESTMENT")
-                    .unwrap_or(&0),
-            );
+            let evidence_file_count = preview_partition.map(|p| p.evidence_file_count).unwrap_or(0);
+            let evidence_record_count = preview_partition.map(|p| p.evidence_record_count).unwrap_or(0);
+            let partition_reasons = withheld_by_audience.get(&key).cloned().unwrap_or_else(empty_withheld_counts);
+            let withheld_domain_counts = withheld_domains_by_audience.get(&key).cloned().unwrap_or_else(empty_domain_counts);
+            let coverage_state = if partition_reasons.values().sum::<u64>() == 0 { "COMPLETE" } else { "PARTIAL" };
             Ok(FamilyPartitionStatusDto { audience_key:key,audience_visibility:visibility,audience_member_id:member_id,
                 audience_member_name:member_name,recipient_names:recipients,pending_change_count:pending,state:outbound_state,
                 withheld_reason:if dirty != 0 && !prepared_before { Some("件数は送信準備時に確定します".to_owned()) } else { None },
-                domain_counts,evidence_file_count:0,evidence_record_count:0,
-                withheld_counts_by_reason:withheld_counts_by_reason.clone(),coverage_state:coverage_state.to_owned() })
+                domain_counts,withheld_domain_counts,evidence_file_count,evidence_record_count,
+                withheld_counts_by_reason:partition_reasons,coverage_state:coverage_state.to_owned() })
         }).collect::<std::result::Result<Vec<_>,rusqlite::Error>>()?;
     let mut inbound_statement = connection.prepare(
         "SELECT i.artifact_id,i.sender_member_name,i.visibility,i.member_name,
@@ -688,8 +721,9 @@ fn load_memberships(
     Ok(memberships)
 }
 
-pub fn prepare_send(
+pub fn prepare_send_with_vault(
     connection: &Connection,
+    vault: &DocumentVault,
     input: &PrepareFamilyDeliveryInput,
 ) -> Result<Vec<PreparedFamilyArtifactDto>> {
     if !valid_id(&input.household_id)
@@ -731,8 +765,11 @@ pub fn prepare_send(
             return Err(FamilyDeliveryError::Snapshot);
         }
     }
-    let set = family_snapshot::export_snapshot_set(connection, &input.household_id)
+    let base = family_snapshot::export_snapshot_set(connection, &input.household_id)
         .map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let prepared_evidence = family_evidence::prepare(connection, vault, base)
+        .map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let set = &prepared_evidence.set;
     let mut prepared = Vec::new();
     let transaction = connection.unchecked_transaction()?;
     for key in &input.audience_keys {
@@ -751,7 +788,7 @@ pub fn prepare_send(
         if recipients == 0 {
             return Err(FamilyDeliveryError::AudienceDenied);
         }
-        let bytes = family_snapshot::encode_partition_artifact(&set, &partition.audience)
+        let bytes = family_evidence::encode(&prepared_evidence, &partition.audience)
             .map_err(|_| FamilyDeliveryError::Snapshot)?;
         if bytes.is_empty() || bytes.len() > MAX_PACKAGE_BYTES {
             return Err(FamilyDeliveryError::InvalidInput);
@@ -771,6 +808,17 @@ pub fn prepare_send(
     }
     transaction.commit()?;
     Ok(prepared)
+}
+
+#[cfg(test)]
+fn prepare_send(
+    connection: &Connection,
+    input: &PrepareFamilyDeliveryInput,
+) -> Result<Vec<PreparedFamilyArtifactDto>> {
+    let root = tempfile::tempdir().map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let vault =
+        DocumentVault::new(root.path(), &[91_u8; 32]).map_err(|_| FamilyDeliveryError::Snapshot)?;
+    prepare_send_with_vault(connection, &vault, input)
 }
 
 fn audience_key(audience: &family_snapshot::FamilyAudienceDto) -> String {
@@ -812,8 +860,14 @@ fn load_delivery(
     if digest(&delivery.package_bytes) != delivery.digest {
         return Err(FamilyDeliveryError::Conflict);
     }
-    let set = family_snapshot::decode_and_validate(&delivery.package_bytes)
-        .map_err(|_| FamilyDeliveryError::Conflict)?;
+    let set = if delivery.artifact_schema == ARTIFACT_SCHEMA {
+        family_evidence::decode(&delivery.package_bytes)
+            .map_err(|_| FamilyDeliveryError::Conflict)?
+            .set
+    } else {
+        family_snapshot::decode_and_validate(&delivery.package_bytes)
+            .map_err(|_| FamilyDeliveryError::Conflict)?
+    };
     let Some(partition) = set.partitions.first() else {
         return Err(FamilyDeliveryError::Conflict);
     };
@@ -823,12 +877,7 @@ fn load_delivery(
         || partition.package_id != delivery.artifact_id
         || partition.audience.visibility != delivery.audience_visibility
         || partition.audience.member_id != delivery.audience_member_id
-        || delivery.artifact_schema
-            != if set.schema_version == 1 {
-                ARTIFACT_SCHEMA_V1
-            } else {
-                ARTIFACT_SCHEMA
-            }
+        || delivery.artifact_schema != artifact_schema(set.schema_version)
     {
         return Err(FamilyDeliveryError::Conflict);
     }
@@ -860,8 +909,14 @@ pub fn mark_accepted(
         }
         if existing.1 != "RELAY_ACCEPTED" {
             let bytes = existing.4.as_deref().ok_or(FamilyDeliveryError::Conflict)?;
-            let set = family_snapshot::decode_and_validate(bytes)
-                .map_err(|_| FamilyDeliveryError::Conflict)?;
+            let set = if bytes.starts_with(b"KFF3") {
+                family_evidence::decode(bytes)
+                    .map_err(|_| FamilyDeliveryError::Conflict)?
+                    .set
+            } else {
+                family_snapshot::decode_and_validate(bytes)
+                    .map_err(|_| FamilyDeliveryError::Conflict)?
+            };
             let partition = set
                 .partitions
                 .first()
@@ -1019,7 +1074,7 @@ pub fn register_inbound(
             || artifact.byte_size as usize > MAX_PACKAGE_BYTES
             || !matches!(
                 artifact.artifact_schema.as_str(),
-                ARTIFACT_SCHEMA_V1 | ARTIFACT_SCHEMA
+                ARTIFACT_SCHEMA_V1 | ARTIFACT_SCHEMA_V2 | ARTIFACT_SCHEMA
             )
             || artifact.origin_device_id == local_device
             || !matches!(artifact.audience_visibility.as_str(), "SHARED" | "PERSONAL")
@@ -1099,8 +1154,9 @@ fn register_one(
     Ok(())
 }
 
-pub fn stage_inbound(
+pub fn stage_inbound_with_vault(
     connection: &Connection,
+    vault: &DocumentVault,
     input: &StageFamilyInboundInput,
 ) -> Result<family_snapshot::FamilySnapshotReviewDto> {
     if !valid_id(&input.household_id)
@@ -1116,8 +1172,20 @@ pub fn stage_inbound(
     if digest(&input.package_bytes) != metadata.0 {
         return Err(FamilyDeliveryError::Conflict);
     }
-    let set = family_snapshot::decode_and_validate(&input.package_bytes)
-        .map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let decoded = if metadata.5 == ARTIFACT_SCHEMA {
+        Some(
+            family_evidence::decode(&input.package_bytes)
+                .map_err(|_| FamilyDeliveryError::Snapshot)?,
+        )
+    } else {
+        None
+    };
+    let set = if let Some(decoded) = decoded.as_ref() {
+        decoded.set.clone()
+    } else {
+        family_snapshot::decode_and_validate(&input.package_bytes)
+            .map_err(|_| FamilyDeliveryError::Snapshot)?
+    };
     let partition = set
         .partitions
         .first()
@@ -1128,18 +1196,15 @@ pub fn stage_inbound(
         || partition.package_id != input.artifact_id
         || partition.audience.visibility != metadata.3
         || partition.audience.member_id != metadata.4
-        || metadata.5
-            != if set.schema_version == 1 {
-                ARTIFACT_SCHEMA_V1
-            } else {
-                ARTIFACT_SCHEMA
-            }
+        || metadata.5 != artifact_schema(set.schema_version)
         || metadata.6 != set.publisher_member_id
     {
         return Err(FamilyDeliveryError::AudienceDenied);
     }
+    let snapshot_bytes =
+        family_snapshot::encode_pretty(&set).map_err(|_| FamilyDeliveryError::Snapshot)?;
     let review =
-        family_snapshot::stage_snapshot_set(connection, &input.household_id, &input.package_bytes)
+        family_snapshot::stage_snapshot_set(connection, &input.household_id, &snapshot_bytes)
             .map_err(|error| match error {
                 family_snapshot::FamilySnapshotError::ReviewPending => {
                     FamilyDeliveryError::ReviewPending
@@ -1149,13 +1214,44 @@ pub fn stage_inbound(
                 }
                 _ => FamilyDeliveryError::Snapshot,
             })?;
+    let _ = vault;
     let inbound_state = if review.state == "READY" {
         "READY_TO_APPLY"
     } else {
         "WAITING_FOR_REVIEW"
     };
-    connection.execute("UPDATE family_delivery_inbound SET state=?1,staged_snapshot_set_id=?2 WHERE artifact_id=?3",params![inbound_state,review.snapshot_set_id,input.artifact_id])?;
+    connection.execute(
+        "UPDATE family_delivery_inbound SET state=?1,staged_snapshot_set_id=?2,
+       pending_package_bytes=CASE WHEN artifact_schema=?4 THEN ?5 ELSE NULL END
+       WHERE artifact_id=?3",
+        params![
+            inbound_state,
+            review.snapshot_set_id,
+            input.artifact_id,
+            ARTIFACT_SCHEMA,
+            input.package_bytes
+        ],
+    )?;
     Ok(review)
+}
+
+#[cfg(test)]
+fn stage_inbound(
+    connection: &Connection,
+    input: &StageFamilyInboundInput,
+) -> Result<family_snapshot::FamilySnapshotReviewDto> {
+    let root = tempfile::tempdir().map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let vault =
+        DocumentVault::new(root.path(), &[92_u8; 32]).map_err(|_| FamilyDeliveryError::Snapshot)?;
+    stage_inbound_with_vault(connection, &vault, input)
+}
+
+fn artifact_schema(schema_version: u32) -> &'static str {
+    match schema_version {
+        1 => ARTIFACT_SCHEMA_V1,
+        2 => ARTIFACT_SCHEMA_V2,
+        _ => ARTIFACT_SCHEMA,
+    }
 }
 
 pub fn update_review_state(
@@ -1176,7 +1272,11 @@ pub fn update_review_state(
 }
 
 pub fn discard_review(connection: &Connection, snapshot_set_id: &str) -> Result<()> {
-    connection.execute("UPDATE family_delivery_inbound SET state='AVAILABLE',staged_snapshot_set_id=NULL WHERE staged_snapshot_set_id=?1",[snapshot_set_id])?;
+    connection.execute(
+        "UPDATE family_delivery_inbound SET state='AVAILABLE',staged_snapshot_set_id=NULL,
+       pending_package_bytes=NULL WHERE staged_snapshot_set_id=?1",
+        [snapshot_set_id],
+    )?;
     Ok(())
 }
 
@@ -1258,14 +1358,59 @@ pub fn resolve_ui_review(
     ui_review(connection, &review)
 }
 
-pub fn apply_ui_review(
+pub fn apply_ui_review_with_vault(
     connection: &Connection,
+    vault: &DocumentVault,
     package_id: &str,
 ) -> Result<FamilySnapshotUiReviewDto> {
-    let review = family_snapshot::apply_snapshot_set(connection, package_id)
+    let pending: Option<Vec<u8>> = connection
+        .query_row(
+            "SELECT pending_package_bytes FROM family_delivery_inbound
+             WHERE staged_snapshot_set_id=?1",
+            [package_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let decoded = pending
+        .as_deref()
+        .map(family_evidence::decode)
+        .transpose()
         .map_err(|_| FamilyDeliveryError::Snapshot)?;
-    update_review_state(connection, package_id, "APPLIED")?;
+    let new_hashes = if let Some(decoded) = decoded.as_ref() {
+        family_evidence::put_blobs(vault, decoded).map_err(|_| FamilyDeliveryError::Snapshot)?
+    } else {
+        Vec::new()
+    };
+    let applied =
+        family_snapshot::apply_snapshot_set_with_hook(connection, package_id, |transaction| {
+            if let Some(decoded) = decoded.as_ref() {
+                family_evidence::materialize(transaction, decoded)
+                    .map_err(|_| family_snapshot::FamilySnapshotError::Encoding)?;
+            }
+            Ok(())
+        });
+    let review = match applied {
+        Ok(review) => review,
+        Err(_) => {
+            family_evidence::cleanup(vault, &new_hashes);
+            return Err(FamilyDeliveryError::Snapshot);
+        }
+    };
+    connection.execute(
+        "UPDATE family_delivery_inbound SET state='APPLIED',pending_package_bytes=NULL
+         WHERE staged_snapshot_set_id=?1",
+        [package_id],
+    )?;
     ui_review(connection, &review)
+}
+
+#[cfg(test)]
+fn apply_ui_review(connection: &Connection, package_id: &str) -> Result<FamilySnapshotUiReviewDto> {
+    let root = tempfile::tempdir().map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let vault =
+        DocumentVault::new(root.path(), &[93_u8; 32]).map_err(|_| FamilyDeliveryError::Snapshot)?;
+    apply_ui_review_with_vault(connection, &vault, package_id)
 }
 
 pub fn discard_ui_review(connection: &Connection, package_id: &str) -> Result<()> {
@@ -1302,6 +1447,17 @@ fn ui_review(
     if (source.1 == "SHARED") != source.2.is_none() {
         return Err(FamilyDeliveryError::Conflict);
     }
+    let manifest: String = connection.query_row(
+        "SELECT manifest_json FROM family_snapshot_sets WHERE snapshot_set_id=?1",
+        [&review.snapshot_set_id],
+        |row| row.get(0),
+    )?;
+    let staged: family_snapshot::FamilySnapshotSetDto =
+        serde_json::from_str(&manifest).map_err(|_| FamilyDeliveryError::Conflict)?;
+    let partition = staged
+        .partitions
+        .first()
+        .ok_or(FamilyDeliveryError::Conflict)?;
     let records = review
         .records
         .iter()
@@ -1367,6 +1523,8 @@ fn ui_review(
         update_count,
         delete_count,
         conflict_count,
+        evidence_file_count: partition.evidence_file_count,
+        evidence_record_count: partition.evidence_record_count,
         records,
     })
 }
@@ -1390,6 +1548,12 @@ fn entity_kind_label(kind: &str) -> &'static str {
 
 fn entity_domain(kind: &str) -> &'static str {
     match kind {
+        "CARD_STATEMENT" | "CARD_PAYMENT" => "CARD",
+        "PORTFOLIO_SNAPSHOT"
+        | "BROKERAGE_EVENT"
+        | "INVESTMENT_FX_RATE"
+        | "INVESTMENT_MARKET_PRICE"
+        | "AGGREGATE_ASSET_SNAPSHOT" => "INVESTMENT",
         "MONTHLY_BUDGET_PLAN" | "SAVINGS_GOAL" => "PLANNING",
         "CLASSIFICATION_RULE"
         | "ACCOUNT_GROUP"
@@ -1776,7 +1940,9 @@ mod tests {
                        '2026-07-14T00:00:00Z')",
                     [],
                 )?;
-                let current = status(connection, "family").unwrap();
+                let root = tempfile::tempdir().unwrap();
+                let vault = DocumentVault::new(root.path(), &[94_u8; 32]).unwrap();
+                let current = status_with_vault(connection, &vault, "family").unwrap();
                 let shared = current
                     .outbound
                     .iter()
@@ -1784,18 +1950,222 @@ mod tests {
                     .unwrap();
                 assert!(shared.domain_counts["PLANNING"] >= 2);
                 assert!(shared.domain_counts["CONFIG"] >= 1);
-                assert_eq!(shared.domain_counts["CARD"], 1);
+                assert_eq!(shared.domain_counts["CARD"], 0);
                 assert_eq!(shared.domain_counts["INVESTMENT"], 1);
-                assert_eq!(current.withheld_counts_by_reason["EVIDENCE_REQUIRED_CARD"], 1);
+                assert_eq!(current.withheld_counts_by_reason["MISSING_CARD_EVIDENCE"], 1);
+                assert_eq!(current.withheld_counts_by_reason["MISSING_INVESTMENT_EVIDENCE"], 0);
+                assert_eq!(shared.withheld_domain_counts["CARD"], 1);
                 assert_eq!(
-                    current.withheld_counts_by_reason["EVIDENCE_REQUIRED_INVESTMENT"],
-                    1
+                    shared.withheld_counts_by_reason.values().sum::<u64>(),
+                    shared.withheld_domain_counts.values().sum::<u64>()
                 );
+                let personal = current
+                    .outbound
+                    .iter()
+                    .find(|partition| partition.audience_visibility == "PERSONAL")
+                    .unwrap();
+                assert_eq!(personal.coverage_state, "COMPLETE");
+                assert_eq!(personal.withheld_counts_by_reason.values().sum::<u64>(), 0);
                 assert_eq!(
                     current.withheld_change_count,
                     current.withheld_counts_by_reason.values().sum::<u64>()
                 );
                 assert_eq!(shared.coverage_state, "PARTIAL");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn oversized_evidence_withholds_aggregate_and_keeps_non_evidence_graph() {
+        let state = setup(15);
+        let root = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(root.path(), &[95_u8; 32]).unwrap();
+        let blob = vec![b'x'; family_evidence::MAX_ARTIFACT_BYTES];
+        let stored = vault.put(&blob, "text/csv").unwrap();
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                connection.execute_batch(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency,
+                       ownership_kind,visibility) VALUES(
+                       'card','family','Card','LIABILITY','CREDIT_CARD','JPY','HOUSEHOLD','SHARED');
+                     INSERT INTO import_runs(id,household_id,status) VALUES('large-run','family','POSTED');",
+                )?;
+                connection.execute(
+                    "INSERT INTO source_documents(id,household_id,import_run_id,source_type,
+                       original_filename,media_type,byte_size,sha256,storage_path)
+                     VALUES('large-doc','family','large-run','OTHER','large.csv','text/csv',?1,?2,?3)",
+                    params![stored.plaintext_size, stored.sha256, "vault"],
+                )?;
+                connection.execute(
+                    "INSERT INTO card_statements(id,household_id,card_account_id,period_start,
+                       period_end,statement_amount_jpy,source_document_id)
+                     VALUES('large-statement','family','card','2026-06-01','2026-06-30',1000,'large-doc')",
+                    [],
+                )?;
+                let prepared = family_evidence::prepare(
+                    connection,
+                    &vault,
+                    family_snapshot::export_snapshot_set(connection, "family").unwrap(),
+                )
+                .unwrap();
+                let shared = prepared
+                    .set
+                    .partitions
+                    .iter()
+                    .find(|partition| partition.audience.visibility == "SHARED")
+                    .unwrap();
+                assert!(shared.records.iter().any(|record| {
+                    record.entity_kind == "ACCOUNT" && record.entity_id == "card"
+                }));
+                assert!(!shared
+                    .records
+                    .iter()
+                    .any(|record| record.entity_kind == "CARD_STATEMENT"));
+                assert_eq!(
+                    prepared.set.excluded_counts_by_reason["EVIDENCE_SIZE_LIMIT"],
+                    1
+                );
+                assert!(!shared
+                    .authoritative_kinds
+                    .iter()
+                    .any(|kind| kind == "CARD_STATEMENT"));
+                let bytes = family_evidence::encode(&prepared, &shared.audience).unwrap();
+                assert!(bytes.len() < family_evidence::MAX_ARTIFACT_BYTES);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn source_scope_failures_remain_global_without_false_partition_attribution() {
+        let state = setup(17);
+        let root = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(root.path(), &[97_u8; 32]).unwrap();
+        state
+            .with_connection(|connection| {
+                let mut base = family_snapshot::export_snapshot_set(connection, "family").unwrap();
+                base.excluded_counts_by_reason
+                    .insert("UNASSIGNED_SCOPE".to_owned(), 1);
+                let prepared = family_evidence::prepare(connection, &vault, base).unwrap();
+                assert_eq!(
+                    prepared.set.excluded_counts_by_reason["UNASSIGNED_SCOPE"],
+                    1
+                );
+                assert!(prepared
+                    .withheld_counts_by_audience
+                    .values()
+                    .all(|reasons| { reasons.values().sum::<u64>() == 0 }));
+                assert!(prepared
+                    .withheld_domains_by_audience
+                    .values()
+                    .all(|domains| { domains.values().sum::<u64>() == 0 }));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn personal_journal_dependency_never_leaks_card_evidence_into_shared_kff3() {
+        let state = setup(16);
+        let root = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(root.path(), &[96_u8; 32]).unwrap();
+        let stored = vault.put(b"private card evidence", "text/csv").unwrap();
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                connection.execute_batch(
+                    "INSERT INTO accounts(
+                       id,household_id,name,account_kind,account_subtype,currency,
+                       owner_member_id,ownership_kind,visibility)
+                     VALUES
+                       ('card','family','Card','LIABILITY','CREDIT_CARD','JPY',NULL,'HOUSEHOLD','SHARED'),
+                       ('private-expense','family','Private expense','EXPENSE','OTHER','JPY',
+                         'member-a','MEMBER','PERSONAL'),
+                       ('private-bank','family','Private bank','ASSET','BANK','JPY',
+                         'member-a','MEMBER','PERSONAL');
+                     INSERT INTO transactions(
+                       id,household_id,occurred_on,transaction_type,status,
+                       audience_visibility,audience_member_id)
+                     VALUES
+                       ('purchase','family','2026-06-15','CARD_PURCHASE','POSTED','SHARED',NULL),
+                       ('bank-payment','family','2026-07-27','CARD_PAYMENT','POSTED','SHARED',NULL);
+                     INSERT INTO journal_entries(
+                       id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES
+                       ('purchase-debit','purchase','private-expense','DEBIT',1000,1),
+                       ('purchase-credit','purchase','card','CREDIT',1000,2),
+                       ('payment-debit','bank-payment','card','DEBIT',1000,1),
+                       ('payment-credit','bank-payment','private-bank','CREDIT',1000,2);
+                     INSERT INTO import_runs(id,household_id,status)
+                     VALUES('private-run','family','POSTED');",
+                )?;
+                connection.execute(
+                    "INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path,audience_visibility,audience_member_id)
+                     VALUES('private-doc','family','private-run','OTHER','private.csv','text/csv',
+                       ?1,?2,'vault','SHARED',NULL)",
+                    params![stored.plaintext_size, stored.sha256],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO source_records(
+                       id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES('private-row','private-doc',1,
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}');
+                     INSERT INTO transaction_sources(transaction_id,source_record_id)
+                     VALUES('bank-payment','private-row');
+                     INSERT INTO card_statements(
+                       id,household_id,card_account_id,period_start,period_end,payment_due_on,
+                       statement_amount_jpy,source_document_id)
+                     VALUES('private-statement','family','card','2026-06-01','2026-06-30',
+                       '2026-07-27',1000,'private-doc');
+                     INSERT INTO card_statement_transactions(
+                       statement_id,transaction_id,statement_line_number,billed_amount_jpy)
+                     VALUES('private-statement','purchase',1,1000);
+                     INSERT INTO card_payments(
+                       id,household_id,statement_id,bank_transaction_id,card_account_id,
+                       payment_amount_jpy,payment_on)
+                     VALUES('private-payment','family','private-statement','bank-payment','card',
+                       1000,'2026-07-27');",
+                )?;
+
+                let base = family_snapshot::export_snapshot_set(connection, "family")
+                    .expect("base snapshot should export");
+                let prepared = family_evidence::prepare(connection, &vault, base)
+                    .expect("personal card evidence should prepare");
+                let shared_audience = prepared
+                    .set
+                    .partitions
+                    .iter()
+                    .find(|partition| partition.audience.visibility == "SHARED")
+                    .unwrap()
+                    .audience
+                    .clone();
+                let personal_audience = prepared
+                    .set
+                    .partitions
+                    .iter()
+                    .find(|partition| partition.audience.member_id.as_deref() == Some("member-a"))
+                    .unwrap()
+                    .audience
+                    .clone();
+                let shared_package = family_evidence::encode(&prepared, &shared_audience).unwrap();
+                let personal_package =
+                    family_evidence::encode(&prepared, &personal_audience).unwrap();
+                let shared_bytes = String::from_utf8_lossy(&shared_package);
+                assert!(!shared_bytes.contains("private-statement"));
+                assert!(!shared_bytes.contains("private-payment"));
+                assert!(!shared_bytes.contains("private card evidence"));
+                let personal_set = family_evidence::decode(&personal_package).unwrap().set;
+                assert!(personal_set.partitions[0].records.iter().any(|record| {
+                    record.entity_kind == "CARD_STATEMENT"
+                        && record.entity_id == "private-statement"
+                }));
+                assert!(personal_set.partitions[0].records.iter().any(|record| {
+                    record.entity_kind == "CARD_PAYMENT" && record.entity_id == "private-payment"
+                }));
                 Ok(())
             })
             .unwrap();
@@ -1819,9 +2189,10 @@ mod tests {
                     [],
                 )?;
                 let first = prepare_send(connection, &PrepareFamilyDeliveryInput {
-                    household_id:"family".into(),audience_keys:vec!["SHARED".into()]
+                    household_id:"family".into(),audience_keys:vec!["SHARED".into(),"PERSONAL:member-a".into()]
                 }).unwrap();
-                accept_one(connection,&first[0],"2026-07-14T00:00:00Z");
+                accept_one(connection,first.iter().find(|artifact| artifact.audience_key == "SHARED").unwrap(),"2026-07-14T00:00:00Z");
+                accept_one(connection,first.iter().find(|artifact| artifact.audience_key == "PERSONAL:member-a").unwrap(),"2026-07-14T00:00:01Z");
                 connection.execute(
                     "UPDATE accounts SET owner_member_id='member-a',ownership_kind='MEMBER',
                        visibility='PERSONAL' WHERE id='moving'",
@@ -1835,12 +2206,15 @@ mod tests {
                     [],
                 )?;
                 let moved = prepare_send(connection, &PrepareFamilyDeliveryInput {
-                    household_id:"family".into(),audience_keys:vec!["SHARED".into()]
+                    household_id:"family".into(),audience_keys:vec!["SHARED".into(),"PERSONAL:member-a".into()]
                 }).unwrap();
-                let moved_set = family_snapshot::decode_and_validate(&moved[0].package_bytes).unwrap();
+                let shared_artifact = moved.iter().find(|artifact| artifact.audience_key == "SHARED").unwrap();
+                let moved_set = family_evidence::decode(&shared_artifact.package_bytes).unwrap().set;
                 assert!(moved_set.partitions[0].relocations.iter().any(|r|r.entity_id=="moving"));
-                assert!(!String::from_utf8(moved[0].package_bytes.clone()).unwrap().contains("never-shared-private"));
-                accept_one(connection,&moved[0],"2026-07-14T00:01:00Z");
+                assert!(!String::from_utf8_lossy(&shared_artifact.package_bytes).contains("never-shared-private"));
+                accept_one(connection,shared_artifact,"2026-07-14T00:01:00Z");
+                let personal_artifact = moved.iter().find(|artifact| artifact.audience_key == "PERSONAL:member-a").unwrap();
+                accept_one(connection,personal_artifact,"2026-07-14T00:01:01Z");
                 connection.execute(
                     "INSERT INTO savings_goals(id,household_id,name,target_jpy,target_date)
                      VALUES('later-goal','family','Later',1000,'2027-01-01')",
@@ -1849,9 +2223,9 @@ mod tests {
                 let later = prepare_send(connection, &PrepareFamilyDeliveryInput {
                     household_id:"family".into(),audience_keys:vec!["SHARED".into()]
                 }).unwrap();
-                let later_set = family_snapshot::decode_and_validate(&later[0].package_bytes).unwrap();
+                let later_set = family_evidence::decode(&later[0].package_bytes).unwrap().set;
                 assert!(later_set.partitions[0].relocations.iter().any(|r|r.entity_id=="moving"));
-                assert!(!String::from_utf8(later[0].package_bytes.clone()).unwrap().contains("never-shared-private"));
+                assert!(!String::from_utf8_lossy(&later[0].package_bytes).contains("never-shared-private"));
                 Ok(())
             })
             .unwrap();
@@ -1908,7 +2282,21 @@ mod tests {
                 )
                 .unwrap();
                 assert!(matches!(review.state.as_str(), "READY" | "REVIEW_REQUIRED"));
+                let staged: (bool, i64) = connection.query_row(
+                    "SELECT pending_package_bytes IS NOT NULL,
+                       (SELECT count(*) FROM evidence_source_document_aliases)
+                     FROM family_delivery_inbound WHERE staged_snapshot_set_id=?1",
+                    [&review.snapshot_set_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert!(
+                    staged.0,
+                    "KFF3 bytes must survive staging until explicit apply"
+                );
+                assert_eq!(staged.1, 0, "staging must not materialize evidence");
                 let ui = active_ui_review(connection, "family").unwrap().unwrap();
+                assert_eq!(ui.evidence_file_count, 0);
+                assert_eq!(ui.evidence_record_count, 0);
                 let value = serde_json::to_value(&ui).unwrap();
                 assert_eq!(value["packageId"], review.snapshot_set_id);
                 assert_eq!(value["householdId"], "family");
@@ -1937,6 +2325,13 @@ mod tests {
                 assert_eq!(ready.state, "READY");
                 let applied = apply_ui_review(connection, &review.snapshot_set_id).unwrap();
                 assert_eq!(applied.state, "APPLIED");
+                let retained: bool = connection.query_row(
+                    "SELECT pending_package_bytes IS NOT NULL FROM family_delivery_inbound
+                     WHERE staged_snapshot_set_id=?1",
+                    [&review.snapshot_set_id],
+                    |row| row.get(0),
+                )?;
+                assert!(!retained, "applied KFF3 bytes must be released");
                 Ok(())
             })
             .unwrap();
@@ -1959,6 +2354,73 @@ mod tests {
                 .unwrap();
                 assert_eq!(status.inbound_cursor, 42);
                 assert!(status.inbound.is_empty());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn register_preserves_v1_v2_v3_schema_and_stage_routes_each_decoder() {
+        let state = setup(16);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                let samples = [
+                    (ARTIFACT_SCHEMA_V1, b"v1".to_vec()),
+                    (ARTIFACT_SCHEMA_V2, b"v2".to_vec()),
+                    (ARTIFACT_SCHEMA, b"KFF3-invalid".to_vec()),
+                ];
+                let artifacts = samples
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (schema, bytes))| RemoteFamilyArtifactInput {
+                        sequence: index as u64 + 1,
+                        artifact_id: format!("artifact-schema-{}", index + 1),
+                        digest: digest(bytes),
+                        created_at: format!("2026-07-14T00:00:0{index}Z"),
+                        origin_device_id: "remote-device".into(),
+                        sender_membership_id: "membership-a-device-2".into(),
+                        audience_visibility: "SHARED".into(),
+                        audience_member_id: None,
+                        byte_size: bytes.len() as u64,
+                        artifact_schema: (*schema).into(),
+                    })
+                    .collect();
+                register_inbound(
+                    connection,
+                    &RegisterFamilyInboundInput {
+                        household_id: "family".into(),
+                        artifacts,
+                        next_cursor: 3,
+                    },
+                )
+                .unwrap();
+                let stored = connection
+                    .prepare(
+                        "SELECT artifact_schema FROM family_delivery_inbound ORDER BY sequence",
+                    )?
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                assert_eq!(
+                    stored,
+                    samples
+                        .iter()
+                        .map(|(schema, _)| (*schema).to_owned())
+                        .collect::<Vec<_>>()
+                );
+                for (index, (_, bytes)) in samples.iter().enumerate() {
+                    assert!(matches!(
+                        stage_inbound(
+                            connection,
+                            &StageFamilyInboundInput {
+                                household_id: "family".into(),
+                                artifact_id: format!("artifact-schema-{}", index + 1),
+                                package_bytes: bytes.clone(),
+                            }
+                        ),
+                        Err(FamilyDeliveryError::Snapshot)
+                    ));
+                }
                 Ok(())
             })
             .unwrap();

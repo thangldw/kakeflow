@@ -11,6 +11,10 @@
 .family-review-domain-counts { display: flex; flex-wrap: wrap; gap: 8px; }
 .family-review-domain-counts span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
 .family-review-domain-counts b { color: inherit; }
+.family-review-evidence-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid #a9ced8; border-radius: 9px; background: #eef8fa; color: #315d68; }
+.family-review-evidence-summary strong { margin-right: 3px; font-size: 12px; }
+.family-review-evidence-summary span { padding: 3px 7px; border-radius: 999px; background: #dceff3; font-weight: 750; }
+.family-review-evidence-summary small { flex-basis: 100%; color: #52737b; }
 .family-review-config-warning { margin: 0; padding: 12px 14px; border-left: 3px solid #d18e16; border-radius: 8px; background: #fff6e6; color: #805a24; }
 .family-review-conflicts,.family-review-ready { display: grid; gap: 12px; }
 .family-review-conflicts h3,.family-review-ready h3 { margin: 0; font-size: 15px; }
