@@ -120,7 +120,7 @@ describe('import preview service', () => {
     const result = await previewImportFile(new File(['%PDF-1.4\n'], 'receipt.pdf', { type: 'application/pdf' }))
 
     expect(result.status).toBe('extractable')
-    expect(result.adapterId).toBe('pdf-embedded-text-v1')
+    expect(result.adapterId).toBe('pdf-local-extraction-v2')
     expect(result.fileBytes).toBeInstanceOf(Uint8Array)
     expect(result.issues[0].code).toBe('DOCUMENT_EXTRACTION_REQUIRED')
   })

@@ -986,7 +986,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const inputRef = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [activeRun, setActiveRun] = useState<string | null>(null)
-  const [protectedPdf, setProtectedPdf] = useState<{ itemId: string; status: Exclude<PdfPasswordStatus, 'SUCCESS'> } | null>(null)
+  const [protectedPdf, setProtectedPdf] = useState<{ itemId: string; status: Exclude<PdfPasswordStatus, 'SUCCESS'>; operation: 'EXTRACT' | 'OCR' } | null>(null)
+  const [pdfOcrRequiredIds, setPdfOcrRequiredIds] = useState<ReadonlySet<string>>(() => new Set())
   const [staged, setStaged] = useState<Record<string, ImportPreviewDto>>({})
   const [receiptStagedIds, setReceiptStagedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [notice, setNotice] = useState('')
@@ -1019,6 +1020,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     hydratedStagedRunsRef.current.clear()
     setStaged({})
     setReceiptStagedIds(new Set())
+    setPdfOcrRequiredIds(new Set())
     setRecoveredReceiptRunIds(new Set())
     setSourceResumeRequiredRunIds(new Set())
     setPendingReviewRuns([])
@@ -1250,39 +1252,79 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     }
   }
 
-  const extractDocument = async (item: ImportPreview, password?: string) => {
+  const extractDocument = async (item: ImportPreview, password?: string, requestedOperation?: 'EXTRACT' | 'OCR') => {
     if (!householdId || !item.fileBytes || !item.mediaType) return
     setActiveRun(item.id); setNotice('')
     try {
       const isImage = item.mediaType.startsWith('image/')
+      const operation = requestedOperation ?? (!isImage && pdfOcrRequiredIds.has(item.id) ? 'OCR' : 'EXTRACT')
       let extracted: ExtractedDocumentDto
       if (isImage) extracted = await platformClient.ocrDocument(item.fileBytes, item.mediaType)
-      else {
+      else if (operation === 'OCR') {
+        // A previous password challenge must not survive an engine/model/limit
+        // failure after the password has already been accepted.
+        setProtectedPdf(null)
+        const attempt = await protectedPdfPlatform.ocr(item.fileBytes, password)
+        if (attempt.status !== 'SUCCESS') {
+          if (attempt.status === 'PASSWORD_REQUIRED' || attempt.status === 'PASSWORD_INVALID' || attempt.status === 'PASSWORD_UNSUPPORTED') {
+            setProtectedPdf({ itemId: item.id, status: attempt.status, operation: 'OCR' })
+            setNotice(attempt.status === 'PASSWORD_UNSUPPORTED' ? 'このPDFの暗号方式には対応していません。保護を解除したコピーを取り込んでください。' : 'スキャンPDFをOCRするためのパスワードを入力してください。')
+          } else {
+            const messages = {
+              OCR_ENGINE_UNAVAILABLE: '端末内OCRエンジンを利用できません。Tesseractと日本語・英語モデルを確認してください。',
+              OCR_MODELS_UNAVAILABLE: '日本語・英語のOCRモデルを利用できません。',
+              LIMIT_EXCEEDED: 'このPDFはOCRのページ数または処理上限を超えています。32ページ以下のファイルに分割してください。',
+              TIMED_OUT: 'スキャンPDFのOCRが時間内に完了しませんでした。PDFを分割して再試行してください。',
+              NO_TEXT: 'スキャンPDFから確認できる文字を読み取れませんでした。',
+              FAILED: 'スキャンPDFをOCRできませんでした。原本は台帳へ反映されていません。',
+            } as const
+            setNotice(messages[attempt.status])
+          }
+          return
+        }
+        extracted = attempt.document
+        setProtectedPdf(null)
+      } else {
         const attempt = await protectedPdfPlatform.extract(item.fileBytes, password)
         if (attempt.status !== 'SUCCESS') {
-          setProtectedPdf({ itemId: item.id, status: attempt.status })
+          setProtectedPdf({ itemId: item.id, status: attempt.status, operation: 'EXTRACT' })
           setNotice(attempt.status === 'PASSWORD_UNSUPPORTED' ? 'このPDFの暗号方式には対応していません。保護を解除したコピーを取り込んでください。' : 'PDFを開くためのパスワードを入力してください。')
           return
         }
         extracted = attempt.document
         setProtectedPdf(null)
+        if (extracted.issues.includes('OCR_REQUIRED')) {
+          setPdfOcrRequiredIds((current) => new Set(current).add(item.id))
+          setNotice(`画像として保存されたPDFです。${extracted.pageCount ?? '全'}ページを端末内OCRで読み取る操作が必要です。`)
+          return
+        }
       }
       const normalized = await buildReceiptImport(extracted, {
         householdId, filename: item.filename, mediaType: item.mediaType, byteSize: item.fileBytes.byteLength,
         sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, accountId: `${householdId}-cash`, sourceType: item.sourceType,
       }, () => globalThis.crypto.randomUUID(), sha256Text)
       if (!normalized.request) {
-        setNotice(normalized.fields.issues.includes('STATEMENT_LIKELY') ? 'この書類は明細書の可能性があるため、1件の支出としては取り込みません。' : '日付または合計金額を読み取れませんでした。内容を確認してください。')
+        setNotice(normalized.fields.issues.includes('STATEMENT_LIKELY') ? '明細書形式のPDFは、1件の支出として取り込みません。原本内容を確認してください。' : '日付または合計金額を読み取れませんでした。内容を確認してください。')
         return
       }
       const started = await startTrackedImport(item, normalized.request, item.fileBytes)
       const backendPreview = await platformClient.previewImport(started.runId)
       setStaged((current) => ({ ...current, [item.id]: backendPreview })); onChanged()
       setReceiptStagedIds((current) => new Set(current).add(item.id))
-      const confidence = Math.min(extracted.confidenceBps, normalized.fields.confidenceBps)
-      setNotice(`${isImage ? 'レシート画像のOCR' : 'PDFの埋め込みテキスト'}から支出候補を抽出しました（信頼度 ${Math.round(confidence / 100)}%）。${confidence < 7500 ? '確認待ちとして保持します。' : ''}`)
+      setPdfOcrRequiredIds((current) => { const next = new Set(current); next.delete(item.id); return next })
+      const candidatePages = normalized.pageResults.filter((page) => page.candidateCreated)
+      const confidence = candidatePages.length > 0
+        ? Math.min(...candidatePages.map((page) => Math.min(extracted.pages?.find((value) => value.pageNumber === page.pageNumber)?.confidenceBps ?? extracted.confidenceBps, page.fields.confidenceBps)))
+        : extracted.confidenceBps
+      if ((extracted.pageCount ?? 1) > 1) {
+        setNotice(candidatePages.length > 0
+          ? `スキャンPDF ${extracted.pageCount}ページの原本を保存し、独立したレシートとして読めた${candidatePages.length}ページだけを支出候補にしました（最低信頼度 ${Math.round(confidence / 100)}%）。明細書ページは集約しません。`
+          : `スキャンPDF ${extracted.pageCount}ページの原本とOCR結果を保存しました。独立したレシートとして確定できるページがないため、支出候補は作成していません。`)
+      } else {
+        setNotice(`${isImage ? 'レシート画像のOCR' : extracted.method === 'OCR' ? 'スキャンPDF 1ページのOCR' : 'PDFの埋め込みテキスト'}から支出候補を抽出しました（信頼度 ${Math.round(confidence / 100)}%）。台帳への反映にはレビューと承認が必要です。`)
+      }
     } catch {
-      setNotice(item.mediaType.startsWith('image/') ? '画像をOCRで読み取れませんでした。対応形式と画質を確認してください。' : 'PDFの埋め込みテキストを抽出できませんでした。スキャンPDFには画像OCRが必要です。')
+      setNotice(item.mediaType.startsWith('image/') ? '画像をOCRで読み取れませんでした。対応形式と画質を確認してください。' : 'PDFを解析できませんでした。原本、パスワード、端末内OCRの状態を確認してください。')
     } finally { setActiveRun(null) }
   }
 
@@ -1475,11 +1517,11 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
         return <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{item.adapterId} ・ {requirement.kindLabel}のみ選択できます。</small>{eligibleAccounts.length === 0 && <small id={`standard-account-empty-${item.id}`} role="status">設定ページで先に{requirement.kindLabel}を追加してください。追加するまで取込は開始できません。</small>}</span><select aria-label={`${item.filename}の取込先${requirement.kindLabel}`} disabled={eligibleAccounts.length === 0} value={standardImportAccounts[item.id] ?? ''} onChange={(event) => setStandardImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{requirement.kindLabel}を選択</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       })}</div>}
       <div className="import-list">
-        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => issue.message).join(' / ')}</small>}</div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : 'テキスト抽出待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && isBrokerageTransactionAdapter(item.detectedAdapterId) && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-describedby={dedicatedBrokerageImport(item.detectedAdapterId) && accounts.every((account) => account.accountKind !== 'ASSET' || account.accountSubtype !== 'SECURITIES') ? `investment-account-empty-${item.id}` : undefined} disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id || (dedicatedBrokerageImport(item.detectedAdapterId) != null && !investmentImportAccounts[item.id])} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-label={previews.length > 1 ? `${item.filename}の取込開始` : undefined} aria-describedby={importAccountDescriptionId(item, accounts)} disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || !hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts) || (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], accounts)) || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? '抽出中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : 'PDF抽出'}</button> : item.status === 'unsupported' && item.fileBytes && /\.(?:csv|tsv)$/i.test(item.filename) ? <button className="mini-btn" onClick={(event) => { rescueTriggerRef.current = event.currentTarget; setRescuePreviewId(item.id) }}>このファイルを読み取る</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
+        {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? '未対応の形式'} ・ {item.encoding}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => issue.message).join(' / ')}</small>}</div><span>{item.recordCount} レコード</span><b className={item.status === 'ready' ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? '総資産履歴に反映済み' : portfolioImported.has(item.id) ? '資産に反映済み' : staged[item.id] ? 'レビュー待ち' : item.status === 'ready' ? 'プレビュー完了' : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? 'OCR待ち' : pdfOcrRequiredIds.has(item.id) ? '画像PDF・OCR待ち' : 'テキスト解析待ち' : '確認が必要'}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? '保存中…' : '総資産履歴に保存'}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? '保存中…' : '資産に保存'}</button> : item.status === 'ready' && isBrokerageTransactionAdapter(item.detectedAdapterId) && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-describedby={dedicatedBrokerageImport(item.detectedAdapterId) && accounts.every((account) => account.accountKind !== 'ASSET' || account.accountSubtype !== 'SECURITIES') ? `investment-account-empty-${item.id}` : undefined} disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id || (dedicatedBrokerageImport(item.detectedAdapterId) != null && !investmentImportAccounts[item.id])} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? '保存中…' : '証券取引に保存'}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-label={previews.length > 1 ? `${item.filename}の取込開始` : undefined} aria-describedby={importAccountDescriptionId(item, accounts)} disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || !hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts) || (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], accounts)) || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? '暗号化中…' : platformClient.runtime === 'tauri' ? '取込開始' : 'Desktopのみ'}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? pdfOcrRequiredIds.has(item.id) ? 'OCR中…' : '解析中…' : item.mediaType?.startsWith('image/') ? '画像OCR' : pdfOcrRequiredIds.has(item.id) ? 'スキャンPDF OCR' : 'PDFを解析'}</button> : item.status === 'unsupported' && item.fileBytes && /\.(?:csv|tsv)$/i.test(item.filename) ? <button className="mini-btn" onClick={(event) => { rescueTriggerRef.current = event.currentTarget; setRescuePreviewId(item.id) }}>このファイルを読み取る</button> : <span className="icon-btn" title={item.issues.map((issue) => issue.message).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
         {platformClient.runtime === 'web' && importItems.map((item) => <div className="import-row" key={item.file}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.file}</strong><span>{item.source} ・ {item.time}</span></div><span>{item.records} レコード</span><b className={item.state}>{item.state === 'ready' ? '反映可能' : item.state === 'review' ? '確認が必要' : item.state === 'matched' ? '取引に照合済み' : '処理済み'}</b></div>)}
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">ファイルを選択すると、ここに解析結果が表示されます。</p>}
       </div>
-      {protectedPdf && (() => { const item = previews.find((preview) => preview.id === protectedPdf.itemId); return item ? <PdfPasswordPrompt filename={item.filename} status={protectedPdf.status} onSubmit={(ephemeralPassword) => extractDocument(item, ephemeralPassword)} onCancel={() => setProtectedPdf(null)} /> : null })()}
+      {protectedPdf && (() => { const item = previews.find((preview) => preview.id === protectedPdf.itemId); return item ? <PdfPasswordPrompt filename={item.filename} status={protectedPdf.status} onSubmit={(ephemeralPassword) => extractDocument(item, ephemeralPassword, protectedPdf.operation)} onCancel={() => setProtectedPdf(null)} /> : null })()}
       {rescuePreviewId && householdId && (() => { const item = previews.find((preview) => preview.id === rescuePreviewId); return item?.fileBytes ? <CustomParserRescueDialog householdId={householdId} filename={item.filename} bytes={item.fileBytes} accounts={accounts} returnFocus={rescueTriggerRef.current} onCancel={() => setRescuePreviewId(null)} onSaved={(profile, accountId) => { setParserProfiles((current) => [...current.filter((candidate) => candidate.id !== profile.id), profile]); setSelectedParserProfiles((current) => ({ ...current, [item.id]: profile.id })); applyCustomParserProfile(item, profile, accountId); setRescuePreviewId(null) }} /> : null })()}
     </section>
     {notice && <div className="import-notice" role="status">{notice}</div>}

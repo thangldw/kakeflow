@@ -50,6 +50,20 @@ pub struct ExtractedRegion {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ExtractedPage {
+    /// One-based page number. Every source PDF page receives one outcome,
+    /// including pages on which no text was recognized.
+    pub page_number: u32,
+    /// Pixel coordinate canvas used by OCR regions. Embedded-text pages do not
+    /// have a pixel canvas and therefore expose `None`.
+    pub width_pixels: Option<u16>,
+    pub height_pixels: Option<u16>,
+    pub confidence_bps: u16,
+    pub issues: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ExtractedDocument {
     pub method: &'static str,
     pub text: String,
@@ -58,6 +72,8 @@ pub struct ExtractedDocument {
     /// Page-aware evidence. Embedded-text extraction currently preserves page
     /// identity but leaves geometry unset; OCR supplies pixel bounding boxes.
     pub regions: Vec<ExtractedRegion>,
+    pub page_count: u32,
+    pub pages: Vec<ExtractedPage>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -86,7 +102,7 @@ pub fn extract_document_with_password(
         return Err(ExtractError::Unsupported);
     }
     preflight_pdf(bytes)?;
-    let extracted = std::panic::catch_unwind(|| extract_text_capped(bytes, password))
+    let (extracted, page_count) = std::panic::catch_unwind(|| extract_text_capped(bytes, password))
         .map_err(|_| ExtractError::Extraction)??;
     let text = extracted.replace('\0', "").trim().to_owned();
     if text.len() > MAX_EXTRACTED_TEXT_BYTES {
@@ -97,16 +113,28 @@ pub fn extract_document_with_password(
         .filter(|character| !character.is_whitespace())
         .count();
     if meaningful < 8 {
+        let pages = (1..=page_count)
+            .map(|page_number| ExtractedPage {
+                page_number,
+                width_pixels: None,
+                height_pixels: None,
+                confidence_bps: 0,
+                issues: vec!["OCR_REQUIRED"],
+            })
+            .collect();
         return Ok(ExtractedDocument {
             method: "EMBEDDED_TEXT",
             text,
             confidence_bps: 0,
             issues: vec!["OCR_REQUIRED"],
             regions: Vec::new(),
+            page_count,
+            pages,
         });
     }
-    let regions = text
-        .split('\u{000c}')
+    let page_texts = text.split('\u{000c}').collect::<Vec<_>>();
+    let regions = page_texts
+        .iter()
         .enumerate()
         .filter_map(|(index, page_text)| {
             let page_text = page_text.trim();
@@ -119,13 +147,38 @@ pub fn extract_document_with_password(
                 provenance: "PDF_EMBEDDED_TEXT".to_owned(),
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
+    let pages = (1..=page_count)
+        .map(|page_number| {
+            let has_text = page_texts
+                .get(usize::try_from(page_number - 1).unwrap_or(usize::MAX))
+                .is_some_and(|value| value.chars().any(|character| !character.is_whitespace()));
+            ExtractedPage {
+                page_number,
+                width_pixels: None,
+                height_pixels: None,
+                confidence_bps: if has_text { 9000 } else { 0 },
+                issues: if has_text {
+                    Vec::new()
+                } else {
+                    vec!["OCR_REQUIRED"]
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    let issues = if pages.iter().any(|page| !page.issues.is_empty()) {
+        vec!["OCR_REQUIRED"]
+    } else {
+        Vec::new()
+    };
     Ok(ExtractedDocument {
         method: "EMBEDDED_TEXT",
         text,
         confidence_bps: 9000,
-        issues: Vec::new(),
+        issues,
         regions,
+        page_count,
+        pages,
     })
 }
 
@@ -164,7 +217,10 @@ fn preflight_pdf(bytes: &[u8]) -> Result<(), ExtractError> {
     Ok(())
 }
 
-fn extract_text_capped(bytes: &[u8], password: Option<&str>) -> Result<String, ExtractError> {
+fn extract_text_capped(
+    bytes: &[u8],
+    password: Option<&str>,
+) -> Result<(String, u32), ExtractError> {
     let mut document =
         pdf_extract::Document::load_mem(bytes).map_err(|_| ExtractError::Extraction)?;
     if document.is_encrypted() {
@@ -174,9 +230,11 @@ fn extract_text_capped(bytes: &[u8], password: Option<&str>) -> Result<String, E
         )
         .map_err(|error| classify_decryption_error(error, password.is_some()))?;
     }
-    if document.objects.len() > MAX_PDF_OBJECTS || document.get_pages().len() > MAX_PDF_PAGES {
+    let page_count = document.get_pages().len();
+    if document.objects.len() > MAX_PDF_OBJECTS || page_count == 0 || page_count > MAX_PDF_PAGES {
         return Err(ExtractError::InvalidInput);
     }
+    let page_count = u32::try_from(page_count).map_err(|_| ExtractError::InvalidInput)?;
 
     let mut text = CappedBytes::new(MAX_EXTRACTED_TEXT_BYTES);
     let output_result = {
@@ -196,9 +254,11 @@ fn extract_text_capped(bytes: &[u8], password: Option<&str>) -> Result<String, E
         if fallback.len() > MAX_EXTRACTED_TEXT_BYTES {
             return Err(ExtractError::InvalidInput);
         }
-        return Ok(fallback);
+        return Ok((fallback, page_count));
     }
-    String::from_utf8(text.value).map_err(|_| ExtractError::Extraction)
+    String::from_utf8(text.value)
+        .map(|text| (text, page_count))
+        .map_err(|_| ExtractError::Extraction)
 }
 
 fn classify_decryption_error(error: pdf_extract::Error, password_supplied: bool) -> ExtractError {

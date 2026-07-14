@@ -8,7 +8,14 @@ export interface DocumentEvidenceReadModel {
   readonly text: string
   readonly confidenceBps: number
   readonly issues: readonly string[]
-  readonly pages: readonly { readonly pageNumber: number; readonly regions: readonly ExtractedRegionDto[] }[]
+  readonly pages: readonly {
+    readonly pageNumber: number
+    readonly widthPixels: number | null
+    readonly heightPixels: number | null
+    readonly confidenceBps: number
+    readonly issues: readonly string[]
+    readonly regions: readonly ExtractedRegionDto[]
+  }[]
   readonly receipt: {
     readonly merchant: string | null
     readonly occurredOn: string | null
@@ -93,7 +100,20 @@ export function buildDocumentEvidence(record: SourceRecordViewDto): DocumentEvid
   const extraction = object(payload.extraction)
   if (!extraction) return null
   const regions = Array.isArray(extraction.regions) ? extraction.regions.map(region).filter((value): value is ExtractedRegionDto => value !== null) : []
-  const pageNumbers = [...new Set(regions.map((item) => item.pageNumber))].sort((left, right) => left - right)
+  const outcomes = Array.isArray(extraction.pages) ? extraction.pages.flatMap((value) => {
+    const page = object(value)
+    const pageNumber = page && integer(page.pageNumber, 1, 10_000)
+    const confidenceBps = page && integer(page.confidenceBps, 0, 10_000)
+    if (!page || pageNumber === null || confidenceBps === null) return []
+    return [{
+      pageNumber,
+      widthPixels: page.widthPixels === null ? null : integer(page.widthPixels, 1, 20_000),
+      heightPixels: page.heightPixels === null ? null : integer(page.heightPixels, 1, 20_000),
+      confidenceBps,
+      issues: stringList(page.issues),
+    }]
+  }) : []
+  const pageNumbers = [...new Set([...outcomes.map((item) => item.pageNumber), ...regions.map((item) => item.pageNumber)])].sort((left, right) => left - right)
   const receipt = object(payload.receipt)
   return {
     sourceRecordId: record.id,
@@ -102,7 +122,17 @@ export function buildDocumentEvidence(record: SourceRecordViewDto): DocumentEvid
     text: text(extraction.text) ?? '',
     confidenceBps: integer(extraction.confidenceBps, 0, 10_000) ?? 0,
     issues: stringList(extraction.issues),
-    pages: pageNumbers.map((pageNumber) => ({ pageNumber, regions: regions.filter((item) => item.pageNumber === pageNumber) })),
+    pages: pageNumbers.map((pageNumber) => {
+      const outcome = outcomes.find((item) => item.pageNumber === pageNumber)
+      return {
+        pageNumber,
+        widthPixels: outcome?.widthPixels ?? null,
+        heightPixels: outcome?.heightPixels ?? null,
+        confidenceBps: outcome?.confidenceBps ?? (regions.filter((item) => item.pageNumber === pageNumber)[0]?.confidenceBps ?? 0),
+        issues: outcome?.issues ?? [],
+        regions: regions.filter((item) => item.pageNumber === pageNumber),
+      }
+    }),
     receipt: receipt ? {
       merchant: text(receipt.merchant),
       occurredOn: text(receipt.occurredOn),

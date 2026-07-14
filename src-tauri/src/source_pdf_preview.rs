@@ -32,6 +32,8 @@ pub enum SourcePdfPreviewError {
     PasswordInvalid,
     #[error("source PDF password encryption is unsupported")]
     PasswordUnsupported,
+    #[error("source PDF exceeds the page limit")]
+    PageLimitExceeded,
 }
 
 impl SourcePdfPreviewError {
@@ -44,6 +46,7 @@ impl SourcePdfPreviewError {
             Self::PasswordRequired => "Source PDF password is required",
             Self::PasswordInvalid => "Source PDF password is invalid",
             Self::PasswordUnsupported => "Source PDF password encryption is unsupported",
+            Self::PageLimitExceeded => "Source PDF exceeds the page limit",
         }
     }
 }
@@ -179,13 +182,100 @@ pub fn attempt_source_pdf_page_preview(
     }
 }
 
-struct RenderedPage {
-    png: Vec<u8>,
-    page_count: u32,
-    page_width_points: f32,
-    page_height_points: f32,
-    width_pixels: u16,
-    height_pixels: u16,
+pub(crate) struct RenderedPage {
+    pub page_number: u32,
+    pub png: Vec<u8>,
+    pub page_count: u32,
+    pub page_width_points: f32,
+    pub page_height_points: f32,
+    pub width_pixels: u16,
+    pub height_pixels: u16,
+}
+
+/// Renders a complete PDF using the same deterministic dimensions as the
+/// authenticated source viewer. Scanned-PDF OCR can therefore persist pixel
+/// boxes that align with the later original-page preview.
+pub(crate) fn render_pdf_pages(
+    bytes: &[u8],
+    password: Option<&str>,
+    maximum_pages: usize,
+    maximum_pixels: u64,
+) -> Result<Vec<RenderedPage>, SourcePdfPreviewError> {
+    let pdf =
+        Pdf::new_with_password(bytes.to_vec(), password.unwrap_or("")).map_err(
+            |error| match error {
+                LoadPdfError::Decryption(DecryptionError::PasswordProtected) => {
+                    if password.is_some() {
+                        SourcePdfPreviewError::PasswordInvalid
+                    } else {
+                        SourcePdfPreviewError::PasswordRequired
+                    }
+                }
+                LoadPdfError::Decryption(DecryptionError::UnsupportedAlgorithm) => {
+                    SourcePdfPreviewError::PasswordUnsupported
+                }
+                _ => SourcePdfPreviewError::Unavailable,
+            },
+        )?;
+    let pages = pdf.pages();
+    if pages.is_empty() || pages.len() > MAX_PDF_PAGES {
+        return Err(SourcePdfPreviewError::Unavailable);
+    }
+    if maximum_pages == 0 || pages.len() > maximum_pages {
+        return Err(SourcePdfPreviewError::PageLimitExceeded);
+    }
+    let page_count = u32::try_from(pages.len()).map_err(|_| SourcePdfPreviewError::Unavailable)?;
+    let cache = RenderCache::new();
+    let mut rendered = Vec::with_capacity(pages.len());
+    let mut rendered_pixels = 0_u64;
+    for (index, page) in pages.iter().enumerate() {
+        let (page_width_points, page_height_points) = page.render_dimensions();
+        if !page_width_points.is_finite()
+            || !page_height_points.is_finite()
+            || page_width_points <= 0.0
+            || page_height_points <= 0.0
+        {
+            return Err(SourcePdfPreviewError::Unavailable);
+        }
+        let scale = (MAX_RENDER_EDGE / page_width_points.max(page_height_points)).min(2.0);
+        let width_pixels = (page_width_points * scale)
+            .round()
+            .clamp(1.0, MAX_RENDER_EDGE) as u16;
+        let height_pixels = (page_height_points * scale)
+            .round()
+            .clamp(1.0, MAX_RENDER_EDGE) as u16;
+        rendered_pixels = rendered_pixels
+            .checked_add(u64::from(width_pixels) * u64::from(height_pixels))
+            .ok_or(SourcePdfPreviewError::PageLimitExceeded)?;
+        if maximum_pixels == 0 || rendered_pixels > maximum_pixels {
+            return Err(SourcePdfPreviewError::PageLimitExceeded);
+        }
+        let pixmap = render(
+            page,
+            &cache,
+            &InterpreterSettings::default(),
+            &RenderSettings {
+                x_scale: scale,
+                y_scale: scale,
+                width: Some(width_pixels),
+                height: Some(height_pixels),
+                bg_color: WHITE,
+            },
+        );
+        rendered.push(RenderedPage {
+            page_number: u32::try_from(index + 1)
+                .map_err(|_| SourcePdfPreviewError::Unavailable)?,
+            png: pixmap
+                .into_png()
+                .map_err(|_| SourcePdfPreviewError::Unavailable)?,
+            page_count,
+            page_width_points,
+            page_height_points,
+            width_pixels,
+            height_pixels,
+        });
+    }
+    Ok(rendered)
 }
 
 fn render_page(
@@ -249,6 +339,7 @@ fn render_page(
         .into_png()
         .map_err(|_| SourcePdfPreviewError::Unavailable)?;
     Ok(RenderedPage {
+        page_number,
         png,
         page_count: u32::try_from(pages.len()).map_err(|_| SourcePdfPreviewError::Unavailable)?,
         page_width_points,
@@ -327,6 +418,15 @@ mod tests {
             render_source_pdf_page(&connection, &vault, "other", "document", 1),
             Err(SourcePdfPreviewError::NotFound)
         );
+    }
+
+    #[test]
+    fn rejects_a_complete_render_before_allocating_beyond_the_pixel_budget() {
+        let bytes = text_pdf("KakeFlow 1200");
+        assert!(matches!(
+            render_pdf_pages(&bytes, None, 1, 1),
+            Err(SourcePdfPreviewError::PageLimitExceeded)
+        ));
     }
 
     #[test]

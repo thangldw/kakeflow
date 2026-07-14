@@ -6,6 +6,7 @@ pub mod card_settlement_mapping;
 pub mod change_package;
 pub mod dashboard_preferences;
 pub mod document_extract;
+pub mod document_pdf_ocr;
 pub mod document_vault;
 pub mod evidence_bundle;
 pub mod family_delivery_credentials;
@@ -168,6 +169,27 @@ struct OcrPaths {
     temporary_directory: std::path::PathBuf,
     bundled_executable: Option<std::path::PathBuf>,
     bundled_tessdata: Option<std::path::PathBuf>,
+}
+
+fn bundled_ocr_ready(executable: &std::path::Path, tessdata: &std::path::Path) -> bool {
+    let executable_ready = executable.is_file() && bundled_ocr_is_executable(executable);
+    executable_ready
+        && tessdata.join("jpn.traineddata").is_file()
+        && tessdata.join("eng.traineddata").is_file()
+        && tessdata.join("configs").join("tsv").is_file()
+}
+
+#[cfg(unix)]
+fn bundled_ocr_is_executable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    path.metadata()
+        .is_ok_and(|metadata| metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn bundled_ocr_is_executable(path: &std::path::Path) -> bool {
+    path.is_file()
 }
 
 #[derive(Debug, Serialize)]
@@ -3345,6 +3367,28 @@ fn document_ocr(
     run_local_ocr(&paths, file_bytes, media_type)
 }
 
+#[tauri::command]
+fn document_pdf_ocr_attempt(
+    paths: tauri::State<'_, OcrPaths>,
+    file_bytes: Vec<u8>,
+    media_type: String,
+    password: Option<String>,
+) -> Result<document_pdf_ocr::PdfOcrAttempt, String> {
+    let password = password.map(zeroize::Zeroizing::new);
+    let config = ocr::OcrConfig {
+        executable: paths.bundled_executable.clone(),
+        tessdata_dir: paths.bundled_tessdata.clone(),
+        ..ocr::OcrConfig::default()
+    };
+    Ok(document_pdf_ocr::attempt_pdf_ocr(
+        &file_bytes,
+        &media_type,
+        password.as_ref().map(|value| value.as_str()),
+        &paths.temporary_directory,
+        config,
+    ))
+}
+
 fn run_local_ocr(
     paths: &OcrPaths,
     file_bytes: Vec<u8>,
@@ -3395,28 +3439,31 @@ fn run_local_ocr(
     if confidence_bps < 7_500 {
         issues.push("LOW_OCR_CONFIDENCE");
     }
+    let mut regions = document_pdf_ocr::line_regions(1, &result.words);
+    regions.extend(
+        result
+            .words
+            .iter()
+            .map(|word| document_pdf_ocr::word_region(1, word)),
+    );
     Ok(document_extract::ExtractedDocument {
         method: "OCR",
         text: result.text,
         confidence_bps,
         issues,
-        regions: result
-            .words
-            .into_iter()
-            .map(|word| document_extract::ExtractedRegion {
-                page_number: word.page.max(1),
-                coordinate_space: "PIXELS".to_owned(),
-                bounding_box: Some(document_extract::EvidenceBoundingBox {
-                    left: word.left,
-                    top: word.top,
-                    width: word.width,
-                    height: word.height,
-                }),
-                text: word.text,
-                confidence_bps: (word.confidence * 10_000.0).round() as u16,
-                provenance: "TESSERACT_WORD".to_owned(),
-            })
-            .collect(),
+        regions,
+        page_count: 1,
+        pages: vec![document_extract::ExtractedPage {
+            page_number: 1,
+            width_pixels: None,
+            height_pixels: None,
+            confidence_bps,
+            issues: if confidence_bps < 7_500 {
+                vec!["LOW_OCR_CONFIDENCE"]
+            } else {
+                Vec::new()
+            },
+        }],
     })
 }
 
@@ -3531,7 +3578,7 @@ pub fn run() {
                     "tesseract"
                 });
             let bundled_tessdata = resource_dir.join("ocr").join("tessdata");
-            let bundled_ocr_available = bundled_ocr.is_file() && bundled_tessdata.is_dir();
+            let bundled_ocr_available = bundled_ocr_ready(&bundled_ocr, &bundled_tessdata);
             let ocr_temporary_directory = app_data_dir.join("temporary").join("ocr");
             if let Ok(metadata) = std::fs::symlink_metadata(&ocr_temporary_directory) {
                 if metadata.file_type().is_symlink() || metadata.is_file() {
@@ -3785,7 +3832,8 @@ pub fn run() {
             app_restart_for_restore,
             document_extract,
             document_extract_attempt,
-            document_ocr
+            document_ocr,
+            document_pdf_ocr_attempt
         ])
         .run(tauri::generate_context!())
         .expect("KakeFlow failed to start");
@@ -3794,10 +3842,11 @@ pub fn run() {
 #[cfg(test)]
 mod command_authorization_tests {
     use super::{
-        cached_family_envelope_output, validate_import_metrics, ImportEnvelopeMetrics,
-        RestoreCommandAuthorization, MAX_IMPORT_CANDIDATES, MAX_IMPORT_CARD_LINES,
-        MAX_IMPORT_CARD_STATEMENTS, MAX_IMPORT_EVIDENCE_LINKS, MAX_IMPORT_FILE_BYTES,
-        MAX_IMPORT_METADATA_BYTES, MAX_IMPORT_RAW_PAYLOAD_BYTES, MAX_IMPORT_RECORDS,
+        bundled_ocr_ready, cached_family_envelope_output, validate_import_metrics,
+        ImportEnvelopeMetrics, RestoreCommandAuthorization, MAX_IMPORT_CANDIDATES,
+        MAX_IMPORT_CARD_LINES, MAX_IMPORT_CARD_STATEMENTS, MAX_IMPORT_EVIDENCE_LINKS,
+        MAX_IMPORT_FILE_BYTES, MAX_IMPORT_METADATA_BYTES, MAX_IMPORT_RAW_PAYLOAD_BYTES,
+        MAX_IMPORT_RECORDS,
     };
     use crate::{
         family_delivery_transport::CachedOutboundEnvelopeDto,
@@ -3806,6 +3855,32 @@ mod command_authorization_tests {
         },
     };
     use sha2::{Digest, Sha256};
+
+    #[test]
+    fn bundled_ocr_requires_both_models_the_tsv_config_and_an_executable() {
+        let temporary = tempfile::tempdir().unwrap();
+        let executable = temporary.path().join("tesseract");
+        let tessdata = temporary.path().join("tessdata");
+        std::fs::create_dir_all(tessdata.join("configs")).unwrap();
+        std::fs::write(&executable, b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut permissions = executable.metadata().unwrap().permissions();
+            permissions.set_mode(0o700);
+            std::fs::set_permissions(&executable, permissions).unwrap();
+        }
+        std::fs::write(tessdata.join("eng.traineddata"), b"eng").unwrap();
+        std::fs::write(tessdata.join("jpn.traineddata"), b"jpn").unwrap();
+        assert!(!bundled_ocr_ready(&executable, &tessdata));
+
+        std::fs::write(
+            tessdata.join("configs").join("tsv"),
+            b"tessedit_create_tsv 1\n",
+        )
+        .unwrap();
+        assert!(bundled_ocr_ready(&executable, &tessdata));
+    }
 
     #[test]
     fn restore_authorization_is_exact_match_and_one_shot() {

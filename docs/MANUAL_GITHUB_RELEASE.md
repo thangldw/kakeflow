@@ -5,6 +5,8 @@ KakeFlow can publish a locally verified release without a GitHub-hosted Actions 
 ## Required local gates
 
 ```bash
+npm run ocr:stage:mac
+npm run ocr:verify
 npm run desktop:smoke
 APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac:dmg
 npm run test:dmg
@@ -13,6 +15,10 @@ npm run test:packaged
 codesign --verify --deep --strict --verbose=2 src-tauri/target/release/bundle/macos/KakeFlow.app
 shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_VERSION_aarch64.dmg
 ```
+
+The generated OCR runtime is intentionally not stored in Git. A clean release
+checkout must stage it first; both macOS bundle commands fail before packaging
+when the pinned manifest, binary, models, or TSV configuration are absent.
 
 Run the packaged-app smoke a second time when the change affects persistence, migrations, import, or application startup. The DMG is ad-hoc signed and is not notarized unless external Apple credentials are configured.
 

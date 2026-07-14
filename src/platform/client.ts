@@ -1124,7 +1124,53 @@ function parseExtractedDocument(value: unknown): ExtractedDocumentDto {
   if ((record.method !== 'EMBEDDED_TEXT' && record.method !== 'OCR') || typeof record.text !== 'string' || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('extracted document')
   const confidenceBps = asSafeInteger(record.confidenceBps)
   if (confidenceBps > 10_000) throw new TypeError('confidence')
-  return { method: record.method, text: record.text, confidenceBps, issues: record.issues }
+  const pages = typeof record.pages === 'undefined' ? undefined : parseExtractedPages(record.pages, record.pageCount)
+  const pageCount = pages ? pages.length : typeof record.pageCount === 'undefined' ? undefined : asBoundedInteger(record.pageCount, 10_000)
+  if (pageCount === 0) throw new TypeError('page count')
+  const regions = typeof record.regions === 'undefined' ? undefined : parseExtractedRegions(record.regions, pages)
+  return { method: record.method, text: record.text, confidenceBps, issues: record.issues, regions, pageCount, pages }
+}
+
+function parseExtractedPages(value: unknown, declaredPageCount: unknown): NonNullable<ExtractedDocumentDto['pages']> {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) throw new TypeError('extracted pages')
+  const pageCount = asBoundedInteger(declaredPageCount, 10_000)
+  if (pageCount !== value.length) throw new TypeError('page count')
+  return value.map((item, index) => {
+    const page = asRecord(item)
+    const pageNumber = asBoundedInteger(page.pageNumber, 10_000)
+    if (pageNumber !== index + 1) throw new TypeError('page order')
+    const widthPixels = page.widthPixels === null ? null : asBoundedInteger(page.widthPixels, 20_000)
+    const heightPixels = page.heightPixels === null ? null : asBoundedInteger(page.heightPixels, 20_000)
+    if ((widthPixels === null) !== (heightPixels === null) || widthPixels === 0 || heightPixels === 0) throw new TypeError('page dimensions')
+    const confidenceBps = asBoundedInteger(page.confidenceBps, 10_000)
+    if (!Array.isArray(page.issues) || !page.issues.every((issue) => typeof issue === 'string')) throw new TypeError('page issues')
+    return { pageNumber, widthPixels, heightPixels, confidenceBps, issues: page.issues }
+  })
+}
+
+function parseExtractedRegions(value: unknown, pages?: NonNullable<ExtractedDocumentDto['pages']>): NonNullable<ExtractedDocumentDto['regions']> {
+  if (!Array.isArray(value) || value.length > 10_000) throw new TypeError('extracted regions')
+  return value.map((item) => {
+    const region = asRecord(item)
+    const pageNumber = asBoundedInteger(region.pageNumber, 10_000)
+    if (pageNumber === 0 || (pages && pageNumber > pages.length)) throw new TypeError('region page')
+    if (region.coordinateSpace !== 'PIXELS' && region.coordinateSpace !== 'PDF_POINTS' && region.coordinateSpace !== 'UNLOCATED') throw new TypeError('coordinate space')
+    const confidenceBps = asBoundedInteger(region.confidenceBps, 10_000)
+    if (typeof region.text !== 'string' || typeof region.provenance !== 'string' || !region.provenance) throw new TypeError('region')
+    let boundingBox = null
+    if (region.boundingBox !== null) {
+      const box = asRecord(region.boundingBox)
+      boundingBox = {
+        left: asBoundedInteger(box.left, 100_000), top: asBoundedInteger(box.top, 100_000),
+        width: asBoundedInteger(box.width, 100_000), height: asBoundedInteger(box.height, 100_000),
+      }
+      if (boundingBox.width === 0 || boundingBox.height === 0 || region.coordinateSpace === 'UNLOCATED') throw new TypeError('region box')
+      const page = pages?.[pageNumber - 1]
+      if (region.coordinateSpace === 'PIXELS' && page?.widthPixels != null && page.heightPixels != null
+        && (boundingBox.left + boundingBox.width > page.widthPixels || boundingBox.top + boundingBox.height > page.heightPixels)) throw new TypeError('region bounds')
+    } else if (region.coordinateSpace !== 'UNLOCATED') throw new TypeError('region box')
+    return { pageNumber, coordinateSpace: region.coordinateSpace, boundingBox, text: region.text, confidenceBps, provenance: region.provenance }
+  })
 }
 
 const CARD_STATUSES: readonly CardReconciliationStatusDto[] = ['UNMATCHED', 'POSSIBLE_MATCH', 'FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'OVERPAID', 'UNDERPAID', 'MANUAL_OVERRIDE']

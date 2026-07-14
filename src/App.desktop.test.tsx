@@ -1604,7 +1604,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
     const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
     fireEvent.change(input, { target: { files: [new File(['%PDF-1.3 protected'], 'protected.pdf', { type: 'application/pdf' })] } })
-    fireEvent.click(await screen.findByRole('button', { name: 'PDF抽出' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'PDFを解析' }))
 
     expect(await screen.findByText('このPDFはパスワードで保護されています')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('PDFパスワード'), { target: { value: 'one-time-password' } })
@@ -1613,6 +1613,77 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('document_extract_attempt', expect.objectContaining({ password: 'one-time-password' })))
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
     expect(desktop.startImport.mock.calls.at(-1)?.[0]).not.toHaveProperty('password')
+    expect(screen.queryByLabelText('PDFパスワード')).not.toBeInTheDocument()
+  })
+
+  it('preserves multi-page scanned PDF evidence and stages only independently parseable receipt pages', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    const line = (pageNumber: number, text: string) => ({ pageNumber, coordinateSpace: 'PIXELS', boundingBox: { left: 0, top: 0, width: 100, height: 20 }, text, confidenceBps: 9000, provenance: 'TESSERACT_LINE' })
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'document_extract_attempt') return {
+        status: 'SUCCESS',
+        document: {
+          method: 'EMBEDDED_TEXT', text: '', confidenceBps: 0, issues: ['OCR_REQUIRED'], regions: [], pageCount: 2,
+          pages: [
+            { pageNumber: 1, widthPixels: null, heightPixels: null, confidenceBps: 0, issues: ['OCR_REQUIRED'] },
+            { pageNumber: 2, widthPixels: null, heightPixels: null, confidenceBps: 0, issues: ['OCR_REQUIRED'] },
+          ],
+        },
+      }
+      if (command === 'document_pdf_ocr_attempt') return {
+        status: 'SUCCESS',
+        document: {
+          method: 'OCR', text: 'スーパー\n2026/07/12\n合計 1,200\nCARD STATEMENT\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000', confidenceBps: 8800, issues: [], pageCount: 2,
+          pages: [
+            { pageNumber: 1, widthPixels: 1000, heightPixels: 1400, confidenceBps: 9200, issues: [] },
+            { pageNumber: 2, widthPixels: 1000, heightPixels: 1400, confidenceBps: 8600, issues: [] },
+          ],
+          regions: [
+            ...['スーパー', '2026/07/12', '合計 1,200'].map((text) => line(1, text)),
+            ...['CARD STATEMENT', '2026/07/01 A', '2026/07/02 B', '2026/07/03 C', '2026/07/04 D', 'TOTAL 20,000'].map((text) => line(2, text)),
+          ],
+        },
+      }
+      return fallback(command, args)
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File(['%PDF scan'], 'two-pages.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'PDFを解析' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スキャンPDF OCR' }))
+
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
+    const request = desktop.startImport.mock.calls.at(-1)?.[0]
+    expect(request.records).toHaveLength(2)
+    expect(request.candidates).toEqual([expect.objectContaining({ occurredOn: '2026-07-12', amountJpy: 1200, descriptionRaw: 'Receipt document page 1' })])
+    const payload = JSON.parse(request.records[0].payloadJson)
+    expect(payload.extraction.pages).toHaveLength(2)
+    expect(payload.receiptPages).toHaveLength(2)
+    expect(await screen.findByText(/独立したレシートとして読めた1ページだけを支出候補/)).toBeInTheDocument()
+  })
+
+  it('clears a stale PDF password prompt when OCR fails after password acceptance', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'document_extract_attempt') return {
+        status: 'SUCCESS', document: { method: 'EMBEDDED_TEXT', text: '', confidenceBps: 0, issues: ['OCR_REQUIRED'], regions: [], pageCount: 1, pages: [{ pageNumber: 1, widthPixels: null, heightPixels: null, confidenceBps: 0, issues: ['OCR_REQUIRED'] }] },
+      }
+      if (command === 'document_pdf_ocr_attempt') return args?.password === 'accepted-once'
+        ? { status: 'OCR_ENGINE_UNAVAILABLE', document: null }
+        : { status: 'PASSWORD_REQUIRED', document: null }
+      return fallback(command, args)
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File(['%PDF protected scan'], 'protected-scan.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'PDFを解析' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'スキャンPDF OCR' }))
+    fireEvent.change(await screen.findByLabelText('PDFパスワード'), { target: { value: 'accepted-once' } })
+    fireEvent.click(screen.getByRole('button', { name: 'ロックを解除' }))
+
+    expect(await screen.findByText('端末内OCRエンジンを利用できません。Tesseractと日本語・英語モデルを確認してください。')).toBeInTheDocument()
     expect(screen.queryByLabelText('PDFパスワード')).not.toBeInTheDocument()
   })
 

@@ -445,6 +445,13 @@ export interface ExtractedRegionDto {
   readonly confidenceBps: number
   readonly provenance: 'PDF_EMBEDDED_TEXT' | 'TESSERACT_WORD' | string
 }
+export interface ExtractedPageDto {
+  readonly pageNumber: number
+  readonly widthPixels: number | null
+  readonly heightPixels: number | null
+  readonly confidenceBps: number
+  readonly issues: readonly string[]
+}
 export interface ExtractedDocumentDto {
   readonly method: 'EMBEDDED_TEXT' | 'OCR'
   readonly text: string
@@ -452,6 +459,9 @@ export interface ExtractedDocumentDto {
   readonly issues: readonly string[]
   /** Optional while reading source payloads produced before the v0.5 evidence contract. */
   readonly regions?: readonly ExtractedRegionDto[]
+  /** Optional while reading persisted evidence created before the v0.62 page-outcome contract. */
+  readonly pageCount?: number
+  readonly pages?: readonly ExtractedPageDto[]
 }
 export type CardReconciliationStatusDto = 'UNMATCHED' | 'POSSIBLE_MATCH' | 'FULLY_RECONCILED' | 'PARTIALLY_RECONCILED' | 'OVERPAID' | 'UNDERPAID' | 'MANUAL_OVERRIDE'
 export interface CardSettlementPaymentDto {

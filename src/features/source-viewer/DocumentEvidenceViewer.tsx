@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import type { ExtractedRegionDto } from '../../platform'
 import type { DocumentEvidenceReadModel } from './documentEvidence'
 import { EvidencePageOverlay } from './EvidencePageOverlay'
@@ -39,6 +39,7 @@ function RegionLocation({ region }: { readonly region: ExtractedRegionDto }) {
 }
 
 export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSource, pdfPageLoader, onSelectRegion }: DocumentEvidenceViewerProps) {
+  const evidenceTitleId = useId()
   const receipt = evidence.receipt
   const [selected, setSelected] = useState<{ pageNumber: number; regionIndex: number } | null>(null)
   const [renderedPdfPages, setRenderedPdfPages] = useState<Readonly<Record<number, EvidencePageImage>>>({})
@@ -85,8 +86,8 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
     setSelected({ pageNumber, regionIndex })
     onSelectRegion?.(pageNumber, region, regionIndex)
   }
-  return <article className="evidence-viewer" aria-labelledby="evidence-title">
-    <header className="evidence-header"><div><p>Source Evidence · v{evidence.evidenceVersion}</p><h2 id="evidence-title">{filename ?? `ソースレコード ${evidence.sourceRecordId}`}</h2></div><div className="evidence-confidence"><span>{methodLabels[evidence.method]}</span><strong>{confidence(evidence.confidenceBps)}</strong></div></header>
+  return <article className="evidence-viewer" aria-labelledby={evidenceTitleId}>
+    <header className="evidence-header"><div><p>Source Evidence · v{evidence.evidenceVersion}</p><h2 id={evidenceTitleId}>{filename ?? `ソースレコード ${evidence.sourceRecordId}`}</h2></div><div className="evidence-confidence"><span>{methodLabels[evidence.method]}</span><strong>{confidence(evidence.confidenceBps)}</strong></div></header>
     {evidence.issues.length > 0 && <aside className="evidence-issues" role="status"><strong>抽出時の注意</strong><ul>{evidence.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></aside>}
     {pdfPasswordStatus && <PdfPasswordPrompt filename={filename} status={pdfPasswordStatus} onSubmit={retryPdfPassword} onCancel={() => setPdfPasswordStatus(null)} />}
 
@@ -105,7 +106,7 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
     </section>}
 
     <section className="evidence-pages" aria-labelledby="evidence-pages-title"><header><div><p>Located evidence</p><h3 id="evidence-pages-title">ページ・領域</h3></div><span>{evidence.pages.length}ページ</span></header>
-      {evidence.pages.length === 0 ? <p className="evidence-empty">この抽出結果には座標情報がありません。</p> : evidence.pages.map((page) => <section className="evidence-page" key={page.pageNumber} aria-labelledby={`evidence-page-${page.pageNumber}`}><header><h4 id={`evidence-page-${page.pageNumber}`}>Page {page.pageNumber}</h4><span>{pendingPdfPages.includes(page.pageNumber) ? '原本を描画中…' : failedPdfPages.includes(page.pageNumber) ? '原本プレビュー unavailable' : `${page.regions.length} regions`}</span></header><EvidencePageOverlay pageNumber={page.pageNumber} regions={page.regions} image={resolvedPageImages[page.pageNumber]} selectedRegionIndexes={selected?.pageNumber === page.pageNumber ? [selected.regionIndex] : []} onSelectRegion={(region, index) => selectRegion(page.pageNumber, region, index)} /><ol>{page.regions.map((region, index) => {
+      {evidence.pages.length === 0 ? <p className="evidence-empty">この抽出結果にはページ情報がありません。</p> : evidence.pages.map((page) => <section className="evidence-page" key={page.pageNumber} aria-labelledby={`${evidenceTitleId}-page-${page.pageNumber}`}><header><h4 id={`${evidenceTitleId}-page-${page.pageNumber}`}>Page {page.pageNumber}</h4><span>{pendingPdfPages.includes(page.pageNumber) ? '原本を描画中…' : failedPdfPages.includes(page.pageNumber) ? '原本プレビュー unavailable' : `${page.regions.length} regions · ${confidence(page.confidenceBps ?? evidence.confidenceBps)}`}</span></header>{(page.issues?.length ?? 0) > 0 && <p className="evidence-overlay-empty" role="status">{page.issues.join(' / ')}</p>}<EvidencePageOverlay pageNumber={page.pageNumber} regions={page.regions} image={resolvedPageImages[page.pageNumber]} widthPixels={page.widthPixels} heightPixels={page.heightPixels} selectedRegionIndexes={selected?.pageNumber === page.pageNumber ? [selected.regionIndex] : []} onSelectRegion={(region, index) => selectRegion(page.pageNumber, region, index)} /><ol>{page.regions.map((region, index) => {
           const content = <><div className="region-copy"><q>{region.text || '（空の領域）'}</q><span>{region.provenance}</span></div><div className="region-meta"><RegionLocation region={region} /><strong>{confidence(region.confidenceBps)}</strong></div></>
           return <li key={`${region.provenance}-${index}`} className={selected?.pageNumber === page.pageNumber && selected.regionIndex === index ? 'selected' : ''}><button type="button" onClick={() => selectRegion(page.pageNumber, region, index)} aria-label={`Page ${page.pageNumber} region ${index + 1}を表示`}>{content}</button></li>
         })}</ol></section>)}
