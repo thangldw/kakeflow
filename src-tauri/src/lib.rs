@@ -26,6 +26,7 @@ mod folder_discovery;
 pub mod forecast_action;
 pub mod google_drive_api;
 pub mod google_drive_command_service;
+pub mod google_drive_commands;
 pub mod google_drive_credentials;
 pub mod google_drive_folder;
 pub mod google_drive_hydration;
@@ -4156,6 +4157,11 @@ pub fn run() {
             } else {
                 family_delivery_credentials::FamilyDeliveryCredentialStore::new_os()?
             };
+            let google_drive_credentials = if setup_smoke_config.is_some() {
+                google_drive_credentials::GoogleDriveCredentialStore::new_ephemeral()
+            } else {
+                google_drive_credentials::GoogleDriveCredentialStore::new_os()?
+            };
             if master_key.len() != 32 {
                 return Err(std::io::Error::other("database key has invalid length").into());
             }
@@ -4177,6 +4183,7 @@ pub fn run() {
             app.manage(vault);
             app.manage(family_envelope_identity);
             app.manage(family_delivery_credentials);
+            app.manage(google_drive_credentials);
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
             app.manage(RestoreCommandAuthorization::default());
@@ -4375,6 +4382,17 @@ pub fn run() {
             watched_file_inbox_mark_staged,
             watched_file_inbox_ignore,
             watched_file_inbox_retry,
+            google_drive_commands::google_drive_availability,
+            google_drive_commands::google_drive_connections_list,
+            google_drive_commands::google_drive_connect,
+            google_drive_commands::google_drive_folder_bind,
+            google_drive_commands::google_drive_disconnect,
+            google_drive_commands::google_drive_schedule_get,
+            google_drive_commands::google_drive_schedule_update,
+            google_drive_commands::google_drive_sync_now,
+            google_drive_commands::google_drive_inbox_list,
+            google_drive_commands::google_drive_inbox_ignore,
+            google_drive_commands::google_drive_inbox_retry,
             import_summary,
             cards_list,
             card_match_confirm,

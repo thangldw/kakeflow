@@ -487,6 +487,85 @@ pub fn list_inbox(
         .collect()
 }
 
+pub fn list_inbox_in_state(
+    connection: &Connection,
+    household_id: &str,
+    connection_id: &str,
+    state: &str,
+    limit: u16,
+) -> Result<Vec<GoogleDriveInboxItemDto>> {
+    validate_scoped_ids(household_id, connection_id)?;
+    if !(1..=500).contains(&limit)
+        || !matches!(
+            state,
+            "DISCOVERED"
+                | "PROCESSING"
+                | "READY"
+                | "NEEDS_MAPPING"
+                | "STAGED"
+                | "IGNORED"
+                | "FAILED"
+                | "REMOVED"
+        )
+    {
+        return Err(GoogleDriveStoreError::InvalidInput);
+    }
+    recover_expired_inbox_leases(connection, household_id, connection_id)?;
+    let mut statement = connection.prepare(
+        "SELECT id FROM google_drive_inbox
+         WHERE household_id=?1 AND connection_id=?2 AND state=?3
+         ORDER BY updated_at DESC,id LIMIT ?4",
+    )?;
+    let ids = statement
+        .query_map(params![household_id, connection_id, state, limit], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    ids.iter()
+        .map(|id| load_inbox_item(connection, household_id, id))
+        .collect()
+}
+
+pub fn ignore_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+) -> Result<GoogleDriveInboxItemDto> {
+    validate_id(household_id, 128)?;
+    validate_hash(item_id)?;
+    let changed = connection.execute(
+        "UPDATE google_drive_inbox SET state='IGNORED',last_error_code=NULL,
+             lease_token=NULL,lease_expires_at=NULL,processing_origin_state=NULL,
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id=?2 AND household_id=?1
+           AND state IN ('DISCOVERED','READY','NEEDS_MAPPING','FAILED')",
+        params![household_id, item_id],
+    )?;
+    if changed != 1 {
+        return Err(GoogleDriveStoreError::Conflict);
+    }
+    load_inbox_item(connection, household_id, item_id)
+}
+
+pub fn retry_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+) -> Result<GoogleDriveInboxItemDto> {
+    validate_id(household_id, 128)?;
+    validate_hash(item_id)?;
+    let changed = connection.execute(
+        "UPDATE google_drive_inbox SET state='DISCOVERED',last_error_code=NULL,
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id=?2 AND household_id=?1 AND state='FAILED' AND attempt_count<?3",
+        params![household_id, item_id, MAX_INBOX_ATTEMPTS],
+    )?;
+    if changed != 1 {
+        return Err(GoogleDriveStoreError::Conflict);
+    }
+    load_inbox_item(connection, household_id, item_id)
+}
+
 pub fn claim_inbox(
     connection: &Connection,
     household_id: &str,
