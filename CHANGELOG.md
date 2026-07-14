@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.80.0 — 2026-07-15
+
+- Add a provider-aware native iCloud Drive durable Inbox for user-selected, locally synchronized folders on macOS and Windows without claiming Apple API or CloudKit access.
+- Preserve `ICLOUD_PICKER` / `ICLOUD` provenance from the registered folder through durable discovery, preview, Source Document, pending-review recovery, and explicit ledger posting.
+- Keep unavailable iCloud placeholders retryable with a bounded `CLOUD_FILE_UNAVAILABLE` state while retaining canonical path, containment, symlink, stable-read, and no-auto-post boundaries.
+- Add a durable foreground queue to the reference mobile-browser receipt uploader: commit exact capsule bytes to IndexedDB before upload, recover interrupted work, and keep capture identity immutable across retries.
+- Verify relay acceptance against the stored capture ID and digest, cap automatic retries at five, retain session-only relay credentials, and keep native mobile/background delivery outside the release claim.
+- Continue the existing review boundary: folder discovery, mobile capture delivery, OCR, and import recovery never post a household transaction without explicit approval.
+
 ## 0.73.0 — 2026-07-15
 
 - Export the exact securities Portfolio Snapshot selected in the investment workspace as a deterministic Japanese PDF using the same household and snapshot request as the screen and native workbook; never substitute a newer snapshot.
