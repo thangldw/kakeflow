@@ -488,6 +488,50 @@ describe('platform client', () => {
     await expect(invalid.sealFamilyEnvelope({} as never)).rejects.toMatchObject({ command: 'family_envelope_seal', code: 'INVALID_RESPONSE' })
   })
 
+  it('validates and routes opt-in background family discovery commands', async () => {
+    const schedule = {
+      householdId: 'family', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-14T02:00:00.000Z',
+      running: false, leaseExpiresAt: null, lastAttemptAt: '2026-07-14T01:30:00.000Z',
+      lastSuccessAt: '2026-07-14T01:30:00.000Z', lastResult: 'DISCOVERED', lastDiscoveredCount: 2,
+      consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-14T01:30:00.000Z',
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => { invokeSpy(command, args); return schedule as T } })
+
+    await expect(client.getFamilyDeliveryBackgroundStatus('family')).resolves.toEqual(schedule)
+    await expect(client.enableFamilyDeliveryBackground({ householdId: 'family', token: 'session-secret', intervalMinutes: 30 })).resolves.toEqual(schedule)
+    await expect(client.disableFamilyDeliveryBackground('family')).resolves.toEqual(schedule)
+    await expect(client.runFamilyDeliveryBackgroundNow('family')).resolves.toEqual(schedule)
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_status', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_enable', { input: { householdId: 'family', token: 'session-secret', intervalMinutes: 30 } })
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_disable', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_run_now', { householdId: 'family' })
+
+    const unconfigured = {
+      ...schedule, enabled: false, nextDueAt: null, lastResult: 'DISABLED',
+      lastAttemptAt: null, lastSuccessAt: null, lastDiscoveredCount: 0, updatedAt: '2026-07-14T01:00:00.000Z',
+    }
+    const unconfiguredClient = createPlatformClient({ tauri: true, invoke: async <T>() => unconfigured as T })
+    await expect(unconfiguredClient.getFamilyDeliveryBackgroundStatus('family')).resolves.toEqual(unconfigured)
+
+    const invalidResponses = [
+      { ...schedule, intervalMinutes: 10 },
+      { ...schedule, running: true },
+      { ...schedule, lastResult: 'UNKNOWN' },
+      { ...schedule, lastDiscoveredCount: -1 },
+      { ...schedule, nextDueAt: 'soon' },
+      { ...schedule, enabled: false, lastResult: 'DISABLED', nextDueAt: schedule.nextDueAt },
+    ]
+    for (const response of invalidResponses) {
+      const invalid = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(invalid.getFamilyDeliveryBackgroundStatus('family')).rejects.toMatchObject({ command: 'family_delivery_background_status', code: 'INVALID_RESPONSE' })
+    }
+
+    const terminal = { ...schedule, nextDueAt: null, lastResult: 'TERMINAL_SUSPENDED', suspensionReason: 'AUTH_EXPIRED', lastErrorCode: 'AUTH_EXPIRED' }
+    const terminalClient = createPlatformClient({ tauri: true, invoke: async <T>() => terminal as T })
+    await expect(terminalClient.getFamilyDeliveryBackgroundStatus('family')).resolves.toEqual(terminal)
+  })
+
   it('loads and persists strictly validated household dashboard preferences', async () => {
     const saved = {
       householdId: 'family', template: 'CASH_FLOW', theme: 'DARK', density: 'COMPACT',

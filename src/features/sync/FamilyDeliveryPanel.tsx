@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { CloudDownload, CloudUpload, Copy, Link2Off, RefreshCw, UserPlus, X } from 'lucide-react'
 
 import { platformClient } from '../../platform'
-import type { FamilyDeliveryMembershipDto, FamilyDeliveryRemoteArtifactDto, FamilyDeliveryStatusDto, HouseholdMemberDto } from '../../platform'
+import type { FamilyDeliveryMembershipDto, FamilyDeliveryRemoteArtifactDto, FamilyDeliveryScheduleStatusDto, FamilyDeliveryStatusDto, HouseholdMemberDto } from '../../platform'
 import {
   cancelFamilyInvitation, createFamilyInvitation, downloadFamilyArtifact, FamilyDeliveryHttpError,
   createFamilyHousehold, getFamilyRemoteState, listFamilyArtifacts, previewFamilyInvitation, redeemFamilyInvitation,
@@ -46,6 +46,21 @@ const withheldLabels: Readonly<Record<string, string>> = {
   EVIDENCE_DEPENDENT_INVESTMENT: '投資の原本・証跡が不足', MIXED_PERSONAL_MEMBERS: '複数メンバーの個人データにまたがる',
   OTHER_MEMBER_PERSONAL: '別メンバーの個人データ', UNASSIGNED_SCOPE: '配信範囲が未設定', UNSUPPORTED_KIND: '未対応のデータ種類',
 }
+const scheduleResultLabels: Readonly<Record<FamilyDeliveryScheduleStatusDto['lastResult'], string>> = {
+  NEVER: 'まだ確認していません', DISABLED: '停止中', RUNNING: '確認中', NO_CHANGES: '新着なし',
+  DISCOVERED: '新着を発見', FAILED_RETRYABLE: '再試行待ち', LEASE_EXPIRED: '前回の確認が中断', TERMINAL_SUSPENDED: 'ユーザー操作が必要',
+}
+const scheduleSuspensionLabels: Readonly<Record<string, string>> = {
+  RETRY_BACKOFF: '接続エラーのため、次回の自動再試行まで待機しています。',
+  AUTH_EXPIRED: '接続トークンの有効期限が切れました。トークンを入力して自動チェックを更新してください。',
+  MEMBERSHIP_REVOKED: '家族スペースへの参加が停止されました。参加状態を確認してください。',
+  MISSING_CREDENTIAL: '保存済みの接続トークンが見つかりません。トークンを入力して自動チェックを更新してください。',
+}
+
+function displayScheduleTime(value: string | null): string {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat('ja-JP', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(value))
+}
 
 function withheldLabel(reason: string): string {
   return withheldLabels[reason] ?? `その他の保留理由（${reason}）`
@@ -82,6 +97,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
   const [ownerMemberId, setOwnerMemberId] = useState(() => members.find((member) => member.status === 'ACTIVE')?.id ?? '')
   const [selected, setSelected] = useState<readonly string[]>([])
   const [remoteArtifacts, setRemoteArtifacts] = useState<readonly FamilyDeliveryRemoteArtifactDto[]>([])
+  const [schedule, setSchedule] = useState<FamilyDeliveryScheduleStatusDto | null>(null)
+  const [scheduleInterval, setScheduleInterval] = useState<15 | 30 | 60>(30)
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState<Notice>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
@@ -94,10 +111,16 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
       const next = await platformClient.getFamilyDeliveryStatus(householdId)
       if (id !== request.current) return
       setStatus(next); setEndpoint(next.endpoint ?? '')
+      if (next.connectionState !== 'NOT_CONFIGURED') {
+        try {
+          const background = await platformClient.getFamilyDeliveryBackgroundStatus(householdId)
+          if (id === request.current) { setSchedule(background); setScheduleInterval(background.intervalMinutes as 15 | 30 | 60) }
+        } catch { if (id === request.current) setSchedule(null) }
+      } else setSchedule(null)
     } catch { if (id === request.current) setNotice({ kind: 'error', text: '家族配信の状態を確認できませんでした。' }) }
     finally { if (id === request.current) setBusy('') }
   }
-  useEffect(() => { setStatus(null); setToken(''); setInviteCode(''); setDialog(null); void load(); return () => { request.current += 1 } }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setStatus(null); setSchedule(null); setToken(''); setInviteCode(''); setDialog(null); void load(); return () => { request.current += 1 } }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setSelected((current) => status?.outbound.filter((part) => part.pendingChangeCount > 0 && ['READY', 'FAILED_RETRYABLE'].includes(part.state))
       .map((part) => part.audienceKey).filter((key) => current.length === 0 || current.includes(key)) ?? [])
@@ -168,7 +191,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
   const disconnect = async () => {
     if (!householdId) return
     setBusy('DISCONNECT')
-    try { setStatus(await platformClient.disconnectFamilyDelivery(householdId)); setToken(''); setNotice({ kind: 'status', text: '家族配信の接続を解除しました。未送信の変更はこの端末に残っています。' }) }
+    try { setStatus(await platformClient.disconnectFamilyDelivery(householdId)); setSchedule(null); setToken(''); setNotice({ kind: 'status', text: '家族配信の接続を解除しました。未送信の変更はこの端末に残っています。' }) }
     catch { setNotice({ kind: 'error', text: '家族配信の接続を解除できませんでした。' }) }
     finally { setBusy('') }
   }
@@ -241,6 +264,37 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     finally { setBusy('') }
   }
 
+  const enableBackground = async () => {
+    if (!householdId || !token) { setNotice({ kind: 'error', text: '自動確認を有効化または更新するには、現在の接続トークンを入力してください。' }); return }
+    setBusy('BACKGROUND_ENABLE')
+    try {
+      const next = await platformClient.enableFamilyDeliveryBackground({ householdId, token, intervalMinutes: scheduleInterval })
+      setSchedule(next)
+      setNotice({ kind: 'status', text: `自動受信チェックを${scheduleInterval}分間隔で有効にしました。KakeFlowが開いている間だけ確認します。` })
+    } catch { setNotice({ kind: 'error', text: '自動受信チェックを設定できませんでした。接続トークンを確認してください。' }) }
+    finally { setBusy('') }
+  }
+  const disableBackground = async () => {
+    if (!householdId) return
+    setBusy('BACKGROUND_DISABLE')
+    try {
+      setSchedule(await platformClient.disableFamilyDeliveryBackground(householdId))
+      setNotice({ kind: 'status', text: '自動受信チェックを停止し、OSの資格情報に保存した接続トークンを削除しました。' })
+    } catch { setNotice({ kind: 'error', text: '自動受信チェックを停止できませんでした。' }) }
+    finally { setBusy('') }
+  }
+  const runBackgroundNow = async () => {
+    if (!householdId) return
+    setBusy('BACKGROUND_NOW')
+    try {
+      const next = await platformClient.runFamilyDeliveryBackgroundNow(householdId)
+      setSchedule(next)
+      setStatus(await platformClient.getFamilyDeliveryStatus(householdId))
+      setNotice({ kind: 'status', text: next.lastDiscoveredCount > 0 ? `${next.lastDiscoveredCount}件の新着を受信可能として追加しました。内容の受信・確認・反映は手動です。` : '新しい家族データはありませんでした。' })
+    } catch { setNotice({ kind: 'error', text: '今すぐ受信確認を完了できませんでした。次回の自動確認で再試行します。' }) }
+    finally { setBusy('') }
+  }
+
   const membershipAction = async () => {
     if (!dialog || !householdId || !status?.endpoint || !token) return
     setBusy('MEMBERSHIP')
@@ -297,6 +351,18 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     {!connected && <div className="family-join-row"><label>招待コード<input value={inviteCode} disabled={Boolean(busy)} onChange={(event) => setInviteCode(event.target.value)} /></label><button className="secondary-btn" disabled={Boolean(busy)} onClick={() => void inspectInvite()}><UserPlus size={16} /> 招待内容を確認</button></div>}
     {connected && <>
       <dl className="family-identity-summary"><div><dt>接続中のアカウント</dt><dd>確認済み</dd></div><div><dt>このアカウントのメンバー</dt><dd>{status.localMemberName ?? '未参加'}</dd></div></dl>
+      <section className="family-background-section" aria-labelledby="family-background-heading">
+        <div className="family-section-head"><div><h3 id="family-background-heading">自動受信チェック</h3><p>KakeFlowが開いている間だけ、暗号化された新着の有無を確認します。発見したデータは「受信可能」のまま残り、受信・内容確認・台帳への反映はすべて手動です。</p></div><b className={schedule?.enabled ? 'background-enabled' : 'background-disabled'}>{schedule?.enabled ? '有効' : 'オプトイン未設定'}</b></div>
+        <p className="family-background-credential">有効化した場合だけ接続トークンをOSの資格情報に保存し、自動チェック専用に使います。手動の送信・受信・内容確認には、引き続きこの画面へのトークン入力が必要です。停止時には保存したトークンを削除します。</p>
+        <div className="family-background-controls">
+          <label>確認間隔<select aria-label="自動受信チェックの間隔" value={scheduleInterval} disabled={Boolean(busy)} onChange={(event) => setScheduleInterval(Number(event.target.value) as 15 | 30 | 60)}><option value={15}>15分</option><option value={30}>30分</option><option value={60}>60分</option></select></label>
+          <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void enableBackground()}>{schedule?.enabled ? '間隔とトークンを更新' : '自動チェックを有効にする'}</button>
+          {schedule?.enabled && <button className="text-btn" disabled={Boolean(busy)} onClick={() => void disableBackground()}>自動チェックを停止</button>}
+          {schedule?.enabled && <button className="secondary-btn" disabled={Boolean(busy) || schedule.running || schedule.lastResult === 'TERMINAL_SUSPENDED'} onClick={() => void runBackgroundNow()}><RefreshCw size={16} /> {busy === 'BACKGROUND_NOW' ? '確認中…' : '今すぐ確認'}</button>}
+        </div>
+        {schedule && <dl className="family-background-status"><div><dt>前回の結果</dt><dd>{scheduleResultLabels[schedule.lastResult]}{schedule.lastResult === 'DISCOVERED' ? `（${schedule.lastDiscoveredCount}件）` : ''}</dd></div><div><dt>前回の確認</dt><dd>{displayScheduleTime(schedule.lastAttemptAt)}</dd></div><div><dt>次回予定</dt><dd>{displayScheduleTime(schedule.nextDueAt)}</dd></div><div><dt>連続失敗</dt><dd>{schedule.consecutiveFailures}回</dd></div></dl>}
+        {schedule?.suspensionReason && <p className={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'family-delivery-error' : 'family-delivery-notice'} role={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'alert' : 'status'}>{scheduleSuspensionLabels[schedule.suspensionReason] ?? `自動チェックを一時停止しています（${schedule.suspensionReason}）。`}</p>}
+      </section>
       {status.connectionState === 'AUTH_EXPIRED' && <p className="family-delivery-error" role="alert">接続の有効期限が切れました。トークンを入力し直して再接続してください。</p>}
       {status.connectionState === 'MEMBERSHIP_REVOKED' && <p className="family-delivery-error" role="alert">この家族スペースへの配信は停止されています。新しいデータは送受信できません。</p>}
       <div className="family-membership-section"><h3>家族メンバーと配信先</h3>{displayMemberships.map((membership) => <article key={membership.memberId} className="family-delivery-member">

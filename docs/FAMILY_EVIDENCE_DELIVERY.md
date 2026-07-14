@@ -89,6 +89,9 @@ same immutable publication identity and recipient rules used by V1/V2.
 - V1 and V2 artifacts remain readable and apply through their existing JSON
   path.
 - V3 uses the binary `FAMILY_AUDIENCE_PARTITION_V3` path.
-- Delivery remains manual: there is no background sync or automatic apply.
-- The relay is not an end-to-end encrypted backup service and cannot erase
-  bytes that a recipient already downloaded.
+- KakeFlow v0.58 wraps V1/V2/V3 artifacts in the recipient-encrypted `KFE1`
+  transport while retaining the exact inner artifact and review contract.
+- Delivery remains manual in v0.58: there is no background scheduling or
+  automatic apply.
+- The relay stores opaque ciphertext, but `KFE1` is not a sender-signature or
+  backup-erasure protocol and cannot erase bytes already downloaded.

@@ -70,7 +70,10 @@ no accepted head is never an omission-delete candidate.
 
 ## Explicit non-claims
 
-Family delivery does not provide end-to-end encryption, realtime/background sync, remote
-ledger posting, evidence transport, remote deletion, or erasure of downloaded
-copies. The bundled relay is a reference transport that must be operated
-separately from the desktop app.
+KakeFlow v0.58 adds relay-blind recipient encryption through the `KFE1`
+transport envelope. The relay stores ciphertext and derives recipients from
+active membership, while device private keys remain native. `KFE1` does not
+add sender signatures, realtime/background synchronization, remote ledger
+posting, remote deletion, or erasure of downloaded copies. The bundled relay
+is a reference transport that must be operated separately from the desktop
+app.
