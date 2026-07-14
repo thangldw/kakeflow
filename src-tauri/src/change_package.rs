@@ -1469,21 +1469,67 @@ fn materialize_transaction(connection: &Connection, payload: &str) -> Result<()>
 }
 
 fn materialize_card_statement(connection: &Connection, payload: &str) -> Result<()> {
-    let incoming_source: Option<String> = connection.query_row(
-        "SELECT json_extract(?1,'$.sourceDocumentId')",
+    let (household_id, statement_id, incoming_source, explicit_origin): (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = connection.query_row(
+        "SELECT json_extract(?1,'$.householdId'),json_extract(?1,'$.id'),
+                json_extract(?1,'$.sourceDocumentId'),
+                json_extract(?1,'$.sourceOriginInstallationId')",
         [payload],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
-    let existing_source: Option<String> = connection
+    let incoming_origin = match incoming_source.as_deref() {
+        None if explicit_origin.is_none() => None,
+        None => return Err(ChangePackageError::Conflict),
+        Some(_) => Some(
+            explicit_origin
+                .or_else(|| {
+                    apply_source_installation(connection, &household_id)
+                        .ok()
+                        .flatten()
+                })
+                .ok_or(ChangePackageError::Conflict)?,
+        ),
+    };
+    let existing_portable: Option<(String, String)> = connection
+        .query_row(
+            "SELECT origin_installation_id,source_document_id
+             FROM card_statement_portable_source_refs
+             WHERE household_id=?1 AND statement_id=?2",
+            params![household_id, statement_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if existing_portable.as_ref().is_some_and(|existing| {
+        incoming_origin.as_deref() != Some(existing.0.as_str())
+            || incoming_source.as_deref() != Some(existing.1.as_str())
+    }) || (existing_portable.is_some() && incoming_source.is_none())
+    {
+        return Err(ChangePackageError::Conflict);
+    }
+    let local_source = match (incoming_origin.as_deref(), incoming_source.as_deref()) {
+        (Some(origin), Some(document)) => lookup_source_document_alias_under_apply_guard(
+            connection,
+            &household_id,
+            origin,
+            document,
+        )?,
+        (None, None) => None,
+        _ => return Err(ChangePackageError::Conflict),
+    };
+    let existing_local: Option<String> = connection
         .query_row(
             "SELECT source_document_id FROM card_statements
-             WHERE id=json_extract(?1,'$.id')",
-            [payload],
+             WHERE household_id=?1 AND id=?2",
+            params![household_id, statement_id],
             |row| row.get(0),
         )
         .optional()?
         .flatten();
-    if existing_source.is_some() && existing_source != incoming_source {
+    if existing_local.is_some() && existing_local != local_source {
         return Err(ChangePackageError::Conflict);
     }
     connection.execute(
@@ -1501,7 +1547,7 @@ fn materialize_card_statement(connection: &Connection, payload: &str) -> Result<
            statement_amount_jpy=excluded.statement_amount_jpy,
            reconciliation_status=excluded.reconciliation_status,
            created_at=excluded.created_at,source_document_id=excluded.source_document_id",
-        params![payload, existing_source.as_deref()],
+        params![payload, local_source.as_deref()],
     )?;
     connection.execute(
         "DELETE FROM card_statement_transactions WHERE statement_id=json_extract(?1,'$.id')",
@@ -1515,16 +1561,12 @@ fn materialize_card_statement(connection: &Connection, payload: &str) -> Result<
          FROM json_each(?1,'$.lines')",
         [payload],
     )?;
-    connection.execute(
-        "DELETE FROM card_statement_portable_source_refs
-         WHERE statement_id=json_extract(?1,'$.id')",
-        [payload],
-    )?;
-    if let Some(source_id) = incoming_source.filter(|_| existing_source.is_none()) {
+    if let (Some(origin), Some(source_id)) = (incoming_origin, incoming_source) {
         connection.execute(
-            "INSERT INTO card_statement_portable_source_refs(statement_id,source_document_id)
-             VALUES(json_extract(?1,'$.id'),?2)",
-            params![payload, source_id],
+            "INSERT INTO card_statement_portable_source_refs(
+               statement_id,household_id,origin_installation_id,source_document_id)
+             VALUES(?1,?2,?3,?4) ON CONFLICT(statement_id) DO NOTHING",
+            params![statement_id, household_id, origin, source_id],
         )?;
     }
     Ok(())
@@ -1541,10 +1583,83 @@ fn materialize_card_payment(connection: &Connection, payload: &str) -> Result<()
            json_extract(?1,'$.cardAccountId'),json_extract(?1,'$.paymentAmountJpy'),
            json_extract(?1,'$.paymentOn'),json_extract(?1,'$.matchScoreBps'),
            json_extract(?1,'$.reconciliationStatus'),json_extract(?1,'$.createdAt'),
-           json_extract(?1,'$.confirmedAt'))",
+           json_extract(?1,'$.confirmedAt'))
+         ON CONFLICT(id) DO UPDATE SET
+           household_id=excluded.household_id,statement_id=excluded.statement_id,
+           bank_transaction_id=excluded.bank_transaction_id,
+           card_account_id=excluded.card_account_id,
+           payment_amount_jpy=excluded.payment_amount_jpy,payment_on=excluded.payment_on,
+           match_score_bps=excluded.match_score_bps,
+           reconciliation_status=excluded.reconciliation_status,
+           created_at=excluded.created_at,confirmed_at=excluded.confirmed_at",
         [payload],
     )?;
     Ok(())
+}
+
+fn apply_source_installation(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Option<String>> {
+    let value = connection
+        .query_row(
+            "SELECT COALESCE(
+               (SELECT p.source_installation_id FROM change_packages p
+                WHERE p.package_id=guard.package_id
+                  AND p.target_household_id=guard.household_id),
+               (SELECT s.source_installation_id FROM family_snapshot_sets s
+                WHERE s.snapshot_set_id=guard.package_id
+                  AND s.target_household_id=guard.household_id))
+             FROM sync_apply_guard guard WHERE guard.household_id=?1",
+            [household_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(value.flatten())
+}
+
+fn resolve_source_document_alias_under_apply_guard(
+    connection: &Connection,
+    household_id: &str,
+    origin_installation_id: &str,
+    portable_document_id: &str,
+) -> Result<String> {
+    lookup_source_document_alias_under_apply_guard(
+        connection,
+        household_id,
+        origin_installation_id,
+        portable_document_id,
+    )?
+    .ok_or(ChangePackageError::Conflict)
+}
+
+fn lookup_source_document_alias_under_apply_guard(
+    connection: &Connection,
+    household_id: &str,
+    origin_installation_id: &str,
+    portable_document_id: &str,
+) -> Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT alias.local_document_id
+             FROM sync_apply_guard guard
+             JOIN evidence_source_document_aliases alias
+               ON alias.household_id=guard.household_id
+              AND alias.origin_installation_id=?2
+              AND alias.portable_document_id=?3
+             WHERE guard.household_id=?1 AND (
+               EXISTS(SELECT 1 FROM change_packages p
+                 WHERE p.package_id=guard.package_id
+                   AND p.target_household_id=guard.household_id)
+               OR EXISTS(SELECT 1 FROM family_snapshot_sets s
+                 WHERE s.snapshot_set_id=guard.package_id
+                   AND s.target_household_id=guard.household_id)
+             )",
+            params![household_id, origin_installation_id, portable_document_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(ChangePackageError::from)
 }
 
 fn resolve_investment_source(
@@ -1610,21 +1725,12 @@ fn resolve_investment_source(
     if !exact_ref {
         return Err(ChangePackageError::Conflict);
     }
-    let local_document_id: String = connection
-        .query_row(
-            "SELECT alias.local_document_id
-             FROM sync_apply_guard guard
-             JOIN change_packages package ON package.package_id=guard.package_id
-             JOIN evidence_source_document_aliases alias
-              ON alias.household_id=guard.household_id
-              AND alias.origin_installation_id=?3
-              AND alias.portable_document_id=?2
-             WHERE guard.household_id=?1",
-            params![household_id, portable_document_id, origin_installation_id],
-            |row| row.get(0),
-        )
-        .optional()?
-        .ok_or(ChangePackageError::Conflict)?;
+    let local_document_id = resolve_source_document_alias_under_apply_guard(
+        connection,
+        &household_id,
+        &origin_installation_id,
+        &portable_document_id,
+    )?;
     if let Some(row_number) = source_row {
         let row_exists: bool = connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM source_records
@@ -2733,8 +2839,9 @@ mod tests {
                  INSERT INTO card_statement_transactions(
                    statement_id,transaction_id,statement_line_number,billed_amount_jpy)
                  VALUES('statement-full','tx',1,1200);
-                 INSERT INTO card_statement_portable_source_refs(statement_id,source_document_id)
-                 VALUES('statement-full','portable-card-source');
+                 INSERT INTO card_statement_portable_source_refs(
+                   statement_id,household_id,origin_installation_id,source_document_id)
+                 VALUES('statement-full','family','source-origin','portable-card-source');
                  INSERT INTO card_payments(
                    id,household_id,statement_id,bank_transaction_id,card_account_id,
                    payment_amount_jpy,payment_on,match_score_bps,reconciliation_status,confirmed_at)
@@ -3037,6 +3144,95 @@ mod tests {
             validate_package(&package),
             Err(ChangePackageError::InvalidInput)
         ));
+    }
+
+    #[test]
+    fn family_snapshot_apply_guard_resolves_origin_qualified_evidence() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO import_runs(id,household_id,status)
+                     VALUES('local-run','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES('local-doc','family','local-run','OTHER','portfolio.csv','text/csv',1,
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','a');
+                     INSERT INTO evidence_import_run_aliases(
+                       household_id,origin_installation_id,portable_import_run_id,local_import_run_id)
+                     VALUES('family','origin-a','portable-run','local-run');
+                     INSERT INTO evidence_source_document_aliases(
+                       household_id,origin_installation_id,portable_document_id,
+                       portable_import_run_id,local_document_id,content_sha256)
+                     VALUES('family','origin-a','portable-doc','portable-run','local-doc',
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                     INSERT INTO family_snapshot_sets(
+                       snapshot_set_id,target_household_id,source_installation_id,
+                       source_principal_id,publisher_member_id,source_revision,set_sha256,
+                       manifest_json,state,record_count,conflict_count,delete_count,
+                       source_created_at,reviewed_at,schema_version)
+                     VALUES('family-set','family','origin-a','principal-a','member-a',1,
+                       'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                       '{}','READY',0,0,0,'2026-07-14T00:00:00Z',
+                       '2026-07-14T00:00:00Z',2);
+                     INSERT INTO sync_apply_guard(household_id,package_id)
+                     VALUES('family','family-set');",
+                )?;
+                assert_eq!(
+                    resolve_source_document_alias_under_apply_guard(
+                        connection,
+                        "family",
+                        "origin-a",
+                        "portable-doc"
+                    )
+                    .unwrap(),
+                    "local-doc"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn confirmed_card_payment_upsert_is_idempotent_and_immutable() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        state
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                let payload: String = connection.query_row(
+                    "SELECT payload_json FROM sync_card_payment_payloads
+                     WHERE payment_id='payment-full'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                materialize_card_payment(connection, &payload).unwrap();
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM card_payments WHERE id='payment-full'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    1
+                );
+                let mut changed: Value = serde_json::from_str(&payload).unwrap();
+                changed["paymentAmountJpy"] = json!(1_300);
+                assert!(
+                    materialize_card_payment(connection, &canonical_json(&changed).unwrap())
+                        .is_err()
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT payment_amount_jpy FROM card_payments WHERE id='payment-full'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    1_200
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

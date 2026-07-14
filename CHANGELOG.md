@@ -1,10 +1,20 @@
 # Changelog
 
+## 0.57.0 — 2026-07-14
+
+- Add `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema v3 with an exact 18-kind contract, carrying card statements/payments plus portfolio snapshots, brokerage events, investment FX rates, market prices, and aggregate asset snapshots while retaining V1/V2 decode and apply compatibility.
+- Add the binary `KFF3` family artifact envelope: a canonical digest-bound header, unsigned 64-bit header length, original document bytes, complete raw rows, evidence links, and strict 64 MiB/tamper/count validation.
+- Resolve account, transaction, statement, document, and row dependencies through the least-widening audience meet; withhold missing, mixed, mismatched, or oversized evidence graphs without making their kinds authoritative or leaking personal evidence into shared bytes.
+- Qualify portable evidence aliases and card source references by origin installation, preserve that origin through forwarding, and allow colliding local IDs from multiple devices without merging unrelated evidence.
+- Keep staging non-mutating by persisting pending KFF3 bytes through review; materialize evidence and accepted aggregates together inside one SQLite apply transaction and clean newly written vault blobs after a failed apply.
+- Add V3 relay byte preservation, exact included/withheld domain counts, evidence file/record coverage, grouped card/investment review summaries, immutable retry behavior, and reason-specific disclosure in the desktop UI.
+- Keep delivery manual and review-gated; v0.57 does not claim background synchronization, automatic apply, E2E relay backup, remote erasure, native mobile delivery, or production-signed Windows artifacts.
+
 ## 0.56.0 — 2026-07-14
 
 - Add `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema v2 for the core family graph plus complete monthly-budget, savings-goal, classification-rule, account-group, card-settlement-mapping, dashboard-preference, and delimited-parser-profile aggregates while retaining schema-v1 decode/apply compatibility.
 - Resolve every account-dependent aggregate through a least-widening audience meet, keep whole plans/groups atomic, and withhold mixed-member, other-member, or unresolved graphs instead of splitting rows or widening access.
-- Bind a signed entity-audience index into each v2 artifact so a `SHARED`/`PERSONAL(member)` relocation removes stale partition lineage without allowing a later omission artifact to delete the entity in its new partition.
+- Bind hash-verified entity-audience relocation lineage into each v2 artifact so a `SHARED`/`PERSONAL(member)` move removes stale partition lineage without allowing a later omission artifact to delete the entity in its new partition.
 - Reuse the schema-v4 local change-package canonical payloads and materializers, apply accepted records in dependency order inside one transaction, and conservatively mark family partitions dirty for planning/configuration parent and child changes without echoing incoming applies.
 - Add exact V1/V2 relay-schema preservation with byte-identical immutable retries, matching-member PERSONAL routing, revocation/generation enforcement, and rejection of unsupported artifact schemas.
 - Add per-audience ledger/planning/config/card/investment counts, evidence counts, reason-specific withheld disclosure, grouped review summaries, and configuration-impact warnings; `COMPLETE` is valid only when no record is withheld.

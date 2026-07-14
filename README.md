@@ -2,6 +2,8 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Version 0.57 adds [audience-partitioned card and investment evidence delivery](docs/FAMILY_EVIDENCE_DELIVERY.md). Family schema v3 carries seven new card and investment aggregates inside a digest-bound `KFF3` envelope with their original document bytes and raw rows. Source IDs are qualified by the installation that created them, private evidence never widens into a shared partition, and staging remains non-mutating until one explicit atomic Apply.
+
 Version 0.56 adds [audience-partitioned planning and configuration delivery](docs/FAMILY_PLANNING_CONFIG_DELIVERY.md). Family schema v2 carries complete monthly-budget, savings-goal, classification-rule, account-group, settlement-mapping, dashboard-layout, and parser-profile aggregates through the same explicit review/atomic-apply boundary as the core family graph. Least-widening account dependencies select `SHARED` or matching `PERSONAL(member)` delivery; mixed, other-member, unresolved, ownerless personal account groups, and evidence-dependent facts remain visibly withheld.
 
 ![KakeFlow family schema v2 planning and configuration delivery](docs/assets/infographics/family-v2-planning.svg)
@@ -136,7 +138,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Current capabilities
 
 - Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
-- [Audience-partitioned family schema v2](docs/FAMILY_PLANNING_CONFIG_DELIVERY.md) for the core graph plus seven complete planning/configuration aggregates, with least-widening dependency resolution, signed entity-audience relocation lineage, reason-specific coverage disclosure, grouped review, schema-v1 compatibility, relay-preserved V1/V2 bytes, and one explicit atomic apply. Card and investment aggregates remain withheld as `EVIDENCE_REQUIRED` until their source-origin-scoped immutable evidence can travel in the same partition.
+- [Audience-partitioned family schema v3](docs/FAMILY_EVIDENCE_DELIVERY.md) for the core graph, complete planning/configuration aggregates, and seven evidence-backed card/investment aggregates. The binary KFF3 envelope carries origin-qualified immutable documents and raw rows in the same least-widening audience partition, discloses exact included/withheld coverage, preserves V1/V2 compatibility, and materializes evidence only inside one explicit atomic apply.
 - Optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) with server-derived Bearer-token principals, manual send/check/stage controls, immutable 64 MiB digest-verified artifacts, retry-safe outbox acknowledgement, and reuse of the existing schema-v4 conflict-review/atomic-apply boundary. The checked-in Node reference relay has an explicit WebView CORS allowlist, must run behind a TLS reverse proxy, and stores package bytes as received; there is no cross-member, E2E-encryption, auto-sync, auto-apply, source-evidence transport, or backup claim.
 - Dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot purchases/sales, with source settlement checks, immutable row provenance, explicit securities-account selection, blocking credit/margin errors, and row-level rejection of `現引`/`現渡` or other unsupported activity; checked-in fixtures are synthetic and contain no customer data.
 - Dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for the official domestic and foreign `約定履歴` CSV structures, limited to supported spot stock purchases and sales with explicit securities-account selection, immutable row provenance, auditable source-settlement adjustments, and rejection of margin, derivatives, and other unsupported rows; checked-in fixtures are synthetic and contain no customer data.
@@ -208,15 +210,16 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
-- Authenticated cross-principal family delivery for the confirmed household/member/account/transaction graph and complete planning/configuration aggregates, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, durable review, signed relocation-safe audience lineage, and partition-scoped omission handling.
+- Authenticated cross-principal family delivery for the confirmed household/member/account/transaction graph and complete planning/configuration aggregates, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling.
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Extend family delivery to evidence-partitioned card and investment aggregates after source-origin-scoped document bytes, raw rows, and complete dependency graphs can travel without widening audience.
-3. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
-4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
+2. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
+3. Add optional encrypted multi-device synchronization while preserving the same explicit review, audience, and evidence-provenance boundaries.
+4. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
+5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.
 
 ## Family delivery boundary
 

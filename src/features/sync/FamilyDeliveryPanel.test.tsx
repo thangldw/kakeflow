@@ -43,10 +43,10 @@ const connected: FamilyDeliveryStatusDto = {
     { memberId: 'member-hanako', memberName: '花子', state: 'UNLINKED', remoteMembershipIds: [], inviteId: null, inviteExpiresAt: null, deviceCount: 0, lastDeliveryAt: null },
   ],
   outbound: [
-    { audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, recipientNames: ['花子'], pendingChangeCount: 4, state: 'READY', withheldReason: null, domainCounts: { LEDGER: 2, PLANNING: 0, CONFIG: 0, CARD: 1, INVESTMENT: 1 }, evidenceFileCount: 2, evidenceRecordCount: 3, withheldCountsByReason: { EVIDENCE_REQUIRED_CARD: 1, EVIDENCE_REQUIRED_INVESTMENT: 1, UNASSIGNED_SCOPE: 1 }, coverageState: 'PARTIAL' },
-    { audienceKey: 'PERSONAL:member-hanako', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-hanako', audienceMemberName: '花子', recipientNames: [], pendingChangeCount: 2, state: 'BLOCKED_NO_RECIPIENT', withheldReason: '配信先未設定', domainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 1, INVESTMENT: 1 }, evidenceFileCount: 0, evidenceRecordCount: 0, withheldCountsByReason: { EVIDENCE_REQUIRED_CARD: 1, EVIDENCE_REQUIRED_INVESTMENT: 1, UNASSIGNED_SCOPE: 1 }, coverageState: 'PARTIAL' },
+    { audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, recipientNames: ['花子'], pendingChangeCount: 4, state: 'READY', withheldReason: null, domainCounts: { LEDGER: 2, PLANNING: 0, CONFIG: 0, CARD: 2, INVESTMENT: 1 }, withheldDomainCounts: { LEDGER: 0, PLANNING: 0, CONFIG: 0, CARD: 2, INVESTMENT: 2 }, evidenceFileCount: 2, evidenceRecordCount: 3, withheldCountsByReason: { MISSING_CARD_EVIDENCE: 1, MISSING_INVESTMENT_EVIDENCE: 1, EVIDENCE_AUDIENCE_MISMATCH: 1, EVIDENCE_SIZE_LIMIT: 1 }, coverageState: 'PARTIAL' },
+    { audienceKey: 'PERSONAL:member-hanako', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-hanako', audienceMemberName: '花子', recipientNames: [], pendingChangeCount: 2, state: 'BLOCKED_NO_RECIPIENT', withheldReason: '配信先未設定', domainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 0, INVESTMENT: 1 }, withheldDomainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 0, INVESTMENT: 1 }, evidenceFileCount: 1, evidenceRecordCount: 2, withheldCountsByReason: { MISSING_INVESTMENT_EVIDENCE: 1, UNASSIGNED_SCOPE: 1 }, coverageState: 'PARTIAL' },
   ],
-  withheldChangeCount: 3,
+  withheldChangeCount: 6,
 }
 
 describe('FamilyDeliveryPanel', () => {
@@ -79,9 +79,14 @@ describe('FamilyDeliveryPanel', () => {
     expect(screen.getByText('個人・花子 → 配信先未設定')).toBeInTheDocument()
     expect(screen.getByText((_text, element) => element?.tagName === 'SMALL' && element.textContent === '4件 · 原本 2ファイル / 証跡 3件')).toBeInTheDocument()
     const withheldPanels = screen.getAllByText((_text, element) => element?.classList.contains('family-withheld-detail') === true)
-    expect(withheldPanels[0]).toHaveTextContent('カードの原本・証跡が必要')
-    expect(withheldPanels[0]).toHaveTextContent('カード 1件 · 投資 1件')
-    expect(withheldPanels[0]).toHaveTextContent('世帯全体の保留内容')
+    expect(screen.getAllByLabelText('この配信で送る内容')[0]).toHaveTextContent('カード 2')
+    expect(screen.getAllByLabelText('この配信で送る内容')[0]).toHaveTextContent('投資 1')
+    expect(withheldPanels[0]).toHaveTextContent('カードの原本・証跡が不足')
+    expect(withheldPanels[0]).toHaveTextContent('投資の原本・証跡が不足')
+    expect(withheldPanels[0]).toHaveTextContent('原本をこの配信範囲へ安全に分けられない')
+    expect(withheldPanels[0]).toHaveTextContent('配信サイズが上限を超える')
+    expect(withheldPanels[0]).toHaveTextContent('カード 2件 · 投資 2件')
+    expect(withheldPanels[0]).not.toHaveTextContent('世帯全体')
     expect(screen.getAllByText('一部保留')).toHaveLength(2)
     expect(screen.getByText(/家族へ送らず、この端末に保留/)).toBeInTheDocument()
     const checkboxes = screen.getAllByRole('checkbox')

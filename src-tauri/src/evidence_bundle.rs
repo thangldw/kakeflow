@@ -65,72 +65,72 @@ pub struct EvidenceBundleSummaryDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Manifest {
-    schema_version: u32,
-    bundle_id: String,
-    household_id: String,
-    origin_installation_id: String,
-    created_at: String,
-    documents: Vec<ManifestDocument>,
+pub(crate) struct Manifest {
+    pub(crate) schema_version: u32,
+    pub(crate) bundle_id: String,
+    pub(crate) household_id: String,
+    pub(crate) origin_installation_id: String,
+    pub(crate) created_at: String,
+    pub(crate) documents: Vec<ManifestDocument>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ManifestDocument {
-    origin_installation_id: String,
-    import_run: ManifestImportRun,
-    id: String,
-    source_type: String,
-    original_filename: String,
-    media_type: String,
-    byte_size: u64,
-    sha256: String,
-    source_modified_at: Option<String>,
-    imported_at: String,
-    audience_visibility: String,
-    audience_member_id: Option<String>,
-    records: Vec<ManifestRecord>,
-    transaction_links: Vec<ManifestTransactionLink>,
-    card_statement_ids: Vec<String>,
+pub(crate) struct ManifestDocument {
+    pub(crate) origin_installation_id: String,
+    pub(crate) import_run: ManifestImportRun,
+    pub(crate) id: String,
+    pub(crate) source_type: String,
+    pub(crate) original_filename: String,
+    pub(crate) media_type: String,
+    pub(crate) byte_size: u64,
+    pub(crate) sha256: String,
+    pub(crate) source_modified_at: Option<String>,
+    pub(crate) imported_at: String,
+    pub(crate) audience_visibility: String,
+    pub(crate) audience_member_id: Option<String>,
+    pub(crate) records: Vec<ManifestRecord>,
+    pub(crate) transaction_links: Vec<ManifestTransactionLink>,
+    pub(crate) card_statement_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    investment_links: Vec<ManifestInvestmentLink>,
+    pub(crate) investment_links: Vec<ManifestInvestmentLink>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ManifestImportRun {
-    id: String,
-    status: String,
-    adapter_id: Option<String>,
-    adapter_version: Option<String>,
-    started_at: String,
-    completed_at: Option<String>,
+pub(crate) struct ManifestImportRun {
+    pub(crate) id: String,
+    pub(crate) status: String,
+    pub(crate) adapter_id: Option<String>,
+    pub(crate) adapter_version: Option<String>,
+    pub(crate) started_at: String,
+    pub(crate) completed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ManifestRecord {
-    id: String,
-    row_number: u64,
-    record_hash: String,
-    raw_payload_json: String,
-    created_at: String,
+pub(crate) struct ManifestRecord {
+    pub(crate) id: String,
+    pub(crate) row_number: u64,
+    pub(crate) record_hash: String,
+    pub(crate) raw_payload_json: String,
+    pub(crate) created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ManifestTransactionLink {
-    transaction_id: String,
-    source_record_id: String,
-    candidate_id: Option<String>,
+pub(crate) struct ManifestTransactionLink {
+    pub(crate) transaction_id: String,
+    pub(crate) source_record_id: String,
+    pub(crate) candidate_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ManifestInvestmentLink {
-    entity_kind: String,
-    entity_id: String,
-    source_row: Option<u64>,
+pub(crate) struct ManifestInvestmentLink {
+    pub(crate) entity_kind: String,
+    pub(crate) entity_id: String,
+    pub(crate) source_row: Option<u64>,
 }
 
 pub struct StagedEvidenceBundle {
@@ -408,7 +408,7 @@ pub fn apply_evidence_bundle(
     ))
 }
 
-fn load_confirmed_documents(
+pub(crate) fn load_confirmed_documents(
     connection: &Connection,
     household_id: &str,
     local_origin: &str,
@@ -437,14 +437,18 @@ fn load_confirmed_documents(
                ) OR EXISTS (
                  SELECT 1 FROM evidence_source_document_aliases da
                  JOIN card_statement_portable_source_refs p
-                   ON p.source_document_id=da.portable_document_id
+                   ON p.household_id=da.household_id
+                  AND p.origin_installation_id=da.origin_installation_id
+                  AND p.source_document_id=da.portable_document_id
                  WHERE da.local_document_id=sd.id
                ) OR EXISTS (
                  SELECT 1 FROM portfolio_snapshots p
                  WHERE p.source_document_id=sd.id AND p.household_id=sd.household_id
                    AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
                      JOIN evidence_source_document_aliases da
-                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                       ON da.household_id=r.household_id
+                      AND da.origin_installation_id=r.origin_installation_id
+                      AND da.portable_document_id=r.source_document_id
                      WHERE r.entity_kind='PORTFOLIO_SNAPSHOT' AND r.entity_id=p.id
                        AND da.local_document_id=p.source_document_id)
                ) OR EXISTS (
@@ -452,7 +456,9 @@ fn load_confirmed_documents(
                  WHERE e.source_document_id=sd.id AND e.household_id=sd.household_id
                    AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
                      JOIN evidence_source_document_aliases da
-                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                       ON da.household_id=r.household_id
+                      AND da.origin_installation_id=r.origin_installation_id
+                      AND da.portable_document_id=r.source_document_id
                      WHERE r.entity_kind='BROKERAGE_EVENT' AND r.entity_id=e.id
                        AND da.local_document_id=e.source_document_id)
                ) OR EXISTS (
@@ -460,7 +466,9 @@ fn load_confirmed_documents(
                  WHERE r.source_document_id=sd.id AND r.household_id=sd.household_id
                    AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs p
                      JOIN evidence_source_document_aliases da
-                       ON da.household_id=p.household_id AND da.portable_document_id=p.source_document_id
+                       ON da.household_id=p.household_id
+                      AND da.origin_installation_id=p.origin_installation_id
+                      AND da.portable_document_id=p.source_document_id
                      WHERE p.entity_kind='INVESTMENT_FX_RATE' AND p.entity_id=r.id
                        AND da.local_document_id=r.source_document_id)
                ) OR EXISTS (
@@ -468,7 +476,9 @@ fn load_confirmed_documents(
                  WHERE p.source_document_id=sd.id AND p.household_id=sd.household_id
                    AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
                      JOIN evidence_source_document_aliases da
-                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                       ON da.household_id=r.household_id
+                      AND da.origin_installation_id=r.origin_installation_id
+                      AND da.portable_document_id=r.source_document_id
                      WHERE r.entity_kind='INVESTMENT_MARKET_PRICE' AND r.entity_id=p.id
                        AND da.local_document_id=p.source_document_id)
                ) OR EXISTS (
@@ -476,7 +486,9 @@ fn load_confirmed_documents(
                  WHERE a.source_document_id=sd.id AND a.household_id=sd.household_id
                    AND NOT EXISTS(SELECT 1 FROM investment_portable_source_refs r
                      JOIN evidence_source_document_aliases da
-                       ON da.household_id=r.household_id AND da.portable_document_id=r.source_document_id
+                       ON da.household_id=r.household_id
+                      AND da.origin_installation_id=r.origin_installation_id
+                      AND da.portable_document_id=r.source_document_id
                      WHERE r.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND r.entity_id=a.id
                        AND da.local_document_id=a.source_document_id)
                ) OR EXISTS (
@@ -511,10 +523,19 @@ fn load_confirmed_documents(
                WHERE sr.source_document_id=?1 AND t.household_id=?2 AND t.status='POSTED'
                UNION ALL SELECT 1 FROM card_statements cs
                WHERE cs.source_document_id=?1 AND cs.household_id=?2
+                 AND NOT EXISTS(
+                   SELECT 1 FROM card_statement_portable_source_refs ref
+                   JOIN evidence_source_document_aliases alias
+                     ON alias.household_id=ref.household_id
+                    AND alias.origin_installation_id=ref.origin_installation_id
+                    AND alias.portable_document_id=ref.source_document_id
+                   WHERE ref.statement_id=cs.id
+                     AND alias.local_document_id=cs.source_document_id)
                UNION ALL SELECT 1 FROM portfolio_snapshots p
                WHERE p.source_document_id=?1 AND p.household_id=?2 AND NOT EXISTS(
                  SELECT 1 FROM investment_portable_source_refs r
                  JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.origin_installation_id=r.origin_installation_id
                    AND da.portable_document_id=r.source_document_id
                  WHERE r.entity_kind='PORTFOLIO_SNAPSHOT' AND r.entity_id=p.id
                    AND da.local_document_id=p.source_document_id)
@@ -522,6 +543,7 @@ fn load_confirmed_documents(
                WHERE e.source_document_id=?1 AND e.household_id=?2 AND NOT EXISTS(
                  SELECT 1 FROM investment_portable_source_refs r
                  JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.origin_installation_id=r.origin_installation_id
                    AND da.portable_document_id=r.source_document_id
                  WHERE r.entity_kind='BROKERAGE_EVENT' AND r.entity_id=e.id
                    AND da.local_document_id=e.source_document_id)
@@ -529,6 +551,7 @@ fn load_confirmed_documents(
                WHERE r.source_document_id=?1 AND r.household_id=?2 AND NOT EXISTS(
                  SELECT 1 FROM investment_portable_source_refs p
                  JOIN evidence_source_document_aliases da ON da.household_id=p.household_id
+                   AND da.origin_installation_id=p.origin_installation_id
                    AND da.portable_document_id=p.source_document_id
                  WHERE p.entity_kind='INVESTMENT_FX_RATE' AND p.entity_id=r.id
                    AND da.local_document_id=r.source_document_id)
@@ -536,6 +559,7 @@ fn load_confirmed_documents(
                WHERE p.source_document_id=?1 AND p.household_id=?2 AND NOT EXISTS(
                  SELECT 1 FROM investment_portable_source_refs r
                  JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.origin_installation_id=r.origin_installation_id
                    AND da.portable_document_id=r.source_document_id
                  WHERE r.entity_kind='INVESTMENT_MARKET_PRICE' AND r.entity_id=p.id
                    AND da.local_document_id=p.source_document_id)
@@ -543,6 +567,7 @@ fn load_confirmed_documents(
                WHERE a.source_document_id=?1 AND a.household_id=?2 AND NOT EXISTS(
                  SELECT 1 FROM investment_portable_source_refs r
                  JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+                   AND da.origin_installation_id=r.origin_installation_id
                    AND da.portable_document_id=r.source_document_id
                  WHERE r.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND r.entity_id=a.id
                    AND da.local_document_id=a.source_document_id)
@@ -568,7 +593,9 @@ fn load_confirmed_documents(
                    AND ra.origin_installation_id=da.origin_installation_id
                    AND ra.portable_document_id=da.portable_document_id AND t.status='POSTED')
                OR EXISTS(SELECT 1 FROM card_statement_portable_source_refs p
-                 WHERE p.source_document_id=da.portable_document_id)
+                 WHERE p.household_id=da.household_id
+                   AND p.origin_installation_id=da.origin_installation_id
+                   AND p.source_document_id=da.portable_document_id)
                OR EXISTS(SELECT 1 FROM investment_portable_source_refs p
                  WHERE p.household_id=da.household_id
                    AND p.origin_installation_id=da.origin_installation_id
@@ -750,16 +777,39 @@ fn load_document(
     document.transaction_links.dedup();
 
     let card_sql = if alias.is_none() {
-        "SELECT id FROM card_statements WHERE household_id=?1 AND source_document_id=?2 ORDER BY 1"
+        "SELECT id FROM card_statements
+         WHERE household_id=?1 AND source_document_id=?2 AND ?3 IS NOT NULL
+           AND NOT EXISTS(
+             SELECT 1 FROM card_statement_portable_source_refs ref
+             JOIN evidence_source_document_aliases source_alias
+               ON source_alias.household_id=ref.household_id
+              AND source_alias.origin_installation_id=ref.origin_installation_id
+              AND source_alias.portable_document_id=ref.source_document_id
+             WHERE ref.statement_id=card_statements.id
+               AND source_alias.local_document_id=card_statements.source_document_id)
+         ORDER BY 1"
     } else {
         "SELECT p.statement_id FROM card_statement_portable_source_refs p
-         WHERE p.source_document_id=?2 ORDER BY 1"
+         WHERE p.household_id=?1 AND p.source_document_id=?2
+           AND p.origin_installation_id=?3 ORDER BY 1"
     };
     let mut cards = connection
         .prepare(card_sql)
         .map_err(|_| EvidenceBundleError::Database)?;
+    let card_document_id = if alias.is_none() {
+        document_id
+    } else {
+        document.id.as_str()
+    };
     document.card_statement_ids = cards
-        .query_map(params![household_id, document_id], |row| row.get(0))
+        .query_map(
+            params![
+                household_id,
+                card_document_id,
+                document.origin_installation_id
+            ],
+            |row| row.get(0),
+        )
         .map_err(|_| EvidenceBundleError::Database)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| EvidenceBundleError::Database)?;
@@ -769,6 +819,7 @@ fn load_document(
          WHERE household_id=?1 AND source_document_id=?2 AND ?3 IS NOT NULL AND NOT EXISTS(
            SELECT 1 FROM investment_portable_source_refs r
            JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.origin_installation_id=r.origin_installation_id
              AND da.portable_document_id=r.source_document_id
            WHERE r.entity_kind='PORTFOLIO_SNAPSHOT' AND r.entity_id=portfolio_snapshots.id
              AND da.local_document_id=portfolio_snapshots.source_document_id)
@@ -776,6 +827,7 @@ fn load_document(
          WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
            SELECT 1 FROM investment_portable_source_refs r
            JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.origin_installation_id=r.origin_installation_id
              AND da.portable_document_id=r.source_document_id
            WHERE r.entity_kind='BROKERAGE_EVENT' AND r.entity_id=brokerage_events.id
              AND da.local_document_id=brokerage_events.source_document_id)
@@ -783,6 +835,7 @@ fn load_document(
          WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
            SELECT 1 FROM investment_portable_source_refs r
            JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.origin_installation_id=r.origin_installation_id
              AND da.portable_document_id=r.source_document_id
            WHERE r.entity_kind='INVESTMENT_FX_RATE' AND r.entity_id=investment_fx_rates.id
              AND da.local_document_id=investment_fx_rates.source_document_id)
@@ -790,6 +843,7 @@ fn load_document(
          WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
            SELECT 1 FROM investment_portable_source_refs r
            JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.origin_installation_id=r.origin_installation_id
              AND da.portable_document_id=r.source_document_id
            WHERE r.entity_kind='INVESTMENT_MARKET_PRICE' AND r.entity_id=investment_market_prices.id
              AND da.local_document_id=investment_market_prices.source_document_id)
@@ -797,6 +851,7 @@ fn load_document(
          WHERE household_id=?1 AND source_document_id=?2 AND NOT EXISTS(
            SELECT 1 FROM investment_portable_source_refs r
            JOIN evidence_source_document_aliases da ON da.household_id=r.household_id
+             AND da.origin_installation_id=r.origin_installation_id
              AND da.portable_document_id=r.source_document_id
            WHERE r.entity_kind='AGGREGATE_ASSET_SNAPSHOT' AND r.entity_id=aggregate_asset_snapshots.id
              AND da.local_document_id=aggregate_asset_snapshots.source_document_id)
@@ -854,7 +909,10 @@ fn validate_manifest(manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
-fn validate_documents(documents: &[ManifestDocument], schema_version: u32) -> Result<()> {
+pub(crate) fn validate_documents(
+    documents: &[ManifestDocument],
+    schema_version: u32,
+) -> Result<()> {
     if documents.len() > MAX_DOCUMENTS {
         return Err(EvidenceBundleError::LimitExceeded);
     }
@@ -867,7 +925,7 @@ fn validate_documents(documents: &[ManifestDocument], schema_version: u32) -> Re
         validate_id(&document.origin_installation_id)?;
         validate_id(&document.id)?;
         validate_id(&document.import_run.id)?;
-        if !document_ids.insert(&document.id)
+        if !document_ids.insert((&document.origin_installation_id, &document.id))
             || !valid_hash(&document.sha256)
             || document.original_filename.is_empty()
             || document.media_type.is_empty()
@@ -886,7 +944,7 @@ fn validate_documents(documents: &[ManifestDocument], schema_version: u32) -> Re
         for record in &document.records {
             validate_id(&record.id)?;
             if record.row_number == 0
-                || !record_ids.insert(&record.id)
+                || !record_ids.insert((&document.origin_installation_id, &record.id))
                 || !valid_hash(&record.record_hash)
                 || record.raw_payload_json.len() > MAX_RAW_PAYLOAD_BYTES
                 || serde_json::from_str::<serde_json::Value>(&record.raw_payload_json).is_err()
@@ -991,8 +1049,16 @@ fn validate_dependencies(connection: &Connection, manifest: &Manifest) -> Result
                      WHERE s.id=?1 AND s.household_id=?2 AND (
                        s.source_document_id=?3 OR EXISTS(
                          SELECT 1 FROM card_statement_portable_source_refs p
-                         WHERE p.statement_id=s.id AND p.source_document_id=?3)))",
-                    params![statement, manifest.household_id, document.id],
+                         WHERE p.statement_id=s.id
+                           AND p.household_id=s.household_id
+                           AND p.origin_installation_id=?4
+                           AND p.source_document_id=?3)))",
+                    params![
+                        statement,
+                        manifest.household_id,
+                        document.id,
+                        document.origin_installation_id
+                    ],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .map_err(|_| EvidenceBundleError::Database)?;
@@ -1004,7 +1070,7 @@ fn validate_dependencies(connection: &Connection, manifest: &Manifest) -> Result
     Ok(())
 }
 
-fn materialize_document(
+pub(crate) fn materialize_document(
     transaction: &rusqlite::Transaction<'_>,
     manifest: &Manifest,
     document: &ManifestDocument,
@@ -1782,6 +1848,89 @@ mod tests {
             })
             .unwrap();
         assert!(stage_evidence_bundle(&archive, "definitely wrong passphrase").is_err());
+    }
+
+    #[test]
+    fn forwarded_card_evidence_retains_original_origin_without_native_duplicate() {
+        let source = AppState::in_memory(&[31_u8; 32]).unwrap();
+        source
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('card','family','Card','LIABILITY','CREDIT_CARD');
+                     INSERT INTO import_runs(id,household_id,status)
+                     VALUES('run','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES('doc-1','family','run','OTHER','card.csv','text/csv',1,
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','a');
+                     INSERT INTO card_statements(
+                       id,household_id,card_account_id,period_start,period_end,
+                       statement_amount_jpy,source_document_id)
+                     VALUES('statement','family','card','2026-06-01','2026-06-30',1000,'doc-1');",
+                )?;
+                let documents = load_confirmed_documents(connection, "family", "origin-a").unwrap();
+                assert_eq!(documents.len(), 1);
+                assert_eq!(documents[0].origin_installation_id, "origin-a");
+                assert_eq!(documents[0].id, "doc-1");
+                assert_eq!(documents[0].card_statement_ids, ["statement"]);
+                let mut other_origin = documents[0].clone();
+                other_origin.origin_installation_id = "origin-b".to_owned();
+                other_origin.card_statement_ids.clear();
+                assert!(validate_documents(
+                    &[documents[0].clone(), other_origin.clone()],
+                    SCHEMA_VERSION
+                )
+                .is_ok());
+                other_origin.origin_installation_id = "origin-a".to_owned();
+                assert!(matches!(
+                    validate_documents(&[documents[0].clone(), other_origin], SCHEMA_VERSION),
+                    Err(EvidenceBundleError::Corrupt)
+                ));
+                Ok(())
+            })
+            .unwrap();
+
+        let forwarded = AppState::in_memory(&[32_u8; 32]).unwrap();
+        forwarded
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('card','family','Card','LIABILITY','CREDIT_CARD');
+                     INSERT INTO import_runs(id,household_id,status)
+                     VALUES('local-run','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES('local-doc','family','local-run','OTHER','card.csv','text/csv',1,
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','a');
+                     INSERT INTO evidence_import_run_aliases(
+                       household_id,origin_installation_id,portable_import_run_id,local_import_run_id)
+                     VALUES('family','origin-a','run','local-run');
+                     INSERT INTO evidence_source_document_aliases(
+                       household_id,origin_installation_id,portable_document_id,
+                       portable_import_run_id,local_document_id,content_sha256)
+                     VALUES('family','origin-a','doc-1','run','local-doc',
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                     INSERT INTO card_statements(
+                       id,household_id,card_account_id,period_start,period_end,
+                       statement_amount_jpy,source_document_id)
+                     VALUES('statement','family','card','2026-06-01','2026-06-30',1000,'local-doc');
+                     INSERT INTO card_statement_portable_source_refs(
+                       statement_id,household_id,origin_installation_id,source_document_id)
+                     VALUES('statement','family','origin-a','doc-1');",
+                )?;
+                let documents = load_confirmed_documents(connection, "family", "origin-b").unwrap();
+                assert_eq!(documents.len(), 1);
+                assert_eq!(documents[0].origin_installation_id, "origin-a");
+                assert_eq!(documents[0].id, "doc-1");
+                assert_eq!(documents[0].card_statement_ids, ["statement"]);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

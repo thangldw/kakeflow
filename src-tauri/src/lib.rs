@@ -9,6 +9,7 @@ pub mod document_extract;
 pub mod document_vault;
 pub mod evidence_bundle;
 pub mod family_delivery_transport;
+mod family_evidence;
 pub mod family_snapshot;
 pub mod financial_calendar;
 pub mod fixed_cost_review;
@@ -707,10 +708,11 @@ fn mobile_capture_promote(
 #[tauri::command]
 fn family_delivery_status(
     state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
     household_id: String,
 ) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
     family_delivery_result(&state, |connection| {
-        family_delivery_transport::status(connection, &household_id)
+        family_delivery_transport::status_with_vault(connection, &vault, &household_id)
     })
 }
 
@@ -747,10 +749,11 @@ fn family_delivery_remote_state_register(
 #[tauri::command]
 fn family_delivery_send_prepare(
     state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
     input: family_delivery_transport::PrepareFamilyDeliveryInput,
 ) -> Result<Vec<family_delivery_transport::PreparedFamilyArtifactDto>, String> {
     family_delivery_result(&state, |connection| {
-        family_delivery_transport::prepare_send(connection, &input)
+        family_delivery_transport::prepare_send_with_vault(connection, &vault, &input)
     })
 }
 
@@ -788,11 +791,12 @@ fn family_delivery_inbound_register(
 #[tauri::command]
 fn family_delivery_inbound_stage(
     state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
     input: family_delivery_transport::StageFamilyInboundInput,
 ) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
     let household_id = input.household_id.clone();
     family_delivery_result(&state, |connection| {
-        family_delivery_transport::stage_inbound(connection, &input)?;
+        family_delivery_transport::stage_inbound_with_vault(connection, &vault, &input)?;
         family_delivery_transport::status(connection, &household_id)
     })
 }
@@ -821,10 +825,11 @@ fn family_snapshot_resolve(
 #[tauri::command]
 fn family_snapshot_apply(
     state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
     package_id: String,
 ) -> Result<family_delivery_transport::FamilySnapshotUiReviewDto, String> {
     family_delivery_result(&state, |connection| {
-        family_delivery_transport::apply_ui_review(connection, &package_id)
+        family_delivery_transport::apply_ui_review_with_vault(connection, &vault, &package_id)
     })
 }
 

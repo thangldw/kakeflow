@@ -114,6 +114,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0047_family_planning_configuration.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0048_origin_qualified_evidence.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1650,6 +1653,160 @@ mod tests {
             )
             .unwrap();
         assert_eq!(schema, "FAMILY_AUDIENCE_PARTITION_V1");
+    }
+
+    #[test]
+    fn migration_48_preserves_aliases_and_backfills_card_source_origin() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..47].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO household_members(id,household_id,display_name,status,sort_order)
+                 VALUES('member','family','Member','ACTIVE',1);
+                 INSERT INTO family_delivery_connections(
+                   household_id,endpoint,remote_principal_id,local_member_id,local_member_name,state)
+                 VALUES('family','https://relay.example','principal','member','Member','CONNECTED');
+                 INSERT INTO family_delivery_partition_state(
+                   household_id,audience_key,visibility,member_id,member_key,dirty)
+                 VALUES('family','SHARED','SHARED',NULL,'',0);
+                 INSERT INTO family_delivery_deliveries(
+                   delivery_id,household_id,audience_key,artifact_id,package_sha256,
+                   origin_device_id,visibility,member_id,item_count,excluded_count,
+                   package_bytes,state,artifact_schema)
+                 VALUES('delivery-v2','family','SHARED','artifact-v2',
+                   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                   'origin-a','SHARED',NULL,1,0,x'01','FAILED_RETRYABLE',
+                   'FAMILY_AUDIENCE_PARTITION_V2');
+                 INSERT INTO family_delivery_inbound(
+                   artifact_id,household_id,sequence,package_sha256,created_at,
+                   origin_device_id,sender_membership_id,sender_member_id,sender_member_name,
+                   visibility,member_id,member_key,member_name,byte_size,artifact_schema,state)
+                 VALUES('inbound-v2','family',1,
+                   'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                   '2026-07-14T00:00:00Z','origin-a','membership-a','member','Member',
+                   'SHARED',NULL,'',NULL,1,'FAMILY_AUDIENCE_PARTITION_V2','AVAILABLE');
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('card','family','Card','LIABILITY','CREDIT_CARD');
+                 INSERT INTO import_runs(id,household_id,status) VALUES('local-run','family','POSTED');
+                 INSERT INTO source_documents(
+                   id,household_id,import_run_id,source_type,original_filename,media_type,
+                   byte_size,sha256,storage_path)
+                 VALUES('local-doc','family','local-run','OTHER','card.csv','text/csv',1,
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','a');
+                 INSERT INTO evidence_import_run_aliases(
+                   household_id,origin_installation_id,portable_import_run_id,local_import_run_id)
+                 VALUES('family','origin-a','portable-run','local-run');
+                 INSERT INTO evidence_source_document_aliases(
+                   household_id,origin_installation_id,portable_document_id,
+                   portable_import_run_id,local_document_id,content_sha256)
+                 VALUES('family','origin-a','portable-doc','portable-run','local-doc',
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                 INSERT INTO card_statements(
+                   id,household_id,card_account_id,period_start,period_end,statement_amount_jpy)
+                 VALUES('statement','family','card','2026-06-01','2026-06-30',1000);
+                 INSERT INTO card_statement_portable_source_refs(statement_id,source_document_id)
+                 VALUES('statement','portable-doc');",
+            )
+            .unwrap();
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        let source: (String, String, String) = connection
+            .query_row(
+                "SELECT household_id,origin_installation_id,source_document_id
+                 FROM card_statement_portable_source_refs WHERE statement_id='statement'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            source,
+            (
+                "family".to_owned(),
+                "origin-a".to_owned(),
+                "portable-doc".to_owned()
+            )
+        );
+        let payload_origin: String = connection
+            .query_row(
+                "SELECT json_extract(payload_json,'$.sourceOriginInstallationId')
+                 FROM sync_card_statement_aggregate_payloads WHERE statement_id='statement'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(payload_origin, "origin-a");
+        let preserved_delivery_schema: String = connection
+            .query_row(
+                "SELECT artifact_schema FROM family_delivery_deliveries
+                 WHERE delivery_id='delivery-v2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(preserved_delivery_schema, "FAMILY_AUDIENCE_PARTITION_V2");
+        let preserved_inbound: (String, Option<Vec<u8>>) = connection
+            .query_row(
+                "SELECT artifact_schema,pending_package_bytes FROM family_delivery_inbound
+                 WHERE artifact_id='inbound-v2'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            preserved_inbound,
+            ("FAMILY_AUDIENCE_PARTITION_V2".to_owned(), None)
+        );
+        connection
+            .execute_batch(
+                "INSERT INTO family_snapshot_sets(
+                   snapshot_set_id,target_household_id,source_installation_id,
+                   source_principal_id,publisher_member_id,source_revision,set_sha256,
+                   manifest_json,state,record_count,conflict_count,delete_count,
+                   source_created_at,schema_version)
+                 VALUES('snapshot-v3','family','origin-a','principal','member',1,
+                   'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                   '{}','REVIEW_REQUIRED',0,0,0,'2026-07-14T00:00:00Z',3);
+                 INSERT INTO family_delivery_deliveries(
+                   delivery_id,household_id,audience_key,artifact_id,package_sha256,
+                   origin_device_id,visibility,member_id,item_count,excluded_count,
+                   package_bytes,state,artifact_schema)
+                 VALUES('delivery-v3','family','SHARED','artifact-v3',
+                   'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                   'origin-a','SHARED',NULL,1,0,x'02','FAILED_RETRYABLE',
+                   'FAMILY_AUDIENCE_PARTITION_V3');
+                 INSERT INTO family_delivery_inbound(
+                   artifact_id,household_id,sequence,package_sha256,created_at,
+                   origin_device_id,sender_membership_id,sender_member_id,sender_member_name,
+                   visibility,member_id,member_key,member_name,byte_size,artifact_schema,state,
+                   pending_package_bytes)
+                 VALUES('inbound-v3','family',2,
+                   'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                   '2026-07-14T00:00:00Z','origin-a','membership-a','member','Member',
+                   'SHARED',NULL,'',NULL,1,'FAMILY_AUDIENCE_PARTITION_V3','AVAILABLE',x'03');",
+            )
+            .unwrap();
+        let pending: Vec<u8> = connection
+            .query_row(
+                "SELECT pending_package_bytes FROM family_delivery_inbound
+                 WHERE artifact_id='inbound-v3'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, vec![3]);
+        assert!(connection
+            .execute(
+                "UPDATE family_delivery_inbound SET pending_package_bytes=x''
+                 WHERE artifact_id='inbound-v3'",
+                [],
+            )
+            .is_err());
+        assert!(integrity_check(&connection).unwrap());
     }
 
     #[test]
@@ -4272,6 +4429,74 @@ mod tests {
                     )?,
                     "SIGNED:OUT:2"
                 );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn origin_qualified_evidence_aliases_accept_colliding_portable_ids() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES('family','Family');
+                     INSERT INTO import_runs(id,household_id,status)
+                     VALUES('local-run-a','family','POSTED'),('local-run-b','family','POSTED');
+                     INSERT INTO source_documents(
+                       id,household_id,import_run_id,source_type,original_filename,media_type,
+                       byte_size,sha256,storage_path)
+                     VALUES
+                       ('local-doc-a','family','local-run-a','OTHER','a.csv','text/csv',1,
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','a'),
+                       ('local-doc-b','family','local-run-b','OTHER','b.csv','text/csv',1,
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','b');
+                     INSERT INTO source_records(
+                       id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES
+                       ('local-row-a','local-doc-a',1,
+                        '1111111111111111111111111111111111111111111111111111111111111111','{}'),
+                       ('local-row-b','local-doc-b',1,
+                        '2222222222222222222222222222222222222222222222222222222222222222','{}');
+                     INSERT INTO evidence_import_run_aliases(
+                       household_id,origin_installation_id,portable_import_run_id,local_import_run_id)
+                     VALUES('family','origin-a','run-1','local-run-a'),
+                           ('family','origin-b','run-1','local-run-b');
+                     INSERT INTO evidence_source_document_aliases(
+                       household_id,origin_installation_id,portable_document_id,
+                       portable_import_run_id,local_document_id,content_sha256)
+                     VALUES
+                       ('family','origin-a','doc-1','run-1','local-doc-a',
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+                       ('family','origin-b','doc-1','run-1','local-doc-b',
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+                     INSERT INTO evidence_source_record_aliases(
+                       household_id,origin_installation_id,portable_document_id,
+                       portable_record_id,local_record_id,record_hash)
+                     VALUES
+                       ('family','origin-a','doc-1','row-1','local-row-a',
+                        '1111111111111111111111111111111111111111111111111111111111111111'),
+                       ('family','origin-b','doc-1','row-1','local-row-b',
+                        '2222222222222222222222222222222222222222222222222222222222222222');",
+                )?;
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM evidence_source_record_aliases
+                         WHERE household_id='family' AND portable_record_id='row-1'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    2
+                );
+                assert!(connection
+                    .execute(
+                        "INSERT INTO evidence_source_document_aliases(
+                           household_id,origin_installation_id,portable_document_id,
+                           portable_import_run_id,local_document_id,content_sha256)
+                         VALUES('family','origin-a','doc-1','run-1','local-doc-b',?1)",
+                        ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                    )
+                    .is_err());
                 Ok(())
             })
             .unwrap();

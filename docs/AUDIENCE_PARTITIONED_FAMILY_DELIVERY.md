@@ -27,7 +27,8 @@ alter relay membership.
 
 ## Family snapshot format
 
-Family delivery uses `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema 1. A snapshot set is
+Family delivery uses the versioned `KAKEFLOW_FAMILY_SNAPSHOT_SET` format. New
+v0.57 exports use schema 3 while schema 1 and schema 2 remain readable. A snapshot set is
 an immutable, current-state collection of audience partitions. Its identity,
 source revision, hashes, record counts, excluded counts, and partition audience
 are covered by deterministic hashes. Recipient principal IDs are never part of
@@ -44,14 +45,15 @@ Schema v1 supports the intentionally narrow core graph:
 
 Schema v2 additionally carries atomic budgets, goals, rules, account groups,
 settlement mappings, dashboard layouts, and parser profiles. Account-dependent
-aggregates use the same least-widening audience meet. A signed entity-audience
-index prevents a later omission artifact from deleting an aggregate that moved
+aggregates use the same least-widening audience meet. A hash-bound
+entity-audience relocation lineage prevents a later omission artifact from deleting an aggregate that moved
 between `SHARED` and `PERSONAL(member)`.
 
-Card and investment records are reported as `EVIDENCE_REQUIRED` until their
-evidence capsule can be partitioned by the same rules. The sender UI shows
-reason-specific counts and may describe a partition as complete only when all
-withheld counts are zero.
+Schema v3 adds card and investment aggregates only when their source-origin-
+scoped immutable evidence, complete raw rows, and dependency graph fit the same
+audience partition. Missing, mismatched, or oversized evidence is disclosed and
+withheld rather than silently omitted or widened. See the full
+[family evidence delivery contract](FAMILY_EVIDENCE_DELIVERY.md).
 
 ## Review and apply
 
