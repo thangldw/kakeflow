@@ -1,7 +1,7 @@
 import type { FamilyDeliveryPreparedArtifactDto, FamilyDeliveryRemoteArtifactDto } from '../../platform'
 
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
-const ARTIFACT_SCHEMA = 'FAMILY_AUDIENCE_PARTITION_V1' as const
+const ARTIFACT_SCHEMAS = new Set<FamilyDeliveryPreparedArtifactDto['artifactSchema']>(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2'])
 
 export type FamilyDeliveryHttpErrorCode =
   | 'AUTH_EXPIRED' | 'NETWORK_RETRYABLE' | 'INVITE_EXPIRED' | 'INVITE_USED' | 'INVITE_REVOKED' | 'INVITE_UNAVAILABLE'
@@ -153,7 +153,7 @@ export async function uploadFamilyArtifact(endpoint: string, token: string, arti
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream', 'x-kakeflow-publication-id': artifact.artifactId,
     'x-kakeflow-digest': artifact.digest, 'x-kakeflow-origin-device-id': artifact.originDeviceId,
-    'x-kakeflow-audience-visibility': artifact.audienceVisibility, 'x-kakeflow-artifact-schema': ARTIFACT_SCHEMA,
+    'x-kakeflow-audience-visibility': artifact.audienceVisibility, 'x-kakeflow-artifact-schema': artifact.artifactSchema,
   }
   if (artifact.audienceMemberId) headers['x-kakeflow-audience-member-id'] = artifact.audienceMemberId
   const response = await request(endpoint, `/v2/households/${encodeURIComponent(artifact.householdId)}/publications`, token, { method: 'POST', headers, body: new Uint8Array(artifact.packageBytes) }, fetcher)
@@ -163,14 +163,14 @@ export async function uploadFamilyArtifact(endpoint: string, token: string, arti
 
 function parsePublication(value: unknown): FamilyDeliveryRemoteArtifactDto {
   const item = record(value); const audience = record(item.audience)
-  if (!['SHARED', 'PERSONAL'].includes(String(audience.visibility)) || item.artifactSchema !== ARTIFACT_SCHEMA) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+  if (!['SHARED', 'PERSONAL'].includes(String(audience.visibility)) || !ARTIFACT_SCHEMAS.has(item.artifactSchema as FamilyDeliveryPreparedArtifactDto['artifactSchema'])) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
   const memberId = nullableString(audience.memberId)
   if ((audience.visibility === 'SHARED') !== (memberId === null)) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
   return {
     sequence: integer(item.sequence), artifactId: string(item.publicationId), digest: hash(item.digest), createdAt: timestamp(item.createdAt),
     originDeviceId: string(item.originDeviceId), senderMembershipId: string(item.senderMembershipId),
     audienceVisibility: audience.visibility as FamilyDeliveryRemoteArtifactDto['audienceVisibility'], audienceMemberId: memberId,
-    byteSize: integer(item.byteSize), artifactSchema: ARTIFACT_SCHEMA,
+    byteSize: integer(item.byteSize), artifactSchema: item.artifactSchema as FamilyDeliveryRemoteArtifactDto['artifactSchema'],
   }
 }
 

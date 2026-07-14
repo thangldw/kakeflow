@@ -419,6 +419,46 @@ describe('platform client', () => {
     })
   })
 
+  it('strictly validates v0.56 family coverage, review domains, and both artifact schemas', async () => {
+    const partition = {
+      audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
+      recipientNames: ['Hanako'], pendingChangeCount: 3, state: 'READY', withheldReason: null,
+      domainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 1, INVESTMENT: 1 },
+      evidenceFileCount: 2, evidenceRecordCount: 3, withheldCountsByReason: {}, coverageState: 'COMPLETE',
+    }
+    const status = {
+      householdId: 'family', connectionState: 'CONNECTED', endpoint: 'https://relay.example', remotePrincipalId: 'principal-1',
+      localDeviceId: 'device-1', inboundCursor: 0, localMemberId: 'member-1', localMemberName: 'Taro', memberships: [],
+      outbound: [partition], withheldChangeCount: 0, inbound: [],
+    }
+    const review = {
+      packageId: 'package-1', householdId: 'family', senderMemberName: 'Hanako', audienceVisibility: 'SHARED', audienceMemberName: null,
+      state: 'REVIEW_REQUIRED', recordCount: 1, createCount: 0, updateCount: 0, deleteCount: 0, conflictCount: 1,
+      records: [{ recordOrder: 0, entityKind: 'CARD_STATEMENT', entityId: 'statement-1', entityLabel: 'カード請求・statement-1', domain: 'CARD', entitySummary: '楽天カード · 2026年7月 · ¥204,987', operation: 'UPSERT', reviewState: 'CONFLICT', resolution: 'PENDING', localSummary: '既存', incomingSummary: '受信' }],
+    }
+    const prepared = [{ deliveryId: 'delivery-1', artifactId: 'artifact-1', digest: 'a'.repeat(64), householdId: 'family', originDeviceId: 'device-1', audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V2', packageBytes: [1] }]
+    const invoke: Invoke = async <T>(command: AppCommand) => {
+      if (command === 'family_delivery_status') return status as T
+      if (command === 'family_snapshot_active_review') return review as T
+      if (command === 'family_delivery_send_prepare') return prepared as T
+      return undefined as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.getFamilyDeliveryStatus('family')).resolves.toMatchObject({ outbound: [expect.objectContaining({ coverageState: 'COMPLETE', evidenceFileCount: 2 })] })
+    await expect(client.getActiveFamilySnapshotReview('family')).resolves.toMatchObject({ records: [expect.objectContaining({ domain: 'CARD', entitySummary: '楽天カード · 2026年7月 · ¥204,987' })] })
+    await expect(client.prepareFamilyDelivery({ householdId: 'family', audienceKeys: ['SHARED'] })).resolves.toMatchObject([{ artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V2' }])
+
+    for (const invalidPartition of [
+      { ...partition, domainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 1 } },
+      { ...partition, withheldCountsByReason: { 'not-canonical': 1 }, coverageState: 'PARTIAL' },
+      { ...partition, withheldCountsByReason: { EVIDENCE_REQUIRED: 1 }, coverageState: 'COMPLETE' },
+      { ...partition, evidenceFileCount: -1 },
+    ]) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => ({ ...status, outbound: [invalidPartition] }) as T })
+      await expect(invalidClient.getFamilyDeliveryStatus('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'family_delivery_status' })
+    }
+  })
+
   it('loads and persists strictly validated household dashboard preferences', async () => {
     const saved = {
       householdId: 'family', template: 'CASH_FLOW', theme: 'DARK', density: 'COMPACT',

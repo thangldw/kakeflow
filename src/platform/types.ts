@@ -252,6 +252,11 @@ export type FamilyDeliveryConnectionStateDto = 'NOT_CONFIGURED' | 'CONNECTED' | 
 export type FamilyMembershipStateDto = 'UNLINKED' | 'INVITED' | 'ACTIVE' | 'REVOKED' | 'ARCHIVED_BLOCKED'
 export type FamilyOutboundStateDto = 'READY' | 'BLOCKED_NO_RECIPIENT' | 'SENDING' | 'RELAY_ACCEPTED' | 'FAILED_RETRYABLE' | 'MEMBERSHIP_REVOKED'
 export type FamilyInboundStateDto = 'AVAILABLE' | 'DOWNLOADING' | 'WAITING_FOR_REVIEW' | 'READY_TO_APPLY' | 'APPLIED' | 'DUPLICATE' | 'REJECTED_INVALID' | 'AUDIENCE_DENIED' | 'FAILED_RETRYABLE'
+export type FamilyDeliveryArtifactSchemaDto = 'FAMILY_AUDIENCE_PARTITION_V1' | 'FAMILY_AUDIENCE_PARTITION_V2'
+export type FamilyDeliveryDomainDto = 'LEDGER' | 'PLANNING' | 'CONFIG' | 'CARD' | 'INVESTMENT'
+export type FamilyDeliveryCoverageStateDto = 'COMPLETE' | 'PARTIAL'
+export type FamilyDeliveryDomainCountsDto = Readonly<Record<FamilyDeliveryDomainDto, number>>
+export type FamilyDeliveryWithheldCountsDto = Readonly<Record<string, number>>
 export interface FamilyDeliveryMembershipDto {
   readonly memberId: string; readonly memberName: string; readonly state: FamilyMembershipStateDto
   readonly remoteMembershipIds: readonly string[]
@@ -263,6 +268,10 @@ export interface FamilyDeliveryPartitionDto {
   readonly audienceMemberId: string | null; readonly audienceMemberName: string | null
   readonly recipientNames: readonly string[]; readonly pendingChangeCount: number
   readonly state: FamilyOutboundStateDto; readonly withheldReason: string | null
+  readonly domainCounts: FamilyDeliveryDomainCountsDto
+  readonly evidenceFileCount: number; readonly evidenceRecordCount: number
+  readonly withheldCountsByReason: FamilyDeliveryWithheldCountsDto
+  readonly coverageState: FamilyDeliveryCoverageStateDto
 }
 export interface FamilyDeliveryInboundDto {
   readonly artifactId: string; readonly senderMemberName: string
@@ -294,7 +303,7 @@ export interface FamilyDeliveryPreparedArtifactDto {
   readonly deliveryId: string; readonly artifactId: string; readonly digest: string
   readonly householdId: string; readonly originDeviceId: string; readonly audienceKey: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
-  readonly artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1'; readonly packageBytes: readonly number[]
+  readonly artifactSchema: FamilyDeliveryArtifactSchemaDto; readonly packageBytes: readonly number[]
 }
 export interface PrepareFamilyDeliveryInputDto { readonly householdId: string; readonly audienceKeys: readonly string[] }
 export interface AcceptFamilyDeliveryInputDto {
@@ -304,13 +313,14 @@ export interface FamilyDeliveryRemoteArtifactDto {
   readonly sequence: number; readonly artifactId: string; readonly digest: string; readonly createdAt: string
   readonly originDeviceId: string; readonly senderMembershipId: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
-  readonly byteSize: number; readonly artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1'
+  readonly byteSize: number; readonly artifactSchema: FamilyDeliveryArtifactSchemaDto
 }
 export interface RegisterFamilyDeliveryInboundInputDto { readonly householdId: string; readonly artifacts: readonly FamilyDeliveryRemoteArtifactDto[]; readonly nextCursor: number }
 export interface StageFamilyDeliveryInboundInputDto { readonly householdId: string; readonly artifactId: string; readonly packageBytes: readonly number[] }
 export type FamilySnapshotResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
 export interface FamilySnapshotReviewRecordDto {
   readonly recordOrder: number; readonly entityKind: string; readonly entityId: string; readonly entityLabel: string
+  readonly domain: FamilyDeliveryDomainDto; readonly entitySummary: string
   readonly operation: 'UPSERT' | 'DELETE'; readonly reviewState: 'CREATE' | 'UPDATE' | 'DELETE' | 'CONFLICT'
   readonly resolution: FamilySnapshotResolutionDto; readonly localSummary: string | null; readonly incomingSummary: string
 }

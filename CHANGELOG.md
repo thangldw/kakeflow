@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.56.0 — 2026-07-14
+
+- Add `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema v2 for the core family graph plus complete monthly-budget, savings-goal, classification-rule, account-group, card-settlement-mapping, dashboard-preference, and delimited-parser-profile aggregates while retaining schema-v1 decode/apply compatibility.
+- Resolve every account-dependent aggregate through a least-widening audience meet, keep whole plans/groups atomic, and withhold mixed-member, other-member, or unresolved graphs instead of splitting rows or widening access.
+- Bind a signed entity-audience index into each v2 artifact so a `SHARED`/`PERSONAL(member)` relocation removes stale partition lineage without allowing a later omission artifact to delete the entity in its new partition.
+- Reuse the schema-v4 local change-package canonical payloads and materializers, apply accepted records in dependency order inside one transaction, and conservatively mark family partitions dirty for planning/configuration parent and child changes without echoing incoming applies.
+- Add exact V1/V2 relay-schema preservation with byte-identical immutable retries, matching-member PERSONAL routing, revocation/generation enforcement, and rejection of unsupported artifact schemas.
+- Add per-audience ledger/planning/config/card/investment counts, evidence counts, reason-specific withheld disclosure, grouped review summaries, and configuration-impact warnings; `COMPLETE` is valid only when no record is withheld.
+- Keep card and investment aggregates explicitly withheld as `EVIDENCE_REQUIRED`; v0.56 does not claim evidence-partitioned delivery, automatic/background delivery, automatic apply, remote posting, or remote erasure.
+
 ## 0.55.0 — 2026-07-14
 
 - Add a separate `MOBILE_RECEIPT_CAPTURE_V1` capsule and relay channel with independent storage, sequence, cursor, immutable retry identity, digest verification, and server-derived `SHARED` or same-member `PERSONAL` recipients.

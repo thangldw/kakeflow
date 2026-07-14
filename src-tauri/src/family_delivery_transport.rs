@@ -10,7 +10,8 @@ use crate::{family_snapshot, sync_foundation};
 const MAX_ID: usize = 128;
 const MAX_ARTIFACTS: usize = 1_000;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
-const ARTIFACT_SCHEMA: &str = "FAMILY_AUDIENCE_PARTITION_V1";
+const ARTIFACT_SCHEMA_V1: &str = "FAMILY_AUDIENCE_PARTITION_V1";
+const ARTIFACT_SCHEMA: &str = "FAMILY_AUDIENCE_PARTITION_V2";
 
 #[derive(Debug, Error)]
 pub enum FamilyDeliveryError {
@@ -56,6 +57,11 @@ pub struct FamilyPartitionStatusDto {
     pub pending_change_count: u64,
     pub state: String,
     pub withheld_reason: Option<String>,
+    pub domain_counts: BTreeMap<String, u64>,
+    pub evidence_file_count: u64,
+    pub evidence_record_count: u64,
+    pub withheld_counts_by_reason: BTreeMap<String, u64>,
+    pub coverage_state: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -85,6 +91,7 @@ pub struct FamilyDeliveryStatusDto {
     pub memberships: Vec<FamilyMembershipDto>,
     pub outbound: Vec<FamilyPartitionStatusDto>,
     pub withheld_change_count: u64,
+    pub withheld_counts_by_reason: BTreeMap<String, u64>,
     pub inbound: Vec<FamilyInboundDto>,
 }
 
@@ -127,7 +134,7 @@ pub struct PreparedFamilyArtifactDto {
     pub audience_key: String,
     pub audience_visibility: String,
     pub audience_member_id: Option<String>,
-    pub artifact_schema: &'static str,
+    pub artifact_schema: String,
     pub package_bytes: Vec<u8>,
 }
 
@@ -198,6 +205,8 @@ pub struct FamilySnapshotUiRecordDto {
     pub resolution: String,
     pub local_summary: Option<String>,
     pub incoming_summary: String,
+    pub domain: String,
+    pub entity_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -238,6 +247,26 @@ fn valid_timestamp(value: &str) -> bool {
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+fn empty_domain_counts() -> BTreeMap<String, u64> {
+    ["LEDGER", "PLANNING", "CONFIG", "CARD", "INVESTMENT"]
+        .into_iter()
+        .map(|domain| (domain.to_owned(), 0))
+        .collect()
+}
+
+fn empty_withheld_counts() -> BTreeMap<String, u64> {
+    [
+        "EVIDENCE_REQUIRED_CARD",
+        "EVIDENCE_REQUIRED_INVESTMENT",
+        "MIXED_PERSONAL_MEMBERS",
+        "OTHER_MEMBER_PERSONAL",
+        "UNASSIGNED_SCOPE",
+    ]
+    .into_iter()
+    .map(|reason| (reason.to_owned(), 0))
+    .collect()
 }
 
 fn normalized_endpoint(value: &str) -> Option<String> {
@@ -508,6 +537,7 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
             memberships: vec![],
             outbound: vec![],
             withheld_change_count: 0,
+            withheld_counts_by_reason: empty_withheld_counts(),
             inbound: vec![],
         });
     };
@@ -524,10 +554,19 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
             memberships: vec![],
             outbound: vec![],
             withheld_change_count: 0,
+            withheld_counts_by_reason: empty_withheld_counts(),
             inbound: vec![],
         });
     }
     let memberships = load_memberships(connection, household_id)?;
+    let preview = family_snapshot::preview_snapshot_set(connection, household_id)
+        .map_err(|_| FamilyDeliveryError::Snapshot)?;
+    let withheld_counts_by_reason = preview.excluded_counts_by_reason.clone();
+    let coverage_state = if withheld_counts_by_reason.values().sum::<u64>() == 0 {
+        "COMPLETE"
+    } else {
+        "PARTIAL"
+    };
     let mut statement = connection.prepare(
         "SELECT audience_key,visibility,member_id,dirty FROM family_delivery_partition_state
          WHERE household_id=?1 ORDER BY CASE visibility WHEN 'SHARED' THEN 0 ELSE 1 END,audience_key")?;
@@ -548,9 +587,33 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
                 else { "READY".to_owned() };
             let prepared_before = latest.as_ref().is_some_and(|(state,_)| matches!(state.as_str(), "SENDING"|"FAILED_RETRYABLE"));
             let pending = if dirty == 0 { 0 } else if prepared_before { latest.as_ref().map(|(_,count)| (*count).max(1) as u64).unwrap_or(1) } else { 1 };
+            let domain_counts = preview.partitions.iter().find(|partition| {
+                partition.audience.visibility == visibility && partition.audience.member_id == member_id
+            }).map(|partition| {
+                let mut counts = empty_domain_counts();
+                for record in &partition.records {
+                    *counts.entry(entity_domain(&record.entity_kind).to_owned()).or_default() += 1;
+                }
+                counts
+            }).unwrap_or_else(empty_domain_counts);
+            let mut domain_counts = domain_counts;
+            domain_counts.insert(
+                "CARD".to_owned(),
+                *withheld_counts_by_reason
+                    .get("EVIDENCE_REQUIRED_CARD")
+                    .unwrap_or(&0),
+            );
+            domain_counts.insert(
+                "INVESTMENT".to_owned(),
+                *withheld_counts_by_reason
+                    .get("EVIDENCE_REQUIRED_INVESTMENT")
+                    .unwrap_or(&0),
+            );
             Ok(FamilyPartitionStatusDto { audience_key:key,audience_visibility:visibility,audience_member_id:member_id,
                 audience_member_name:member_name,recipient_names:recipients,pending_change_count:pending,state:outbound_state,
-                withheld_reason:if dirty != 0 && !prepared_before { Some("件数は送信準備時に確定します".to_owned()) } else { None } })
+                withheld_reason:if dirty != 0 && !prepared_before { Some("件数は送信準備時に確定します".to_owned()) } else { None },
+                domain_counts,evidence_file_count:0,evidence_record_count:0,
+                withheld_counts_by_reason:withheld_counts_by_reason.clone(),coverage_state:coverage_state.to_owned() })
         }).collect::<std::result::Result<Vec<_>,rusqlite::Error>>()?;
     let mut inbound_statement = connection.prepare(
         "SELECT i.artifact_id,i.sender_member_name,i.visibility,i.member_name,
@@ -573,10 +636,7 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let withheld_change_count = connection.query_row(
-        "SELECT coalesce(max(excluded_count),0) FROM family_delivery_deliveries WHERE household_id=?1",
-        [household_id], |row| row.get::<_,i64>(0),
-    )?.max(0) as u64;
+    let withheld_change_count = withheld_counts_by_reason.values().sum();
     Ok(FamilyDeliveryStatusDto {
         household_id: household_id.to_owned(),
         connection_state: state,
@@ -589,6 +649,7 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<FamilyDeliv
         memberships,
         outbound,
         withheld_change_count,
+        withheld_counts_by_reason,
         inbound,
     })
 }
@@ -699,11 +760,11 @@ pub fn prepare_send(
         let delivery_id = format!("family-delivery-{package_digest}");
         transaction.execute(
             "INSERT INTO family_delivery_deliveries(delivery_id,household_id,audience_key,artifact_id,package_sha256,
-               origin_device_id,visibility,member_id,item_count,excluded_count,package_bytes,state)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'SENDING')",
+               origin_device_id,visibility,member_id,item_count,excluded_count,package_bytes,state,artifact_schema)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'SENDING',?12)",
             params![delivery_id,input.household_id,key,partition.package_id,package_digest,set.source_installation_id,
                 partition.audience.visibility,partition.audience.member_id,partition.records.len() as u64,
-                set.excluded_counts_by_reason.values().sum::<u64>(),bytes],
+                set.excluded_counts_by_reason.values().sum::<u64>(),bytes,ARTIFACT_SCHEMA],
         )?;
         prepared
             .push(load_delivery(&transaction, &delivery_id)?.ok_or(FamilyDeliveryError::Conflict)?);
@@ -739,10 +800,10 @@ fn load_delivery(
     delivery_id: &str,
 ) -> Result<Option<PreparedFamilyArtifactDto>> {
     let delivery = connection.query_row(
-        "SELECT delivery_id,artifact_id,package_sha256,household_id,origin_device_id,audience_key,visibility,member_id,package_bytes
+        "SELECT delivery_id,artifact_id,package_sha256,household_id,origin_device_id,audience_key,visibility,member_id,artifact_schema,package_bytes
          FROM family_delivery_deliveries WHERE delivery_id=?1", [delivery_id], |row| Ok(PreparedFamilyArtifactDto {
             delivery_id:row.get(0)?,artifact_id:row.get(1)?,digest:row.get(2)?,household_id:row.get(3)?,origin_device_id:row.get(4)?,
-            audience_key:row.get(5)?,audience_visibility:row.get(6)?,audience_member_id:row.get(7)?,artifact_schema:ARTIFACT_SCHEMA,package_bytes:row.get(8)?,
+            audience_key:row.get(5)?,audience_visibility:row.get(6)?,audience_member_id:row.get(7)?,artifact_schema:row.get(8)?,package_bytes:row.get(9)?,
         }),
     ).optional()?;
     let Some(delivery) = delivery else {
@@ -762,6 +823,12 @@ fn load_delivery(
         || partition.package_id != delivery.artifact_id
         || partition.audience.visibility != delivery.audience_visibility
         || partition.audience.member_id != delivery.audience_member_id
+        || delivery.artifact_schema
+            != if set.schema_version == 1 {
+                ARTIFACT_SCHEMA_V1
+            } else {
+                ARTIFACT_SCHEMA
+            }
     {
         return Err(FamilyDeliveryError::Conflict);
     }
@@ -785,13 +852,82 @@ pub fn mark_accepted(
             return Err(FamilyDeliveryError::InvalidInput);
         }
         let existing = transaction.query_row(
-            "SELECT audience_key,state,artifact_id,package_sha256 FROM family_delivery_deliveries
-             WHERE household_id=?1 AND delivery_id=?2", params![input.household_id,receipt.delivery_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?)),
+            "SELECT audience_key,state,artifact_id,package_sha256,package_bytes FROM family_delivery_deliveries
+             WHERE household_id=?1 AND delivery_id=?2", params![input.household_id,receipt.delivery_id], |row| Ok((row.get::<_,String>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,String>(3)?,row.get::<_,Option<Vec<u8>>>(4)?)),
         ).optional()?.ok_or(FamilyDeliveryError::Conflict)?;
         if existing.2 != receipt.artifact_id || existing.3 != receipt.digest {
             return Err(FamilyDeliveryError::Conflict);
         }
         if existing.1 != "RELAY_ACCEPTED" {
+            let bytes = existing.4.as_deref().ok_or(FamilyDeliveryError::Conflict)?;
+            let set = family_snapshot::decode_and_validate(bytes)
+                .map_err(|_| FamilyDeliveryError::Conflict)?;
+            let partition = set
+                .partitions
+                .first()
+                .ok_or(FamilyDeliveryError::Conflict)?;
+            let retained = partition
+                .records
+                .iter()
+                .map(|record| (record.entity_kind.as_str(), record.entity_id.as_str()))
+                .chain(
+                    partition
+                        .relocations
+                        .iter()
+                        .map(|record| (record.entity_kind.as_str(), record.entity_id.as_str())),
+                )
+                .collect::<BTreeSet<_>>();
+            let mut old_statement = transaction.prepare(
+                "SELECT entity_kind,entity_id FROM family_delivery_outbound_entity_heads
+                 WHERE household_id=?1 AND visibility=?2 AND member_key=?3",
+            )?;
+            let old = old_statement
+                .query_map(
+                    params![
+                        input.household_id,
+                        partition.audience.visibility,
+                        partition.audience.member_key()
+                    ],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            drop(old_statement);
+            for (kind, id) in old {
+                if !retained.contains(&(kind.as_str(), id.as_str())) {
+                    transaction.execute(
+                        "DELETE FROM family_delivery_outbound_entity_heads
+                         WHERE household_id=?1 AND visibility=?2 AND member_key=?3
+                           AND entity_kind=?4 AND entity_id=?5",
+                        params![
+                            input.household_id,
+                            partition.audience.visibility,
+                            partition.audience.member_key(),
+                            kind,
+                            id
+                        ],
+                    )?;
+                }
+            }
+            for record in &partition.records {
+                transaction.execute(
+                    "INSERT INTO family_delivery_outbound_entity_heads(
+                       household_id,visibility,member_id,member_key,entity_kind,entity_id,
+                       payload_sha256,accepted_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                     ON CONFLICT(household_id,visibility,member_key,entity_kind,entity_id)
+                     DO UPDATE SET member_id=excluded.member_id,payload_sha256=excluded.payload_sha256,
+                       accepted_at=excluded.accepted_at",
+                    params![input.household_id,partition.audience.visibility,
+                        partition.audience.member_id,partition.audience.member_key(),record.entity_kind,
+                        record.entity_id,record.payload_sha256,receipt.accepted_at],
+                )?;
+            }
+            mark_v2_outbound_lineage_tracked(
+                &transaction,
+                &input.household_id,
+                &existing.0,
+                &receipt.accepted_at,
+                set.schema_version,
+            )?;
             transaction.execute("UPDATE family_delivery_deliveries SET state='RELAY_ACCEPTED',accepted_at=?1,package_bytes=NULL WHERE delivery_id=?2", params![receipt.accepted_at,receipt.delivery_id])?;
             transaction.execute("UPDATE family_delivery_partition_state SET dirty=0,last_accepted_digest=?1,last_accepted_at=?2 WHERE household_id=?3 AND audience_key=?4",
                 params![receipt.digest,receipt.accepted_at,input.household_id,existing.0])?;
@@ -800,6 +936,25 @@ pub fn mark_accepted(
     transaction.execute("UPDATE family_delivery_connections SET state='CONNECTED',last_checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1", [&input.household_id])?;
     transaction.commit()?;
     status(connection, &input.household_id)
+}
+
+fn mark_v2_outbound_lineage_tracked(
+    transaction: &Transaction<'_>,
+    household_id: &str,
+    audience_key: &str,
+    accepted_at: &str,
+    schema_version: u32,
+) -> Result<()> {
+    if schema_version >= 2 {
+        transaction.execute(
+            "INSERT INTO family_delivery_outbound_lineage_state(
+               household_id,audience_key,state,updated_at) VALUES(?1,?2,'V2_TRACKED',?3)
+             ON CONFLICT(household_id,audience_key) DO UPDATE SET
+               state='V2_TRACKED',updated_at=excluded.updated_at",
+            params![household_id, audience_key, accepted_at],
+        )?;
+    }
+    Ok(())
 }
 
 pub fn mark_failed(
@@ -862,7 +1017,10 @@ pub fn register_inbound(
             || !valid_timestamp(&artifact.created_at)
             || artifact.byte_size == 0
             || artifact.byte_size as usize > MAX_PACKAGE_BYTES
-            || artifact.artifact_schema != ARTIFACT_SCHEMA
+            || !matches!(
+                artifact.artifact_schema.as_str(),
+                ARTIFACT_SCHEMA_V1 | ARTIFACT_SCHEMA
+            )
             || artifact.origin_device_id == local_device
             || !matches!(artifact.audience_visibility.as_str(), "SHARED" | "PERSONAL")
             || ((artifact.audience_visibility == "SHARED") != artifact.audience_member_id.is_none())
@@ -970,7 +1128,12 @@ pub fn stage_inbound(
         || partition.package_id != input.artifact_id
         || partition.audience.visibility != metadata.3
         || partition.audience.member_id != metadata.4
-        || metadata.5 != ARTIFACT_SCHEMA
+        || metadata.5
+            != if set.schema_version == 1 {
+                ARTIFACT_SCHEMA_V1
+            } else {
+                ARTIFACT_SCHEMA
+            }
         || metadata.6 != set.publisher_member_id
     {
         return Err(FamilyDeliveryError::AudienceDenied);
@@ -1143,29 +1306,39 @@ fn ui_review(
         .records
         .iter()
         .filter(|record| record.review_state != "UNCHANGED")
-        .map(|record| FamilySnapshotUiRecordDto {
-            record_order: record.record_order,
-            entity_kind: record.entity_kind.clone(),
-            entity_id: record.entity_id.clone(),
-            entity_label: format!(
-                "{}・{}",
-                entity_kind_label(&record.entity_kind),
-                record.entity_id
-            ),
-            operation: record.operation.clone(),
-            review_state: record.review_state.clone(),
-            resolution: record.resolution.clone(),
-            local_summary: record
-                .current_payload_sha256
-                .as_ref()
-                .map(|_| "この端末に既存データがあります".to_owned()),
-            incoming_summary: if record.operation == "DELETE" {
-                "受信した現在状態には含まれていません".to_owned()
-            } else {
-                format!("受信した{}データ", entity_kind_label(&record.entity_kind))
-            },
+        .map(|record| {
+            Ok(FamilySnapshotUiRecordDto {
+                record_order: record.record_order,
+                entity_kind: record.entity_kind.clone(),
+                entity_id: record.entity_id.clone(),
+                entity_label: format!(
+                    "{}・{}",
+                    entity_kind_label(&record.entity_kind),
+                    record.entity_id
+                ),
+                operation: record.operation.clone(),
+                review_state: record.review_state.clone(),
+                resolution: record.resolution.clone(),
+                local_summary: record
+                    .current_payload_sha256
+                    .as_ref()
+                    .map(|_| "この端末に既存データがあります".to_owned()),
+                incoming_summary: if record.operation == "DELETE" {
+                    "受信した現在状態には含まれていません".to_owned()
+                } else {
+                    format!("受信した{}データ", entity_kind_label(&record.entity_kind))
+                },
+                domain: entity_domain(&record.entity_kind).to_owned(),
+                entity_summary: review_entity_summary(
+                    connection,
+                    &review.snapshot_set_id,
+                    record.record_order,
+                    &record.entity_kind,
+                    &record.entity_id,
+                )?,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
     let create_count = records
         .iter()
         .filter(|r| r.review_state == "CREATE")
@@ -1204,8 +1377,123 @@ fn entity_kind_label(kind: &str) -> &'static str {
         "HOUSEHOLD_MEMBER" => "メンバー",
         "ACCOUNT" => "口座",
         "TRANSACTION" => "取引",
+        "MONTHLY_BUDGET_PLAN" => "月次予算",
+        "SAVINGS_GOAL" => "貯蓄目標",
+        "CLASSIFICATION_RULE" => "分類ルール",
+        "ACCOUNT_GROUP" => "口座グループ",
+        "CARD_SETTLEMENT_MAPPING" => "カード引落口座",
+        "DASHBOARD_PREFERENCES" => "ダッシュボード設定",
+        "DELIMITED_PARSER_PROFILE" => "CSV解析設定",
         _ => "データ",
     }
+}
+
+fn entity_domain(kind: &str) -> &'static str {
+    match kind {
+        "MONTHLY_BUDGET_PLAN" | "SAVINGS_GOAL" => "PLANNING",
+        "CLASSIFICATION_RULE"
+        | "ACCOUNT_GROUP"
+        | "CARD_SETTLEMENT_MAPPING"
+        | "DASHBOARD_PREFERENCES"
+        | "DELIMITED_PARSER_PROFILE" => "CONFIG",
+        _ => "LEDGER",
+    }
+}
+
+fn review_entity_summary(
+    connection: &Connection,
+    snapshot_set_id: &str,
+    record_order: u64,
+    kind: &str,
+    entity_id: &str,
+) -> Result<String> {
+    let payload: String = connection.query_row(
+        "SELECT canonical_payload_json FROM family_snapshot_records
+         WHERE snapshot_set_id=?1 AND record_order=?2",
+        params![snapshot_set_id, record_order],
+        |row| row.get(0),
+    )?;
+    let value: serde_json::Value =
+        serde_json::from_str(&payload).map_err(|_| FamilyDeliveryError::Conflict)?;
+    let text = match kind {
+        "MONTHLY_BUDGET_PLAN" => {
+            let budgets = value
+                .get("budgets")
+                .and_then(|v| v.as_array())
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let first = budgets
+                .first()
+                .and_then(|v| v.get("month"))
+                .and_then(|v| v.as_str());
+            let last = budgets
+                .last()
+                .and_then(|v| v.get("month"))
+                .and_then(|v| v.as_str());
+            format!(
+                "{}件・{}〜{}",
+                budgets.len(),
+                first.unwrap_or("—"),
+                last.unwrap_or("—")
+            )
+        }
+        "SAVINGS_GOAL" => format!(
+            "{}・¥{}/¥{}",
+            value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(entity_id),
+            value.get("savedJpy").and_then(|v| v.as_i64()).unwrap_or(0),
+            value.get("targetJpy").and_then(|v| v.as_i64()).unwrap_or(0)
+        ),
+        "CLASSIFICATION_RULE" => value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(entity_id)
+            .to_owned(),
+        "ACCOUNT_GROUP" => format!(
+            "{}・{}口座",
+            value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(entity_id),
+            value
+                .get("members")
+                .and_then(|v| v.as_array())
+                .map(Vec::len)
+                .unwrap_or(0)
+        ),
+        "CARD_SETTLEMENT_MAPPING" => format!(
+            "{} → {}",
+            value
+                .get("cardAccountId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("—"),
+            value
+                .get("bankAccountId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("—")
+        ),
+        "DASHBOARD_PREFERENCES" => format!(
+            "{}・{}・{}",
+            value
+                .get("dashboardTemplate")
+                .and_then(|v| v.as_str())
+                .unwrap_or("—"),
+            value.get("theme").and_then(|v| v.as_str()).unwrap_or("—"),
+            value.get("density").and_then(|v| v.as_str()).unwrap_or("—")
+        ),
+        "DELIMITED_PARSER_PROFILE" => format!(
+            "{}・v{}",
+            value
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(entity_id),
+            value.get("version").and_then(|v| v.as_i64()).unwrap_or(0)
+        ),
+        _ => format!("{}・{}", entity_kind_label(kind), entity_id),
+    };
+    Ok(text.chars().take(240).collect())
 }
 
 #[cfg(test)]
@@ -1317,6 +1605,61 @@ mod tests {
     }
 
     #[test]
+    fn accepted_v1_preserves_unknown_lineage_until_v2_is_accepted() {
+        let state = setup(15);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                connection.execute(
+                    "INSERT INTO family_delivery_outbound_lineage_state(
+                       household_id,audience_key,state,updated_at)
+                     VALUES('family','SHARED','LEGACY_UNKNOWN','2026-07-13T00:00:00Z')
+                     ON CONFLICT(household_id,audience_key) DO UPDATE SET
+                       state='LEGACY_UNKNOWN',updated_at=excluded.updated_at",
+                    [],
+                )?;
+
+                let transaction = connection.unchecked_transaction()?;
+                mark_v2_outbound_lineage_tracked(
+                    &transaction,
+                    "family",
+                    "SHARED",
+                    "2026-07-14T00:00:00Z",
+                    1,
+                )
+                .unwrap();
+                transaction.commit()?;
+                let after_v1: String = connection.query_row(
+                    "SELECT state FROM family_delivery_outbound_lineage_state
+                     WHERE household_id='family' AND audience_key='SHARED'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(after_v1, "LEGACY_UNKNOWN");
+
+                let transaction = connection.unchecked_transaction()?;
+                mark_v2_outbound_lineage_tracked(
+                    &transaction,
+                    "family",
+                    "SHARED",
+                    "2026-07-14T00:01:00Z",
+                    2,
+                )
+                .unwrap();
+                transaction.commit()?;
+                let after_v2: String = connection.query_row(
+                    "SELECT state FROM family_delivery_outbound_lineage_state
+                     WHERE household_id='family' AND audience_key='SHARED'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(after_v2, "V2_TRACKED");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn accepted_partition_becomes_ready_after_a_new_local_change() {
         let state = setup(7);
         state
@@ -1377,6 +1720,138 @@ mod tests {
                 .unwrap()
                 .remove(0);
                 assert_ne!(second.artifact_id, first.artifact_id);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn accept_one(connection: &Connection, artifact: &PreparedFamilyArtifactDto, at: &str) {
+        mark_accepted(
+            connection,
+            &AcceptFamilyDeliveryInput {
+                household_id: "family".into(),
+                receipts: vec![AcceptanceReceiptInput {
+                    delivery_id: artifact.delivery_id.clone(),
+                    artifact_id: artifact.artifact_id.clone(),
+                    digest: artifact.digest.clone(),
+                    accepted_at: at.into(),
+                }],
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn status_preview_reports_truthful_planning_configuration_and_coverage() {
+        let state = setup(13);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                connection.execute(
+                    "INSERT INTO savings_goals(id,household_id,name,target_jpy,saved_jpy,target_date)
+                     VALUES('goal','family','Emergency',100000,10000,'2027-01-01')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO dashboard_preferences(household_id,dashboard_template,theme,density)
+                     VALUES('family','FINANCIAL_OVERVIEW','DARK','COMPACT')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency,
+                       ownership_kind,visibility) VALUES(
+                       'card','family','Card','LIABILITY','CREDIT_CARD','JPY','HOUSEHOLD','SHARED')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO card_statements(id,household_id,card_account_id,period_start,
+                       period_end,statement_amount_jpy)
+                     VALUES('statement','family','card','2026-06-01','2026-06-30',1000)",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO investment_fx_rates(id,household_id,rate_date,base_currency,
+                       quote_currency,rate,source_kind,provider,observed_at)
+                     VALUES('fx','family','2026-07-14','USD','JPY',150,'MANUAL','User',
+                       '2026-07-14T00:00:00Z')",
+                    [],
+                )?;
+                let current = status(connection, "family").unwrap();
+                let shared = current
+                    .outbound
+                    .iter()
+                    .find(|partition| partition.audience_visibility == "SHARED")
+                    .unwrap();
+                assert!(shared.domain_counts["PLANNING"] >= 2);
+                assert!(shared.domain_counts["CONFIG"] >= 1);
+                assert_eq!(shared.domain_counts["CARD"], 1);
+                assert_eq!(shared.domain_counts["INVESTMENT"], 1);
+                assert_eq!(current.withheld_counts_by_reason["EVIDENCE_REQUIRED_CARD"], 1);
+                assert_eq!(
+                    current.withheld_counts_by_reason["EVIDENCE_REQUIRED_INVESTMENT"],
+                    1
+                );
+                assert_eq!(
+                    current.withheld_change_count,
+                    current.withheld_counts_by_reason.values().sum::<u64>()
+                );
+                assert_eq!(shared.coverage_state, "PARTIAL");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn accepted_relocation_head_persists_without_leaking_never_shared_personal_ids() {
+        let state = setup(14);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency,
+                       ownership_kind,visibility) VALUES(
+                       'moving','family','Moving','EXPENSE','OTHER','JPY','HOUSEHOLD','SHARED')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
+                     VALUES('family','2026-07','moving',1000)",
+                    [],
+                )?;
+                let first = prepare_send(connection, &PrepareFamilyDeliveryInput {
+                    household_id:"family".into(),audience_keys:vec!["SHARED".into()]
+                }).unwrap();
+                accept_one(connection,&first[0],"2026-07-14T00:00:00Z");
+                connection.execute(
+                    "UPDATE accounts SET owner_member_id='member-a',ownership_kind='MEMBER',
+                       visibility='PERSONAL' WHERE id='moving'",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency,
+                       owner_member_id,ownership_kind,visibility) VALUES(
+                       'never-shared-private','family','Private','EXPENSE','OTHER','JPY',
+                       'member-a','MEMBER','PERSONAL')",
+                    [],
+                )?;
+                let moved = prepare_send(connection, &PrepareFamilyDeliveryInput {
+                    household_id:"family".into(),audience_keys:vec!["SHARED".into()]
+                }).unwrap();
+                let moved_set = family_snapshot::decode_and_validate(&moved[0].package_bytes).unwrap();
+                assert!(moved_set.partitions[0].relocations.iter().any(|r|r.entity_id=="moving"));
+                assert!(!String::from_utf8(moved[0].package_bytes.clone()).unwrap().contains("never-shared-private"));
+                accept_one(connection,&moved[0],"2026-07-14T00:01:00Z");
+                connection.execute(
+                    "INSERT INTO savings_goals(id,household_id,name,target_jpy,target_date)
+                     VALUES('later-goal','family','Later',1000,'2027-01-01')",
+                    [],
+                )?;
+                let later = prepare_send(connection, &PrepareFamilyDeliveryInput {
+                    household_id:"family".into(),audience_keys:vec!["SHARED".into()]
+                }).unwrap();
+                let later_set = family_snapshot::decode_and_validate(&later[0].package_bytes).unwrap();
+                assert!(later_set.partitions[0].relocations.iter().any(|r|r.entity_id=="moving"));
+                assert!(!String::from_utf8(later[0].package_bytes.clone()).unwrap().contains("never-shared-private"));
                 Ok(())
             })
             .unwrap();

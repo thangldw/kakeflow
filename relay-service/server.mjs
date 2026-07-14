@@ -14,7 +14,10 @@ const FAMILY_INDEX_VERSION = 2
 const PAGE_SIZE = 100
 const MAX_JSON_BYTES = 64 * 1024
 const FAMILY_AUDIENCES = new Set(['SHARED', 'PERSONAL'])
-const FAMILY_ARTIFACT_SCHEMA = 'FAMILY_AUDIENCE_PARTITION_V1'
+const FAMILY_ARTIFACT_SCHEMAS = new Set([
+  'FAMILY_AUDIENCE_PARTITION_V1',
+  'FAMILY_AUDIENCE_PARTITION_V2',
+])
 const CAPTURE_CAPSULE_SCHEMA = 'MOBILE_RECEIPT_CAPTURE_V1'
 
 function json(response, status, body) {
@@ -125,7 +128,7 @@ function validFamilyIndex(value) {
       && FAMILY_AUDIENCES.has(item.audienceVisibility)
       && ((item.audienceVisibility === 'SHARED' && item.audienceMemberId === null)
         || (item.audienceVisibility === 'PERSONAL' && ID.test(item.audienceMemberId)))
-      && item.artifactSchema === FAMILY_ARTIFACT_SCHEMA
+      && FAMILY_ARTIFACT_SCHEMAS.has(item.artifactSchema)
       && membershipById.get(item.senderMembershipId)?.householdId === item.householdId
       && membershipById.get(item.senderMembershipId)?.principalId === item.senderPrincipalId
       && ID.test(item.senderPrincipalId)
@@ -563,7 +566,7 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
           || !FAMILY_AUDIENCES.has(audienceVisibility)
           || (audienceVisibility === 'SHARED' && audienceMemberId != null)
           || (audienceVisibility === 'PERSONAL' && (typeof audienceMemberId !== 'string' || !ID.test(audienceMemberId)))
-          || artifactSchema !== FAMILY_ARTIFACT_SCHEMA) {
+          || !FAMILY_ARTIFACT_SCHEMAS.has(artifactSchema)) {
           request.resume(); return failure(response, 400, 'INVALID_PUBLICATION_HEADERS')
         }
         const declaredLength = Number(request.headers['content-length'])

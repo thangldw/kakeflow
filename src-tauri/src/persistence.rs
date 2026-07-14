@@ -111,6 +111,9 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0045_family_delivery_transport.sql"
     )),
     M::up(include_str!("../migrations/0046_mobile_capture_inbox.sql")),
+    M::up(include_str!(
+        "../migrations/0047_family_planning_configuration.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1595,6 +1598,58 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_47_quarantines_accepted_v1_outbound_lineage() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..46].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('migration-family','Family');
+                 INSERT INTO household_members(id,household_id,display_name,status,sort_order)
+                   VALUES('migration-member-a','migration-family','A','ACTIVE',99);
+                 INSERT INTO family_delivery_connections(
+                   household_id,endpoint,remote_principal_id,local_member_id,local_member_name,state)
+                   VALUES('migration-family','https://relay.example','principal-a','migration-member-a','A','CONNECTED');
+                 INSERT INTO family_delivery_partition_state(
+                   household_id,audience_key,visibility,member_id,member_key,dirty)
+                   VALUES('migration-family','SHARED','SHARED',NULL,'',0);
+                 INSERT INTO family_delivery_deliveries(
+                   delivery_id,household_id,audience_key,artifact_id,package_sha256,
+                   origin_device_id,visibility,member_id,item_count,excluded_count,
+                   package_bytes,state,accepted_at)
+                   VALUES('delivery','migration-family','SHARED','artifact',
+                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                     'device-a','SHARED',NULL,1,0,NULL,'RELAY_ACCEPTED',
+                     '2026-07-14T00:00:00Z');",
+            )
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0047_family_planning_configuration.sql"
+            ))
+            .unwrap();
+        let state: String = connection
+            .query_row(
+                "SELECT state FROM family_delivery_outbound_lineage_state
+                 WHERE household_id='migration-family' AND audience_key='SHARED'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "LEGACY_UNKNOWN");
+        let schema: String = connection
+            .query_row(
+                "SELECT artifact_schema FROM family_delivery_deliveries WHERE delivery_id='delivery'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(schema, "FAMILY_AUDIENCE_PARTITION_V1");
     }
 
     #[test]

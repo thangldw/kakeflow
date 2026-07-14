@@ -115,6 +115,11 @@ membership; this does not change or widen the personal-relay contract.
   enters as immutable pending source evidence, runs through desktop-local OCR
   and matching, and still requires explicit user confirmation; it never posts
   a transaction directly.
+- **0.56:** family snapshot schema v2 carries complete planning and
+  configuration aggregates through least-widening SHARED/PERSONAL partitions,
+  reason-specific coverage disclosure, explicit review, and atomic apply.
+  Card and investment graphs remain withheld until their immutable evidence can
+  travel in the same audience partition.
 
 The current `.kakeflow-review` format excludes receipt-only imports, while
 confirmed-evidence capsules apply only to evidence behind confirmed facts.

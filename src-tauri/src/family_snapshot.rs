@@ -12,13 +12,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::sync_foundation::{canonical_json, get_local_status, sha256_hex};
+use crate::{
+    change_package,
+    sync_foundation::{canonical_json, get_local_status, sha256_hex},
+};
 
 pub const FAMILY_FORMAT: &str = "KAKEFLOW_FAMILY_SNAPSHOT_SET";
-pub const FAMILY_SCHEMA_VERSION: u32 = 1;
+pub const FAMILY_SCHEMA_VERSION: u32 = 2;
 pub const FAMILY_MODE: &str = "AUDIENCE_PARTITION_CURRENT_STATE";
-pub const FAMILY_SUPPORTED_KINDS: [&str; 4] =
+pub const FAMILY_V1_SUPPORTED_KINDS: [&str; 4] =
     ["HOUSEHOLD", "HOUSEHOLD_MEMBER", "ACCOUNT", "TRANSACTION"];
+pub const FAMILY_SUPPORTED_KINDS: [&str; 11] = [
+    "HOUSEHOLD",
+    "HOUSEHOLD_MEMBER",
+    "ACCOUNT",
+    "TRANSACTION",
+    "MONTHLY_BUDGET_PLAN",
+    "SAVINGS_GOAL",
+    "CLASSIFICATION_RULE",
+    "ACCOUNT_GROUP",
+    "CARD_SETTLEMENT_MAPPING",
+    "DASHBOARD_PREFERENCES",
+    "DELIMITED_PARSER_PROFILE",
+];
 const MAX_RECORDS: usize = 100_000;
 
 #[derive(Debug, Error)]
@@ -75,7 +91,7 @@ impl FamilyAudienceDto {
         }
     }
 
-    fn member_key(&self) -> &str {
+    pub(crate) fn member_key(&self) -> &str {
         self.member_id.as_deref().unwrap_or("")
     }
 }
@@ -101,6 +117,8 @@ pub struct FamilySnapshotPartitionDto {
     pub snapshot_sha256: String,
     pub package_sha256: String,
     pub records: Vec<FamilySnapshotRecordDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relocations: Vec<FamilyEntityRelocationDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,6 +137,14 @@ pub struct FamilySnapshotSetDto {
     pub excluded_counts_by_reason: BTreeMap<String, u64>,
     pub partitions: Vec<FamilySnapshotPartitionDto>,
     pub set_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FamilyEntityRelocationDto {
+    pub entity_kind: String,
+    pub entity_id: String,
+    pub target_audience: FamilyAudienceDto,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -178,6 +204,8 @@ struct PartitionIdentity<'a> {
     authoritative_kinds: &'a [String],
     counts_by_kind: &'a BTreeMap<String, u64>,
     records: &'a [FamilySnapshotRecordDto],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    relocations: &'a Vec<FamilyEntityRelocationDto>,
 }
 
 #[derive(Serialize)]
@@ -225,6 +253,21 @@ pub fn export_snapshot_set(
     connection: &Connection,
     household_id: &str,
 ) -> Result<FamilySnapshotSetDto> {
+    build_snapshot_set(connection, household_id, true)
+}
+
+pub(crate) fn preview_snapshot_set(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<FamilySnapshotSetDto> {
+    build_snapshot_set(connection, household_id, false)
+}
+
+fn build_snapshot_set(
+    connection: &Connection,
+    household_id: &str,
+    allocate_revision: bool,
+) -> Result<FamilySnapshotSetDto> {
     if !valid_id(household_id) {
         return Err(FamilySnapshotError::InvalidInput);
     }
@@ -246,22 +289,42 @@ pub fn export_snapshot_set(
     }
 
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute(
-        "UPDATE family_snapshot_revisions SET revision=revision+1,
-           updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1",
-        [household_id],
-    )?;
+    if allocate_revision {
+        transaction.execute(
+            "UPDATE family_snapshot_revisions SET revision=revision+1,
+               updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1",
+            [household_id],
+        )?;
+    }
     let revision: i64 = transaction.query_row(
         "SELECT revision FROM family_snapshot_revisions WHERE household_id=?1",
         [household_id],
         |row| row.get(0),
     )?;
-    let created_at: String =
+    let created_at: String = if allocate_revision {
         transaction.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| {
             row.get(0)
-        })?;
+        })?
+    } else {
+        transaction.query_row(
+            "SELECT updated_at FROM households WHERE id=?1",
+            [household_id],
+            |row| row.get(0),
+        )?
+    };
 
-    let raw_records = load_core_records(&transaction, household_id)?;
+    let mut raw_records = load_core_records(&transaction, household_id)?;
+    raw_records.extend(
+        change_package::load_planning_configuration_records(&transaction, household_id)
+            .map_err(|_| FamilySnapshotError::Encoding)?
+            .into_iter()
+            .map(|record| RawRecord {
+                entity_kind: record.entity_kind,
+                entity_id: record.entity_id,
+                canonical_payload_json: record.canonical_payload_json,
+                payload_sha256: record.payload_sha256,
+            }),
+    );
     if raw_records.len() > MAX_RECORDS {
         return Err(FamilySnapshotError::LimitExceeded);
     }
@@ -269,7 +332,7 @@ pub fn export_snapshot_set(
     let mut shared_records = Vec::new();
     let mut personal_records = Vec::new();
     let mut excluded = default_excluded_counts();
-    let mut unresolved_transaction = false;
+    let mut unresolved_kinds = BTreeSet::new();
 
     for record in raw_records {
         match effective_audience(&record, &account_audiences, &publisher_member_id)? {
@@ -280,36 +343,80 @@ pub fn export_snapshot_set(
             EffectiveAudience::OtherMember => increment(&mut excluded, "OTHER_MEMBER_PERSONAL"),
             EffectiveAudience::Mixed => {
                 increment(&mut excluded, "MIXED_PERSONAL_MEMBERS");
-                unresolved_transaction |= record.entity_kind == "TRANSACTION";
+                unresolved_kinds.insert(record.entity_kind.clone());
             }
             EffectiveAudience::Unassigned => {
                 increment(&mut excluded, "UNASSIGNED_SCOPE");
-                unresolved_transaction |= record.entity_kind == "TRANSACTION";
+                unresolved_kinds.insert(record.entity_kind.clone());
             }
         }
     }
     excluded.insert(
-        "EVIDENCE_DEPENDENT_INVESTMENT".to_owned(),
-        count_investment_records(&transaction, household_id)?,
+        "EVIDENCE_REQUIRED_CARD".to_owned(),
+        count_card_evidence_required_records(&transaction, household_id)?,
     );
     excluded.insert(
-        "UNSUPPORTED_KIND".to_owned(),
-        count_unsupported_records(&transaction, household_id)?,
+        "EVIDENCE_REQUIRED_INVESTMENT".to_owned(),
+        count_investment_evidence_required_records(&transaction, household_id)?,
     );
 
     sort_records(&mut shared_records);
     sort_records(&mut personal_records);
-    let source_revision = u64::try_from(revision).map_err(|_| FamilySnapshotError::Encoding)?;
+    let current_audiences = shared_records
+        .iter()
+        .map(|record| {
+            (
+                (record.entity_kind.clone(), record.entity_id.clone()),
+                (FamilyAudienceDto::shared(), record.payload_sha256.clone()),
+            )
+        })
+        .chain(personal_records.iter().map(|record| {
+            (
+                (record.entity_kind.clone(), record.entity_id.clone()),
+                (
+                    FamilyAudienceDto::personal(&publisher_member_id),
+                    record.payload_sha256.clone(),
+                ),
+            )
+        }))
+        .collect::<BTreeMap<_, _>>();
+    let (shared_relocations, personal_relocations) = load_relocations(
+        &transaction,
+        household_id,
+        &publisher_member_id,
+        &current_audiences,
+    )?;
+    let source_revision =
+        u64::try_from(revision.max(1)).map_err(|_| FamilySnapshotError::Encoding)?;
+    let shared_lineage_unknown = outbound_lineage_unknown(&transaction, household_id, "SHARED")?;
+    let personal_lineage_unknown = outbound_lineage_unknown(
+        &transaction,
+        household_id,
+        &format!("PERSONAL:{publisher_member_id}"),
+    )?;
     let shared_authoritative = FAMILY_SUPPORTED_KINDS
         .iter()
-        .filter(|kind| **kind != "TRANSACTION" || !unresolved_transaction)
+        .filter(|kind| {
+            !unresolved_kinds.contains(**kind)
+                && (!shared_lineage_unknown || !kind_supports_absence_delete(kind))
+        })
         .map(|kind| (*kind).to_owned())
         .collect::<Vec<_>>();
-    let personal_authoritative = ["ACCOUNT", "TRANSACTION"]
-        .iter()
-        .filter(|kind| **kind != "TRANSACTION" || !unresolved_transaction)
-        .map(|kind| (*kind).to_owned())
-        .collect::<Vec<_>>();
+    let personal_authoritative = [
+        "ACCOUNT",
+        "TRANSACTION",
+        "MONTHLY_BUDGET_PLAN",
+        "CLASSIFICATION_RULE",
+        "ACCOUNT_GROUP",
+        "CARD_SETTLEMENT_MAPPING",
+    ]
+    .iter()
+    .filter(|kind| {
+        !unresolved_kinds.contains(**kind)
+            && (!personal_lineage_unknown || !kind_supports_absence_delete(kind))
+    })
+    .map(|kind| (*kind).to_owned())
+    .collect::<Vec<_>>();
     let partition_source = PartitionSource {
         source_installation_id: &status.device.id,
         source_principal_id: &status.principal.id,
@@ -324,6 +431,7 @@ pub fn export_snapshot_set(
         shared_authoritative,
         shared_records,
         &account_audiences,
+        shared_relocations,
     )?;
     let personal = build_partition(
         &partition_source,
@@ -331,6 +439,7 @@ pub fn export_snapshot_set(
         personal_authoritative,
         personal_records,
         &account_audiences,
+        personal_relocations,
     )?;
     let partitions = vec![shared, personal];
     let identity = SetIdentity {
@@ -415,7 +524,7 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<FamilySnapshotSetDto> {
 
 pub fn validate_snapshot_set(set: &FamilySnapshotSetDto) -> Result<()> {
     if set.format != FAMILY_FORMAT
-        || set.schema_version != FAMILY_SCHEMA_VERSION
+        || !matches!(set.schema_version, 1 | FAMILY_SCHEMA_VERSION)
         || set.mode != FAMILY_MODE
         || !valid_id(&set.source_installation_id)
         || !valid_id(&set.source_principal_id)
@@ -440,13 +549,23 @@ pub fn validate_snapshot_set(set: &FamilySnapshotSetDto) -> Result<()> {
     if !valid_partition_shape {
         return Err(FamilySnapshotError::InvalidInput);
     }
-    let expected_excluded = [
-        "EVIDENCE_DEPENDENT_INVESTMENT",
-        "MIXED_PERSONAL_MEMBERS",
-        "OTHER_MEMBER_PERSONAL",
-        "UNASSIGNED_SCOPE",
-        "UNSUPPORTED_KIND",
-    ]
+    let expected_excluded = if set.schema_version == 1 {
+        vec![
+            "EVIDENCE_DEPENDENT_INVESTMENT",
+            "MIXED_PERSONAL_MEMBERS",
+            "OTHER_MEMBER_PERSONAL",
+            "UNASSIGNED_SCOPE",
+            "UNSUPPORTED_KIND",
+        ]
+    } else {
+        vec![
+            "EVIDENCE_REQUIRED_CARD",
+            "EVIDENCE_REQUIRED_INVESTMENT",
+            "MIXED_PERSONAL_MEMBERS",
+            "OTHER_MEMBER_PERSONAL",
+            "UNASSIGNED_SCOPE",
+        ]
+    }
     .into_iter()
     .map(str::to_owned)
     .collect::<BTreeSet<_>>();
@@ -663,6 +782,22 @@ pub fn stage_snapshot_set(
                 if incoming.contains(&key) {
                     continue;
                 }
+                if set.schema_version >= 2 {
+                    if let Some(target) = partition.relocations.iter().find(|entry| {
+                        entry.entity_kind == *kind && entry.entity_id == head.entity_id
+                    }) {
+                        if target.target_audience.visibility == "SHARED"
+                            || target.target_audience.member_id.as_deref()
+                                == Some(local_member.as_str())
+                        {
+                            // The entity moved to another partition that this
+                            // local member may receive. Do not let a later
+                            // omission delete clobber the target-partition
+                            // upsert, regardless of delivery order.
+                            continue;
+                        }
+                    }
+                }
                 let Some(current) =
                     load_entity_payload(connection, target_household_id, kind, &head.entity_id)?
                 else {
@@ -719,9 +854,9 @@ pub fn stage_snapshot_set(
         "INSERT INTO family_snapshot_sets(
            snapshot_set_id,target_household_id,source_installation_id,source_principal_id,
            publisher_member_id,source_revision,set_sha256,manifest_json,state,record_count,
-           conflict_count,delete_count,source_created_at,reviewed_at)
+           conflict_count,delete_count,source_created_at,reviewed_at,schema_version)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,
-           CASE WHEN ?9='READY' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END)",
+           CASE WHEN ?9='READY' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END,?14)",
         params![
             set.snapshot_set_id,
             target_household_id,
@@ -736,6 +871,7 @@ pub fn stage_snapshot_set(
             conflict_count,
             delete_count,
             set.created_at,
+            set.schema_version,
         ],
     )?;
     for (order, partition) in set.partitions.iter().enumerate() {
@@ -962,6 +1098,24 @@ pub fn apply_snapshot_set(
             ],
         )?;
     }
+    if set.schema_version >= 2 {
+        for partition in &set.partitions {
+            for entry in &partition.relocations {
+                transaction.execute(
+                    "DELETE FROM family_replica_entity_heads
+                     WHERE household_id=?1 AND visibility=?2 AND member_key=?3
+                       AND entity_kind=?4 AND entity_id=?5",
+                    params![
+                        review.target_household_id,
+                        partition.audience.visibility,
+                        partition.audience.member_key(),
+                        entry.entity_kind,
+                        entry.entity_id
+                    ],
+                )?;
+            }
+        }
+    }
     transaction.execute(
         "DELETE FROM sync_apply_guard WHERE household_id=?1 AND package_id=?2",
         params![review.target_household_id, snapshot_set_id],
@@ -1019,6 +1173,7 @@ fn build_partition(
     authoritative_kinds: Vec<String>,
     records: Vec<FamilySnapshotRecordDto>,
     account_audiences: &BTreeMap<String, FamilyAudienceDto>,
+    relocations: Vec<FamilyEntityRelocationDto>,
 ) -> Result<FamilySnapshotPartitionDto> {
     let mut counts = FAMILY_SUPPORTED_KINDS
         .iter()
@@ -1035,31 +1190,24 @@ fn build_partition(
         .map(|record| record.entity_id.as_str())
         .collect::<BTreeSet<_>>();
     let mut dependency_audiences = BTreeMap::new();
-    for record in records
-        .iter()
-        .filter(|record| record.entity_kind == "TRANSACTION")
-    {
-        let payload: Value = serde_json::from_str(&record.canonical_payload_json)
-            .map_err(|_| FamilySnapshotError::Encoding)?;
-        let entries = payload
-            .get("journalEntries")
-            .and_then(Value::as_array)
-            .ok_or(FamilySnapshotError::Encoding)?;
-        for entry in entries {
-            let account_id = entry
-                .get("accountId")
-                .and_then(Value::as_str)
-                .ok_or(FamilySnapshotError::Encoding)?;
-            if included_accounts.contains(account_id) {
+    for record in &records {
+        let raw = RawRecord {
+            entity_kind: record.entity_kind.clone(),
+            entity_id: record.entity_id.clone(),
+            canonical_payload_json: record.canonical_payload_json.clone(),
+            payload_sha256: record.payload_sha256.clone(),
+        };
+        for account_id in record_account_dependencies(&raw)? {
+            if included_accounts.contains(account_id.as_str()) {
                 continue;
             }
             let dependency = account_audiences
-                .get(account_id)
+                .get(&account_id)
                 .ok_or(FamilySnapshotError::AudienceBlocked)?;
             if *dependency != FamilyAudienceDto::shared() {
                 return Err(FamilySnapshotError::AudienceBlocked);
             }
-            dependency_audiences.insert(account_id.to_owned(), dependency.clone());
+            dependency_audiences.insert(account_id, dependency.clone());
         }
     }
     let identity = PartitionIdentity {
@@ -1077,6 +1225,7 @@ fn build_partition(
         authoritative_kinds: &authoritative_kinds,
         counts_by_kind: &counts,
         records: &records,
+        relocations: &relocations,
     };
     let snapshot_sha256 = hash_serializable(&identity)?;
     let package_id = format!("family-partition-{snapshot_sha256}");
@@ -1094,6 +1243,7 @@ fn build_partition(
         snapshot_sha256,
         package_sha256,
         records,
+        relocations,
     })
 }
 
@@ -1118,11 +1268,26 @@ fn validate_partition(
         || partition
             .authoritative_kinds
             .iter()
-            .any(|kind| !FAMILY_SUPPORTED_KINDS.contains(&kind.as_str()))
+            .any(|kind| !supported_kinds(set.schema_version).contains(&kind.as_str()))
+        || (set.schema_version == 1 && !partition.relocations.is_empty())
     {
         return Err(FamilySnapshotError::InvalidInput);
     }
-    let expected_keys = FAMILY_SUPPORTED_KINDS
+    let mut relocation_keys = BTreeSet::new();
+    for relocation in &partition.relocations {
+        if !supported_kinds(set.schema_version).contains(&relocation.entity_kind.as_str())
+            || !valid_id(&relocation.entity_id)
+            || !relocation.target_audience.valid()
+            || relocation.target_audience == partition.audience
+            || !relocation_keys.insert((
+                relocation.entity_kind.as_str(),
+                relocation.entity_id.as_str(),
+            ))
+        {
+            return Err(FamilySnapshotError::InvalidInput);
+        }
+    }
+    let expected_keys = supported_kinds(set.schema_version)
         .iter()
         .map(|kind| (*kind).to_owned())
         .collect::<BTreeSet<_>>();
@@ -1143,7 +1308,7 @@ fn validate_partition(
     for record in &partition.records {
         if record.operation != "UPSERT"
             || !valid_id(&record.entity_id)
-            || !FAMILY_SUPPORTED_KINDS.contains(&record.entity_kind.as_str())
+            || !supported_kinds(set.schema_version).contains(&record.entity_kind.as_str())
             || !identities.insert((record.entity_kind.clone(), record.entity_id.clone()))
         {
             return Err(FamilySnapshotError::InvalidInput);
@@ -1166,7 +1331,7 @@ fn validate_partition(
     }
     let identity = PartitionIdentity {
         format: FAMILY_FORMAT,
-        schema_version: FAMILY_SCHEMA_VERSION,
+        schema_version: set.schema_version,
         mode: FAMILY_MODE,
         source_installation_id: &set.source_installation_id,
         source_principal_id: &set.source_principal_id,
@@ -1179,6 +1344,7 @@ fn validate_partition(
         authoritative_kinds: &partition.authoritative_kinds,
         counts_by_kind: &partition.counts_by_kind,
         records: &partition.records,
+        relocations: &partition.relocations,
     };
     let snapshot = hash_serializable(&identity)?;
     if snapshot != partition.snapshot_sha256
@@ -1317,23 +1483,30 @@ fn effective_audience(
     }
     let value: Value = serde_json::from_str(&record.canonical_payload_json)
         .map_err(|_| FamilySnapshotError::Encoding)?;
-    let mut audience = match (
-        value.get("audienceVisibility").and_then(Value::as_str),
-        value.get("audienceMemberId").and_then(Value::as_str),
-    ) {
-        (Some("SHARED"), None) => FamilyAudienceDto::shared(),
-        (Some("PERSONAL"), Some(member)) if valid_id(member) => FamilyAudienceDto::personal(member),
-        _ => return Ok(EffectiveAudience::Unassigned),
+    if record.entity_kind == "ACCOUNT_GROUP"
+        && value.get("groupKind").and_then(Value::as_str) == Some("PERSONAL")
+    {
+        // ACCOUNT_GROUP has no owner member. Inferring one from zero, shared,
+        // or even currently-personal members would turn mutable dependencies
+        // into an access-control decision, so PERSONAL groups fail closed.
+        return Ok(EffectiveAudience::Unassigned);
+    }
+    let mut audience = if record.entity_kind == "TRANSACTION" {
+        match (
+            value.get("audienceVisibility").and_then(Value::as_str),
+            value.get("audienceMemberId").and_then(Value::as_str),
+        ) {
+            (Some("SHARED"), None) => FamilyAudienceDto::shared(),
+            (Some("PERSONAL"), Some(member)) if valid_id(member) => {
+                FamilyAudienceDto::personal(member)
+            }
+            _ => return Ok(EffectiveAudience::Unassigned),
+        }
+    } else {
+        FamilyAudienceDto::shared()
     };
-    let entries = value
-        .get("journalEntries")
-        .and_then(Value::as_array)
-        .ok_or(FamilySnapshotError::Encoding)?;
-    for entry in entries {
-        let Some(account_id) = entry.get("accountId").and_then(Value::as_str) else {
-            return Ok(EffectiveAudience::Unassigned);
-        };
-        let Some(dependency) = accounts.get(account_id) else {
+    for account_id in record_account_dependencies(record)? {
+        let Some(dependency) = accounts.get(&account_id) else {
             return Ok(EffectiveAudience::Unassigned);
         };
         match meet_audience(&audience, dependency) {
@@ -1342,6 +1515,60 @@ fn effective_audience(
         }
     }
     classify_for_publisher(audience, publisher_member_id)
+}
+
+fn record_account_dependencies(record: &RawRecord) -> Result<Vec<String>> {
+    let value: Value = serde_json::from_str(&record.canonical_payload_json)
+        .map_err(|_| FamilySnapshotError::Encoding)?;
+    let mut dependencies = Vec::new();
+    let mut push = |value: Option<&Value>| -> Result<()> {
+        if let Some(value) = value {
+            let id = value.as_str().ok_or(FamilySnapshotError::Encoding)?;
+            if !valid_id(id) {
+                return Err(FamilySnapshotError::Encoding);
+            }
+            dependencies.push(id.to_owned());
+        }
+        Ok(())
+    };
+    match record.entity_kind.as_str() {
+        "TRANSACTION" => {
+            for entry in value
+                .get("journalEntries")
+                .and_then(Value::as_array)
+                .ok_or(FamilySnapshotError::Encoding)?
+            {
+                push(entry.get("accountId"))?;
+            }
+        }
+        "MONTHLY_BUDGET_PLAN" => {
+            for budget in value
+                .get("budgets")
+                .and_then(Value::as_array)
+                .ok_or(FamilySnapshotError::Encoding)?
+            {
+                push(budget.get("categoryAccountId"))?;
+            }
+        }
+        "CLASSIFICATION_RULE" => push(value.get("categoryAccountId"))?,
+        "ACCOUNT_GROUP" => {
+            for member in value
+                .get("members")
+                .and_then(Value::as_array)
+                .ok_or(FamilySnapshotError::Encoding)?
+            {
+                push(member.get("accountId"))?;
+            }
+        }
+        "CARD_SETTLEMENT_MAPPING" => {
+            push(value.get("cardAccountId"))?;
+            push(value.get("bankAccountId"))?;
+        }
+        _ => {}
+    }
+    dependencies.sort_unstable();
+    dependencies.dedup();
+    Ok(dependencies)
 }
 
 fn classify_for_publisher(
@@ -1408,7 +1635,23 @@ fn validate_partition_scopes(
     Ok(())
 }
 
-fn count_investment_records(connection: &Connection, household_id: &str) -> Result<u64> {
+fn count_card_evidence_required_records(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<u64> {
+    let count: i64 = connection.query_row(
+        "SELECT (SELECT count(*) FROM card_statements WHERE household_id=?1)+
+                (SELECT count(*) FROM card_payments WHERE household_id=?1)",
+        [household_id],
+        |row| row.get(0),
+    )?;
+    Ok(count.max(0) as u64)
+}
+
+fn count_investment_evidence_required_records(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<u64> {
     let count: i64 = connection.query_row(
         "SELECT
            (SELECT count(*) FROM portfolio_snapshots WHERE household_id=?1)+
@@ -1422,31 +1665,92 @@ fn count_investment_records(connection: &Connection, household_id: &str) -> Resu
     Ok(count.max(0) as u64)
 }
 
-fn count_unsupported_records(connection: &Connection, household_id: &str) -> Result<u64> {
-    let count: i64 = connection.query_row(
-        "SELECT
-           (SELECT count(*) FROM card_statements WHERE household_id=?1)+
-           (SELECT count(*) FROM card_payments WHERE household_id=?1)+
-           1+
-           (SELECT count(*) FROM savings_goals WHERE household_id=?1)+
-           (SELECT count(*) FROM classification_rules WHERE household_id=?1)+
-           (SELECT count(*) FROM account_groups WHERE household_id=?1)+
-           (SELECT count(*) FROM card_settlement_bank_mappings WHERE household_id=?1)+
-           (SELECT count(*) FROM dashboard_preferences WHERE household_id=?1)+
-           (SELECT count(*) FROM delimited_parser_profiles WHERE household_id=?1)",
-        [household_id],
-        |row| row.get(0),
+fn outbound_lineage_unknown(
+    connection: &Connection,
+    household_id: &str,
+    audience_key: &str,
+) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT state='LEGACY_UNKNOWN' FROM family_delivery_outbound_lineage_state
+             WHERE household_id=?1 AND audience_key=?2",
+            params![household_id, audience_key],
+            |row| row.get(0),
+        )
+        .optional()
+        .map(|state| state.unwrap_or(false))
+        .map_err(FamilySnapshotError::from)
+}
+
+fn kind_supports_absence_delete(kind: &&str) -> bool {
+    matches!(
+        *kind,
+        "ACCOUNT"
+            | "TRANSACTION"
+            | "SAVINGS_GOAL"
+            | "CLASSIFICATION_RULE"
+            | "ACCOUNT_GROUP"
+            | "CARD_SETTLEMENT_MAPPING"
+            | "DASHBOARD_PREFERENCES"
+            | "DELIMITED_PARSER_PROFILE"
+    )
+}
+
+fn load_relocations(
+    connection: &Connection,
+    household_id: &str,
+    publisher_member_id: &str,
+    current: &BTreeMap<(String, String), (FamilyAudienceDto, String)>,
+) -> Result<(
+    Vec<FamilyEntityRelocationDto>,
+    Vec<FamilyEntityRelocationDto>,
+)> {
+    let mut statement = connection.prepare(
+        "SELECT visibility,member_id,entity_kind,entity_id
+         FROM family_delivery_outbound_entity_heads
+         WHERE household_id=?1 ORDER BY visibility,member_key,entity_kind,entity_id",
     )?;
-    Ok(count.max(0) as u64)
+    let rows = statement.query_map([household_id], |row| {
+        Ok((
+            FamilyAudienceDto {
+                visibility: row.get(0)?,
+                member_id: row.get(1)?,
+            },
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut shared = Vec::new();
+    let mut personal = Vec::new();
+    for row in rows {
+        let (previous, kind, id) = row?;
+        let Some((target, _hash)) = current.get(&(kind.clone(), id.clone())) else {
+            continue;
+        };
+        if previous == *target {
+            continue;
+        }
+        let relocation = FamilyEntityRelocationDto {
+            entity_kind: kind,
+            entity_id: id,
+            target_audience: target.clone(),
+        };
+        if previous.visibility == "SHARED" {
+            shared.push(relocation);
+        } else if previous.member_id.as_deref() == Some(publisher_member_id) {
+            personal.push(relocation);
+        }
+    }
+    Ok((shared, personal))
 }
 
 fn default_excluded_counts() -> BTreeMap<String, u64> {
     [
-        "EVIDENCE_DEPENDENT_INVESTMENT",
+        "EVIDENCE_REQUIRED_CARD",
+        "EVIDENCE_REQUIRED_INVESTMENT",
         "MIXED_PERSONAL_MEMBERS",
         "OTHER_MEMBER_PERSONAL",
         "UNASSIGNED_SCOPE",
-        "UNSUPPORTED_KIND",
     ]
     .into_iter()
     .map(|reason| (reason.to_owned(), 0))
@@ -1489,11 +1793,21 @@ fn payload_identity_matches(
     if string("recordKind") != Some(expected) {
         return false;
     }
-    if record.entity_kind == "HOUSEHOLD" {
-        string("id") == Some(record.entity_id.as_str()) && record.entity_id == household_id
-    } else {
-        string("householdId") == Some(household_id)
-            && string("id") == Some(record.entity_id.as_str())
+    match record.entity_kind.as_str() {
+        "HOUSEHOLD" => {
+            string("id") == Some(record.entity_id.as_str()) && record.entity_id == household_id
+        }
+        "MONTHLY_BUDGET_PLAN" | "DASHBOARD_PREFERENCES" => {
+            string("householdId") == Some(household_id) && record.entity_id == household_id
+        }
+        "CARD_SETTLEMENT_MAPPING" => {
+            string("householdId") == Some(household_id)
+                && string("cardAccountId") == Some(record.entity_id.as_str())
+        }
+        _ => {
+            string("householdId") == Some(household_id)
+                && string("id") == Some(record.entity_id.as_str())
+        }
     }
 }
 
@@ -1589,6 +1903,10 @@ fn load_entity_payload(
     kind: &str,
     entity_id: &str,
 ) -> Result<Option<String>> {
+    if !FAMILY_V1_SUPPORTED_KINDS.contains(&kind) {
+        return change_package::load_entity_payload(connection, household_id, kind, entity_id, 4)
+            .map_err(|_| FamilySnapshotError::Encoding);
+    }
     let sql = match kind {
         "HOUSEHOLD" => {
             "SELECT json(json_object(
@@ -1735,6 +2053,10 @@ fn load_stored_records(
 }
 
 fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Result<()> {
+    if !FAMILY_V1_SUPPORTED_KINDS.contains(&kind) {
+        return change_package::materialize_upsert(connection, kind, payload, 4)
+            .map_err(|_| FamilySnapshotError::Conflict);
+    }
     match kind {
         "HOUSEHOLD" => {
             connection.execute(
@@ -1861,6 +2183,10 @@ fn materialize_delete(
     kind: &str,
     entity_id: &str,
 ) -> Result<()> {
+    if !FAMILY_V1_SUPPORTED_KINDS.contains(&kind) {
+        return change_package::materialize_delete(connection, household_id, kind, entity_id, 4)
+            .map_err(|_| FamilySnapshotError::Conflict);
+    }
     let table = match kind {
         "TRANSACTION" => "transactions",
         "ACCOUNT" => "accounts",
@@ -1882,6 +2208,11 @@ fn dependency_rank(kind: &str) -> u8 {
         "HOUSEHOLD_MEMBER" => 1,
         "ACCOUNT" => 2,
         "TRANSACTION" => 3,
+        "SAVINGS_GOAL" | "DASHBOARD_PREFERENCES" | "DELIMITED_PARSER_PROFILE" => 4,
+        "MONTHLY_BUDGET_PLAN"
+        | "CLASSIFICATION_RULE"
+        | "ACCOUNT_GROUP"
+        | "CARD_SETTLEMENT_MAPPING" => 5,
         _ => u8::MAX,
     }
 }
@@ -1898,6 +2229,14 @@ fn valid_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
+}
+
+fn supported_kinds(schema_version: u32) -> &'static [&'static str] {
+    if schema_version == 1 {
+        &FAMILY_V1_SUPPORTED_KINDS
+    } else {
+        &FAMILY_SUPPORTED_KINDS
+    }
 }
 
 #[cfg(test)]
@@ -1973,6 +2312,449 @@ mod tests {
         if !resolutions.is_empty() {
             resolve_snapshot_set(connection, &review.snapshot_set_id, &resolutions).unwrap();
         }
+    }
+
+    fn seed_planning_configuration(state: &AppState) {
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,currency,
+                       owner_member_id,ownership_kind,visibility)
+                     VALUES('private-category','family','Private category','EXPENSE','OTHER','JPY',
+                       'family-member-primary','MEMBER','PERSONAL')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
+                     VALUES('family','2026-07','private-category',50000)",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO classification_rules(id,household_id,name,priority,merchant_contains,category_account_id)
+                     VALUES('private-rule','family','Private rule',10,'STORE','private-category')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO account_groups(id,household_id,name,group_kind,sort_order)
+                     VALUES('private-group','family','Private group','CUSTOM',1)",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO account_group_members(household_id,account_group_id,account_id,sort_order)
+                     VALUES('family','private-group','shared-bank',0),
+                           ('family','private-group','private-category',1)",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO savings_goals(id,household_id,name,target_jpy,saved_jpy,target_date)
+                     VALUES('shared-goal','family','Emergency fund',1000000,100000,'2027-07-01')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_two_partitions_atomic_planning_configuration_by_account_dependencies() {
+        let source = state();
+        setup(&source, "Source");
+        seed_planning_configuration(&source);
+        let set = export_from(&source);
+        assert_eq!(set.schema_version, 2);
+        let shared = &set.partitions[0];
+        let personal = &set.partitions[1];
+        assert!(shared
+            .records
+            .iter()
+            .any(|record| record.entity_kind == "SAVINGS_GOAL"));
+        for kind in [
+            "MONTHLY_BUDGET_PLAN",
+            "CLASSIFICATION_RULE",
+            "ACCOUNT_GROUP",
+        ] {
+            assert!(personal
+                .records
+                .iter()
+                .any(|record| record.entity_kind == kind));
+            assert!(!shared
+                .records
+                .iter()
+                .any(|record| record.entity_kind == kind));
+        }
+        let shared_bytes = encode_partition_artifact(&set, &FamilyAudienceDto::shared()).unwrap();
+        let shared_text = String::from_utf8(shared_bytes).unwrap();
+        assert!(!shared_text.contains("private-rule"));
+        assert!(!shared_text.contains("private-group"));
+        assert!(!shared_text.contains("private-category"));
+        decode_and_validate(&encode_pretty(&set).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn personal_account_groups_without_explicit_owner_fail_closed() {
+        for with_shared_member in [false, true] {
+            let state = state();
+            setup(&state, "Source");
+            state
+                .with_connection(|connection| {
+                    connection.execute(
+                        "INSERT INTO account_groups(id,household_id,name,group_kind,sort_order)
+                         VALUES('ambiguous-personal','family','Ambiguous','PERSONAL',1)",
+                        [],
+                    )?;
+                    if with_shared_member {
+                        connection.execute(
+                            "INSERT INTO account_group_members(
+                               household_id,account_group_id,account_id,sort_order)
+                             VALUES('family','ambiguous-personal','shared-bank',0)",
+                            [],
+                        )?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let set = export_from(&state);
+            assert_eq!(set.excluded_counts_by_reason["UNASSIGNED_SCOPE"], 1);
+            assert!(!set.partitions.iter().any(|partition| partition
+                .records
+                .iter()
+                .any(|record| record.entity_id == "ambiguous-personal")));
+            assert!(set.partitions.iter().all(|partition| !partition
+                .authoritative_kinds
+                .iter()
+                .any(|kind| kind == "ACCOUNT_GROUP")));
+        }
+    }
+
+    #[test]
+    fn genuine_schema_one_identity_remains_compatible() {
+        let state = state();
+        setup(&state, "Source");
+        let mut legacy = export_from(&state);
+        legacy.schema_version = 1;
+        legacy.excluded_counts_by_reason = [
+            "EVIDENCE_DEPENDENT_INVESTMENT",
+            "MIXED_PERSONAL_MEMBERS",
+            "OTHER_MEMBER_PERSONAL",
+            "UNASSIGNED_SCOPE",
+            "UNSUPPORTED_KIND",
+        ]
+        .into_iter()
+        .map(|reason| (reason.to_owned(), 0))
+        .collect();
+        for partition in &mut legacy.partitions {
+            partition
+                .records
+                .retain(|record| FAMILY_V1_SUPPORTED_KINDS.contains(&record.entity_kind.as_str()));
+            partition
+                .authoritative_kinds
+                .retain(|kind| FAMILY_V1_SUPPORTED_KINDS.contains(&kind.as_str()));
+            partition.counts_by_kind = FAMILY_V1_SUPPORTED_KINDS
+                .iter()
+                .map(|kind| {
+                    (
+                        (*kind).to_owned(),
+                        partition
+                            .records
+                            .iter()
+                            .filter(|record| record.entity_kind == *kind)
+                            .count() as u64,
+                    )
+                })
+                .collect();
+            partition.relocations.clear();
+            partition.dependency_audiences.clear();
+            let identity = PartitionIdentity {
+                format: FAMILY_FORMAT,
+                schema_version: 1,
+                mode: FAMILY_MODE,
+                source_installation_id: &legacy.source_installation_id,
+                source_principal_id: &legacy.source_principal_id,
+                publisher_member_id: &legacy.publisher_member_id,
+                source_revision: legacy.source_revision,
+                household_id: &legacy.household_id,
+                created_at: &legacy.created_at,
+                audience: &partition.audience,
+                dependency_audiences: &partition.dependency_audiences,
+                authoritative_kinds: &partition.authoritative_kinds,
+                counts_by_kind: &partition.counts_by_kind,
+                records: &partition.records,
+                relocations: &partition.relocations,
+            };
+            partition.snapshot_sha256 = hash_serializable(&identity).unwrap();
+            partition.package_id = format!("family-partition-{}", partition.snapshot_sha256);
+            partition.package_sha256 = hash_serializable(&json!({
+                "packageId": partition.package_id,
+                "snapshotSha256": partition.snapshot_sha256,
+                "identity": identity,
+            }))
+            .unwrap();
+        }
+        let identity = SetIdentity {
+            format: FAMILY_FORMAT,
+            schema_version: 1,
+            mode: FAMILY_MODE,
+            source_installation_id: &legacy.source_installation_id,
+            source_principal_id: &legacy.source_principal_id,
+            publisher_member_id: &legacy.publisher_member_id,
+            source_revision: legacy.source_revision,
+            household_id: &legacy.household_id,
+            created_at: &legacy.created_at,
+            excluded_counts_by_reason: &legacy.excluded_counts_by_reason,
+            partitions: &legacy.partitions,
+        };
+        legacy.set_sha256 = hash_serializable(&identity).unwrap();
+        legacy.snapshot_set_id = format!("family-set-{}", legacy.set_sha256);
+        let bytes = encode_pretty(&legacy).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("relocations"));
+        for partition in &legacy.partitions {
+            validate_partition(&legacy, partition).unwrap();
+        }
+        let records = legacy
+            .partitions
+            .iter()
+            .flat_map(|partition| {
+                partition
+                    .records
+                    .iter()
+                    .cloned()
+                    .map(|record| (partition.audience.clone(), record))
+            })
+            .collect::<Vec<_>>();
+        validate_partition_scopes(&legacy, &records, &legacy.publisher_member_id).unwrap();
+        let check_identity = SetIdentity {
+            format: &legacy.format,
+            schema_version: legacy.schema_version,
+            mode: &legacy.mode,
+            source_installation_id: &legacy.source_installation_id,
+            source_principal_id: &legacy.source_principal_id,
+            publisher_member_id: &legacy.publisher_member_id,
+            source_revision: legacy.source_revision,
+            household_id: &legacy.household_id,
+            created_at: &legacy.created_at,
+            excluded_counts_by_reason: &legacy.excluded_counts_by_reason,
+            partitions: &legacy.partitions,
+        };
+        assert_eq!(
+            hash_serializable(&check_identity).unwrap(),
+            legacy.set_sha256
+        );
+        let decoded = decode_and_validate(&bytes).unwrap();
+        assert_eq!(decoded.schema_version, 1);
+    }
+
+    #[test]
+    fn legacy_unknown_outbound_lineage_disables_first_v2_omissions() {
+        let state = state();
+        setup(&state, "Source");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO family_delivery_connections(
+                       household_id,endpoint,remote_principal_id,local_member_id,
+                       local_member_name,state)
+                     VALUES('family','https://relay.example','principal',
+                       'family-member-primary','Primary','CONNECTED')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO family_delivery_partition_state(
+                       household_id,audience_key,visibility,member_id,member_key,dirty)
+                     VALUES('family','SHARED','SHARED',NULL,'',1)",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO family_delivery_outbound_lineage_state(
+                       household_id,audience_key,state)
+                     VALUES('family','SHARED','LEGACY_UNKNOWN')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let set = export_from(&state);
+        let shared = &set.partitions[0];
+        for kind in [
+            "ACCOUNT",
+            "TRANSACTION",
+            "SAVINGS_GOAL",
+            "CLASSIFICATION_RULE",
+            "ACCOUNT_GROUP",
+            "CARD_SETTLEMENT_MAPPING",
+            "DASHBOARD_PREFERENCES",
+            "DELIMITED_PARSER_PROFILE",
+        ] {
+            assert!(!shared.authoritative_kinds.iter().any(|value| value == kind));
+        }
+    }
+
+    #[test]
+    fn schema_two_round_trip_reuses_change_package_materializers() {
+        let source = state();
+        setup(&source, "Source");
+        seed_planning_configuration(&source);
+        let bytes = encode_pretty(&export_from(&source)).unwrap();
+
+        let destination = state();
+        setup(&destination, "Destination");
+        reidentify_destination(&destination);
+        destination
+            .with_connection(|connection| {
+                let review = stage_snapshot_set(connection, "family", &bytes).unwrap();
+                resolve_pending(connection, &review);
+                apply_snapshot_set(connection, &review.snapshot_set_id).unwrap();
+                let values: (i64, i64, i64, i64) = connection.query_row(
+                    "SELECT
+                       (SELECT count(*) FROM monthly_category_budgets WHERE household_id='family'),
+                       (SELECT count(*) FROM classification_rules WHERE household_id='family'),
+                       (SELECT count(*) FROM account_groups WHERE household_id='family'),
+                       (SELECT count(*) FROM savings_goals WHERE household_id='family')",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )?;
+                assert_eq!(values, (1, 1, 1, 1));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    fn apply_artifact(state: &AppState, bytes: &[u8]) {
+        state
+            .with_connection(|connection| {
+                let review = stage_snapshot_set(connection, "family", bytes).unwrap();
+                resolve_pending(connection, &review);
+                apply_snapshot_set(connection, &review.snapshot_set_id).unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn audience_index_prevents_shared_personal_move_clobber_in_both_orders() {
+        let source = state();
+        setup(&source, "Source");
+        source
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO monthly_category_budgets(household_id,month,category_account_id,budget_jpy)
+                     VALUES('family','2026-07','shared-bank',50000)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let initial_set = export_from(&source);
+        source
+            .with_connection(|connection| {
+                for partition in &initial_set.partitions {
+                    for record in &partition.records {
+                        connection.execute(
+                            "INSERT INTO family_delivery_outbound_entity_heads(
+                               household_id,visibility,member_id,member_key,entity_kind,entity_id,
+                               payload_sha256,accepted_at) VALUES('family',?1,?2,?3,?4,?5,?6,
+                               '2026-07-14T00:00:00Z')",
+                            params![
+                                partition.audience.visibility,
+                                partition.audience.member_id,
+                                partition.audience.member_key(),
+                                record.entity_kind,
+                                record.entity_id,
+                                record.payload_sha256
+                            ],
+                        )?;
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        let initial = encode_pretty(&initial_set).unwrap();
+        let destination = state();
+        setup(&destination, "Destination");
+        reidentify_destination(&destination);
+        apply_artifact(&destination, &initial);
+
+        source
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE accounts SET owner_member_id='family-member-primary',
+                       ownership_kind='MEMBER',visibility='PERSONAL' WHERE id='shared-bank'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let moved_personal = export_from(&source);
+        let personal_first = encode_partition_artifact(
+            &moved_personal,
+            &FamilyAudienceDto::personal("family-member-primary"),
+        )
+        .unwrap();
+        let shared_second =
+            encode_partition_artifact(&moved_personal, &FamilyAudienceDto::shared()).unwrap();
+        apply_artifact(&destination, &personal_first);
+        apply_artifact(&destination, &shared_second);
+        source
+            .with_connection(|connection| {
+                connection.execute(
+                    "DELETE FROM family_delivery_outbound_entity_heads WHERE household_id='family'",
+                    [],
+                )?;
+                for partition in &moved_personal.partitions {
+                    for record in &partition.records {
+                        connection.execute(
+                            "INSERT INTO family_delivery_outbound_entity_heads(
+                               household_id,visibility,member_id,member_key,entity_kind,entity_id,
+                               payload_sha256,accepted_at) VALUES('family',?1,?2,?3,?4,?5,?6,
+                               '2026-07-14T00:01:00Z')",
+                            params![
+                                partition.audience.visibility,
+                                partition.audience.member_id,
+                                partition.audience.member_key(),
+                                record.entity_kind,
+                                record.entity_id,
+                                record.payload_sha256
+                            ],
+                        )?;
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+
+        source
+            .with_connection(|connection| {
+                connection.execute(
+                    "UPDATE accounts SET owner_member_id=NULL,ownership_kind='HOUSEHOLD',
+                       visibility='SHARED' WHERE id='shared-bank'",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let moved_shared = export_from(&source);
+        let shared_first =
+            encode_partition_artifact(&moved_shared, &FamilyAudienceDto::shared()).unwrap();
+        let personal_second = encode_partition_artifact(
+            &moved_shared,
+            &FamilyAudienceDto::personal("family-member-primary"),
+        )
+        .unwrap();
+        apply_artifact(&destination, &shared_first);
+        apply_artifact(&destination, &personal_second);
+        destination
+            .with_connection(|connection| {
+                let state: (String, i64) = connection.query_row(
+                    "SELECT a.visibility,
+                      (SELECT count(*) FROM monthly_category_budgets b
+                       WHERE b.household_id=a.household_id AND b.category_account_id=a.id)
+                     FROM accounts a WHERE a.id='shared-bank'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert_eq!(state, ("SHARED".to_owned(), 1));
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -2146,17 +2928,11 @@ mod tests {
                         record.operation == "DELETE" && record.entity_id == "shared-bank"
                     })
                     .unwrap();
-                let resolved = resolve_snapshot_set(
-                    connection,
-                    &review.snapshot_set_id,
-                    &[FamilySnapshotResolutionInput {
-                        partition_order: delete.partition_order,
-                        entity_kind: delete.entity_kind.clone(),
-                        entity_id: delete.entity_id.clone(),
-                        resolution: "APPLY_INCOMING".to_owned(),
-                    }],
-                )
-                .unwrap();
+                assert_eq!(delete.resolution, "PENDING");
+                resolve_pending(connection, &review);
+                let resolved = load_review(connection, &review.snapshot_set_id)
+                    .unwrap()
+                    .unwrap();
                 assert_eq!(resolved.state, "READY");
                 apply_snapshot_set(connection, &review.snapshot_set_id).unwrap();
                 let exists: bool = connection.query_row(

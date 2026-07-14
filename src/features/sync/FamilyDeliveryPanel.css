@@ -27,6 +27,16 @@
 .family-partition span { display: grid; gap: 3px; }
 .family-partition small { color: var(--muted); }
 .family-partition.blocked { background: var(--soft); cursor: not-allowed; }
+.family-partition-title { align-items: center; display: flex !important; flex-wrap: wrap; justify-content: space-between; gap: 8px !important; }
+.family-coverage-state { border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .04em; padding: 3px 7px; }
+.coverage-COMPLETE { background: #e5f1e7; color: #315a3d; }
+.coverage-PARTIAL { background: #fff0d5; color: #805a24; }
+.family-domain-counts { display: flex !important; flex-wrap: wrap; gap: 6px !important; margin-top: 5px; }
+.family-domain-counts span { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 700; padding: 3px 7px; }
+.family-partition-blocked-reason { color: #805a24 !important; font-weight: 700; }
+.family-withheld-detail { border-left: 3px solid #d18e16; border-radius: 6px; background: #fff6e6; color: #805a24; gap: 5px !important; margin-top: 7px; padding: 9px 10px; }
+.family-withheld-detail > span { display: flex; flex-direction: row; justify-content: space-between; gap: 12px; font-size: 11px; }
+.family-withheld-detail b { white-space: nowrap; }
 .family-delivery-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .family-inbound-section article { grid-template-columns: minmax(0,1fr) auto auto; }
 .family-revocation-warning { grid-column: 1 / -1; display: block; border-radius: 7px; }

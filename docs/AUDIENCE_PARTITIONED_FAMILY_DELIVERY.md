@@ -1,9 +1,13 @@
 # Audience-partitioned family delivery
 
-KakeFlow v0.54 introduces a family-delivery protocol that is deliberately
+KakeFlow v0.54 introduced a family-delivery protocol that is deliberately
 separate from the schema-v4 personal change package. Personal relay packages
 remain suitable only for devices authenticated as the same remote principal.
 They must never be filtered and sent to another household member.
+
+KakeFlow v0.56 adds schema-v2 planning/configuration aggregates without
+widening that trust boundary. See the dedicated
+[planning and configuration contract](FAMILY_PLANNING_CONFIG_DELIVERY.md).
 
 ## Trust and routing boundary
 
@@ -29,7 +33,7 @@ source revision, hashes, record counts, excluded counts, and partition audience
 are covered by deterministic hashes. Recipient principal IDs are never part of
 the package.
 
-The first supported dependency graph is intentionally narrow:
+Schema v1 supports the intentionally narrow core graph:
 
 - household and member directory records are `SHARED`;
 - an account follows its explicit `SHARED` or `PERSONAL(member)` scope;
@@ -38,9 +42,16 @@ The first supported dependency graph is intentionally narrow:
 - a dependency graph involving two different personal members is withheld;
 - source links and evidence bytes are not included in v0.54.
 
-Investment and other evidence-dependent records are reported as withheld until
-their evidence capsule can be partitioned by the same rules. The sender UI must
-show those counts and must not describe the snapshot as complete.
+Schema v2 additionally carries atomic budgets, goals, rules, account groups,
+settlement mappings, dashboard layouts, and parser profiles. Account-dependent
+aggregates use the same least-widening audience meet. A signed entity-audience
+index prevents a later omission artifact from deleting an aggregate that moved
+between `SHARED` and `PERSONAL(member)`.
+
+Card and investment records are reported as `EVIDENCE_REQUIRED` until their
+evidence capsule can be partitioned by the same rules. The sender UI shows
+reason-specific counts and may describe a partition as complete only when all
+withheld counts are zero.
 
 ## Review and apply
 
@@ -57,7 +68,7 @@ no accepted head is never an omission-delete candidate.
 
 ## Explicit non-claims
 
-v0.54 does not provide end-to-end encryption, realtime/background sync, remote
+Family delivery does not provide end-to-end encryption, realtime/background sync, remote
 ledger posting, evidence transport, remote deletion, or erasure of downloaded
 copies. The bundled relay is a reference transport that must be operated
 separately from the desktop app.

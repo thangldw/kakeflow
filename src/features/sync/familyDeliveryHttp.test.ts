@@ -50,6 +50,17 @@ describe('familyDeliveryHttp v2 contract', () => {
     })
   })
 
+  it('preserves the v2 evidence-partition schema through upload and listing', async () => {
+    const digest = 'c'.repeat(64)
+    const upload = vi.fn().mockResolvedValue(json({ publication: { publicationId: 'publication-v2', digest, createdAt: '2026-07-14T01:00:00Z' }, created: true }, 201))
+    const artifact = { deliveryId: 'delivery-v2', artifactId: 'publication-v2', digest, householdId: 'family', originDeviceId: 'device-local', audienceKey: 'SHARED', audienceVisibility: 'SHARED' as const, audienceMemberId: null, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V2' as const, packageBytes: [1, 2, 3] }
+    await uploadFamilyArtifact('https://relay.example', 'secret', artifact, upload)
+    expect(upload.mock.calls[0][1].headers['x-kakeflow-artifact-schema']).toBe('FAMILY_AUDIENCE_PARTITION_V2')
+
+    const listing = vi.fn().mockResolvedValue(json({ publications: [{ sequence: 5, publicationId: 'publication-v2', digest, householdId: 'family', originDeviceId: 'device-other', audience: { visibility: 'SHARED', memberId: null }, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V2', senderPrincipalId: 'principal-2', senderMembershipId: 'membership-2', recipientCount: 1, byteSize: 42, createdAt: '2026-07-14T02:00:00Z' }], nextCursor: '5' }))
+    await expect(listFamilyArtifacts('https://relay.example', 'secret', 'family', 0, 'device-local', listing)).resolves.toEqual({ artifacts: [expect.objectContaining({ artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V2' })], nextCursor: 5 })
+  })
+
   it('parses publications and maps the relay error shape', async () => {
     const digest = 'b'.repeat(64)
     const fetcher = vi.fn().mockResolvedValueOnce(json({ publications: [{ sequence: 4, publicationId: 'publication-4', digest, householdId: 'family', originDeviceId: 'device-other', audience: { visibility: 'SHARED', memberId: null }, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1', senderPrincipalId: 'principal-2', senderMembershipId: 'membership-2', recipientCount: 1, byteSize: 42, createdAt: '2026-07-14T02:00:00Z' }], nextCursor: '4' }))

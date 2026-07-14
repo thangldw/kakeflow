@@ -36,6 +36,19 @@ const inboundLabels: Readonly<Record<FamilyDeliveryStatusDto['inbound'][number][
   AVAILABLE: '受信可能', DOWNLOADING: '受信中', WAITING_FOR_REVIEW: '内容確認待ち', READY_TO_APPLY: '反映準備完了',
   APPLIED: '反映済み', DUPLICATE: '受信済み', REJECTED_INVALID: '受信不可', AUDIENCE_DENIED: '配信対象外', FAILED_RETRYABLE: '再取得できます',
 }
+const domainLabels: Readonly<Record<keyof FamilyDeliveryStatusDto['outbound'][number]['domainCounts'], string>> = {
+  LEDGER: '台帳', PLANNING: '計画', CONFIG: '設定', CARD: 'カード', INVESTMENT: '投資',
+}
+const withheldLabels: Readonly<Record<string, string>> = {
+  EVIDENCE_REQUIRED: '原本・証跡が必要', EVIDENCE_REQUIRED_CARD: 'カードの原本・証跡が必要', EVIDENCE_REQUIRED_INVESTMENT: '投資の原本・証跡が必要',
+  EVIDENCE_MISSING: '原本・証跡が不足', EVIDENCE_AUDIENCE_MISMATCH: '原本をこの配信範囲へ安全に分けられない',
+  EVIDENCE_DEPENDENT_INVESTMENT: '投資の原本・証跡が不足', MIXED_PERSONAL_MEMBERS: '複数メンバーの個人データにまたがる',
+  OTHER_MEMBER_PERSONAL: '別メンバーの個人データ', UNASSIGNED_SCOPE: '配信範囲が未設定', UNSUPPORTED_KIND: '未対応のデータ種類',
+}
+
+function withheldLabel(reason: string): string {
+  return withheldLabels[reason] ?? `その他の保留理由（${reason}）`
+}
 
 function errorCopy(error: unknown): string {
   if (!(error instanceof FamilyDeliveryHttpError)) return '操作を完了できませんでした。台帳は変更されていません。'
@@ -253,9 +266,12 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
         {status.outbound.length === 0 ? <p className="empty-state">送信できる変更はありません。</p> : status.outbound.map((part) => {
           const enabled = part.pendingChangeCount > 0 && ['READY', 'FAILED_RETRYABLE'].includes(part.state)
           const audience = part.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${part.audienceMemberName}`
-          return <label key={part.audienceKey} className={`family-partition ${enabled ? '' : 'blocked'}`}><input type="checkbox" checked={selected.includes(part.audienceKey)} disabled={!enabled || Boolean(busy)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, part.audienceKey] : current.filter((key) => key !== part.audienceKey))} /><span><strong>{audience} → {part.recipientNames.length ? part.recipientNames.join('、') : '配信先未設定'}</strong><small>{part.withheldReason ? `変更あり・${part.withheldReason}` : `${part.pendingChangeCount}件`}</small></span></label>
+          const includedDomains = Object.entries(part.domainCounts).filter(([domain, count]) => count > 0 && domain !== 'CARD' && domain !== 'INVESTMENT')
+          const withheldDomains = (['CARD', 'INVESTMENT'] as const).map((domain) => [domain, part.domainCounts[domain]] as const).filter((entry) => entry[1] > 0)
+          const withheld = Object.entries(part.withheldCountsByReason).filter((entry) => entry[1] > 0)
+          return <label key={part.audienceKey} className={`family-partition ${enabled ? '' : 'blocked'}`}><input type="checkbox" checked={selected.includes(part.audienceKey)} disabled={!enabled || Boolean(busy)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, part.audienceKey] : current.filter((key) => key !== part.audienceKey))} /><span><span className="family-partition-title"><strong>{audience} → {part.recipientNames.length ? part.recipientNames.join('、') : '配信先未設定'}</strong><b className={`family-coverage-state coverage-${part.coverageState}`}>{part.coverageState === 'COMPLETE' ? '全範囲' : '一部保留'}</b></span><small>{part.pendingChangeCount}件 · 原本 {part.evidenceFileCount}ファイル / 証跡 {part.evidenceRecordCount}件</small>{includedDomains.length > 0 && <span className="family-domain-counts" aria-label="この配信で送る内容">{includedDomains.map(([domain, count]) => <span key={domain}>{domainLabels[domain as keyof typeof domainLabels]} {count}</span>)}</span>}{part.withheldReason && <small className="family-partition-blocked-reason">{part.withheldReason}</small>}{withheld.length > 0 && <span className="family-withheld-detail" role="status"><strong>この配信に含まれない内容</strong>{withheld.map(([reason, count]) => <span key={reason}>{withheldLabel(reason)} <b>{count}件</b></span>)}{withheldDomains.length > 0 && <span>{withheldDomains.map(([domain, count]) => `${domainLabels[domain]} ${count}件`).join(' · ')}</span>}{withheldDomains.length > 0 && <small>この件数は世帯全体の保留内容です。選択した配信範囲には含まれません。</small>}</span>}</span></label>
         })}
-        {status.withheldChangeCount > 0 && <p className="family-withheld" role="status">配信範囲を確定できない変更が{status.withheldChangeCount}件あります。家族には送らず、この端末に保留しました。</p>}
+        {status.withheldChangeCount > 0 && <p className="family-withheld" role="status">家族へ送らず、この端末に保留した変更が合計{status.withheldChangeCount}件あります。理由は各配信範囲に表示しています。</p>}
         <div className="family-delivery-actions"><button className="primary-btn" disabled={Boolean(busy) || !token || selected.length === 0} onClick={() => void send()}><CloudUpload size={16} /> {busy === 'SEND' ? '送信中…' : '選択した範囲を送信'}</button><button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void refresh()}><RefreshCw size={16} /> {busy === 'REFRESH' ? '確認中…' : '家族からの受信を確認'}</button></div>
       </div>
       <div className="family-inbound-section"><h3>家族から受け取ったデータ</h3>{status.inbound.length === 0 ? <p className="empty-state">受信した家族データはありません。</p> : status.inbound.map((item) => <article key={item.artifactId}><div><strong>{item.senderMemberName}さんから・{item.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${item.audienceMemberName}`}</strong><small>{item.itemCount > 0 ? `${item.itemCount}件` : '内容は受信時に確認'}・{item.createdAt}</small>{item.receivedBeforeRevocation && <span className="family-revocation-warning">受信後にメンバー配信が停止されました。停止前に受信済みです。</span>}</div><span className="family-inbound-state">{inboundLabels[item.state]}</span>{['AVAILABLE', 'FAILED_RETRYABLE'].includes(item.state) && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void stage(item.artifactId)}><CloudDownload size={16} /> {busy === `STAGE:${item.artifactId}` ? '検証中…' : '受信して内容を確認'}</button>}{['WAITING_FOR_REVIEW', 'READY_TO_APPLY'].includes(item.state) && <button className="secondary-btn" onClick={onReviewStaged}>確認内容を開く</button>}</article>)}</div>
