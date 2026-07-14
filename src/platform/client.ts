@@ -27,6 +27,7 @@ import type {
   DesktopRelayPreparedDeliveryDto,
   FamilyDeliveryStatusDto,
   FamilyDeliveryPreparedArtifactDto,
+  FamilyDeliveryScheduleStatusDto,
   FamilyEnvelopePublicIdentityDto,
   SealFamilyEnvelopeOutputDto,
   OpenFamilyEnvelopeOutputDto,
@@ -169,6 +170,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       registerFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_inbound_register') },
       stageFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_inbound_stage') },
       stageEncryptedFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_encrypted_inbound_stage') },
+      getFamilyDeliveryBackgroundStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_status') },
+      enableFamilyDeliveryBackground: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_enable') },
+      disableFamilyDeliveryBackground: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_disable') },
+      runFamilyDeliveryBackgroundNow: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_run_now') },
       getActiveFamilySnapshotReview: async () => null,
       resolveFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_resolve') },
       applyFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_apply') },
@@ -295,6 +300,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     registerFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_inbound_register', parseFamilyDeliveryStatus, { input }),
     stageFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_inbound_stage', parseFamilyDeliveryStatus, { input }),
     stageEncryptedFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_encrypted_inbound_stage', parseFamilyDeliveryStatus, { input }),
+    getFamilyDeliveryBackgroundStatus: (householdId) => invokeValidated(invoke, 'family_delivery_background_status', parseFamilyDeliveryScheduleStatus, { householdId }),
+    enableFamilyDeliveryBackground: (input) => invokeValidated(invoke, 'family_delivery_background_enable', parseFamilyDeliveryScheduleStatus, { input }),
+    disableFamilyDeliveryBackground: (householdId) => invokeValidated(invoke, 'family_delivery_background_disable', parseFamilyDeliveryScheduleStatus, { householdId }),
+    runFamilyDeliveryBackgroundNow: (householdId) => invokeValidated(invoke, 'family_delivery_background_run_now', parseFamilyDeliveryScheduleStatus, { householdId }),
     getActiveFamilySnapshotReview: (householdId) => invokeValidated(invoke, 'family_snapshot_active_review', parseNullableFamilySnapshotReview, { householdId }),
     resolveFamilySnapshot: (packageId, resolutions) => invokeValidated(invoke, 'family_snapshot_resolve', parseFamilySnapshotReview, { packageId, resolutions }),
     applyFamilySnapshot: (packageId) => invokeValidated(invoke, 'family_snapshot_apply', parseFamilySnapshotReview, { packageId }),
@@ -611,6 +620,37 @@ function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
     householdId: asRequiredString(record.householdId), connectionState: record.connectionState as FamilyDeliveryStatusDto['connectionState'],
     endpoint, remotePrincipalId, localDeviceId: asRequiredString(record.localDeviceId), inboundCursor: asSafeInteger(record.inboundCursor), localMemberId, localMemberName,
     memberships, outbound, withheldChangeCount: asSafeInteger(record.withheldChangeCount), inbound,
+  }
+}
+
+const FAMILY_SCHEDULE_RESULTS = new Set(['NEVER', 'DISABLED', 'RUNNING', 'NO_CHANGES', 'DISCOVERED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED'])
+
+function parseFamilyDeliveryScheduleStatus(value: unknown): FamilyDeliveryScheduleStatusDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean'
+      || !FAMILY_SCHEDULE_RESULTS.has(String(record.lastResult))) throw new TypeError('family delivery schedule')
+  const intervalMinutes = asSafeInteger(record.intervalMinutes)
+  if (![15, 30, 60].includes(intervalMinutes)) throw new TypeError('family delivery interval')
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
+  const leaseExpiresAt = record.leaseExpiresAt === null ? null : asIsoTimestamp(record.leaseExpiresAt)
+  const lastAttemptAt = record.lastAttemptAt === null ? null : asIsoTimestamp(record.lastAttemptAt)
+  const lastSuccessAt = record.lastSuccessAt === null ? null : asIsoTimestamp(record.lastSuccessAt)
+  const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = asNullableStrictString(record.suspensionReason)
+  const lastErrorCode = asNullableStrictString(record.lastErrorCode)
+  if ((record.running !== true) !== (leaseExpiresAt === null) || (record.running === true) !== (record.lastResult === 'RUNNING')) {
+    throw new TypeError('family delivery schedule lease')
+  }
+  if (!record.enabled && (record.running || nextDueAt !== null || record.lastResult !== 'DISABLED')) {
+    throw new TypeError('family delivery disabled schedule')
+  }
+  return {
+    householdId: asRequiredString(record.householdId), enabled: record.enabled, intervalMinutes,
+    nextDueAt, running: record.running, leaseExpiresAt, lastAttemptAt, lastSuccessAt,
+    lastResult: record.lastResult as FamilyDeliveryScheduleStatusDto['lastResult'],
+    lastDiscoveredCount: asSafeInteger(record.lastDiscoveredCount),
+    consecutiveFailures: asSafeInteger(record.consecutiveFailures), suspendedUntil,
+    suspensionReason, lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
   }
 }
 

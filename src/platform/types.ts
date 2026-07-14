@@ -351,6 +351,18 @@ export interface StageEncryptedFamilyDeliveryInboundInputDto {
   readonly householdId: string; readonly artifactId: string; readonly envelopeBytes: readonly number[]
   readonly localMembershipId: string
 }
+export type FamilyDeliveryScheduleResultDto = 'NEVER' | 'DISABLED' | 'RUNNING' | 'NO_CHANGES' | 'DISCOVERED' | 'FAILED_RETRYABLE' | 'LEASE_EXPIRED' | 'TERMINAL_SUSPENDED'
+export interface FamilyDeliveryScheduleStatusDto {
+  readonly householdId: string; readonly enabled: boolean; readonly intervalMinutes: number
+  readonly nextDueAt: string | null; readonly running: boolean; readonly leaseExpiresAt: string | null
+  readonly lastAttemptAt: string | null; readonly lastSuccessAt: string | null
+  readonly lastResult: FamilyDeliveryScheduleResultDto; readonly lastDiscoveredCount: number
+  readonly consecutiveFailures: number; readonly suspendedUntil: string | null
+  readonly suspensionReason: string | null; readonly lastErrorCode: string | null; readonly updatedAt: string
+}
+export interface EnableFamilyDeliveryBackgroundInputDto {
+  readonly householdId: string; readonly token: string; readonly intervalMinutes: 15 | 30 | 60
+}
 export type FamilySnapshotResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
 export interface FamilySnapshotReviewRecordDto {
   readonly recordOrder: number; readonly entityKind: string; readonly entityId: string; readonly entityLabel: string
@@ -758,6 +770,10 @@ export type AppCommand =
   | 'family_delivery_inbound_register'
   | 'family_delivery_inbound_stage'
   | 'family_delivery_encrypted_inbound_stage'
+  | 'family_delivery_background_status'
+  | 'family_delivery_background_enable'
+  | 'family_delivery_background_disable'
+  | 'family_delivery_background_run_now'
   | 'family_snapshot_active_review'
   | 'family_snapshot_resolve'
   | 'family_snapshot_apply'
@@ -884,6 +900,10 @@ export interface PlatformClient {
   registerFamilyDeliveryInbound(input: RegisterFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
   stageFamilyDeliveryInbound(input: StageFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
   stageEncryptedFamilyDeliveryInbound(input: StageEncryptedFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
+  getFamilyDeliveryBackgroundStatus(householdId: string): Promise<FamilyDeliveryScheduleStatusDto>
+  enableFamilyDeliveryBackground(input: EnableFamilyDeliveryBackgroundInputDto): Promise<FamilyDeliveryScheduleStatusDto>
+  disableFamilyDeliveryBackground(householdId: string): Promise<FamilyDeliveryScheduleStatusDto>
+  runFamilyDeliveryBackgroundNow(householdId: string): Promise<FamilyDeliveryScheduleStatusDto>
   getActiveFamilySnapshotReview(householdId: string): Promise<FamilySnapshotReviewDto | null>
   resolveFamilySnapshot(packageId: string, resolutions: readonly FamilySnapshotResolutionInputDto[]): Promise<FamilySnapshotReviewDto>
   applyFamilySnapshot(packageId: string): Promise<FamilySnapshotReviewDto>

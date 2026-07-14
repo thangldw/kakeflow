@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const family = vi.hoisted(() => ({
-  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), registerRemote: vi.fn(), prepare: vi.fn(), envelopePrepare: vi.fn(), identity: vi.fn(), accept: vi.fn(), fail: vi.fn(), registerInbound: vi.fn(), stage: vi.fn(), encryptedStage: vi.fn(),
+  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), registerRemote: vi.fn(), prepare: vi.fn(), envelopePrepare: vi.fn(), identity: vi.fn(), accept: vi.fn(), fail: vi.fn(), registerInbound: vi.fn(), stage: vi.fn(), encryptedStage: vi.fn(), backgroundStatus: vi.fn(), backgroundEnable: vi.fn(), backgroundDisable: vi.fn(), backgroundNow: vi.fn(),
   remote: vi.fn(), registerKey: vi.fn(), recipientDigest: vi.fn(), createHousehold: vi.fn(), previewInvite: vi.fn(), createInvite: vi.fn(), cancelInvite: vi.fn(), redeem: vi.fn(), revoke: vi.fn(), upload: vi.fn(), list: vi.fn(), download: vi.fn(),
 }))
 vi.mock('../../platform', () => ({ platformClient: {
@@ -13,6 +13,10 @@ vi.mock('../../platform', () => ({ platformClient: {
   acceptFamilyDelivery: (...args: unknown[]) => family.accept(...args), failFamilyDelivery: (...args: unknown[]) => family.fail(...args),
   registerFamilyDeliveryInbound: (...args: unknown[]) => family.registerInbound(...args), stageFamilyDeliveryInbound: (...args: unknown[]) => family.stage(...args),
   stageEncryptedFamilyDeliveryInbound: (...args: unknown[]) => family.encryptedStage(...args),
+  getFamilyDeliveryBackgroundStatus: (...args: unknown[]) => family.backgroundStatus(...args),
+  enableFamilyDeliveryBackground: (...args: unknown[]) => family.backgroundEnable(...args),
+  disableFamilyDeliveryBackground: (...args: unknown[]) => family.backgroundDisable(...args),
+  runFamilyDeliveryBackgroundNow: (...args: unknown[]) => family.backgroundNow(...args),
 } }))
 vi.mock('./familyDeliveryHttp', () => ({
   FamilyDeliveryHttpError: class FamilyDeliveryHttpError extends Error { constructor(readonly code: string) { super(code) } },
@@ -53,6 +57,15 @@ const connected: FamilyDeliveryStatusDto = {
   ],
   withheldChangeCount: 6,
 }
+const disabledSchedule = {
+  householdId: 'family', enabled: false, intervalMinutes: 30, nextDueAt: null, running: false, leaseExpiresAt: null,
+  lastAttemptAt: null, lastSuccessAt: null, lastResult: 'DISABLED' as const, lastDiscoveredCount: 0,
+  consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-14T00:00:00Z',
+}
+const enabledSchedule = {
+  ...disabledSchedule, enabled: true, nextDueAt: '2026-07-14T01:30:00Z', lastAttemptAt: '2026-07-14T01:00:00Z',
+  lastSuccessAt: '2026-07-14T01:00:00Z', lastResult: 'NO_CHANGES' as const, updatedAt: '2026-07-14T01:00:00Z',
+}
 
 describe('FamilyDeliveryPanel', () => {
   beforeEach(() => {
@@ -60,6 +73,8 @@ describe('FamilyDeliveryPanel', () => {
     family.status.mockResolvedValue(base); family.remote.mockResolvedValue(remote); family.save.mockResolvedValue(connected)
     family.identity.mockResolvedValue({ keyId, publicKey: 'public-owner', generation: 1 }); family.registerKey.mockResolvedValue(undefined); family.recipientDigest.mockResolvedValue('d'.repeat(64))
     family.disconnect.mockResolvedValue(base); family.registerRemote.mockResolvedValue(connected)
+    family.backgroundStatus.mockResolvedValue(disabledSchedule); family.backgroundEnable.mockResolvedValue(enabledSchedule)
+    family.backgroundDisable.mockResolvedValue(disabledSchedule); family.backgroundNow.mockResolvedValue({ ...enabledSchedule, lastResult: 'DISCOVERED', lastDiscoveredCount: 2 })
     family.prepare.mockResolvedValue([{ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'a'.repeat(64), householdId: 'family', originDeviceId: 'device-local', audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1', packageBytes: [1] }])
     family.envelopePrepare.mockResolvedValue({ envelopeBytes: [9, 8], envelopeSha256: 'c'.repeat(64), envelopeByteSize: 2, recipientCount: 1 })
     family.upload.mockResolvedValue({ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'c'.repeat(64), acceptedAt: '2026-07-14T01:00:00Z' })
@@ -132,5 +147,49 @@ describe('FamilyDeliveryPanel', () => {
     expect(family.stage).toHaveBeenCalledWith({ householdId: 'family', artifactId: 'publication-in', packageBytes: [1, 2, 3] })
     expect(onReviewStaged).toHaveBeenCalledTimes(1)
     expect(await screen.findByText(/最終確定までは台帳へ反映されません/)).toBeInTheDocument()
+  })
+
+  it('opts in to background discovery, runs it without resending a token, and keeps apply manual', async () => {
+    family.status.mockResolvedValue(connected)
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    expect(await screen.findByText('オプトイン未設定')).toBeInTheDocument()
+    expect(screen.getByText(/KakeFlowが開いている間だけ/)).toBeInTheDocument()
+    expect(screen.getByText(/受信・内容確認・台帳への反映はすべて手動/)).toBeInTheDocument()
+    expect(screen.getByText(/自動チェック専用に使います/)).toBeInTheDocument()
+    expect(screen.getByText(/手動の送信・受信・内容確認には、引き続きこの画面へのトークン入力が必要/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('自動受信チェックの間隔'), { target: { value: '15' } })
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '自動チェックを有効にする' }))
+    await waitFor(() => expect(family.backgroundEnable).toHaveBeenCalledWith({ householdId: 'family', token: 'session-secret', intervalMinutes: 15 }))
+    expect(await screen.findByText('新着なし')).toBeInTheDocument()
+    expect(screen.getByText('前回の結果')).toBeInTheDocument()
+    expect(screen.getByText('次回予定')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '今すぐ確認' }))
+    await waitFor(() => expect(family.backgroundNow).toHaveBeenCalledWith('family'))
+    expect(JSON.stringify(family.backgroundNow.mock.calls)).not.toContain('session-secret')
+    expect(family.status).toHaveBeenCalledTimes(2)
+    expect(await screen.findByText(/2件の新着を受信可能として追加/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '自動チェックを停止' }))
+    await waitFor(() => expect(family.backgroundDisable).toHaveBeenCalledWith('family'))
+    expect(JSON.stringify(family.backgroundDisable.mock.calls)).not.toContain('session-secret')
+    expect(await screen.findByText(/OSの資格情報に保存した接続トークンを削除/)).toBeInTheDocument()
+  })
+
+  it('shows the user action required for a terminally suspended background check', async () => {
+    family.status.mockResolvedValue(connected)
+    family.backgroundStatus.mockResolvedValue({
+      ...enabledSchedule, nextDueAt: null, lastResult: 'TERMINAL_SUSPENDED',
+      suspensionReason: 'MISSING_CREDENTIAL', lastErrorCode: 'MISSING_CREDENTIAL',
+    })
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    expect(await screen.findByText('ユーザー操作が必要')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('保存済みの接続トークンが見つかりません')
+    expect(screen.getByRole('button', { name: '今すぐ確認' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '間隔とトークンを更新' })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'replacement-token' } })
+    expect(screen.getByRole('button', { name: '間隔とトークンを更新' })).toBeEnabled()
   })
 })

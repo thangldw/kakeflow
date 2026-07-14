@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "0.58.0"
+version = "0.59.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "MIT"
@@ -37,6 +37,7 @@ argon2 = { version = "0.5", features = ["zeroize"] }
 pdf-extract = "0.12"
 notify = "8.2.0"
 hayro = "0.7.1"
+reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

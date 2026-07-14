@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.59.0 — 2026-07-14
+
+- Add an explicit opt-in native schedule for checking family-delivery publication metadata every 15, 30, or 60 minutes while the KakeFlow desktop process is open, plus an immediate check control and persisted status.
+- Store the relay token only in macOS Keychain or Windows Credential Manager after opt-in, bind it to the household, endpoint, and authenticated remote principal, and remove it when automatic checks are disabled or family delivery is disconnected.
+- Revalidate the relay principal, active household membership, local public encryption identity, and remote member mapping before listing a bounded page set after the durable inbound cursor.
+- Register newly visible publications only as `AVAILABLE`; the background worker never prepares or sends outbound data and never downloads, decrypts, stages, reviews, resolves, or applies an inbound artifact.
+- Add single-flight schedule leases, restart recovery, bounded retry backoff, network-state recovery, and terminal suspension for expired authorization, revoked membership, or a missing saved credential.
+- Keep the claim bounded: checks run only while the application is open and do not provide push/realtime sync, an operating-system daemon, automatic apply, sender signatures, remote erasure, or a production-hosted relay.
+
 ## 0.58.0 — 2026-07-14
 
 - Add the binary `KFE1` recipient-encrypted family transport envelope, wrapping unchanged KFF1/KFF2/KFF3 artifacts for active X25519 membership keys with XChaCha20-Poly1305 payload encryption and strict metadata binding.

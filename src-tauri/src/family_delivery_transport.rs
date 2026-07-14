@@ -1354,7 +1354,7 @@ pub fn register_inbound(
     }
     let (local_device,local_member):(String,String)=connection.query_row(
         "SELECT c.device_id,f.local_member_id FROM family_delivery_connections f JOIN local_sync_contexts c USING(household_id)
-         WHERE f.household_id=?1 AND f.state='CONNECTED'",[&input.household_id],|row|Ok((row.get(0)?,row.get(1)?)))
+         WHERE f.household_id=?1 AND f.state IN ('CONNECTED','NETWORK_UNAVAILABLE')",[&input.household_id],|row|Ok((row.get(0)?,row.get(1)?)))
         .optional()?.ok_or(FamilyDeliveryError::NotConnected)?;
     let memberships = load_memberships(connection, &input.household_id)?;
     let remote_to_member = memberships
@@ -2818,6 +2818,33 @@ mod tests {
                 .unwrap();
                 assert_eq!(status.inbound_cursor, 42);
                 assert!(status.inbound.is_empty());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn successful_inbound_poll_recovers_network_unavailable_connection() {
+        let state = setup(24);
+        state
+            .with_connection(|connection| {
+                connect(connection);
+                connection.execute(
+                    "UPDATE family_delivery_connections SET state='NETWORK_UNAVAILABLE'
+                     WHERE household_id='family'",
+                    [],
+                )?;
+                let status = register_inbound(
+                    connection,
+                    &RegisterFamilyInboundInput {
+                        household_id: "family".into(),
+                        artifacts: vec![],
+                        next_cursor: 7,
+                    },
+                )
+                .unwrap();
+                assert_eq!(status.connection_state, "CONNECTED");
+                assert_eq!(status.inbound_cursor, 7);
                 Ok(())
             })
             .unwrap();

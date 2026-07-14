@@ -120,6 +120,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0049_encrypted_family_delivery_transport.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0050_family_delivery_schedule.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;

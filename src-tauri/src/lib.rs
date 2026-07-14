@@ -8,6 +8,10 @@ pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_vault;
 pub mod evidence_bundle;
+pub mod family_delivery_credentials;
+pub mod family_delivery_http;
+pub mod family_delivery_schedule;
+mod family_delivery_scheduler;
 pub mod family_delivery_transport;
 pub mod family_encrypted_envelope;
 pub mod family_envelope_identity;
@@ -621,6 +625,17 @@ fn family_delivery_result<T>(
         .map_err(|_| "Family delivery operation could not be completed".to_owned())
 }
 
+fn family_delivery_schedule_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> family_delivery_schedule::Result<T>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| {
+            operation(connection).map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Automatic family delivery check could not be completed".to_owned())
+}
+
 fn mobile_capture_result<T>(
     state: &AppState,
     operation: impl FnOnce(&rusqlite::Connection) -> mobile_capture_inbox::Result<T>,
@@ -721,21 +736,262 @@ fn family_delivery_status(
 #[tauri::command]
 fn family_delivery_connection_save(
     state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
     input: family_delivery_transport::SaveFamilyConnectionInput,
 ) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
-    family_delivery_result(&state, |connection| {
-        family_delivery_transport::save_connection(connection, &input)
-    })
+    let next_binding = family_delivery_credentials::FamilyDeliveryCredentialBinding::new(
+        input.household_id.clone(),
+        &input.endpoint,
+        input.remote_principal_id.clone(),
+    )
+    .map_err(|_| "Family delivery connection is invalid".to_owned())?;
+    let household_id = input.household_id.clone();
+    let saved = state
+        .with_connection(|connection| {
+            let previous_status = family_delivery_transport::status(connection, &household_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let previous_input = match (
+                previous_status.endpoint.clone(),
+                previous_status.remote_principal_id.clone(),
+                previous_status.local_member_id.clone(),
+                previous_status.local_member_name.clone(),
+            ) {
+                (
+                    Some(endpoint),
+                    Some(remote_principal_id),
+                    Some(local_member_id),
+                    Some(local_member_name),
+                ) => Some(family_delivery_transport::SaveFamilyConnectionInput {
+                    household_id: household_id.clone(),
+                    endpoint,
+                    remote_principal_id,
+                    local_member_id: Some(local_member_id),
+                    local_member_name: Some(local_member_name),
+                    memberships: previous_status.memberships.clone(),
+                }),
+                _ => None,
+            };
+            let previous_binding = previous_input.as_ref().and_then(|previous| {
+                family_delivery_credentials::FamilyDeliveryCredentialBinding::new(
+                    previous.household_id.clone(),
+                    &previous.endpoint,
+                    previous.remote_principal_id.clone(),
+                )
+                .ok()
+            });
+            let binding_changed = previous_binding
+                .as_ref()
+                .is_some_and(|previous| previous != &next_binding);
+
+            // Persist the replacement first while holding the database lock. If
+            // disabling its inherited schedule fails, restore the prior
+            // connection before another worker can claim it.
+            let saved = family_delivery_transport::save_connection(connection, &input)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            if binding_changed {
+                match family_delivery_schedule::disable(connection, &household_id) {
+                    Ok(_)
+                    | Err(family_delivery_schedule::FamilyDeliveryScheduleError::NotConfigured) => {
+                    }
+                    Err(_) => {
+                        if let Some(previous) = previous_input.as_ref() {
+                            let _ =
+                                family_delivery_transport::save_connection(connection, previous);
+                        }
+                        return Err(rusqlite::Error::InvalidQuery.into());
+                    }
+                }
+            }
+            Ok((saved, binding_changed.then_some(previous_binding).flatten()))
+        })
+        .map_err(|_| "Family delivery connection could not be saved safely".to_owned())?;
+
+    if let Some(previous_binding) = saved.1 {
+        // The new connection is durable and automatic checking is disabled at
+        // this point. A credential cleanup failure is reported, but can never
+        // leave the schedule enabled for the replacement binding.
+        credentials
+            .delete(&previous_binding)
+            .map_err(|_| "Stored family relay credential could not be deleted".to_owned())?;
+    }
+    Ok(saved.0)
 }
 
 #[tauri::command]
 fn family_delivery_disconnect(
     state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
     household_id: String,
 ) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    match state.with_connection(|connection| {
+        Ok(family_delivery_schedule::disable(connection, &household_id))
+    }) {
+        Ok(Ok(_))
+        | Ok(Err(family_delivery_schedule::FamilyDeliveryScheduleError::NotConfigured)) => {}
+        _ => return Err("Automatic family delivery check could not be disabled".to_owned()),
+    }
+    if let Ok(context) = family_delivery_scheduler::load_connection_context(&state, &household_id) {
+        let binding = family_delivery_scheduler::credential_binding(&context)
+            .map_err(|_| "Family delivery connection is invalid".to_owned())?;
+        credentials
+            .delete(&binding)
+            .map_err(|_| "Stored family relay credential could not be deleted".to_owned())?;
+    }
     family_delivery_result(&state, |connection| {
         family_delivery_transport::disconnect(connection, &household_id)
     })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EnableFamilyDeliveryBackgroundInput {
+    household_id: String,
+    token: String,
+    interval_minutes: u32,
+}
+
+fn disabled_family_delivery_schedule(
+    state: &AppState,
+    household_id: &str,
+) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
+    state
+        .with_connection(|connection| {
+            let updated_at =
+                connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| {
+                    row.get(0)
+                })?;
+            Ok(family_delivery_schedule::FamilyDeliveryScheduleStatusDto {
+                household_id: household_id.to_owned(),
+                enabled: false,
+                interval_minutes: 30,
+                next_due_at: None,
+                running: false,
+                lease_expires_at: None,
+                last_attempt_at: None,
+                last_success_at: None,
+                last_result: "DISABLED".to_owned(),
+                last_discovered_count: 0,
+                consecutive_failures: 0,
+                suspended_until: None,
+                suspension_reason: None,
+                last_error_code: None,
+                updated_at,
+            })
+        })
+        .map_err(|_| "Automatic family delivery status could not be loaded".to_owned())
+}
+
+#[tauri::command]
+fn family_delivery_background_status(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
+    match state.with_connection(|connection| {
+        Ok(family_delivery_schedule::status(connection, &household_id))
+    }) {
+        Ok(Ok(status)) => Ok(status),
+        Ok(Err(family_delivery_schedule::FamilyDeliveryScheduleError::NotConfigured)) => {
+            disabled_family_delivery_schedule(&state, &household_id)
+        }
+        _ => Err("Automatic family delivery status could not be loaded".to_owned()),
+    }
+}
+
+#[tauri::command]
+fn family_delivery_background_enable(
+    state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
+    identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
+    input: EnableFamilyDeliveryBackgroundInput,
+) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
+    if !matches!(input.interval_minutes, 15 | 30 | 60) {
+        return Err("Automatic check interval is invalid".to_owned());
+    }
+    let context =
+        family_delivery_scheduler::load_connection_context(&state, &input.household_id)
+            .map_err(|_| "Connect family delivery before enabling automatic checks".to_owned())?;
+    let token = Zeroizing::new(input.token);
+    let client = family_delivery_http::FamilyDeliveryHttpClient::production(
+        &context.endpoint,
+        token.as_str(),
+    )
+    .map_err(|_| "Family relay connection could not be validated".to_owned())?;
+    family_delivery_scheduler::validate_and_refresh_with_client(
+        &state, &identity, &context, &client,
+    )
+    .map_err(|failure| match failure {
+        family_delivery_scheduler::DiscoveryFailure::Terminal("AUTH_EXPIRED") => {
+            "Family relay authentication expired".to_owned()
+        }
+        family_delivery_scheduler::DiscoveryFailure::Terminal("MEMBERSHIP_REVOKED") => {
+            "Family relay membership is no longer active".to_owned()
+        }
+        _ => "Family relay connection could not be validated".to_owned(),
+    })?;
+    let binding = family_delivery_scheduler::credential_binding(&context)
+        .map_err(|_| "Family delivery connection is invalid".to_owned())?;
+    credentials
+        .store(binding.clone(), token)
+        .map_err(|_| "Family relay credential could not be stored".to_owned())?;
+    match family_delivery_schedule_result(&state, |connection| {
+        family_delivery_schedule::configure(
+            connection,
+            &input.household_id,
+            true,
+            input.interval_minutes,
+        )
+    }) {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            let _ = credentials.delete(&binding);
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+fn family_delivery_background_disable(
+    state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
+    household_id: String,
+) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
+    let context = family_delivery_scheduler::load_connection_context(&state, &household_id)
+        .map_err(|_| "Family delivery connection is unavailable".to_owned())?;
+    let binding = family_delivery_scheduler::credential_binding(&context)
+        .map_err(|_| "Family delivery connection is invalid".to_owned())?;
+    let status = family_delivery_schedule_result(&state, |connection| {
+        family_delivery_schedule::disable(connection, &household_id)
+    })?;
+    // Disable the durable schedule before touching the OS credential. If the
+    // database write fails the token remains available and the existing
+    // schedule is unchanged. If deletion fails, the schedule remains disabled.
+    credentials
+        .delete(&binding)
+        .map_err(|_| "Automatic checks are disabled, but the stored family relay credential could not be deleted".to_owned())?;
+    Ok(status)
+}
+
+#[tauri::command]
+fn family_delivery_background_run_now(
+    state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
+    identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
+    household_id: String,
+) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
+    family_delivery_schedule_result(&state, |connection| {
+        family_delivery_schedule::request_now(connection, &household_id)
+    })?;
+    let lease = family_delivery_schedule_result(&state, |connection| {
+        family_delivery_schedule::claim_due(connection, &household_id)
+    })?
+    .ok_or_else(|| "Automatic family delivery check is already running".to_owned())?;
+    family_delivery_scheduler::process_claimed_now(
+        &state,
+        &credentials,
+        &identity,
+        &household_id,
+        &lease.lease_token,
+    )
 }
 
 #[tauri::command]
@@ -3225,6 +3481,11 @@ pub fn run() {
             } else {
                 family_envelope_identity::FamilyEnvelopeIdentityState::load_or_create_os()?
             };
+            let family_delivery_credentials = if setup_smoke_config.is_some() {
+                family_delivery_credentials::FamilyDeliveryCredentialStore::new_ephemeral()
+            } else {
+                family_delivery_credentials::FamilyDeliveryCredentialStore::new_os()?
+            };
             if master_key.len() != 32 {
                 return Err(std::io::Error::other("database key has invalid length").into());
             }
@@ -3240,6 +3501,7 @@ pub fn run() {
             app.manage(state);
             app.manage(vault);
             app.manage(family_envelope_identity);
+            app.manage(family_delivery_credentials);
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
             app.manage(RestoreCommandAuthorization::default());
@@ -3258,6 +3520,11 @@ pub fn run() {
                 app.manage(folder_discovery::BackgroundFolderDiscovery::start(
                     app.handle().clone(),
                 ));
+                app.manage(
+                    family_delivery_scheduler::BackgroundFamilyDeliveryDiscovery::start(
+                        app.handle().clone(),
+                    ),
+                );
             }
             Ok(())
         })
@@ -3278,6 +3545,10 @@ pub fn run() {
             family_delivery_status,
             family_delivery_connection_save,
             family_delivery_disconnect,
+            family_delivery_background_status,
+            family_delivery_background_enable,
+            family_delivery_background_disable,
+            family_delivery_background_run_now,
             family_delivery_remote_state_register,
             family_delivery_send_prepare,
             family_delivery_envelope_prepare,
