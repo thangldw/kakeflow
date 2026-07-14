@@ -160,6 +160,14 @@ fn current_nodes_and_inbox_preserve_multiple_generations() {
     assert_eq!(states.len(), 2);
     assert!(states.contains(&"REMOVED".to_owned()));
     assert!(states.contains(&"DISCOVERED".to_owned()));
+    let discovered = list_inbox_in_state(&connection, "home", "drive", "DISCOVERED", 10)
+        .expect("state-filtered Inbox should load");
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].drive_version.as_deref(), Some("02"));
+    assert!(matches!(
+        list_inbox_in_state(&connection, "home", "drive", "UNKNOWN", 10),
+        Err(GoogleDriveStoreError::InvalidInput)
+    ));
     let current: String = connection
         .query_row(
             "SELECT drive_version FROM google_drive_nodes WHERE file_id='file-1'",

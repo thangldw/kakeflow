@@ -206,6 +206,30 @@ pub fn list_inbox(
     )?)
 }
 
+pub fn ignore_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+) -> Result<GoogleDriveInboxItemDto, GoogleDriveCommandServiceError> {
+    Ok(google_drive_store::ignore_inbox(
+        connection,
+        household_id,
+        item_id,
+    )?)
+}
+
+pub fn retry_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+) -> Result<GoogleDriveInboxItemDto, GoogleDriveCommandServiceError> {
+    Ok(google_drive_store::retry_inbox(
+        connection,
+        household_id,
+        item_id,
+    )?)
+}
+
 pub fn disconnect(
     connection: &Connection,
     household_id: &str,
@@ -466,6 +490,32 @@ mod tests {
                 assert_eq!(inbox[0].state, "DISCOVERED");
                 assert!(inbox[0].import_run_id.is_none());
                 assert!(inbox[0].content_sha256.is_none());
+
+                let claim = google_drive_store::claim_inbox(
+                    connection,
+                    "home",
+                    "drive",
+                    std::slice::from_ref(&inbox[0].id),
+                )
+                .unwrap();
+                google_drive_store::fail_inbox(
+                    connection,
+                    "home",
+                    &inbox[0].id,
+                    &claim.lease_token,
+                    "REMOTE_NETWORK_FAILED",
+                )
+                .unwrap();
+                assert_eq!(
+                    retry_inbox(connection, "home", &inbox[0].id).unwrap().state,
+                    "DISCOVERED"
+                );
+                assert_eq!(
+                    ignore_inbox(connection, "home", &inbox[0].id)
+                        .unwrap()
+                        .state,
+                    "IGNORED"
+                );
 
                 let disabled = update_schedule(connection, "home", "drive", false, 30).unwrap();
                 assert!(!disabled.enabled);
