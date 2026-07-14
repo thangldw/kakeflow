@@ -102,7 +102,7 @@ import type { DelimitedParserProfileDto } from './features/parser-profiles/delim
 import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
-import { platformClient } from './platform'
+import { platformClient, PlatformIpcError } from './platform'
 import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
@@ -1084,7 +1084,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     })
   }, [previews])
 
-  const processFiles = async (files: FileList | readonly File[], sourceType: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' = 'MANUAL_UPLOAD') => {
+  const processFiles = async (files: FileList | readonly File[], sourceType: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' | 'ICLOUD_PICKER' = 'MANUAL_UPLOAD') => {
     if (files.length === 0) return
     setBusy(true)
     const next = (await previewImportFiles(files)).map((preview) => ({ ...preview, sourceType }))
@@ -1174,6 +1174,20 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       if (selected) { setWatchedFolders((current) => [...current.filter((folder) => folder.id !== selected.id), selected]); await platformClient.scanWatchedFolder(householdId, selected.id); await folderInbox.refresh(true) }
     } catch { setNotice('フォルダーを登録できませんでした。シンボリックリンクではないローカルフォルダーを選択してください。') }
     finally { setFolderBusy(null) }
+  }
+  const connectIcloudFolder = async () => {
+    if (!householdId) return
+    setFolderBusy('icloud'); setNotice('')
+    try {
+      const selected = await platformClient.selectIcloudFolder(householdId, 'iCloud Drive Inbox')
+      if (!selected) { setNotice('iCloud Drive フォルダーの接続をキャンセルしました。'); return }
+      setWatchedFolders((current) => [...current.filter((folder) => folder.id !== selected.id), selected])
+      await platformClient.scanWatchedFolder(householdId, selected.id)
+      await folderInbox.refresh(true)
+      setNotice('iCloud Drive の同期済みローカルフォルダーを永続 Inbox に接続しました。台帳へは自動反映しません。')
+    } catch {
+      setNotice('iCloud Drive フォルダーを接続できませんでした。macOS または Windows の iCloud Drive がローカルに同期済みか確認してください。')
+    } finally { setFolderBusy(null) }
   }
   const scanWatchedFolder = async (folder: WatchedFolderDto) => {
     if (!householdId) return
@@ -1469,10 +1483,12 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
 
   return <>
     <PageHeader eyebrow="データ取り込み" title="インポート Inbox" description="ファイルから読み取った候補を確認して台帳へ反映します。">
-      {platformClient.runtime === 'tauri' && <button className="secondary-btn" disabled={folderBusy === 'select'} onClick={() => void addWatchedFolder()}>{folderBusy === 'select' ? '選択中…' : '同期フォルダーを追加'}</button>}
+      {platformClient.runtime === 'tauri' && <button className="secondary-btn" disabled={folderBusy !== null} onClick={() => void connectIcloudFolder()}>{folderBusy === 'icloud' ? 'iCloud Drive を接続中…' : 'iCloud Drive を接続'}</button>}
+      {platformClient.runtime === 'tauri' && <button className="secondary-btn" disabled={folderBusy !== null} onClick={() => void addWatchedFolder()}>{folderBusy === 'select' ? '選択中…' : '同期フォルダーを追加'}</button>}
       <button className="primary-btn" disabled={busy} onClick={() => inputRef.current?.click()}><Import size={17} /> {busy ? '解析中…' : 'ファイルを選択'}</button>
       <input ref={inputRef} aria-label="CSV、TSV、Excel、PDF、レシート画像、ゆうちょ公式ZIPを選択" className="visually-hidden" type="file" accept=".csv,.tsv,.xlsx,.pdf,.png,.jpg,.jpeg,.zip,text/csv,text/tab-separated-values,application/zip,application/x-zip-compressed,application/pdf,image/png,image/jpeg,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple onChange={(event) => { const files = event.currentTarget.files; event.currentTarget.value = ''; if (files) void processFiles(files) }} />
     </PageHeader>
+    {platformClient.runtime === 'tauri' && <div className="import-notice"><span>iCloud Drive は Apple API へ直接接続しません。macOS または Windows の iCloud Drive が端末へ同期したフォルダーをローカルで監視します。</span></div>}
     {folderInbox.counts && folderInbox.counts.actionable > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>永続 Folder Inbox に {folderInbox.counts.actionable} 件の確認対象があります。プレビューだけを自動化し、台帳への反映は必ず明示的な承認後です。</span><button className="text-btn" disabled={folderInbox.busy} onClick={() => void folderInbox.refresh(true)}>更新</button></div>}
     {(recoveryBusy || recoveryError) && <div className="import-notice" role={recoveryError ? 'alert' : 'status'}><span>{recoveryError || '保存済みの確認待ちインポートを復元しています…'}</span>{recoveryError && <button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>再試行</button>}</div>}
     {!recoveryBusy && !recoveryError && recoveredReviewCount > 0 && <div className="import-notice" role="status"><span>再起動前からの確認待ちを {recoveredReviewCount} 件復元しました。台帳へは自動反映しません。</span><button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>確認待ちを更新</button></div>}
@@ -1485,7 +1501,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
     <PendingImportHandoffPanel householdId={householdId} accounts={accounts} members={members} pendingRuns={pendingReviewRuns} onApplied={() => { setRecoveryRevision((value) => value + 1); onChanged() }} />
-    {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>変更履歴と処理状態は端末内データベースに保持され、再起動後も復元されます。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={folderInbox.autoScan} onChange={(event) => folderInbox.setAutoScan(event.target.checked)} /><span>自動プレビュー</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{folderInbox.items.filter((item) => item.watchedFolderId === folder.id && item.state !== 'REMOVED').map((item) => { const stateLabel = { DISCOVERED: '検出済み', PROCESSING: '解析中', READY: 'プレビュー完了', NEEDS_MAPPING: '形式の対応付けが必要', STAGED: '取込処理に接続済み', FAILED: '失敗', IGNORED: '無視', REMOVED: '削除済み' }[item.state]; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>{item.relativePath} ・ {(item.byteSize / 1024).toFixed(1)} KB ・ 試行 {item.attemptCount}</small></span><b className={item.state === 'READY' || item.state === 'STAGED' ? 'ready' : 'review'}>{stateLabel}</b><span className="folder-inbox-actions">{(item.state === 'FAILED' || item.state === 'IGNORED') && <button className="mini-btn" onClick={() => void folderInbox.retry(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" onClick={() => void folderInbox.ignore(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div>)}</section>}
+    {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>変更履歴と処理状態は端末内データベースに保持され、再起動後も復元されます。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={folderInbox.autoScan} onChange={(event) => folderInbox.setAutoScan(event.target.checked)} /><span>自動プレビュー</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.provider === 'ICLOUD' ? 'iCloud Drive' : 'ローカル同期'} ・ {folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{folderInbox.items.filter((item) => item.watchedFolderId === folder.id && item.state !== 'REMOVED').map((item) => { const stateLabel = { DISCOVERED: '検出済み', PROCESSING: '解析中', READY: 'プレビュー完了', NEEDS_MAPPING: '形式の対応付けが必要', STAGED: '取込処理に接続済み', FAILED: '失敗', IGNORED: '無視', REMOVED: '削除済み' }[item.state]; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>{item.provider === 'ICLOUD' ? 'iCloud Drive' : 'ローカル同期'} ・ {(item.byteSize / 1024).toFixed(1)} KB ・ 試行 {item.attemptCount}</small></span><b className={item.state === 'READY' || item.state === 'STAGED' ? 'ready' : 'review'}>{stateLabel}</b><span className="folder-inbox-actions">{(item.state === 'FAILED' || item.state === 'IGNORED') && <button className="mini-btn" onClick={() => void folderInbox.retry(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" onClick={() => void folderInbox.ignore(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div>)}</section>}
     <section className="panel import-panel">
       <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / TSV / Excel / PDF / レシート画像 / ZIPをここにドロップ</span><small>PayPay・銀行・カード・ゆうちょ公式CSV一括ZIP・PNG / JPEGレシート</small></button>
@@ -2149,6 +2165,34 @@ function SyncSettingsPanels({ householdId, members }: { readonly householdId: st
   </>
 }
 
+function IcloudDriveInboxSettingsPanel({ householdId }: { readonly householdId: string | null }) {
+  const [folders, setFolders] = useState<readonly WatchedFolderDto[]>([])
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (!householdId || platformClient.runtime !== 'tauri') { setFolders([]); return }
+    let active = true
+    void platformClient.listWatchedFolders(householdId)
+      .then((items) => { if (active) setFolders(items.filter((folder) => folder.provider === 'ICLOUD')) })
+      .catch(() => { if (active) setNotice('iCloud Drive Inbox の接続状態を読み込めませんでした。') })
+    return () => { active = false }
+  }, [householdId])
+  const connect = async () => {
+    if (!householdId) return
+    setBusy(true); setNotice('')
+    try {
+      const selected = await platformClient.selectIcloudFolder(householdId, 'iCloud Drive Inbox')
+      if (!selected) { setNotice('iCloud Drive フォルダーの接続をキャンセルしました。'); return }
+      setFolders((current) => [...current.filter((folder) => folder.id !== selected.id), selected])
+      await platformClient.scanWatchedFolder(householdId, selected.id)
+      setNotice('iCloud Drive の同期済みローカルフォルダーを永続 Inbox に接続しました。')
+    } catch {
+      setNotice('iCloud Drive フォルダーを接続できませんでした。macOS または Windows の iCloud Drive がローカルに同期済みか確認してください。')
+    } finally { setBusy(false) }
+  }
+  return <section className="panel settings-panel" aria-labelledby="icloud-inbox-settings-title"><div><h2 id="icloud-inbox-settings-title">iCloud Drive Inbox</h2><p>Apple API への直接接続ではありません。macOS、または Windows の iCloud Drive が端末へ同期したフォルダーをKakeFlowがローカルで監視します。</p>{folders.map((folder) => <small key={folder.id}>接続済み ・ iCloud Drive ・ {folder.displayName}</small>)}</div><div className="backup-form"><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri' || !householdId} onClick={() => void connect()}>{busy ? 'iCloud Drive を接続中…' : 'iCloud Drive を接続'}</button><small>新着ファイルは確認候補になり、台帳へ自動反映されません。</small>{notice && <p role="status">{notice}</p>}</div></section>
+}
+
 function App() {
   const [page, setPage] = useState<PageId>('overview')
   const [reportsInitialView, setReportsInitialView] = useState<ReportView>('CALENDAR')
@@ -2214,8 +2258,11 @@ function App() {
             if (outcome === 'READY') await platformClient.markWatchedFileInboxReady(householdId, item.id, claim.leaseToken)
             else if (outcome === 'NEEDS_MAPPING') await platformClient.markWatchedFileInboxNeedsMapping(householdId, item.id, claim.leaseToken)
             else { await platformClient.markWatchedFileInboxFailed(householdId, item.id, claim.leaseToken, folderInboxFailureCode(preview)); hydratedFolderItemsRef.current.delete(item.id) }
-          } catch {
-            try { await platformClient.markWatchedFileInboxFailed(householdId, item.id, claim.leaseToken, 'PREVIEW_FAILED') } catch { /* stale leases are recovered natively */ }
+          } catch (error) {
+            const failureCode = error instanceof PlatformIpcError && error.code === 'CLOUD_FILE_UNAVAILABLE'
+              ? 'CLOUD_FILE_UNAVAILABLE'
+              : 'PREVIEW_FAILED'
+            try { await platformClient.markWatchedFileInboxFailed(householdId, item.id, claim.leaseToken, failureCode) } catch { /* stale leases are recovered natively */ }
             hydratedFolderItemsRef.current.delete(item.id)
           }
         }
@@ -2495,7 +2542,7 @@ function App() {
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
-    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
   return <div className="app-shell"><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }

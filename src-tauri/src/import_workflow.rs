@@ -1879,7 +1879,7 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
     validate_text("media type", &request.media_type, 255)?;
     if !matches!(
         request.source_type.as_str(),
-        "LOCAL_FOLDER" | "MANUAL_UPLOAD" | "CAMERA_SCAN" | "OTHER"
+        "LOCAL_FOLDER" | "ICLOUD_PICKER" | "MANUAL_UPLOAD" | "CAMERA_SCAN" | "OTHER"
     ) {
         return Err(ImportWorkflowError::Validation(
             "unsupported source type".into(),
@@ -2478,6 +2478,40 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn icloud_source_type_is_preserved_across_document_preview_and_pending_review() {
+        let connection = database();
+        let mut input = request("icloud-run", "icloud-document", 'd');
+        input.source_type = "ICLOUD_PICKER".into();
+
+        start_import(&connection, &input, "vault://icloud-document").unwrap();
+
+        let source_type: String = connection
+            .query_row(
+                "SELECT sd.source_type FROM import_runs ir \
+                 JOIN source_documents sd ON sd.import_run_id=ir.id \
+                 WHERE ir.id='icloud-run' AND sd.id='icloud-document'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_type, "ICLOUD_PICKER");
+
+        let preview = preview_import(&connection, "icloud-run").unwrap();
+        assert_eq!(preview.summary.run_id, "icloud-run");
+        assert_eq!(preview.summary.document_id, "icloud-document");
+        assert_eq!(preview.source.source_type, "ICLOUD_PICKER");
+
+        let pending = list_pending_reviews(&connection, "household").unwrap();
+        let recovered = pending
+            .runs
+            .iter()
+            .find(|run| run.run_id == "icloud-run")
+            .expect("iCloud run must remain reviewable");
+        assert_eq!(recovered.document_id, "icloud-document");
+        assert_eq!(recovered.source_type, "ICLOUD_PICKER");
     }
 
     #[test]

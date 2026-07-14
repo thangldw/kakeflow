@@ -54,6 +54,7 @@ describe('platform client', () => {
     await expect(client.listTransactionSourceRecords('family', 'tx')).rejects.toMatchObject({ command: 'transaction_source_records_list' })
     await expect(client.listWatchedFolders('family')).resolves.toEqual([])
     await expect(client.selectWatchedFolder('family', 'Inbox')).rejects.toMatchObject({ command: 'watched_folder_select' })
+    await expect(client.selectIcloudFolder('family', 'iCloud Drive Inbox')).rejects.toMatchObject({ command: 'icloud_folder_select' })
     await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
     await expect(client.scanWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_scan' })
     await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).rejects.toMatchObject({ command: 'watched_folder_file_read' })
@@ -141,20 +142,21 @@ describe('platform client', () => {
         page: 1, pageSize: 20, totalItems: 1, totalPages: 1,
       },
       transaction_source_records_list: [{ id: 'record-1', sourceDocumentId: 'document-1', rowNumber: 2, recordHash: 'b'.repeat(64), payloadJson: '{"rawFields":["STORE","1200"]}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }],
-      watched_folders_list: [{ id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }],
-      watched_folder_select: { id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' },
+      watched_folders_list: [{ id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }],
+      watched_folder_select: { id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'KakeFlow', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' },
+      icloud_folder_select: { id: 'icloud-folder', householdId: 'family', label: 'iCloud Drive Inbox', displayName: 'KakeFlow Inbox', sourceType: 'ICLOUD_PICKER', provider: 'ICLOUD', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' },
       watched_folder_remove: null,
       watched_folder_scan: { watchedFolderId: 'folder', files: [{ relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000 }] },
       watched_folder_file_read: { relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fileBytes: [1, 2, 3] },
-      watched_file_inbox_list: [{ id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }],
+      watched_file_inbox_list: [{ id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }],
       watched_file_inbox_counts: { discovered: 0, processing: 0, ready: 1, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 },
-      watched_file_inbox_claim: { leaseToken: 'c'.repeat(64), leaseExpiresAt: '2026-07-12T00:06:00Z', items: [{ id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'PROCESSING', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }] },
-      watched_file_inbox_mark_ready: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
-      watched_file_inbox_mark_needs_mapping: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'NEEDS_MAPPING', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
-      watched_file_inbox_mark_failed: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'FAILED', attemptCount: 2, importRunId: null, lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
-      watched_file_inbox_mark_staged: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
-      watched_file_inbox_ignore: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'IGNORED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
-      watched_file_inbox_retry: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'DISCOVERED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_claim: { leaseToken: 'c'.repeat(64), leaseExpiresAt: '2026-07-12T00:06:00Z', items: [{ id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'PROCESSING', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }] },
+      watched_file_inbox_mark_ready: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_mark_needs_mapping: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'NEEDS_MAPPING', attemptCount: 2, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_mark_failed: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'FAILED', attemptCount: 2, importRunId: null, lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_mark_staged: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_ignore: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'IGNORED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
+      watched_file_inbox_retry: { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'DISCOVERED', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' },
       import_summary: { totalRuns: 0, discovered: 0, extracting: 0, reviewRequired: 0, posted: 0, failed: 0, rolledBack: 0, sourceDocuments: 0, sourceRecords: 0, pendingCandidates: 0, readyCandidates: 0, latestSuccessfulImportAt: null, latestSourceFilename: null, latestSourceType: null, distinctSourceTypes: 0 },
       pending_review_list: {
         householdId: 'family',
@@ -297,6 +299,7 @@ describe('platform client', () => {
     await expect(client.listTransactionSourceRecords('family', 'tx-manual')).resolves.toEqual(responses.transaction_source_records_list)
     await expect(client.listWatchedFolders('family')).resolves.toEqual(responses.watched_folders_list)
     await expect(client.selectWatchedFolder('family', 'Inbox')).resolves.toEqual(responses.watched_folder_select)
+    await expect(client.selectIcloudFolder('family', 'iCloud Drive Inbox')).resolves.toEqual(responses.icloud_folder_select)
     await expect(client.removeWatchedFolder('family', 'folder')).resolves.toBeUndefined()
     await expect(client.scanWatchedFolder('family', 'folder')).resolves.toEqual(responses.watched_folder_scan)
     await expect(client.readWatchedFile('family', 'folder', 'bank.csv')).resolves.toEqual(responses.watched_folder_file_read)
@@ -352,6 +355,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('transaction_source_records_list', { householdId: 'family', transactionId: 'tx-manual' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folders_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_select', { householdId: 'family', label: 'Inbox' })
+    expect(invokeSpy).toHaveBeenCalledWith('icloud_folder_select', { householdId: 'family', label: 'iCloud Drive Inbox' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_remove', { householdId: 'family', watchedFolderId: 'folder' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_scan', { householdId: 'family', watchedFolderId: 'folder' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_folder_file_read', { householdId: 'family', watchedFolderId: 'folder', relativePath: 'bank.csv' })
@@ -383,7 +387,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(57)
+    expect(invokeSpy).toHaveBeenCalledTimes(58)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {
@@ -428,6 +432,17 @@ describe('platform client', () => {
       command: 'app_status',
       message: 'The desktop service returned an invalid response.',
     })
+  })
+
+  it('rejects unknown or mismatched watched-folder provenance at the IPC boundary', async () => {
+    const baseFolder = { id: 'folder', householdId: 'family', label: 'Inbox', displayName: 'Inbox', sourceType: 'ICLOUD_PICKER', provider: 'ICLOUD', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }
+    for (const response of [{ ...baseFolder, sourceType: 'DROPBOX' }, { ...baseFolder, provider: 'LOCAL' }]) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => [response] as T })
+      await expect(client.listWatchedFolders('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'watched_folders_list' })
+    }
+    const inbox = { id: 'a'.repeat(64), householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'ICLOUD_PICKER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'b'.repeat(64), state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }
+    const client = createPlatformClient({ tauri: true, invoke: async <T>() => [inbox] as T })
+    await expect(client.listWatchedFileInbox('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'watched_file_inbox_list' })
   })
 
   it('strictly validates v0.57 partition coverage, evidence summaries, and all artifact schemas', async () => {
@@ -748,6 +763,31 @@ describe('platform client', () => {
     expect(String(error)).not.toContain(secret)
     expect(error).not.toHaveProperty('cause')
     expect(error).toMatchObject({ code: 'COMMAND_FAILED', command: 'app_health' })
+  })
+
+  it('preserves only the allowlisted retry code for an unavailable cloud file', async () => {
+    const unavailable = createPlatformClient({
+      tauri: true,
+      invoke: async () => { throw 'CLOUD_FILE_UNAVAILABLE' },
+    })
+    const unrelated = createPlatformClient({
+      tauri: true,
+      invoke: async () => { throw 'CLOUD_FILE_UNAVAILABLE: /private/path' },
+    })
+
+    await expect(unavailable.readWatchedFile('family', 'folder', 'receipt.jpg')).rejects.toMatchObject({
+      code: 'CLOUD_FILE_UNAVAILABLE',
+      command: 'watched_folder_file_read',
+      message: 'The cloud file is not available locally.',
+    })
+    await expect(unrelated.readWatchedFile('family', 'folder', 'receipt.jpg')).rejects.toMatchObject({
+      code: 'COMMAND_FAILED',
+      command: 'watched_folder_file_read',
+    })
+    await expect(unavailable.health()).rejects.toMatchObject({
+      code: 'COMMAND_FAILED',
+      command: 'app_health',
+    })
   })
 
   it('rejects malformed financial IPC rows instead of trusting structural casts', async () => {

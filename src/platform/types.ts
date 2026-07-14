@@ -95,7 +95,7 @@ export interface NormalizedCandidateDto {
 }
 export interface StartImportDto {
   readonly runId: string; readonly documentId: string; readonly householdId: string
-  readonly sourceType: 'LOCAL_FOLDER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
+  readonly sourceType: 'LOCAL_FOLDER' | 'ICLOUD_PICKER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
   readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly sourceModifiedAt: string | null; readonly adapterId: string | null; readonly adapterVersion: string | null
@@ -697,13 +697,20 @@ export interface SourceRecordPageDto {
   readonly items: readonly SourceRecordViewDto[]; readonly page: number; readonly pageSize: number
   readonly totalItems: number; readonly totalPages: number
 }
-export interface WatchedFolderDto { readonly id: string; readonly householdId: string; readonly label: string; readonly displayName: string; readonly isEnabled: boolean; readonly createdAt: string }
+export type WatchedFolderSourceTypeDto = 'LOCAL_FOLDER' | 'ICLOUD_PICKER'
+export type WatchedFolderProviderDto = 'LOCAL' | 'ICLOUD'
+export interface WatchedFolderDto {
+  readonly id: string; readonly householdId: string; readonly label: string; readonly displayName: string
+  readonly sourceType: WatchedFolderSourceTypeDto; readonly provider: WatchedFolderProviderDto
+  readonly isEnabled: boolean; readonly createdAt: string
+}
 export interface WatchedFileMetadataDto { readonly relativePath: string; readonly fileName: string; readonly mediaType: string; readonly byteSize: number; readonly modifiedUnixMs: number | null }
 export interface WatchedFolderScanDto { readonly watchedFolderId: string; readonly files: readonly WatchedFileMetadataDto[] }
 export interface WatchedFileDto extends WatchedFileMetadataDto { readonly fileBytes: readonly number[] }
 export type WatchedFileInboxStateDto = 'DISCOVERED' | 'PROCESSING' | 'READY' | 'NEEDS_MAPPING' | 'STAGED' | 'FAILED' | 'IGNORED' | 'REMOVED'
 export interface WatchedFileInboxItemDto {
   readonly id: string; readonly householdId: string; readonly watchedFolderId: string; readonly watchedFolderLabel: string
+  readonly sourceType: WatchedFolderSourceTypeDto; readonly provider: WatchedFolderProviderDto
   readonly relativePath: string; readonly fileName: string; readonly mediaType: string; readonly byteSize: number
   readonly modifiedUnixMs: number | null; readonly fingerprint: string; readonly state: WatchedFileInboxStateDto
   readonly attemptCount: number; readonly importRunId: string | null; readonly lastErrorCode: string | null
@@ -853,6 +860,7 @@ export type AppCommand =
   | 'transaction_source_records_list'
   | 'watched_folders_list'
   | 'watched_folder_select'
+  | 'icloud_folder_select'
   | 'watched_folder_remove'
   | 'watched_folder_scan'
   | 'watched_folder_file_read'
@@ -985,6 +993,7 @@ export interface PlatformClient {
   listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
+  selectIcloudFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   removeWatchedFolder(householdId: string, watchedFolderId: string): Promise<void>
   scanWatchedFolder(householdId: string, watchedFolderId: string): Promise<WatchedFolderScanDto>
   readWatchedFile(householdId: string, watchedFolderId: string, relativePath: string): Promise<WatchedFileDto>

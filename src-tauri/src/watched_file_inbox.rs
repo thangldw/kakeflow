@@ -3,7 +3,9 @@
 //! Discovery is intentionally separate from ingestion: rows in this table do
 //! not contain file bytes or native paths and no transition posts ledger data.
 
-use crate::watched_folders::WatchedFileMetadataDto;
+use crate::watched_folders::{
+    WatchedFileMetadataDto, WatchedFolderProvider, WatchedFolderSourceType,
+};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -63,6 +65,8 @@ pub struct WatchedFileInboxItemDto {
     pub household_id: String,
     pub watched_folder_id: String,
     pub watched_folder_label: String,
+    pub source_type: WatchedFolderSourceType,
+    pub provider: WatchedFolderProvider,
     pub relative_path: String,
     pub file_name: String,
     pub media_type: String,
@@ -223,7 +227,8 @@ pub fn list(
     }
     recover_expired_leases(connection, household_id)?;
     let mut statement = connection.prepare(
-        "SELECT i.id,i.household_id,i.watched_folder_id,wf.label,i.relative_path,
+        "SELECT i.id,i.household_id,i.watched_folder_id,wf.label,wf.source_type,wf.provider,
+                i.relative_path,
                 i.file_name,i.media_type,i.byte_size,i.modified_unix_ms,i.fingerprint,
                 i.state,i.attempt_count,i.import_run_id,i.last_error_code,
                 i.discovered_at,i.updated_at
@@ -614,7 +619,8 @@ fn load_item(
 ) -> Result<WatchedFileInboxItemDto> {
     connection
         .query_row(
-            "SELECT i.id,i.household_id,i.watched_folder_id,wf.label,i.relative_path,
+            "SELECT i.id,i.household_id,i.watched_folder_id,wf.label,wf.source_type,wf.provider,
+                    i.relative_path,
                     i.file_name,i.media_type,i.byte_size,i.modified_unix_ms,i.fingerprint,
                     i.state,i.attempt_count,i.import_run_id,i.last_error_code,
                     i.discovered_at,i.updated_at
@@ -628,32 +634,45 @@ fn load_item(
 }
 
 fn item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WatchedFileInboxItemDto> {
-    let byte_size: i64 = row.get(7)?;
-    let modified: Option<i64> = row.get(8)?;
-    let attempts: i64 = row.get(11)?;
+    let byte_size: i64 = row.get(9)?;
+    let modified: Option<i64> = row.get(10)?;
+    let attempts: i64 = row.get(13)?;
+    let source_type = match row.get::<_, String>(4)?.as_str() {
+        "LOCAL_FOLDER" => WatchedFolderSourceType::LocalFolder,
+        "ICLOUD_PICKER" => WatchedFolderSourceType::IcloudPicker,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    let provider = match row.get::<_, String>(5)?.as_str() {
+        "LOCAL" => WatchedFolderProvider::Local,
+        "ICLOUD" => WatchedFolderProvider::Icloud,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
     Ok(WatchedFileInboxItemDto {
         id: row.get(0)?,
         household_id: row.get(1)?,
         watched_folder_id: row.get(2)?,
         watched_folder_label: row.get(3)?,
-        relative_path: row.get(4)?,
-        file_name: row.get(5)?,
-        media_type: row.get(6)?,
+        source_type,
+        provider,
+        relative_path: row.get(6)?,
+        file_name: row.get(7)?,
+        media_type: row.get(8)?,
         byte_size: u64::try_from(byte_size)
-            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(7, byte_size))?,
+            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(9, byte_size))?,
         modified_unix_ms: modified
             .map(|value| {
-                u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(8, value))
+                u64::try_from(value)
+                    .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(10, value))
             })
             .transpose()?,
-        fingerprint: row.get(9)?,
-        state: row.get(10)?,
+        fingerprint: row.get(11)?,
+        state: row.get(12)?,
         attempt_count: u8::try_from(attempts)
-            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, attempts))?,
-        import_run_id: row.get(12)?,
-        last_error_code: row.get(13)?,
-        discovered_at: row.get(14)?,
-        updated_at: row.get(15)?,
+            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(13, attempts))?,
+        import_run_id: row.get(14)?,
+        last_error_code: row.get(15)?,
+        discovered_at: row.get(16)?,
+        updated_at: row.get(17)?,
     })
 }
 
@@ -806,6 +825,11 @@ mod tests {
             .execute_batch(include_str!("../migrations/0008_watched_folders.sql"))
             .unwrap();
         connection
+            .execute_batch(include_str!(
+                "../migrations/0051_watched_folder_sources.sql"
+            ))
+            .unwrap();
+        connection
             .execute_batch(include_str!("../migrations/0028_watched_file_inbox.sql"))
             .unwrap();
         connection
@@ -896,6 +920,28 @@ mod tests {
                 "canonical_path" | "absolute_path" | "bytes"
             )
         }));
+    }
+
+    #[test]
+    fn list_and_claim_expose_the_registered_cloud_source() {
+        let connection = database();
+        connection
+            .execute(
+                "UPDATE watched_folders
+                 SET source_type='ICLOUD_PICKER',provider='ICLOUD'
+                 WHERE id='folder-home'",
+                [],
+            )
+            .unwrap();
+        let item = discovered(&connection);
+        assert_eq!(item.source_type, WatchedFolderSourceType::IcloudPicker);
+        assert_eq!(item.provider, WatchedFolderProvider::Icloud);
+        let claimed = claim(&connection, "home", &[item.id]).unwrap();
+        assert_eq!(
+            claimed.items[0].source_type,
+            WatchedFolderSourceType::IcloudPicker
+        );
+        assert_eq!(claimed.items[0].provider, WatchedFolderProvider::Icloud);
     }
 
     #[test]

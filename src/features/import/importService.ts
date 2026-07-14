@@ -2,6 +2,7 @@ import { decodeCsvBytes, detectImportAdapter } from '../../ingestion'
 import type { AdapterId, ParsedImport, ParseIssue } from '../../ingestion'
 import readXlsxFile from 'read-excel-file/browser'
 import { expandZipCsv, ZipImportError } from './zipImport'
+import type { ImportSourceType } from './importMapper'
 
 export interface ImportPreview {
   id: string
@@ -17,7 +18,7 @@ export interface ImportPreview {
   detectedAdapterId?: AdapterId
   mediaType?: string
   sourceModifiedAt?: string
-  sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER'
+  sourceType?: ImportSourceType
   folderInboxItemId?: string
   watchedFolderId?: string
   relativePath?: string

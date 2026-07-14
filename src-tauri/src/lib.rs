@@ -3093,6 +3093,32 @@ async fn watched_folder_select(
 }
 
 #[tauri::command]
+async fn icloud_folder_select(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    label: String,
+) -> Result<Option<watched_folders::WatchedFolderDto>, String> {
+    let icloud_root = watched_folders::resolve_icloud_root()
+        .map_err(|error| error.public_message().to_owned())?;
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .set_directory(&icloud_root)
+        .blocking_pick_folder()
+    else {
+        return Ok(None);
+    };
+    let path = selected
+        .into_path()
+        .map_err(|_| "Selected folder is unavailable".to_owned())?;
+    watched_folder_result(&state, |connection| {
+        watched_folders::register_icloud(connection, &household_id, &label, &path, &icloud_root)
+    })
+    .map(Some)
+}
+
+#[tauri::command]
 fn watched_folder_remove(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -4085,6 +4111,7 @@ pub fn run() {
             classification_rule_apply,
             watched_folders_list,
             watched_folder_select,
+            icloud_folder_select,
             watched_folder_remove,
             watched_folder_scan,
             watched_folder_file_read,
