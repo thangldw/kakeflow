@@ -4,6 +4,8 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
+Version 0.65 adds [Annual Household Review XLSX export](docs/ANNUAL_REVIEW_XLSX.md). The native workbook reuses the exact validated report, selected account group/member scope, year, and as-of date shown in KakeFlow. Its Summary, Monthly, Drivers, and Health sheets retain complete/partial/future month states, typed financial values, Japanese labels, reconciliation, and data-quality disclosures; workbook bytes never cross the WebView IPC boundary.
+
 Version 0.64 adds restart-safe [receipt item review and split posting](docs/RECEIPT_ITEM_SPLIT.md). Import Inbox exposes a bounded projection of item, tax, coupon, point, payment, confidence, and source-line evidence before approval. An exact outgoing receipt can create one categorized expense debit per item while preserving the original payment credit; mismatched totals disclose their delta and require explicit manual allocation instead of guessing how tax, discounts, or points should be treated.
 
 Version 0.63 adds a strict [AEON finalized-statement import](docs/AEON_CARD_IMPORT.md). Detection uses an AEON content marker, named finalized fields, dated detail rows, and one exact statement total rather than a filename. Refunds retain their negative sign, while installment, revolving, bonus, partial, ambiguous, multi-section, malformed, and unfamiliar layouts fail closed. The checked-in fixture is screen-derived synthetic because AEON does not publish a literal consumer CSV schema.
@@ -223,7 +225,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Monthly/yearly reports with MoM/YoY comparisons, budget/goal progress, spending drivers, reconciliation, and data-quality status.
 - Explainable recurring/subscription and unusual-spending detection derived locally from confirmed ledger history.
 - Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export.
-- Automatic reviewed ingestion from registered local, iCloud Drive, Google Drive, OneDrive, or NAS folders across the desktop app, including restart-safe queue state and an app-wide actionable badge.
+- Automatic discovery with review-gated ingestion from registered local, iCloud Drive, Google Drive, OneDrive, or NAS folders across the desktop app, including restart-safe queue state and an app-wide actionable badge.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
@@ -232,11 +234,12 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 
 ## Remaining product milestones
 
-1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
-3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
-4. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
-5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.
+1. Extend source-backed XLSX export to monthly and investment reports, then add PDF reports with deterministic Japanese font embedding and visual QA.
+2. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
+3. Add direct data connectors: Google Drive OAuth folder sync, email-attachment ingestion, a native iCloud document/folder picker, and a contracted read-only Japanese bank/card aggregation provider.
+4. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
+5. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
+6. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.
 
 ## Family delivery boundary
 

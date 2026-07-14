@@ -4,6 +4,7 @@
 .report-view-head p { color: #6b7f76; font-size: 11px; font-weight: 800; letter-spacing: .13em; margin: 0 0 5px; text-transform: uppercase; }
 .report-view-head h2 { font-size: clamp(24px, 3vw, 34px); letter-spacing: -.04em; margin: 0; }
 .report-view-head span { color: #75847e; display: block; font-size: 12px; margin-top: 5px; }
+.annual-review-export-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .report-segmented { background: #edf1ee; border-radius: 11px; display: inline-flex; padding: 3px; }
 .report-segmented button { background: transparent; border: 0; border-radius: 8px; color: #66756f; cursor: pointer; font-size: 12px; font-weight: 700; padding: 8px 13px; }
 .report-segmented button[aria-pressed="true"] { background: #fff; box-shadow: 0 2px 7px rgb(31 48 42 / 9%); color: #26342f; }
@@ -92,6 +93,7 @@ button.calendar-event { cursor: pointer; }
 @media (max-width: 680px) {
   .report-view-head { align-items: stretch; flex-direction: column; gap: 12px; }
   .report-segmented { align-self: flex-start; }
+  .annual-review-export-actions { justify-content: flex-start; }
   .report-summary-grid, .report-health-grid, .report-kpi-grid { grid-template-columns: 1fr; }
   .report-quality-warning { align-items: flex-start; flex-direction: column; }
   .calendar-table-wrap { margin-inline: -14px; padding-inline: 14px; }

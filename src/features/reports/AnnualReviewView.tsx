@@ -2,12 +2,14 @@ import type { YearlyFinancialReportDto } from '../calendar/financialCalendarPlat
 
 export interface AnnualReviewViewProps {
   readonly data: YearlyFinancialReportDto
-  readonly saving?: boolean
+  readonly savingCsv?: boolean
+  readonly savingXlsx?: boolean
   readonly onSelectDriver?: (kind: 'CATEGORY' | 'MERCHANT', id: string) => void
   readonly onOpenBudget?: () => void
   readonly onOpenImports?: () => void
   readonly onOpenReconciliation?: () => void
   readonly onSaveCsv?: () => void
+  readonly onSaveXlsx?: () => void
 }
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -19,13 +21,13 @@ function AnnualDelta({ amount, rateBps, inverse = false }: { readonly amount: nu
   return <span className={`report-delta ${undesirable ? 'report-delta--negative' : 'report-delta--positive'}`}>{signedYen(amount)} <small>({rate(rateBps)})</small></span>
 }
 
-export function AnnualReviewView({ data, saving = false, onSelectDriver, onOpenBudget, onOpenImports, onOpenReconciliation, onSaveCsv }: AnnualReviewViewProps) {
+export function AnnualReviewView({ data, savingCsv = false, savingXlsx = false, onSelectDriver, onOpenBudget, onOpenImports, onOpenReconciliation, onSaveCsv, onSaveXlsx }: AnnualReviewViewProps) {
   const max = Math.max(1, ...data.months.filter((point) => point.status === 'COMPLETE').flatMap((point) => [point.incomeJpy, point.expenseJpy]))
   const comparisonLabel = data.isCompleteYear ? '前年' : '前年同期間'
   const statementsNeedingReview = data.reconciliation.unmatched + data.reconciliation.mismatchCount + data.reconciliation.possibleMatches + data.reconciliation.partiallyReconciled
 
   return <div className="report-view annual-review-view" aria-label="年次家計レビュー">
-    <header className="report-view-head"><div><p>Annual Household Review</p><h2>{data.period}年</h2><span>{data.completedMonthCount}か月の完了月・{comparisonLabel}と同じ期間で比較</span></div>{onSaveCsv && <button type="button" className="secondary-btn" disabled={saving || data.completedMonthCount === 0} onClick={onSaveCsv}>{saving ? 'CSVを作成中…' : '年次CSVを保存'}</button>}</header>
+    <header className="report-view-head"><div><p>Annual Household Review</p><h2>{data.period}年</h2><span>{data.completedMonthCount}か月の完了月・{comparisonLabel}と同じ期間で比較</span></div>{(onSaveCsv || onSaveXlsx) && <div className="annual-review-export-actions">{onSaveCsv && <button type="button" className="secondary-btn" disabled={savingCsv || savingXlsx || data.completedMonthCount === 0} onClick={onSaveCsv}>{savingCsv ? 'CSVを作成中…' : '年次CSVを保存'}</button>}{onSaveXlsx && <button type="button" className="primary-btn" disabled={savingCsv || savingXlsx || data.completedMonthCount === 0} onClick={onSaveXlsx}>{savingXlsx ? 'Excelを作成中…' : '年次Excelを保存'}</button>}</div>}</header>
     <aside className="annual-review-disclosure"><strong>比較条件</strong><span>{data.isCompleteYear ? '12か月の計算対象の確定取引を前年と比較しています（集計対象外を除く）。' : `${data.throughMonth ?? '完了月なし'}までの計算対象取引を前年同期間と比較し、集計対象外・現在の未完了月・将来月は年間KPIから除外しています。`}</span><span>{data.asOf} 現在</span></aside>
 
     {data.dataQuality.hasUnresolvedImports && <aside className="report-quality-warning" role="status"><div><strong>年間値の完全性を確認してください</strong><span>確認待ち {data.dataQuality.reviewRequiredImports}件・失敗 {data.dataQuality.failedImports}件・最終取込 {data.dataQuality.latestImportedAt ?? 'なし'}</span></div>{onOpenImports && <button type="button" onClick={onOpenImports}>インポートを確認</button>}</aside>}

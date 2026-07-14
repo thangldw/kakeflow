@@ -57,11 +57,14 @@ describe('financial calendar platform boundary', () => {
 
   it('saves the exact annual scope and rejects inconsistent annual windows', async () => {
     const saved = { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
-    const invoke = vi.fn(async (command: string) => command === 'annual_household_review_csv_save' ? saved : annual) as unknown as FinancialCalendarInvoke
+    const xlsx = { fileName: 'kakeflow-annual-review-2026.xlsx', rowCount: 48, byteSize: 8_000 }
+    const invoke = vi.fn(async (command: string) => command === 'annual_household_review_csv_save' ? saved : command === 'annual_household_review_xlsx_save' ? xlsx : annual) as unknown as FinancialCalendarInvoke
     const platform = createFinancialCalendarPlatform(invoke)
     const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, year: '2026', asOf: '2026-07-31' }
     await expect(platform.saveAnnualReviewCsv(request)).resolves.toEqual(saved)
     expect(invoke).toHaveBeenCalledWith('annual_household_review_csv_save', { request })
+    await expect(platform.saveAnnualReviewXlsx(request)).resolves.toEqual(xlsx)
+    expect(invoke).toHaveBeenCalledWith('annual_household_review_xlsx_save', { request })
 
     const bad = vi.fn(async () => ({ ...annual, completedMonthCount: 7 })) as unknown as FinancialCalendarInvoke
     await expect(createFinancialCalendarPlatform(bad).getYearlyReport(request)).rejects.toThrow('completed months')
@@ -69,6 +72,23 @@ describe('financial calendar platform boundary', () => {
     await expect(createFinancialCalendarPlatform(badAlias).getYearlyReport(request)).rejects.toThrow('legacy aliases')
     const badFuture = vi.fn(async () => ({ ...annual, months: annualMonths.map((point, index) => index === 8 ? { ...point, incomeJpy: 1, savingsJpy: 1, savingsRateBps: 10_000 } : point) })) as unknown as FinancialCalendarInvoke
     await expect(createFinancialCalendarPlatform(badFuture).getYearlyReport(request)).rejects.toThrow('future month')
+  })
+
+  it('accepts canceled XLSX saves and rejects malformed native summaries', async () => {
+    const request = { householdId: 'family', attributionScope: { kind: 'ALL' as const }, year: '2026', asOf: '2026-07-31' }
+    const canceled = vi.fn(async () => null) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(canceled).saveAnnualReviewXlsx(request)).resolves.toBeNull()
+
+    for (const response of [
+      { fileName: 'annual.csv', rowCount: 48, byteSize: 8_000 },
+      { fileName: '../annual.xlsx', rowCount: 48, byteSize: 8_000 },
+      { fileName: 'annual.xlsx', rowCount: 0, byteSize: 8_000 },
+      { fileName: 'annual.xlsx', rowCount: 48, byteSize: 0 },
+      { fileName: 'annual.xlsx', rowCount: 1.5, byteSize: 8_000 },
+    ]) {
+      const malformed = vi.fn(async () => response) as unknown as FinancialCalendarInvoke
+      await expect(createFinancialCalendarPlatform(malformed).saveAnnualReviewXlsx(request)).rejects.toThrow(TypeError)
+    }
   })
 
   it('rejects malformed financial responses at the desktop boundary', async () => {
