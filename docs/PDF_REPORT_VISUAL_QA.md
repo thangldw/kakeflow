@@ -2,10 +2,11 @@
 
 ## Release acceptance scope
 
-KakeFlow v0.71 implements two PDF exports: the source-backed Monthly Household
-Review and Annual Household Review. Therefore the v0.71 PDF release gate
-requires exactly the `monthly` and `annual` fixture reports. It must not claim
-investment-performance or portfolio-snapshot PDF coverage.
+KakeFlow v0.72 implements three PDF exports: the source-backed Monthly Household
+Review, Annual Household Review, and Investment Performance report. Therefore
+the v0.72 PDF release gate requires exactly the `monthly`, `annual`, and
+`investment-performance` fixture reports. Portfolio Snapshot PDF remains
+unreleased and must not be claimed as coverage.
 
 Each PDF must be generated from the fixed synthetic household fixture used by
 its report contract test. The selected household, reporting period, accounting
@@ -20,10 +21,16 @@ ordered calendar months and include at least one partial-coverage month. If a
 report supports empty-state export, that is a separate test and is not a
 substitute for the populated visual fixture.
 
+The investment fixture must include at least two native currencies, one realized
+allocation with buy and sell evidence, one corporate-action allocation, one
+uncovered sale, one skipped event, and one corporate-action event without a
+matching allocation. This makes currency isolation, exception disclosure, and
+available-versus-unavailable lineage observable rather than theoretical.
+
 ## Reproducible render command
 
-Generate the monthly and annual fixture PDFs from their Rust contract tests in
-a clean checkout:
+Generate all three fixture PDFs from their Rust contract tests in a clean
+checkout:
 
 ```sh
 KAKEFLOW_MONTHLY_REVIEW_PDF_FIXTURE="$PWD/tmp/pdfs/monthly-review.pdf" \
@@ -34,15 +41,20 @@ KAKEFLOW_MONTHLY_REVIEW_PDF_FIXTURE="$PWD/tmp/pdfs/monthly-review.pdf" \
 KAKEFLOW_ANNUAL_PDF_FIXTURE="$PWD/tmp/pdfs/annual-review.pdf" \
   cargo test --manifest-path src-tauri/Cargo.toml \
   annual_review_pdf --lib
+
+KAKEFLOW_INVESTMENT_PERFORMANCE_PDF_FIXTURE="$PWD/tmp/pdfs/investment-performance.pdf" \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  investment_performance_pdf --lib
 ```
 
 Then render and validate it:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --output tmp/pdfs/v071-report-qa \
+  --output tmp/pdfs/v072-report-qa \
   monthly="$PWD/tmp/pdfs/monthly-review.pdf" \
-  annual="$PWD/tmp/pdfs/annual-review.pdf"
+  annual="$PWD/tmp/pdfs/annual-review.pdf" \
+  investment-performance="$PWD/tmp/pdfs/investment-performance.pdf"
 ```
 
 Use `--replace` only when intentionally regenerating the same review directory.
@@ -50,17 +62,18 @@ The command requires Poppler's `pdfinfo` and `pdftoppm`. The Codex bundled PDF
 runtime provides both commands; local macOS environments can install Poppler
 with `brew install poppler`.
 
-The harness also recognizes `investment-performance` and `portfolio-snapshot`
-as reserved future report types, but they are not v0.71 gates. A later release
-can opt in only after the corresponding PDF export and contract tests exist:
+The harness recognizes `portfolio-snapshot` only as a reserved future report
+type. It is not a v0.72 gate. A later release can opt in only after the Portfolio
+Snapshot PDF export and contract tests exist:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --require monthly,annual,investment-performance \
+  --require monthly,annual,investment-performance,portfolio-snapshot \
   --output tmp/pdfs/future-report-qa \
   monthly=/absolute/path/monthly-review.pdf \
   annual=/absolute/path/annual-review.pdf \
-  investment-performance=/absolute/path/investment-performance.pdf
+  investment-performance=/absolute/path/investment-performance.pdf \
+  portfolio-snapshot=/absolute/path/portfolio-snapshot.pdf
 ```
 
 The names supplied to `--require` and the named PDF arguments must match
@@ -84,9 +97,9 @@ correct.
 All gates fail closed; failed runs remove their staging directory and never
 publish partial QA evidence.
 
-- The current required report set is present exactly once. For v0.71 that set is
-  exactly `monthly,annual`; future sets must be selected explicitly with
-  `--require`.
+- The current required report set is present exactly once. For v0.72 that set is
+  exactly `monthly,annual,investment-performance`; future sets must be selected
+  explicitly with `--require`.
 - Every input is a regular, non-empty `%PDF-` file no larger than 32 MiB.
 - `pdfinfo` succeeds, reports PDF version, reports 1-40 pages, and reports a
   page size between 200 and 2,000 points on each axis.
@@ -132,6 +145,18 @@ generated checklist. Acceptance requires all of the following:
   legibly, and uses the same scale and color semantics for the entire year.
 - A partial-coverage month is visibly distinguishable from a complete month and
   is never presented as a zero-activity or fully covered month.
+- Investment totals remain grouped and labeled by native currency. The PDF must
+  not add JPY, USD, or any other unlike currencies into a consolidated amount.
+- The investment report does not invent a consolidated return, ROI, TWR, IRR,
+  unrealized return, current valuation, FX conversion, or forecast from the
+  event-only DTO.
+- Uncovered sales, skipped event IDs, and corporate-action event IDs without an
+  allocation remain visible in an exceptions section rather than disappearing
+  from a visually clean summary.
+- Realized and corporate-action rows show every source document ID and source
+  row available in the DTO. When skipped or unmatched event lineage is absent
+  from the DTO, the PDF says that it is unavailable; it does not display zero,
+  a guessed row, or provenance copied from another event.
 
 The reviewer records name, date, and `PASS` in `VISUAL_REVIEW.md`. An unchecked
 or unsigned checklist is not release evidence.
@@ -158,8 +183,8 @@ alone.
 
 Archive these files with the locally verified release evidence:
 
-- every fixture PDF in the explicitly required report set (monthly and annual
-  review PDFs for v0.71);
+- every fixture PDF in the explicitly required report set (monthly, annual, and
+  investment-performance PDFs for v0.72);
 - `manifest.json`;
 - every normalized PNG page;
 - the completed `VISUAL_REVIEW.md`;

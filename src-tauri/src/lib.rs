@@ -28,6 +28,7 @@ pub mod import_workflow;
 pub mod investment_fx;
 pub mod investment_market;
 pub mod investment_performance;
+pub mod investment_performance_pdf;
 pub mod investment_performance_xlsx;
 mod key_store;
 pub mod mobile_capture_capsule;
@@ -2894,6 +2895,39 @@ async fn investment_performance_xlsx_save(
 }
 
 #[tauri::command]
+async fn investment_performance_pdf_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: InvestmentPerformanceRequest,
+) -> Result<Option<investment_performance_pdf::InvestmentPerformancePdfSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(investment_performance_pdf::generate_investment_performance_pdf(connection, &request))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("Investment performance PDF is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected investment performance PDF destination is unavailable".to_owned())?;
+    investment_performance_pdf::save_investment_performance_pdf_document(
+        &document,
+        Some(&destination),
+    )
+    .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn portfolio_snapshot_xlsx_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4007,6 +4041,7 @@ pub fn run() {
             monthly_household_review_xlsx_save,
             monthly_household_review_pdf_save,
             investment_performance_xlsx_save,
+            investment_performance_pdf_save,
             portfolio_snapshot_xlsx_save,
             classification_rules_list,
             classification_rule_create,

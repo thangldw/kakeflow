@@ -76,26 +76,32 @@ describe('PDF report visual QA', () => {
     try {
       await writeFile(fixture, minimalPdf())
       const result = await runPdfReportVisualQa({
-        reports: { monthly: fixture, annual: fixture },
+        reports: { monthly: fixture, annual: fixture, 'investment-performance': fixture },
         outputDirectory: output,
       })
       expect(result).toMatchObject({ status: 'automated-pass', visualReview: 'required' })
-      expect(result.reportTypes).toEqual(['monthly', 'annual'])
+      expect(result.reportTypes).toEqual(['monthly', 'annual', 'investment-performance'])
       expect(result.reports).toEqual([
         expect.objectContaining({ pages: 1, type: 'monthly' }),
         expect.objectContaining({ pages: 1, type: 'annual' }),
+        expect.objectContaining({ pages: 1, type: 'investment-performance' }),
       ])
       const manifest = JSON.parse(await readFile(path.join(output, 'manifest.json'), 'utf8'))
       expect(manifest.reports[0].render.pages[0]).toMatchObject({ page: 1, width: 1190, height: 1684 })
       const checklist = await readFile(path.join(output, 'VISUAL_REVIEW.md'), 'utf8')
       expect(checklist).toContain('- [ ] `monthly/page-0001.png`')
       expect(checklist).toContain('- [ ] `annual/page-0001.png`')
+      expect(checklist).toContain('- [ ] `investment-performance/page-0001.png`')
       expect(checklist).toContain('annual chart keeps January-December order')
       expect(checklist).toContain('Partial-coverage months are distinguishable')
+      expect(checklist).toContain('separated and visibly labeled by native currency')
+      expect(checklist).toContain('No consolidated return, ROI, TWR, IRR')
+      expect(checklist).toContain('remain visible as exceptions')
+      expect(checklist).toContain('unavailable lineage stays explicitly unavailable')
       await expect(runPdfReportVisualQa({
-        reports: { monthly: fixture },
+        reports: { monthly: fixture, annual: fixture },
         outputDirectory: path.join(temporaryRoot, 'wrong-release-scope'),
-      })).rejects.toThrow(/Expected PDF report types annual, monthly/)
+      })).rejects.toThrow(/Expected PDF report types annual, investment-performance, monthly/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }

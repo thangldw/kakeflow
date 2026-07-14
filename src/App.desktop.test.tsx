@@ -1249,6 +1249,7 @@ describe('KakeFlow desktop read models', () => {
       if (command === 'investment_holdings_query') return { asOf: '2026-07-31', costBasisMethod: 'FIFO', positions: [], openLots: [], realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [] }
       if (command === 'investment_performance_query') return performance
       if (command === 'investment_performance_xlsx_save') return { fileName: 'kakeflow-investment-performance-2025.xlsx', rowCount: 24, byteSize: 8_000, sheetCount: 4 }
+      if (command === 'investment_performance_pdf_save') return { fileName: 'kakeflow-investment-performance-2025.pdf', pageCount: 6, byteSize: 18_000, rendererVersion: 1 }
       return fallback(command, args)
     })
 
@@ -1268,6 +1269,12 @@ describe('KakeFlow desktop read models', () => {
     expect(request).not.toHaveProperty('fxAsOf')
     expect(request).not.toHaveProperty('reportingCurrency')
     expect(await screen.findByText('kakeflow-investment-performance-2025.xlsx（24行）を保存しました。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '年間投資PDFを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('investment_performance_pdf_save', { request }))
+    const pdfRequest = nativeInvoke.mock.calls.find(([command]) => command === 'investment_performance_pdf_save')?.[1]?.request
+    const xlsxRequest = nativeInvoke.mock.calls.find(([command]) => command === 'investment_performance_xlsx_save')?.[1]?.request
+    expect(pdfRequest).toEqual(xlsxRequest)
+    expect(await screen.findByText('kakeflow-investment-performance-2025.pdf（6ページ）を保存しました。')).toBeInTheDocument()
     expect(screen.getByText('実現損益 ¥40,000')).toBeInTheDocument()
   })
 

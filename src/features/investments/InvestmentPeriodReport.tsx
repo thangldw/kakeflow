@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import {
   createInvestmentPerformancePlatform,
   type InvestmentPerformanceDto,
+  type InvestmentPerformancePdfSavedDto,
   type InvestmentPerformanceRequest,
   type InvestmentPerformanceXlsxSavedDto,
 } from './investmentPerformancePlatform'
@@ -10,6 +11,7 @@ import './investmentPeriodReport.css'
 
 export type InvestmentPerformanceQuery = (request: InvestmentPerformanceRequest) => Promise<InvestmentPerformanceDto>
 export type InvestmentPerformanceXlsxSave = (request: InvestmentPerformanceRequest) => Promise<InvestmentPerformanceXlsxSavedDto | null>
+export type InvestmentPerformancePdfSave = (request: InvestmentPerformanceRequest) => Promise<InvestmentPerformancePdfSavedDto | null>
 
 export interface InvestmentPeriodReportProps {
   readonly householdId: string | null
@@ -17,11 +19,13 @@ export interface InvestmentPeriodReportProps {
   readonly initialYear?: number
   readonly queryPerformance?: InvestmentPerformanceQuery
   readonly savePerformanceXlsx?: InvestmentPerformanceXlsxSave
+  readonly savePerformancePdf?: InvestmentPerformancePdfSave
 }
 
 const defaultPlatform = createInvestmentPerformancePlatform()
 const defaultQuery = defaultPlatform.queryPerformance
 const defaultXlsxSave = defaultPlatform.savePerformanceXlsx
+const defaultPdfSave = defaultPlatform.savePerformancePdf
 
 function formatAmount(currency: string, value: number): string {
   const sign = value < 0 ? '−' : ''
@@ -29,13 +33,14 @@ function formatAmount(currency: string, value: number): string {
   return currency === 'JPY' ? `${sign}¥${amount}` : `${sign}${currency} ${amount}`
 }
 
-export function InvestmentPeriodReport({ householdId, revision, initialYear = new Date().getFullYear(), queryPerformance = defaultQuery, savePerformanceXlsx = defaultXlsxSave }: InvestmentPeriodReportProps) {
+export function InvestmentPeriodReport({ householdId, revision, initialYear = new Date().getFullYear(), queryPerformance = defaultQuery, savePerformanceXlsx = defaultXlsxSave, savePerformancePdf = defaultPdfSave }: InvestmentPeriodReportProps) {
   const [year, setYear] = useState(initialYear)
   const [report, setReport] = useState<InvestmentPerformanceDto | null>(null)
   const [notice, setNotice] = useState('')
   const [exportNotice, setExportNotice] = useState('')
   const [loading, setLoading] = useState(false)
   const [savingXlsx, setSavingXlsx] = useState(false)
+  const [savingPdf, setSavingPdf] = useState(false)
 
   useEffect(() => {
     if (!householdId) {
@@ -54,7 +59,7 @@ export function InvestmentPeriodReport({ householdId, revision, initialYear = ne
   }, [householdId, queryPerformance, revision, year])
 
   const saveXlsx = async () => {
-    if (!householdId || savingXlsx || !report) return
+    if (!householdId || savingXlsx || savingPdf || !report) return
     setSavingXlsx(true)
     setExportNotice('')
     try {
@@ -66,6 +71,22 @@ export function InvestmentPeriodReport({ householdId, revision, initialYear = ne
       setExportNotice('投資Excelを書き出せませんでした。対象年と確定した証券取引を確認してください。')
     } finally {
       setSavingXlsx(false)
+    }
+  }
+
+  const savePdf = async () => {
+    if (!householdId || savingXlsx || savingPdf || !report) return
+    setSavingPdf(true)
+    setExportNotice('')
+    try {
+      const saved = await savePerformancePdf({ householdId, dateFrom: `${year}-01-01`, dateTo: `${year}-12-31` })
+      setExportNotice(saved === null
+        ? '投資PDFエクスポートをキャンセルしました。'
+        : `${saved.fileName}（${saved.pageCount.toLocaleString('ja-JP')}ページ）を保存しました。`)
+    } catch {
+      setExportNotice('投資PDFを書き出せませんでした。対象年と確定した証券取引を確認してください。')
+    } finally {
+      setSavingPdf(false)
     }
   }
 
@@ -82,7 +103,8 @@ export function InvestmentPeriodReport({ householdId, revision, initialYear = ne
       <div><h2>年間投資実績・税金</h2><p>確定した証券取引を元通貨別に集計</p></div>
       <div className="investment-period-actions">
         <label>対象年<input aria-label="投資実績の対象年" type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(Number(event.target.value))} /></label>
-        <button className="secondary-btn" disabled={loading || savingXlsx || !hasReportData} onClick={() => void saveXlsx()}>{savingXlsx ? 'Excelを作成中…' : '年間投資Excelを保存'}</button>
+        <button className="secondary-btn" disabled={loading || savingXlsx || savingPdf || !hasReportData} onClick={() => void saveXlsx()}>{savingXlsx ? 'Excelを作成中…' : '年間投資Excelを保存'}</button>
+        <button className="secondary-btn" disabled={loading || savingXlsx || savingPdf || !hasReportData} onClick={() => void savePdf()}>{savingPdf ? 'PDFを作成中…' : '年間投資PDFを保存'}</button>
       </div>
     </div>
     {exportNotice && <p className="investment-export-notice" role="status">{exportNotice}</p>}
