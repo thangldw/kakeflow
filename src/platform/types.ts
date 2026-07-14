@@ -211,6 +211,43 @@ export interface LocalSyncFoundationStatusDto {
 export interface UpdatePrincipalMemberBindingInputDto {
   readonly householdId: string; readonly principalId: string; readonly memberId: string | null; readonly mutationId: string
 }
+export type DesktopRelayConnectionStateDto = 'NOT_CONFIGURED' | 'CONNECTED' | 'DEGRADED'
+export type DesktopRelayDeliveryStateDto = 'IDLE' | 'SENDING' | 'ACCEPTED' | 'FAILED_RETRYABLE'
+export type DesktopRelayInboundStateDto = 'AVAILABLE' | 'WAITING_FOR_REVIEW' | 'DUPLICATE' | 'REJECTED_INVALID' | 'FAILED_RETRYABLE'
+export interface DesktopRelayInboundArtifactDto {
+  readonly artifactId: string; readonly digest: string; readonly createdAt: string
+  readonly originDeviceId: string; readonly state: DesktopRelayInboundStateDto
+}
+export interface DesktopRelayStatusDto {
+  readonly householdId: string; readonly connectionState: DesktopRelayConnectionStateDto
+  readonly localDeviceId: string
+  readonly remotePrincipalId: string | null; readonly endpoint: string | null
+  readonly outbound: {
+    readonly pendingEnvelopeCount: number; readonly totalEnvelopeCount: number
+    readonly deliveryState: DesktopRelayDeliveryStateDto; readonly latestAcceptedAt: string | null
+  }
+  readonly inbound: readonly DesktopRelayInboundArtifactDto[]
+}
+export interface SaveDesktopRelayConnectionInputDto {
+  readonly householdId: string; readonly endpoint: string; readonly remotePrincipalId: string
+}
+export interface DesktopRelayPreparedDeliveryDto {
+  readonly deliveryId: string; readonly artifactId: string; readonly digest: string
+  readonly householdId: string; readonly originDeviceId: string; readonly packageBytes: readonly number[]
+}
+export interface AcceptDesktopRelayDeliveryInputDto {
+  readonly householdId: string; readonly deliveryId: string; readonly artifactId: string
+  readonly digest: string; readonly acceptedAt: string
+}
+export interface DesktopRelayRemoteArtifactDto {
+  readonly artifactId: string; readonly digest: string; readonly createdAt: string; readonly originDeviceId: string
+}
+export interface RegisterDesktopRelayInboundInputDto {
+  readonly householdId: string; readonly artifacts: readonly DesktopRelayRemoteArtifactDto[]
+}
+export interface StageDesktopRelayInboundInputDto {
+  readonly householdId: string; readonly artifactId: string; readonly packageBytes: readonly number[]
+}
 export type ChangePackageResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
 export interface ChangePackageRecordReviewDto {
   readonly recordOrder: number; readonly entityKind: string; readonly entityId: string
@@ -549,6 +586,13 @@ export type AppCommand =
   | 'app_status'
   | 'local_sync_foundation_status'
   | 'principal_member_binding_update'
+  | 'relay_status'
+  | 'relay_connection_save'
+  | 'relay_disconnect'
+  | 'relay_send_prepare'
+  | 'relay_send_accept'
+  | 'relay_inbound_register'
+  | 'relay_inbound_stage'
   | 'change_package_export_save'
   | 'change_package_pick_and_stage'
   | 'change_package_active_review'
@@ -641,6 +685,13 @@ export interface PlatformClient {
   status(): Promise<AppStatusDto>
   getLocalSyncFoundationStatus(householdId: string): Promise<LocalSyncFoundationStatusDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
+  getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>
+  saveDesktopRelayConnection(input: SaveDesktopRelayConnectionInputDto): Promise<DesktopRelayStatusDto>
+  disconnectDesktopRelay(householdId: string): Promise<DesktopRelayStatusDto>
+  prepareDesktopRelaySend(householdId: string): Promise<DesktopRelayPreparedDeliveryDto>
+  acceptDesktopRelaySend(input: AcceptDesktopRelayDeliveryInputDto): Promise<DesktopRelayStatusDto>
+  registerDesktopRelayInbound(input: RegisterDesktopRelayInboundInputDto): Promise<DesktopRelayStatusDto>
+  stageDesktopRelayInbound(input: StageDesktopRelayInboundInputDto): Promise<DesktopRelayStatusDto>
   exportChangePackage(householdId: string): Promise<string | null>
   pickAndStageChangePackage(householdId: string): Promise<ChangePackageReviewDto | null>
   getActiveChangePackageReview(householdId: string): Promise<ChangePackageReviewDto | null>

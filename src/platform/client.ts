@@ -23,6 +23,8 @@ import type {
   HouseholdDto,
   HouseholdMemberDto,
   LocalSyncFoundationStatusDto,
+  DesktopRelayStatusDto,
+  DesktopRelayPreparedDeliveryDto,
   ImportPreviewDto,
   ImportRunCountsDto,
   ImportSummaryDto,
@@ -134,6 +136,13 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       status: async () => WEB_STATUS,
       getLocalSyncFoundationStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'local_sync_foundation_status') },
       updatePrincipalMemberBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'principal_member_binding_update') },
+      getDesktopRelayStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_status') },
+      saveDesktopRelayConnection: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_connection_save') },
+      disconnectDesktopRelay: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_disconnect') },
+      prepareDesktopRelaySend: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_send_prepare') },
+      acceptDesktopRelaySend: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_send_accept') },
+      registerDesktopRelayInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_inbound_register') },
+      stageDesktopRelayInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_inbound_stage') },
       exportChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_export_save') },
       pickAndStageChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_pick_and_stage') },
       getActiveChangePackageReview: async () => null,
@@ -226,6 +235,13 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     status: () => invokeValidated(invoke, 'app_status', parseStatus),
     getLocalSyncFoundationStatus: (householdId) => invokeValidated(invoke, 'local_sync_foundation_status', parseLocalSyncFoundationStatus, { householdId }),
     updatePrincipalMemberBinding: (input) => invokeValidated(invoke, 'principal_member_binding_update', parseLocalSyncFoundationStatus, { input }),
+    getDesktopRelayStatus: (householdId) => invokeValidated(invoke, 'relay_status', parseDesktopRelayStatus, { householdId }),
+    saveDesktopRelayConnection: (input) => invokeValidated(invoke, 'relay_connection_save', parseDesktopRelayStatus, { input }),
+    disconnectDesktopRelay: (householdId) => invokeValidated(invoke, 'relay_disconnect', parseDesktopRelayStatus, { householdId }),
+    prepareDesktopRelaySend: (householdId) => invokeValidated(invoke, 'relay_send_prepare', parseDesktopRelayPreparedDelivery, { householdId }),
+    acceptDesktopRelaySend: (input) => invokeValidated(invoke, 'relay_send_accept', parseDesktopRelayStatus, { input }),
+    registerDesktopRelayInbound: (input) => invokeValidated(invoke, 'relay_inbound_register', parseDesktopRelayStatus, { input }),
+    stageDesktopRelayInbound: (input) => invokeValidated(invoke, 'relay_inbound_stage', parseDesktopRelayStatus, { input }),
     exportChangePackage: (householdId) => invokeValidated(invoke, 'change_package_export_save', parseNullableString, { householdId }),
     pickAndStageChangePackage: (householdId) => invokeValidated(invoke, 'change_package_pick_and_stage', parseNullableChangePackageReview, { householdId }),
     getActiveChangePackageReview: (householdId) => invokeValidated(invoke, 'change_package_active_review', parseNullableChangePackageReview, { householdId }),
@@ -382,6 +398,55 @@ function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStat
     },
     outbox: { envelopeCount: asSafeInteger(outbox.envelopeCount), latestSequence: asSafeInteger(outbox.latestSequence), latestRecordedAt },
     remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED',
+  }
+}
+
+const DESKTOP_RELAY_CONNECTION_STATES = new Set(['NOT_CONFIGURED', 'CONNECTED', 'DEGRADED'])
+const DESKTOP_RELAY_DELIVERY_STATES = new Set(['IDLE', 'SENDING', 'ACCEPTED', 'FAILED_RETRYABLE'])
+const DESKTOP_RELAY_INBOUND_STATES = new Set(['AVAILABLE', 'WAITING_FOR_REVIEW', 'DUPLICATE', 'REJECTED_INVALID', 'FAILED_RETRYABLE'])
+
+function parseDesktopRelayStatus(value: unknown): DesktopRelayStatusDto {
+  const record = asRecord(value); const outbound = asRecord(record.outbound)
+  if (!DESKTOP_RELAY_CONNECTION_STATES.has(String(record.connectionState))
+      || !DESKTOP_RELAY_DELIVERY_STATES.has(String(outbound.deliveryState))
+      || !Array.isArray(record.inbound)) throw new TypeError('desktop relay status')
+  const endpoint = asNullableStrictString(record.endpoint)
+  const remotePrincipalId = asNullableStrictString(record.remotePrincipalId)
+  if (record.connectionState === 'NOT_CONFIGURED' ? endpoint !== null || remotePrincipalId !== null : endpoint === null || remotePrincipalId === null) throw new TypeError('desktop relay connection')
+  const pendingEnvelopeCount = asSafeInteger(outbound.pendingEnvelopeCount)
+  const totalEnvelopeCount = asSafeInteger(outbound.totalEnvelopeCount)
+  if (pendingEnvelopeCount > totalEnvelopeCount) throw new TypeError('desktop relay outbox')
+  const seen = new Set<string>()
+  const inbound = record.inbound.map((value) => {
+    const artifact = asRecord(value); const artifactId = asRequiredString(artifact.artifactId)
+    if (seen.has(artifactId) || !DESKTOP_RELAY_INBOUND_STATES.has(String(artifact.state))) throw new TypeError('desktop relay inbound')
+    seen.add(artifactId)
+    return {
+      artifactId, digest: asCanonicalHash(artifact.digest), createdAt: asIsoTimestamp(artifact.createdAt),
+      originDeviceId: asRequiredString(artifact.originDeviceId), state: artifact.state as DesktopRelayStatusDto['inbound'][number]['state'],
+    }
+  })
+  return {
+    householdId: asRequiredString(record.householdId), connectionState: record.connectionState as DesktopRelayStatusDto['connectionState'],
+    localDeviceId: asRequiredString(record.localDeviceId),
+    remotePrincipalId, endpoint,
+    outbound: {
+      pendingEnvelopeCount, totalEnvelopeCount,
+      deliveryState: outbound.deliveryState as DesktopRelayStatusDto['outbound']['deliveryState'],
+      latestAcceptedAt: outbound.latestAcceptedAt === null ? null : asIsoTimestamp(outbound.latestAcceptedAt),
+    },
+    inbound,
+  }
+}
+
+function parseDesktopRelayPreparedDelivery(value: unknown): DesktopRelayPreparedDeliveryDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.packageBytes) || record.packageBytes.length === 0 || record.packageBytes.length > 64 * 1024 * 1024
+      || record.packageBytes.some((byte) => typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('desktop relay package bytes')
+  return {
+    deliveryId: asRequiredString(record.deliveryId), artifactId: asRequiredString(record.artifactId),
+    digest: asCanonicalHash(record.digest), householdId: asRequiredString(record.householdId),
+    originDeviceId: asRequiredString(record.originDeviceId), packageBytes: record.packageBytes,
   }
 }
 

@@ -27,6 +27,7 @@ mod read_model;
 pub mod receipt_matching;
 mod record_scope;
 pub mod recurring_analytics;
+pub mod relay_transport;
 pub mod restore;
 pub mod source_pdf_preview;
 pub mod source_preview;
@@ -506,6 +507,89 @@ fn principal_member_binding_update(
                 .map_err(|_| rusqlite::Error::InvalidQuery.into())
         })
         .map_err(|_| "Principal member binding could not be updated".to_owned())
+}
+
+fn relay_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> relay_transport::Result<T>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| {
+            operation(connection).map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Desktop relay operation could not be completed".to_owned())
+}
+
+#[tauri::command]
+fn relay_status(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::status(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn relay_connection_save(
+    state: tauri::State<'_, AppState>,
+    input: relay_transport::SaveConnectionInput,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::save_connection(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn relay_disconnect(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::disconnect(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn relay_send_prepare(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<relay_transport::RelayPreparedDeliveryDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::prepare_send(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn relay_send_accept(
+    state: tauri::State<'_, AppState>,
+    input: relay_transport::AcceptDeliveryInput,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::mark_accepted(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn relay_inbound_register(
+    state: tauri::State<'_, AppState>,
+    input: relay_transport::RegisterInboundInput,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::register_inbound(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn relay_inbound_stage(
+    state: tauri::State<'_, AppState>,
+    input: relay_transport::StageInboundInput,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    let household_id = input.household_id.clone();
+    relay_result(&state, |connection| {
+        relay_transport::stage_inbound(connection, &input)?;
+        relay_transport::status(connection, &household_id)
+    })
 }
 
 fn change_package_result<T>(
@@ -2753,6 +2837,13 @@ pub fn run() {
             app_status,
             local_sync_foundation_status,
             principal_member_binding_update,
+            relay_status,
+            relay_connection_save,
+            relay_disconnect,
+            relay_send_prepare,
+            relay_send_accept,
+            relay_inbound_register,
+            relay_inbound_stage,
             change_package_export_save,
             change_package_pick_and_stage,
             change_package_active_review,

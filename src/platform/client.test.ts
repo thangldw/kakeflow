@@ -39,6 +39,7 @@ describe('platform client', () => {
       householdId: 'family', templateLayouts: dashboardLayouts(),
     })
     await expect(client.getLocalSyncFoundationStatus('family')).rejects.toMatchObject({ command: 'local_sync_foundation_status' })
+    await expect(client.getDesktopRelayStatus('family')).rejects.toMatchObject({ command: 'relay_status' })
     await expect(client.listHouseholds()).resolves.toEqual([])
     await expect(client.listHouseholdMembers('family')).resolves.toEqual([])
     await expect(client.createHouseholdMember({} as never)).rejects.toMatchObject({ command: 'household_member_create' })
@@ -595,6 +596,48 @@ describe('platform client', () => {
 
     await expect(client.listAccounts('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'accounts_list' })
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+  })
+
+  it('strictly validates desktop relay DTOs and keeps bearer tokens outside IPC', async () => {
+    const hash = 'a'.repeat(64)
+    const status = {
+      householdId: 'family', connectionState: 'CONNECTED', localDeviceId: 'device-local', remotePrincipalId: 'principal-remote', endpoint: 'https://relay.example',
+      outbound: { pendingEnvelopeCount: 2, totalEnvelopeCount: 8, deliveryState: 'IDLE', latestAcceptedAt: null },
+      inbound: [{ artifactId: 'artifact-in', digest: hash, createdAt: '2026-07-13T00:00:00Z', originDeviceId: 'device-other', state: 'AVAILABLE' }],
+    }
+    const prepared = { deliveryId: 'delivery-1', artifactId: 'artifact-out', digest: hash, householdId: 'family', originDeviceId: 'device-local', packageBytes: [1, 2, 3] }
+    const invokeSpy = vi.fn()
+    const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      invokeSpy(command, args)
+      return (command === 'relay_send_prepare' ? prepared : status) as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+    const connection = { householdId: 'family', endpoint: 'https://relay.example', remotePrincipalId: 'principal-remote' }
+    const acceptance = { householdId: 'family', deliveryId: 'delivery-1', artifactId: 'artifact-out', digest: hash, acceptedAt: '2026-07-13T00:01:00Z' }
+    const artifacts = [{ artifactId: 'artifact-in', digest: hash, createdAt: '2026-07-13T00:00:00Z', originDeviceId: 'device-other' }]
+    await expect(client.getDesktopRelayStatus('family')).resolves.toEqual(status)
+    await expect(client.saveDesktopRelayConnection(connection)).resolves.toEqual(status)
+    await expect(client.prepareDesktopRelaySend('family')).resolves.toEqual(prepared)
+    await expect(client.acceptDesktopRelaySend(acceptance)).resolves.toEqual(status)
+    await expect(client.registerDesktopRelayInbound({ householdId: 'family', artifacts })).resolves.toEqual(status)
+    await expect(client.stageDesktopRelayInbound({ householdId: 'family', artifactId: 'artifact-in', packageBytes: [1, 2, 3] })).resolves.toEqual(status)
+    await expect(client.disconnectDesktopRelay('family')).resolves.toEqual(status)
+    expect(invokeSpy.mock.calls).not.toContainEqual(expect.arrayContaining([expect.objectContaining({ bearerToken: expect.anything() })]))
+    expect(invokeSpy).toHaveBeenCalledWith('relay_connection_save', { input: connection })
+    expect(invokeSpy).toHaveBeenCalledWith('relay_send_prepare', { householdId: 'family' })
+
+    for (const invalid of [
+      { ...status, connectionState: 'SYNCED' },
+      { ...status, remotePrincipalId: null },
+      { ...status, outbound: { ...status.outbound, pendingEnvelopeCount: 9 } },
+      { ...status, inbound: [{ ...status.inbound[0], digest: 'bad' }] },
+      { ...status, inbound: [status.inbound[0], status.inbound[0]] },
+    ]) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => invalid as T })
+      await expect(invalidClient.getDesktopRelayStatus('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'relay_status' })
+    }
+    const invalidDelivery = createPlatformClient({ tauri: true, invoke: async <T>() => ({ ...prepared, packageBytes: [256] }) as T })
+    await expect(invalidDelivery.prepareDesktopRelaySend('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'relay_send_prepare' })
   })
 
   it('validates import freshness as an atomic source-backed tuple', async () => {
