@@ -64,3 +64,17 @@ jobs:
           args: --bundles ${{ matrix.bundles }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: kakeflow-[platform]-[arch]-[bundle]
+
+      - name: Install, launch, and uninstall Windows NSIS package
+        if: runner.os == 'Windows'
+        env:
+          KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/Windows
+        run: npm run test:windows-installer
+
+      - name: Upload Windows installer acceptance evidence
+        if: runner.os == 'Windows' && always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-acceptance
+          path: artifacts/packaged-smoke/Windows
+          if-no-files-found: error

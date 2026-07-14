@@ -14,8 +14,69 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  windows-installer-acceptance:
+    name: Gate Windows NSIS publication
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install Rust 1.97.0
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal
+          rustup default 1.97.0
+
+      - name: Prefer Strawberry Perl for OpenSSL
+        shell: pwsh
+        run: |
+          $perlBin = 'C:\Strawberry\perl\bin'
+          if (-not (Test-Path "$perlBin\perl.exe")) {
+            choco install strawberryperl --yes --no-progress
+          }
+          $perlBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          cache-all-crates: false
+          cache-on-failure: false
+          save-if: false
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build unsigned Windows NSIS acceptance candidate
+        run: npm run desktop:build:windows
+
+      - name: Install, launch, and uninstall Windows candidate
+        env:
+          KAKEFLOW_SMOKE_ARTIFACT_DIR: artifacts/packaged-smoke/Windows
+        run: npm run test:windows-installer
+
+      - name: Upload pre-publication Windows acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-acceptance-${{ github.ref_name }}
+          path: artifacts/packaged-smoke/Windows
+          if-no-files-found: error
+
   release:
     name: Release (${{ matrix.name }})
+    needs: windows-installer-acceptance
     runs-on: ${{ matrix.runner }}
     env:
       PERL: ${{ matrix.perl }}
