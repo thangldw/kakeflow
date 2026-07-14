@@ -44,6 +44,25 @@ describe('investment performance platform boundary', () => {
     expect(result.corporateActionAllocations[0]).toMatchObject({ actionType: 'MERGER_STOCK', sourceCurrency: 'USD', currency: 'EUR', conversionRate: 0.92 })
   })
 
+  it('saves the exact annual performance request and validates the native XLSX summary', async () => {
+    const request = { householdId: 'home', dateFrom: '2026-01-01', dateTo: '2026-12-31' }
+    const saved = { fileName: 'kakeflow-investment-performance-2026.xlsx', rowCount: 42, byteSize: 9_000, sheetCount: 4 }
+    const invoke = vi.fn(async () => saved) as unknown as InvestmentPerformanceInvoke
+    await expect(createInvestmentPerformancePlatform(invoke).savePerformanceXlsx(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('investment_performance_xlsx_save', { request })
+
+    await expect(createInvestmentPerformancePlatform(async () => null).savePerformanceXlsx(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'investment.csv', rowCount: 42, byteSize: 9_000 },
+      { fileName: '../investment.xlsx', rowCount: 42, byteSize: 9_000 },
+      { fileName: 'investment.xlsx', rowCount: 0, byteSize: 9_000 },
+      { fileName: 'investment.xlsx', rowCount: 42, byteSize: 0 },
+      { fileName: 'investment.xlsx', rowCount: 1.5, byteSize: 9_000 },
+    ]) {
+      await expect(createInvestmentPerformancePlatform(async () => response).savePerformanceXlsx(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('rejects malformed native responses instead of coercing them', async () => {
     const invoke = vi.fn(async () => ({ asOf: '2026-12-31', costBasisMethod: 'AVERAGE', positions: [], openLots: [], realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [] })) as unknown as InvestmentPerformanceInvoke
     await expect(createInvestmentPerformancePlatform(invoke).queryHoldings({ householdId: 'home', asOf: '2026-12-31' })).rejects.toThrow('costBasisMethod')

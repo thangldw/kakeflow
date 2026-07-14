@@ -129,6 +129,12 @@ export interface InvestmentPerformanceDto {
   readonly corporateActionAllocations: readonly CorporateActionAllocationDto[]
 }
 
+export interface InvestmentPerformanceXlsxSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+}
+
 export type InvestmentPerformanceInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createInvestmentPerformancePlatform(invoke: InvestmentPerformanceInvoke = tauriInvoke) {
@@ -137,7 +143,22 @@ export function createInvestmentPerformancePlatform(invoke: InvestmentPerformanc
       parseHoldings(await invoke('investment_holdings_query', { request })),
     queryPerformance: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformanceDto> =>
       parsePerformance(await invoke('investment_performance_query', { request })),
+    savePerformanceXlsx: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformanceXlsxSavedDto | null> => {
+      const value = await invoke('investment_performance_xlsx_save', { request })
+      return value === null ? null : parsePerformanceXlsxSaved(value)
+    },
   }
+}
+
+function parsePerformanceXlsxSaved(value: unknown): InvestmentPerformanceXlsxSavedDto {
+  const item = record(value, 'saved investment performance XLSX')
+  string(item.fileName, 'saved investment performance XLSX filename')
+  safeInteger(item.rowCount, 'saved investment performance XLSX rows')
+  safeInteger(item.byteSize, 'saved investment performance XLSX bytes')
+  const fileName = item.fileName
+  if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('Invalid saved investment performance XLSX filename')
+  if (item.rowCount <= 0 || item.byteSize <= 0) throw new TypeError('Invalid saved investment performance XLSX')
+  return item as unknown as InvestmentPerformanceXlsxSavedDto
 }
 
 function parseHoldings(value: unknown): InvestmentHoldingsDto {

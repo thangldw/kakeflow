@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.68.0 — 2026-07-14
+
+- Export the annual Investment Performance report as a native four-sheet `.xlsx` workbook using the same household, inclusive year window, and FIFO performance query as the visible desktop report.
+- Preserve native-currency totals without combining unlike currencies, and carry source-backed realized allocations, corporate-action allocations, uncovered sales, skipped events, and unallocated action diagnostics into dedicated sheets.
+- Keep holdings, current valuation, FX conversion, portfolio snapshots, aggregate asset history, and unsupported return metrics outside this event-led workbook instead of manufacturing a consolidated investment result.
+
 ## 0.67.0 — 2026-07-14
 
 - Export the Monthly Household Review as a native four-sheet `.xlsx` workbook using the same validated calendar month, account-group scope, and household/member attribution scope as the desktop report.
