@@ -1181,8 +1181,8 @@ mod tests {
         let file = read_registered_file(&connection, "home", &watched.id, "bank.csv").unwrap();
         assert_eq!(file.file_bytes, b"date,amount");
         assert_eq!(file.relative_path, "bank.csv");
-        let email = read_registered_file(&connection, "home", &watched.id, "statement.eml")
-            .unwrap();
+        let email =
+            read_registered_file(&connection, "home", &watched.id, "statement.eml").unwrap();
         assert_eq!(email.media_type, "message/rfc822");
         assert_eq!(email.file_bytes, email_bytes);
         assert!(matches!(

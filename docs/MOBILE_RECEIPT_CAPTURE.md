@@ -42,6 +42,32 @@ Capture delivery has its own sequence and cursor. It does not consume or alter
 the cursor used by confirmed family snapshots. Revocation blocks future relay
 access but cannot erase an image that was already downloaded to a desktop.
 
+## Opt-in desktop intake while KakeFlow is open
+
+The Capture Inbox offers an explicit `15`, `30`, or `60` minute automatic
+receive schedule. It is off by default and runs only inside the KakeFlow
+desktop process. Closing KakeFlow stops the worker; this is not an
+operating-system service and does not claim app-closed background operation.
+
+Enabling the schedule validates the current family membership and stores the
+relay bearer token through the existing OS-bound family-delivery credential
+binding. The WebView never performs scheduled HTTP requests. A bounded native
+client lists at most 100 capture descriptors, downloads each opaque capsule,
+and validates household, audience, schema, byte size, capsule digest, manifest,
+and original-image digest before publication to Capture Inbox.
+
+For each accepted capsule, the immutable receipt row and its capture cursor are
+committed in the same SQLite transaction. A failure after one successful image
+therefore retries from that image's sequence rather than skipping the failed
+capsule. Exact retry is idempotent. Authentication expiry or revoked membership
+terminally suspends the schedule until the user reconnects; transient failures
+use bounded backoff. A durable lease prevents concurrent workers and recovers
+an interrupted in-process run.
+
+The worker stops at `RECEIVED`. It never calls OCR, promotes an import,
+matches a receipt, assigns a category, or posts a transaction. Those actions
+remain separate, visible user decisions in the desktop UI.
+
 ## Desktop states
 
 Transport and ledger processing remain separate concepts. `AVAILABLE` means a
@@ -70,5 +96,6 @@ or a production-hosted relay.
 The capture channel does not provide remote OCR, automatic matching, automatic
 categorization, automatic ledger posting, push/realtime delivery, remote
 deletion, end-to-end/zero-knowledge relay encryption, operating-system
-background delivery, or native mobile distribution. Existing explicit receipt
-matching and balanced posting controls remain mandatory.
+background delivery while KakeFlow is closed, or native mobile distribution.
+Existing explicit receipt matching and balanced posting controls remain
+mandatory.

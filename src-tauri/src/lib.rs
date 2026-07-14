@@ -31,6 +31,7 @@ pub mod investment_performance;
 pub mod investment_performance_pdf;
 pub mod investment_performance_xlsx;
 mod key_store;
+mod mobile_capture_background;
 pub mod mobile_capture_capsule;
 pub mod mobile_capture_inbox;
 pub mod monthly_review_pdf;
@@ -752,6 +753,193 @@ fn mobile_capture_promote(
     })
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EnableMobileCaptureBackgroundInput {
+    household_id: String,
+    token: String,
+    interval_minutes: u32,
+}
+
+fn disabled_mobile_capture_background(
+    state: &AppState,
+    household_id: &str,
+) -> Result<mobile_capture_background::MobileCaptureBackgroundStatusDto, String> {
+    state
+        .with_connection(|connection| {
+            let updated_at =
+                connection.query_row("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now')", [], |row| {
+                    row.get(0)
+                })?;
+            Ok(
+                mobile_capture_background::MobileCaptureBackgroundStatusDto {
+                    household_id: household_id.to_owned(),
+                    enabled: false,
+                    interval_minutes: 30,
+                    next_due_at: None,
+                    running: false,
+                    lease_expires_at: None,
+                    last_attempt_at: None,
+                    last_success_at: None,
+                    last_result: "DISABLED".to_owned(),
+                    last_ingested_count: 0,
+                    consecutive_failures: 0,
+                    suspended_until: None,
+                    suspension_reason: None,
+                    last_error_code: None,
+                    updated_at,
+                },
+            )
+        })
+        .map_err(|_| "Automatic mobile capture status could not be loaded".to_owned())
+}
+
+#[tauri::command]
+fn mobile_capture_background_status(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<mobile_capture_background::MobileCaptureBackgroundStatusDto, String> {
+    match state.with_connection(|connection| {
+        mobile_capture_background::status(connection, &household_id)
+            .map_err(persistence::PersistenceError::from)
+    }) {
+        Ok(status) => Ok(status),
+        Err(persistence::PersistenceError::Database(rusqlite::Error::QueryReturnedNoRows)) => {
+            disabled_mobile_capture_background(&state, &household_id)
+        }
+        Err(_) => Err("Automatic mobile capture status could not be loaded".to_owned()),
+    }
+}
+
+#[tauri::command]
+fn mobile_capture_background_enable(
+    state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
+    identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
+    input: EnableMobileCaptureBackgroundInput,
+) -> Result<mobile_capture_background::MobileCaptureBackgroundStatusDto, String> {
+    if !matches!(input.interval_minutes, 15 | 30 | 60) {
+        return Err("Automatic capture interval is invalid".to_owned());
+    }
+    let context =
+        family_delivery_scheduler::load_connection_context(&state, &input.household_id)
+            .map_err(|_| "Connect family delivery before enabling automatic capture".to_owned())?;
+    let token = Zeroizing::new(input.token);
+    let client = family_delivery_http::FamilyDeliveryHttpClient::production(
+        &context.endpoint,
+        token.as_str(),
+    )
+    .map_err(|_| "Family relay connection could not be validated".to_owned())?;
+    family_delivery_scheduler::validate_and_refresh_with_client(
+        &state, &identity, &context, &client,
+    )
+    .map_err(|failure| match failure {
+        family_delivery_scheduler::DiscoveryFailure::Terminal("AUTH_EXPIRED") => {
+            "Family relay authentication expired".to_owned()
+        }
+        family_delivery_scheduler::DiscoveryFailure::Terminal("MEMBERSHIP_REVOKED") => {
+            "Family relay membership is no longer active".to_owned()
+        }
+        _ => "Family relay connection could not be validated".to_owned(),
+    })?;
+    let binding = family_delivery_scheduler::credential_binding(&context)
+        .map_err(|_| "Family delivery connection is invalid".to_owned())?;
+    credentials
+        .store(binding.clone(), token)
+        .map_err(|_| "Family relay credential could not be stored".to_owned())?;
+    match state.with_connection(|connection| {
+        mobile_capture_background::configure(
+            connection,
+            &input.household_id,
+            true,
+            input.interval_minutes,
+        )
+        .map_err(persistence::PersistenceError::from)
+    }) {
+        Ok(status) => Ok(status),
+        Err(_) => {
+            let family_enabled = state
+                .with_connection(|connection| {
+                    connection.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM family_delivery_schedules WHERE household_id=?1 AND enabled=1)",
+                        [&input.household_id],
+                        |row| row.get::<_, bool>(0),
+                    ).map_err(persistence::PersistenceError::from)
+                })
+                .unwrap_or(false);
+            if !family_enabled {
+                let _ = credentials.delete(&binding);
+            }
+            Err("Automatic mobile capture could not be enabled".to_owned())
+        }
+    }
+}
+
+#[tauri::command]
+fn mobile_capture_background_disable(
+    state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
+    household_id: String,
+) -> Result<mobile_capture_background::MobileCaptureBackgroundStatusDto, String> {
+    let context = family_delivery_scheduler::load_connection_context(&state, &household_id)
+        .map_err(|_| "Family delivery connection is unavailable".to_owned())?;
+    let binding = family_delivery_scheduler::credential_binding(&context)
+        .map_err(|_| "Family delivery connection is invalid".to_owned())?;
+    let status = state
+        .with_connection(|connection| {
+            mobile_capture_background::disable(connection, &household_id)
+                .map_err(persistence::PersistenceError::from)
+        })
+        .map_err(|_| "Automatic mobile capture could not be disabled".to_owned())?;
+    let family_enabled = state
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM family_delivery_schedules WHERE household_id=?1 AND enabled=1)",
+                    [&household_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(persistence::PersistenceError::from)
+        })
+        .unwrap_or(false);
+    if !family_enabled {
+        credentials.delete(&binding).map_err(|_| {
+            "Automatic capture is disabled, but its stored relay credential could not be deleted"
+                .to_owned()
+        })?;
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+fn mobile_capture_background_run_now(
+    state: tauri::State<'_, AppState>,
+    credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
+    vault: tauri::State<'_, DocumentVault>,
+    household_id: String,
+) -> Result<mobile_capture_background::MobileCaptureBackgroundStatusDto, String> {
+    state
+        .with_connection(|connection| {
+            mobile_capture_background::request_now(connection, &household_id)
+                .map_err(persistence::PersistenceError::from)
+        })
+        .map_err(|_| "Automatic mobile capture could not be requested".to_owned())?;
+    let lease = state
+        .with_connection(|connection| {
+            mobile_capture_background::claim_due(connection, &household_id)
+                .map_err(persistence::PersistenceError::from)
+        })
+        .map_err(|_| "Automatic mobile capture could not start".to_owned())?
+        .ok_or_else(|| "Automatic mobile capture is already running".to_owned())?;
+    mobile_capture_background::process_now(
+        &state,
+        &credentials,
+        &vault,
+        &household_id,
+        &lease.lease_token,
+    )
+}
+
 #[tauri::command]
 fn family_delivery_status(
     state: tauri::State<'_, AppState>,
@@ -831,6 +1019,16 @@ fn family_delivery_connection_save(
                         return Err(rusqlite::Error::InvalidQuery.into());
                     }
                 }
+                match mobile_capture_background::disable(connection, &household_id) {
+                    Ok(_) | Err(rusqlite::Error::QueryReturnedNoRows) => {}
+                    Err(_) => {
+                        if let Some(previous) = previous_input.as_ref() {
+                            let _ =
+                                family_delivery_transport::save_connection(connection, previous);
+                        }
+                        return Err(rusqlite::Error::InvalidQuery.into());
+                    }
+                }
             }
             Ok((saved, binding_changed.then_some(previous_binding).flatten()))
         })
@@ -859,6 +1057,14 @@ fn family_delivery_disconnect(
         Ok(Ok(_))
         | Ok(Err(family_delivery_schedule::FamilyDeliveryScheduleError::NotConfigured)) => {}
         _ => return Err("Automatic family delivery check could not be disabled".to_owned()),
+    }
+    match state.with_connection(|connection| {
+        mobile_capture_background::disable(connection, &household_id)
+            .map_err(persistence::PersistenceError::from)
+    }) {
+        Ok(_)
+        | Err(persistence::PersistenceError::Database(rusqlite::Error::QueryReturnedNoRows)) => {}
+        Err(_) => return Err("Automatic mobile capture could not be disabled".to_owned()),
     }
     if let Ok(context) = family_delivery_scheduler::load_connection_context(&state, &household_id) {
         let binding = family_delivery_scheduler::credential_binding(&context)
@@ -973,7 +1179,20 @@ fn family_delivery_background_enable(
     }) {
         Ok(status) => Ok(status),
         Err(error) => {
-            let _ = credentials.delete(&binding);
+            let capture_enabled = state
+                .with_connection(|connection| {
+                    connection
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM mobile_capture_schedules WHERE household_id=?1 AND enabled=1)",
+                            [&input.household_id],
+                            |row| row.get::<_, bool>(0),
+                        )
+                        .map_err(persistence::PersistenceError::from)
+                })
+                .unwrap_or(false);
+            if !capture_enabled {
+                let _ = credentials.delete(&binding);
+            }
             Err(error)
         }
     }
@@ -995,9 +1214,22 @@ fn family_delivery_background_disable(
     // Disable the durable schedule before touching the OS credential. If the
     // database write fails the token remains available and the existing
     // schedule is unchanged. If deletion fails, the schedule remains disabled.
-    credentials
-        .delete(&binding)
-        .map_err(|_| "Automatic checks are disabled, but the stored family relay credential could not be deleted".to_owned())?;
+    let capture_enabled = state
+        .with_connection(|connection| {
+            connection
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM mobile_capture_schedules WHERE household_id=?1 AND enabled=1)",
+                    [&household_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(persistence::PersistenceError::from)
+        })
+        .unwrap_or(false);
+    if !capture_enabled {
+        credentials
+            .delete(&binding)
+            .map_err(|_| "Automatic checks are disabled, but the stored family relay credential could not be deleted".to_owned())?;
+    }
     Ok(status)
 }
 
@@ -3958,6 +4190,11 @@ pub fn run() {
                         app.handle().clone(),
                     ),
                 );
+                app.manage(
+                    mobile_capture_background::BackgroundMobileCaptureIntake::start(
+                        app.handle().clone(),
+                    ),
+                );
             }
             Ok(())
         })
@@ -4007,6 +4244,10 @@ pub fn run() {
             mobile_capture_ocr,
             mobile_capture_mark_ocr_review_required,
             mobile_capture_promote,
+            mobile_capture_background_status,
+            mobile_capture_background_enable,
+            mobile_capture_background_disable,
+            mobile_capture_background_run_now,
             change_package_export_save,
             change_package_pick_and_stage,
             change_package_active_review,

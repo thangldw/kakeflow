@@ -5,6 +5,7 @@ import { CaptureInboxWorkspace } from './CaptureInboxWorkspace'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), preview: vi.fn(), ocr: vi.fn(), promote: vi.fn(), mark: vi.fn(), commit: vi.fn(), receipt: vi.fn(),
+  backgroundStatus: vi.fn(), backgroundEnable: vi.fn(), backgroundDisable: vi.fn(), backgroundRun: vi.fn(),
 }))
 
 vi.mock('../../platform', async (original) => ({
@@ -12,6 +13,8 @@ vi.mock('../../platform', async (original) => ({
   platformClient: {
     runtime: 'tauri', listMobileCaptureInbox: mocks.list, getMobileCaptureImagePreview: mocks.preview,
     ocrMobileCapture: mocks.ocr, promoteMobileCapture: mocks.promote, markMobileCaptureOcrReviewRequired: mocks.mark,
+    getMobileCaptureBackgroundStatus: mocks.backgroundStatus, enableMobileCaptureBackground: mocks.backgroundEnable,
+    disableMobileCaptureBackground: mocks.backgroundDisable, runMobileCaptureBackgroundNow: mocks.backgroundRun,
     commitImport: mocks.commit,
   },
 }))
@@ -27,6 +30,7 @@ describe('CaptureInboxWorkspace', () => {
     mocks.ocr.mockResolvedValue({ item: { ...item, state: 'OCR_READY', latestExtractionId: 'extract-1' }, extractionId: 'extract-1', document: { method: 'OCR', text: '花子商店\n2026/07/14\n合計 100円', confidenceBps: 9000, issues: [] } })
     mocks.receipt.mockResolvedValue({ request: { runId: 'run-1', documentId: 'document-1', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-a' }, fields: { issues: [] } })
     mocks.promote.mockResolvedValue({ item: { ...item, state: 'PROMOTED', latestExtractionId: 'extract-1', localRunId: 'run-1', localDocumentId: 'document-1' }, runId: 'run-1', documentId: 'document-1', reusedExisting: false })
+    mocks.backgroundStatus.mockResolvedValue({ householdId: 'family', enabled: false, intervalMinutes: 30, nextDueAt: null, running: false, leaseExpiresAt: null, lastAttemptAt: null, lastSuccessAt: null, lastResult: 'DISABLED', lastIngestedCount: 0, consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-15T00:00:00Z' })
   })
 
   it('requires original preview, preserves PERSONAL audience, and creates review without posting', async () => {
@@ -38,5 +42,14 @@ describe('CaptureInboxWorkspace', () => {
     expect(mocks.receipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sourceType: 'CAMERA_SCAN', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-a', attributionKind: 'MEMBER', attributedMemberId: 'member-a' }), expect.any(Function), expect.any(Function))
     expect(mocks.commit).not.toHaveBeenCalled()
     expect(await screen.findByText(/台帳へは自動反映していません/)).toBeInTheDocument()
+  })
+
+  it('enables background receipt intake without invoking OCR, promotion, or posting', async () => {
+    mocks.backgroundEnable.mockResolvedValue({ householdId: 'family', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-15T01:00:00Z', running: false, leaseExpiresAt: null, lastAttemptAt: null, lastSuccessAt: null, lastResult: 'NEVER', lastIngestedCount: 0, consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-15T00:00:00Z' })
+    render(<CaptureInboxWorkspace householdId="family" accounts={[cash]} onOpenImport={vi.fn()} onChanged={vi.fn()} />)
+    fireEvent.change(await screen.findByLabelText('接続トークン'), { target: { value: 'session-token' } })
+    fireEvent.click(screen.getByRole('button', { name: '自動受信を有効にする' }))
+    await waitFor(() => expect(mocks.backgroundEnable).toHaveBeenCalledWith({ householdId: 'family', token: 'session-token', intervalMinutes: 30 }))
+    expect(mocks.ocr).not.toHaveBeenCalled(); expect(mocks.promote).not.toHaveBeenCalled(); expect(mocks.commit).not.toHaveBeenCalled()
   })
 })

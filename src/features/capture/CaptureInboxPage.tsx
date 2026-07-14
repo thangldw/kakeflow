@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
 import { Camera, FileImage, RefreshCw, RotateCcw, ScanLine, X } from 'lucide-react'
-import type { MobileCaptureImagePreviewDto, MobileCaptureInboxItemDto, MobileCaptureInboxStateDto } from '../../platform'
+import type { MobileCaptureBackgroundStatusDto, MobileCaptureImagePreviewDto, MobileCaptureInboxItemDto, MobileCaptureInboxStateDto } from '../../platform'
 import './CaptureInboxPage.css'
 
 export interface CaptureInboxPageProps {
@@ -13,6 +13,13 @@ export interface CaptureInboxPageProps {
   readonly preview: { readonly item: MobileCaptureInboxItemDto; readonly image: MobileCaptureImagePreviewDto } | null
   readonly previewBusy: boolean
   readonly notice: { readonly kind: 'status' | 'error'; readonly text: string } | null
+  readonly background?: MobileCaptureBackgroundStatusDto | null
+  readonly backgroundInterval?: 15 | 30 | 60
+  readonly backgroundBusy?: boolean
+  readonly onBackgroundIntervalChange?: (interval: 15 | 30 | 60) => void
+  readonly onEnableBackground?: () => void
+  readonly onDisableBackground?: () => void
+  readonly onRunBackgroundNow?: () => void
   readonly onTokenChange: (token: string) => void
   readonly onPreview: (item: MobileCaptureInboxItemDto) => void
   readonly onClosePreview: () => void
@@ -64,7 +71,7 @@ function StateAction({ item, busy, onPreview, onOpenImport, onRetry }: {
   return null
 }
 
-export function CaptureInboxPage({ householdId, items, loading, busyArtifactId, token, preview, previewBusy, notice, onTokenChange, onPreview, onClosePreview, onRefresh, onProcess, onOpenImport, onRetry }: CaptureInboxPageProps) {
+export function CaptureInboxPage({ householdId, items, loading, busyArtifactId, token, preview, previewBusy, notice, background = null, backgroundInterval = 30, backgroundBusy = false, onBackgroundIntervalChange = () => undefined, onEnableBackground = () => undefined, onDisableBackground = () => undefined, onRunBackgroundNow = () => undefined, onTokenChange, onPreview, onClosePreview, onRefresh, onProcess, onOpenImport, onRetry }: CaptureInboxPageProps) {
   const heading = useRef<HTMLHeadingElement>(null)
   const returnFocus = useRef<HTMLElement | null>(null)
   useEffect(() => { heading.current?.focus() }, [])
@@ -82,9 +89,31 @@ export function CaptureInboxPage({ householdId, items, loading, busyArtifactId, 
     </header>
     <p className="capture-boundary">スマートフォンから画像を受信しても、台帳には反映されません。この端末で原本を確認し、OCR結果を承認するか、既存取引へ証憑として紐付けてください。</p>
     <section className="panel capture-receive-controls" aria-label="モバイルからの受信">
-      <label>接続トークン（この画面のみ）<input type="password" autoComplete="off" value={token} disabled={loading} onChange={(event) => onTokenChange(event.target.value)} /></label>
-      <button className="secondary-btn" disabled={!householdId || !token || loading} onClick={onRefresh}><RefreshCw size={17} />{loading ? '確認中…' : '受信を確認'}</button>
-      <p>トークンは保存しません。受信した画像はこの端末へ保存されますが、OCRと台帳への承認は別の操作です。</p>
+      <label>接続トークン<input type="password" autoComplete="off" value={token} disabled={loading} onChange={(event) => onTokenChange(event.target.value)} /></label>
+      <button className="secondary-btn" disabled={!householdId || !token || loading || Boolean(background?.enabled)} onClick={onRefresh}><RefreshCw size={17} />{loading ? '確認中…' : '受信を確認'}</button>
+      <p>{background?.enabled ? '自動受信が有効です。「今すぐ確認」を使うと、同じネイティブ受信処理を実行できます。' : '手動確認ではトークンを保存しません。自動受信を有効にした場合だけ、デスクトップの接続資格情報として保存します。'} 受信した画像はこの端末へ保存されますが、OCRと台帳への承認は別の操作です。</p>
+    </section>
+    <section className="panel capture-background-controls" aria-label="原本画像の自動受信">
+      <div>
+        <h2>アプリ起動中の自動受信</h2>
+        <p>KakeFlowを開いている間だけ定期確認し、検証済みの原本画像を撮影 Inboxへ保存します。OCR、分類、取引照合、台帳反映は自動実行しません。</p>
+      </div>
+      <label>確認間隔
+        <select value={backgroundInterval} disabled={backgroundBusy || background?.enabled} onChange={(event) => onBackgroundIntervalChange(Number(event.target.value) as 15 | 30 | 60)}>
+          <option value={15}>15分</option><option value={30}>30分</option><option value={60}>60分</option>
+        </select>
+      </label>
+      {background?.enabled
+        ? background.lastResult === 'TERMINAL_SUSPENDED'
+          ? <><button className="primary-btn" disabled={!token || backgroundBusy} onClick={onEnableBackground}>接続を更新</button><button className="secondary-btn" disabled={backgroundBusy} onClick={onDisableBackground}>自動受信を停止</button></>
+          : <><button className="secondary-btn" disabled={backgroundBusy || background.running} onClick={onRunBackgroundNow}><RefreshCw size={17} />{background.running ? '受信中…' : '今すぐ確認'}</button><button className="secondary-btn" disabled={backgroundBusy || background.running} onClick={onDisableBackground}>自動受信を停止</button></>
+        : <button className="primary-btn" disabled={!householdId || !token || backgroundBusy} onClick={onEnableBackground}>自動受信を有効にする</button>}
+      <div className="capture-background-status" role="status">
+        <strong>{background?.enabled ? '有効' : '無効'}</strong>
+        {background?.lastSuccessAt && <span>最終成功 {dateTime(background.lastSuccessAt)}・原本 {background.lastIngestedCount}件</span>}
+        {background?.enabled && background.nextDueAt && <span>次回 {dateTime(background.nextDueAt)}</span>}
+        {background?.lastResult === 'TERMINAL_SUSPENDED' && <span className="error">認証または家族メンバー状態を確認して、接続トークンを入力し直してください。</span>}
+      </div>
     </section>
     <section className="capture-status-grid" aria-label="撮影 Inboxの状態">
       <article><strong>{counts.unreviewed}</strong><span>OCR待ち</span><small>原本を保存済み</small></article>
