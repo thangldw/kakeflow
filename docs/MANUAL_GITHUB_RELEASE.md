@@ -37,4 +37,7 @@ gh release create vVERSION \
 
 Do not claim a Windows release unless a Windows installer was built and tested on Windows. GitHub automatically provides source archives from the verified tag; those archives are not substitutes for a tested installer.
 
-The checked-in release workflow is intentionally `workflow_dispatch` only during the quota constraint. It can be re-enabled for tag pushes after hosted runners and production signing credentials are available again.
+The checked-in CI and release workflows are intentionally `workflow_dispatch`
+only during the quota constraint. They can be re-enabled for push, pull-request,
+and tag events after hosted runners and production signing credentials are
+available again.

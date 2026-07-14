@@ -1,8 +1,9 @@
 name: CI
 
+# Hosted runners cannot currently start under the repository's monthly Actions
+# quota. Release gates run locally; keep CI opt-in until quota is available.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
