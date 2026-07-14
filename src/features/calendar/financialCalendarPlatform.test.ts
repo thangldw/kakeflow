@@ -91,6 +91,25 @@ describe('financial calendar platform boundary', () => {
     }
   })
 
+  it('saves the exact annual scope as PDF and validates the native summary', async () => {
+    const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, year: '2026', asOf: '2026-07-31' }
+    const saved = { fileName: 'kakeflow-annual-review-2026.pdf', pageCount: 8, byteSize: 24_000, rendererVersion: 1 }
+    const invoke = vi.fn(async () => saved) as unknown as FinancialCalendarInvoke
+    await expect(createFinancialCalendarPlatform(invoke).saveAnnualReviewPdf(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('annual_household_review_pdf_save', { request })
+
+    await expect(createFinancialCalendarPlatform(async () => null).saveAnnualReviewPdf(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'annual.xlsx', pageCount: 8, byteSize: 24_000 },
+      { fileName: '../annual.pdf', pageCount: 8, byteSize: 24_000 },
+      { fileName: 'annual.pdf', pageCount: 0, byteSize: 24_000 },
+      { fileName: 'annual.pdf', pageCount: 8, byteSize: 0 },
+      { fileName: 'annual.pdf', pageCount: 1.5, byteSize: 24_000 },
+    ]) {
+      await expect(createFinancialCalendarPlatform(async () => response).saveAnnualReviewPdf(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('saves the exact monthly scope, allows native summary metadata, and validates the XLSX boundary', async () => {
     const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, month: '2026-07', asOf: '2026-07-31' }
     const saved = { fileName: 'kakeflow-monthly-review-2026-07.xlsx', rowCount: 32, byteSize: 7_000, sheetCount: 4 }

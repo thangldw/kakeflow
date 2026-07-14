@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.71.0 — 2026-07-14
+
+- Export the source-backed Annual Household Review as a deterministic Japanese PDF using the exact year, account-group, member-attribution, and `asOf` scope shared by the visible annual review and its CSV/XLSX exports.
+- Lead with an Executive Summary, comparable-period KPI cards, and a status-aware 12-month income, expense, and savings trend that distinguishes complete, partial, and future months instead of presenting missing data as zero activity.
+- Preserve category and merchant drivers, budget and savings goals, import health, card reconciliation, recommended actions, accounting-basis caveats, and the rule that bank settlements do not double-count card expenses.
+- Keep generated PDF bytes in the native process, return only saved-file metadata over IPC, and treat save-dialog cancellation as a non-error.
+- Extend the reproducible Poppler visual-QA gate so stable releases require page-by-page evidence for both monthly and annual household-review PDFs.
+
 ## 0.70.0 — 2026-07-14
 
 - Export the source-backed Monthly Household Review as a deterministic four-page PDF using the same validated household, month, account-group, member-attribution, and data-quality `asOf` scope as the visible report and monthly workbook.

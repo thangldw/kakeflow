@@ -1789,6 +1789,7 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
   const [annualNotice, setAnnualNotice] = useState('')
   const [annualCsvSaving, setAnnualCsvSaving] = useState(false)
   const [annualXlsxSaving, setAnnualXlsxSaving] = useState(false)
+  const [annualPdfSaving, setAnnualPdfSaving] = useState(false)
   const [forecast, setForecast] = useState<ForecastActionDto | null>(null)
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [comparison, setComparison] = useState<'PRIOR_MONTH' | 'PRIOR_YEAR'>('PRIOR_MONTH')
@@ -1848,11 +1849,20 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
     } catch { setAnnualNotice('年次Excelを書き出せませんでした。対象年とスコープを確認してください。') }
     finally { setAnnualXlsxSaving(false) }
   }
+  const saveAnnualPdf = async () => {
+    if (!householdId) return
+    setAnnualPdfSaving(true); setAnnualNotice('')
+    try {
+      const saved = await financialCalendarPlatform.saveAnnualReviewPdf({ householdId, accountGroupId, attributionScope, year: month.slice(0, 4), asOf: currentTokyoDate() })
+      setAnnualNotice(saved ? `${saved.fileName}（${saved.pageCount}ページ）を保存しました。` : 'PDFエクスポートをキャンセルしました。')
+    } catch { setAnnualNotice('年次PDFを書き出せませんでした。対象年とスコープを確認してください。') }
+    finally { setAnnualPdfSaving(false) }
+  }
   const reportBody = view === 'CALENDAR'
     ? calendar ? <FinancialCalendarView data={calendar} basis={basis} onBasisChange={setBasis} onSelectDate={() => openPage('transactions')} onSelectEvent={() => openPage('transactions')} onOpenImports={() => openPage('import')} /> : <section className="panel report-loading"><CalendarDays size={28} /><p>{notice || '日次カレンダーを読み込んでいます…'}</p></section>
     : view === 'MONTHLY'
       ? monthlyReport ? <><MonthlyReportView data={monthlyReport} comparison={comparison} savingXlsx={monthlyXlsxSaving} savingPdf={monthlyPdfSaving} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveXlsx={() => void saveMonthlyXlsx()} onSavePdf={() => void saveMonthlyPdf()} />{monthlyExportNotice && <p role="status">{monthlyExportNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
-      : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} savingCsv={annualCsvSaving} savingXlsx={annualXlsxSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} onSaveXlsx={() => void saveAnnualXlsx()} />{annualNotice && <p role="status">{annualNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || '前年同期間と年次推移を比較しています…'}</p></section>
+      : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} savingCsv={annualCsvSaving} savingXlsx={annualXlsxSaving} savingPdf={annualPdfSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} onSaveXlsx={() => void saveAnnualXlsx()} onSavePdf={() => void saveAnnualPdf()} />{annualNotice && <p role="status">{annualNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || '前年同期間と年次推移を比較しています…'}</p></section>
       : view === 'FORECAST' ? forecast ? <ForecastActionViews data={forecast} onAction={(action: ActionItemDto) => openPage(pageForAction(action))} /> : <section className="panel report-loading"><TrendingUp size={28} /><p>{notice || '予測とアクションを読み込んでいます…'}</p></section>
         : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
           : view === 'FIXED_COST' ? <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />

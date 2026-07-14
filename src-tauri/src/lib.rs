@@ -1,5 +1,6 @@
 pub mod account_groups_export;
 pub mod aggregate_asset_history;
+pub mod annual_review_pdf;
 pub mod annual_review_xlsx;
 pub mod backup;
 pub mod brokerage;
@@ -2760,6 +2761,38 @@ async fn annual_household_review_xlsx_save(
 }
 
 #[tauri::command]
+async fn annual_household_review_pdf_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: financial_calendar::YearlyFinancialReportRequest,
+) -> Result<Option<annual_review_pdf::AnnualReviewPdfSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(annual_review_pdf::generate_annual_review_pdf(
+            connection, &request,
+        ))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("Annual household review PDF is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected annual review PDF destination is unavailable".to_owned())?;
+    annual_review_pdf::save_annual_review_pdf_document(&document, Some(&destination))
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn monthly_household_review_xlsx_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -3970,6 +4003,7 @@ pub fn run() {
             export_csv_save,
             annual_household_review_csv_save,
             annual_household_review_xlsx_save,
+            annual_household_review_pdf_save,
             monthly_household_review_xlsx_save,
             monthly_household_review_pdf_save,
             investment_performance_xlsx_save,

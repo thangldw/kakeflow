@@ -41,16 +41,16 @@ pub struct MonthlyReviewPdfSavedDto {
 }
 
 #[derive(Clone, Copy)]
-enum LineStyle {
+pub(crate) enum LineStyle {
     Title,
     Section,
     Body,
 }
 
 #[derive(Clone)]
-struct PdfLine {
-    style: LineStyle,
-    text: String,
+pub(crate) struct PdfLine {
+    pub(crate) style: LineStyle,
+    pub(crate) text: String,
 }
 
 pub fn generate_monthly_review_pdf(
@@ -72,18 +72,8 @@ pub fn generate_monthly_review_pdf_from_report(
         return Err(invalid());
     }
 
-    let mut font_warnings = Vec::new();
-    let font = ParsedFont::from_bytes(NOTO_SANS_JP, 0, &mut font_warnings)
-        .ok_or(FinancialCalendarError::Unavailable)?;
     let mut pdf = PdfDocument::new("KakeFlow Monthly Household Review");
-    // A stable resource id makes the generated object graph reproducible. `add_font`
-    // intentionally assigns a random id, which is useful for document merging but not
-    // for an export whose bytes are expected to be deterministic.
-    let font_id = FontId("KakeFlowNotoSansJP".to_owned());
-    pdf.resources
-        .fonts
-        .map
-        .insert(font_id.clone(), PdfFont::new(font));
+    let font_id = install_japanese_font(&mut pdf)?;
     let page_count = pages.len() as u16;
     let rendered = pages
         .into_iter()
@@ -126,7 +116,24 @@ pub fn generate_monthly_review_pdf_from_report(
     })
 }
 
-fn normalize_pdf_identifiers(bytes: &mut [u8]) -> Result<(), FinancialCalendarError> {
+pub(crate) fn install_japanese_font(
+    pdf: &mut PdfDocument,
+) -> Result<FontId, FinancialCalendarError> {
+    let mut font_warnings = Vec::new();
+    let font = ParsedFont::from_bytes(NOTO_SANS_JP, 0, &mut font_warnings)
+        .ok_or(FinancialCalendarError::Unavailable)?;
+    // A stable resource id makes the generated object graph reproducible. `add_font`
+    // intentionally assigns a random id, which is useful for document merging but not
+    // for an export whose bytes are expected to be deterministic.
+    let font_id = FontId("KakeFlowNotoSansJP".to_owned());
+    pdf.resources
+        .fonts
+        .map
+        .insert(font_id.clone(), PdfFont::new(font));
+    Ok(font_id)
+}
+
+pub(crate) fn normalize_pdf_identifiers(bytes: &mut [u8]) -> Result<(), FinancialCalendarError> {
     let marker = b"/ID[(";
     let Some(start) = bytes
         .windows(marker.len())
@@ -520,7 +527,7 @@ fn report_groups(
     Ok(vec![executive, overview, planning, health])
 }
 
-fn push(
+pub(crate) fn push(
     lines: &mut Vec<PdfLine>,
     style: LineStyle,
     value: &str,
@@ -545,7 +552,7 @@ fn push(
     Ok(())
 }
 
-fn paginate(groups: Vec<Vec<PdfLine>>) -> Vec<Vec<PdfLine>> {
+pub(crate) fn paginate(groups: Vec<Vec<PdfLine>>) -> Vec<Vec<PdfLine>> {
     let mut pages = Vec::new();
     for group in groups {
         let mut page = Vec::new();
@@ -756,7 +763,7 @@ fn render_executive_visuals(
     );
 }
 
-fn draw_rect(ops: &mut Vec<Op>, x: f32, y: f32, width: f32, height: f32, color: Color) {
+pub(crate) fn draw_rect(ops: &mut Vec<Op>, x: f32, y: f32, width: f32, height: f32, color: Color) {
     let mut rect = Rect::from_xywh(
         Mm(x).into_pt(),
         Mm(y).into_pt(),
@@ -770,7 +777,7 @@ fn draw_rect(ops: &mut Vec<Op>, x: f32, y: f32, width: f32, height: f32, color: 
     });
 }
 
-fn add_text(
+pub(crate) fn add_text(
     ops: &mut Vec<Op>,
     font_id: &FontId,
     x: f32,
@@ -796,7 +803,7 @@ fn add_text(
     ]);
 }
 
-fn rgb(r: f32, g: f32, b: f32) -> Color {
+pub(crate) fn rgb(r: f32, g: f32, b: f32) -> Color {
     Color::Rgb(Rgb {
         r,
         g,
@@ -813,7 +820,7 @@ fn line_height_mm(style: LineStyle) -> f32 {
     }
 }
 
-fn format_jpy(value: i64) -> String {
+pub(crate) fn format_jpy(value: i64) -> String {
     let sign = if value < 0 { "-" } else { "" };
     let digits = value.unsigned_abs().to_string();
     let mut grouped = String::new();
@@ -826,7 +833,7 @@ fn format_jpy(value: i64) -> String {
     format!("{sign}¥{grouped}")
 }
 
-fn format_rate(value: Option<i64>) -> String {
+pub(crate) fn format_rate(value: Option<i64>) -> String {
     value.map_or_else(
         || "—".to_owned(),
         |bps| {

@@ -37,9 +37,9 @@ describe('AnnualReviewView', () => {
     expect(screen.getByText(/集計対象外・現在の未完了月・将来月は年間KPIから除外/)).toBeInTheDocument()
   })
 
-  it('supports driver drill-down, actions and separate CSV/Excel saving', () => {
-    const select = vi.fn(); const budget = vi.fn(); const imports = vi.fn(); const cards = vi.fn(); const saveCsv = vi.fn(); const saveXlsx = vi.fn()
-    render(<AnnualReviewView data={data} onSelectDriver={select} onOpenBudget={budget} onOpenImports={imports} onOpenReconciliation={cards} onSaveCsv={saveCsv} onSaveXlsx={saveXlsx} />)
+  it('supports driver drill-down, actions and separate CSV/Excel/PDF saving', () => {
+    const select = vi.fn(); const budget = vi.fn(); const imports = vi.fn(); const cards = vi.fn(); const saveCsv = vi.fn(); const saveXlsx = vi.fn(); const savePdf = vi.fn()
+    render(<AnnualReviewView data={data} onSelectDriver={select} onOpenBudget={budget} onOpenImports={imports} onOpenReconciliation={cards} onSaveCsv={saveCsv} onSaveXlsx={saveXlsx} onSavePdf={savePdf} />)
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
     fireEvent.click(screen.getByRole('button', { name: '生協' }))
     fireEvent.click(screen.getByRole('button', { name: '予算を見る' }))
@@ -47,18 +47,25 @@ describe('AnnualReviewView', () => {
     fireEvent.click(screen.getByRole('button', { name: '照合を見る' }))
     fireEvent.click(screen.getByRole('button', { name: '年次CSVを保存' }))
     fireEvent.click(screen.getByRole('button', { name: '年次Excelを保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '年次PDFを保存' }))
     expect(select).toHaveBeenNthCalledWith(1, 'CATEGORY', 'food')
     expect(select).toHaveBeenNthCalledWith(2, 'MERCHANT', '生協')
-    expect(budget).toHaveBeenCalledOnce(); expect(imports).toHaveBeenCalledOnce(); expect(cards).toHaveBeenCalledOnce(); expect(saveCsv).toHaveBeenCalledOnce(); expect(saveXlsx).toHaveBeenCalledOnce()
+    expect(budget).toHaveBeenCalledOnce(); expect(imports).toHaveBeenCalledOnce(); expect(cards).toHaveBeenCalledOnce(); expect(saveCsv).toHaveBeenCalledOnce(); expect(saveXlsx).toHaveBeenCalledOnce(); expect(savePdf).toHaveBeenCalledOnce()
   })
 
   it('shows format-specific progress and prevents overlapping exports', () => {
-    const { rerender } = render(<AnnualReviewView data={data} savingXlsx onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} />)
+    const { rerender } = render(<AnnualReviewView data={data} savingXlsx onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} onSavePdf={vi.fn()} />)
     expect(screen.getByRole('button', { name: '年次CSVを保存' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Excelを作成中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '年次PDFを保存' })).toBeDisabled()
 
-    rerender(<AnnualReviewView data={data} savingCsv onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} />)
+    rerender(<AnnualReviewView data={data} savingCsv onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} onSavePdf={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'CSVを作成中…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '年次Excelを保存' })).toBeDisabled()
+
+    rerender(<AnnualReviewView data={data} savingPdf onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} onSavePdf={vi.fn()} />)
+    expect(screen.getByRole('button', { name: '年次CSVを保存' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '年次Excelを保存' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'PDFを作成中…' })).toBeDisabled()
   })
 })
