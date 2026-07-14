@@ -73,6 +73,10 @@ import type {
   MobileCapturePromoteResultDto,
   MobileCaptureStatusDto,
   MobileCaptureImagePreviewDto,
+  GoogleDriveAvailabilityDto,
+  GoogleDriveConnectionDto,
+  GoogleDriveSyncScheduleDto,
+  GoogleDriveInboxItemDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE' | 'CLOUD_FILE_UNAVAILABLE'
@@ -112,6 +116,13 @@ const WEB_HEALTH: AppHealthDto = Object.freeze({
 const WEB_STATUS: AppStatusDto = Object.freeze({
   schemaVersion: 0,
   integrity: 'failed',
+})
+
+const WEB_GOOGLE_DRIVE_AVAILABILITY: GoogleDriveAvailabilityDto = Object.freeze({
+  available: false,
+  authorizationMode: 'SYSTEM_BROWSER_LOOPBACK',
+  scopeProfile: 'DRIVE_READONLY',
+  unavailableReason: 'UNSUPPORTED_RUNTIME',
 })
 
 const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
@@ -246,6 +257,17 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       markWatchedFileInboxNeedsMapping: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_needs_mapping') },
       markWatchedFileInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_failed') },
       markWatchedFileInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_file_inbox_mark_staged') },
+      getGoogleDriveAvailability: async () => WEB_GOOGLE_DRIVE_AVAILABILITY,
+      listGoogleDriveConnections: async () => [],
+      connectGoogleDrive: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_connect') },
+      bindGoogleDriveFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_folder_bind') },
+      disconnectGoogleDrive: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_disconnect') },
+      getGoogleDriveSchedule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_schedule_get') },
+      updateGoogleDriveSchedule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_schedule_update') },
+      syncGoogleDriveNow: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_sync_now') },
+      listGoogleDriveInbox: async () => [],
+      ignoreGoogleDriveInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_ignore') },
+      retryGoogleDriveInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_retry') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', templateLayouts: defaultDashboardTemplateLayouts(), updatedAt: new Date(0).toISOString() }),
       upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
@@ -383,6 +405,17 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     markWatchedFileInboxNeedsMapping: (householdId, itemId, leaseToken) => invokeValidated(invoke, 'watched_file_inbox_mark_needs_mapping', parseWatchedFileInboxItem, { householdId, itemId, leaseToken }),
     markWatchedFileInboxFailed: (householdId, itemId, leaseToken, errorCode) => invokeValidated(invoke, 'watched_file_inbox_mark_failed', parseWatchedFileInboxItem, { householdId, itemId, leaseToken, errorCode }),
     markWatchedFileInboxStaged: (householdId, itemId, leaseToken, importRunId) => invokeValidated(invoke, 'watched_file_inbox_mark_staged', parseWatchedFileInboxItem, { householdId, itemId, leaseToken, importRunId }),
+    getGoogleDriveAvailability: () => invokeValidated(invoke, 'google_drive_availability', parseGoogleDriveAvailability),
+    listGoogleDriveConnections: (householdId) => invokeValidated(invoke, 'google_drive_connections_list', parseGoogleDriveConnections, { householdId }),
+    connectGoogleDrive: (householdId) => invokeValidated(invoke, 'google_drive_connect', parseGoogleDriveConnection, { householdId }),
+    bindGoogleDriveFolder: (input) => invokeValidated(invoke, 'google_drive_folder_bind', parseGoogleDriveConnection, { input }),
+    disconnectGoogleDrive: (householdId, connectionId) => invokeValidated(invoke, 'google_drive_disconnect', parseGoogleDriveConnection, { householdId, connectionId }),
+    getGoogleDriveSchedule: (householdId, connectionId) => invokeValidated(invoke, 'google_drive_schedule_get', parseGoogleDriveSchedule, { householdId, connectionId }),
+    updateGoogleDriveSchedule: (input) => invokeValidated(invoke, 'google_drive_schedule_update', parseGoogleDriveSchedule, { input }),
+    syncGoogleDriveNow: (householdId, connectionId) => invokeValidated(invoke, 'google_drive_sync_now', parseGoogleDriveSchedule, { householdId, connectionId }),
+    listGoogleDriveInbox: (householdId, connectionId, state, limit) => invokeValidated(invoke, 'google_drive_inbox_list', parseGoogleDriveInboxItems, { householdId, connectionId: connectionId ?? null, state: state ?? null, limit: limit ?? null }),
+    ignoreGoogleDriveInboxItem: (householdId, itemId) => invokeValidated(invoke, 'google_drive_inbox_ignore', parseGoogleDriveInboxItem, { householdId, itemId }),
+    retryGoogleDriveInboxItem: (householdId, itemId) => invokeValidated(invoke, 'google_drive_inbox_retry', parseGoogleDriveInboxItem, { householdId, itemId }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     getDashboardPreferences: (householdId) => invokeValidated(invoke, 'dashboard_preferences_get', parseDashboardPreferences, { householdId }),
     upsertDashboardPreferences: (input) => invokeValidated(invoke, 'dashboard_preferences_upsert', parseDashboardPreferences, { input }),
@@ -1868,6 +1901,97 @@ function parseWatchedFileInboxClaim(value: unknown): WatchedFileInboxClaimDto {
   const items = parseWatchedFileInboxItems(record.items)
   if (items.length < 1 || items.length > 25 || items.some((item) => item.state !== 'PROCESSING')) throw new TypeError('watched inbox claim')
   return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
+}
+
+const GOOGLE_DRIVE_CONNECTION_STATES = new Set(['AUTHORIZING', 'SELECTING_FOLDER', 'CONNECTED', 'AUTH_REQUIRED', 'DISCONNECTED'])
+const GOOGLE_DRIVE_INBOX_STATES = new Set(['DISCOVERED', 'PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'FAILED', 'IGNORED', 'REMOVED', 'TOO_LARGE', 'UNSUPPORTED'])
+const GOOGLE_DRIVE_SYNC_RESULTS = new Set(['NEVER', 'RUNNING', 'NO_CHANGES', 'DISCOVERED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED', 'DISABLED'])
+const GOOGLE_DRIVE_SUSPENSIONS = new Set(['RETRY_BACKOFF', 'AUTH_EXPIRED', 'MISSING_CREDENTIAL', 'CURSOR_INVALID'])
+
+function parseGoogleDriveAvailability(value: unknown): GoogleDriveAvailabilityDto {
+  const record = asRecord(value)
+  if (typeof record.available !== 'boolean' || record.authorizationMode !== 'SYSTEM_BROWSER_LOOPBACK' || record.scopeProfile !== 'DRIVE_READONLY') throw new TypeError('google drive availability')
+  const unavailableReason = record.unavailableReason === null ? null : asRequiredString(record.unavailableReason)
+  if (unavailableReason !== null && unavailableReason !== 'CLIENT_ID_NOT_COMPILED' && unavailableReason !== 'UNSUPPORTED_RUNTIME') throw new TypeError('google drive unavailable reason')
+  if (record.available !== (unavailableReason === null)) throw new TypeError('google drive availability invariant')
+  return { available: record.available, authorizationMode: record.authorizationMode, scopeProfile: record.scopeProfile, unavailableReason }
+}
+
+function parseGoogleDriveConnection(value: unknown): GoogleDriveConnectionDto {
+  const record = asRecord(value)
+  if (!GOOGLE_DRIVE_CONNECTION_STATES.has(String(record.status))) throw new TypeError('google drive connection state')
+  const googleAccountId = asNullableString(record.googleAccountId); const accountEmail = asNullableString(record.accountEmail)
+  const driveId = asNullableString(record.driveId); const rootFolderId = asNullableString(record.rootFolderId)
+  const rootFolderName = asNullableString(record.rootFolderName); const rootResourceKey = asNullableString(record.rootResourceKey)
+  const startPageToken = asNullableString(record.startPageToken); const changePageToken = asNullableString(record.changePageToken)
+  const lastFullScanAt = record.lastFullScanAt === null ? null : asIsoTimestamp(record.lastFullScanAt)
+  const lastChangeAt = record.lastChangeAt === null ? null : asIsoTimestamp(record.lastChangeAt)
+  if ((rootFolderId === null) !== (rootFolderName === null)) throw new TypeError('google drive folder binding')
+  if ((record.status === 'SELECTING_FOLDER' || record.status === 'CONNECTED') && (googleAccountId === null || accountEmail === null)) throw new TypeError('google drive account binding')
+  if (record.status === 'CONNECTED' && (rootFolderId === null || startPageToken === null || changePageToken === null)) throw new TypeError('google drive connected invariant')
+  if (changePageToken !== null && startPageToken === null) throw new TypeError('google drive cursor invariant')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), googleAccountId, accountEmail,
+    clientIdFingerprint: asCanonicalHash(record.clientIdFingerprint), driveId, rootFolderId, rootFolderName, rootResourceKey,
+    status: record.status as GoogleDriveConnectionDto['status'], startPageToken, changePageToken, lastFullScanAt, lastChangeAt,
+    createdAt: asIsoTimestamp(record.createdAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+function parseGoogleDriveConnections(value: unknown): readonly GoogleDriveConnectionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('google drive connections')
+  return value.map(parseGoogleDriveConnection)
+}
+
+function parseGoogleDriveSchedule(value: unknown): GoogleDriveSyncScheduleDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean' || ![15, 30, 60].includes(Number(record.intervalMinutes)) || !GOOGLE_DRIVE_SYNC_RESULTS.has(String(record.lastResult))) throw new TypeError('google drive schedule')
+  const intervalMinutes = record.intervalMinutes as 15 | 30 | 60
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
+  const leaseExpiresAt = record.leaseExpiresAt === null ? null : asIsoTimestamp(record.leaseExpiresAt)
+  const lastAttemptAt = record.lastAttemptAt === null ? null : asIsoTimestamp(record.lastAttemptAt)
+  const lastSuccessAt = record.lastSuccessAt === null ? null : asIsoTimestamp(record.lastSuccessAt)
+  const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = record.suspensionReason === null ? null : asRequiredString(record.suspensionReason)
+  const lastErrorCode = asNullableString(record.lastErrorCode)
+  const lastDiscoveredCount = asSafeInteger(record.lastDiscoveredCount); const consecutiveFailures = asSafeInteger(record.consecutiveFailures)
+  if (suspensionReason !== null && !GOOGLE_DRIVE_SUSPENSIONS.has(suspensionReason)) throw new TypeError('google drive suspension')
+  if (record.running !== (record.lastResult === 'RUNNING') || record.running !== (leaseExpiresAt !== null) || consecutiveFailures > 10) throw new TypeError('google drive schedule invariant')
+  if (record.enabled !== (nextDueAt !== null) || (!record.enabled && (leaseExpiresAt !== null || suspensionReason !== null || suspendedUntil !== null))) throw new TypeError('google drive schedule lifecycle')
+  if ((suspensionReason === null && suspendedUntil !== null)
+    || (suspensionReason === 'RETRY_BACKOFF' && suspendedUntil === null)
+    || (suspensionReason !== null && suspensionReason !== 'RETRY_BACKOFF' && (suspendedUntil !== null || record.lastResult !== 'TERMINAL_SUSPENDED'))) throw new TypeError('google drive schedule suspension invariant')
+  return {
+    connectionId: asRequiredString(record.connectionId), enabled: record.enabled, intervalMinutes, nextDueAt, running: record.running,
+    leaseExpiresAt, lastAttemptAt, lastSuccessAt, lastResult: record.lastResult as GoogleDriveSyncScheduleDto['lastResult'],
+    lastDiscoveredCount, consecutiveFailures, suspendedUntil, suspensionReason: suspensionReason as GoogleDriveSyncScheduleDto['suspensionReason'],
+    lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+function parseGoogleDriveInboxItem(value: unknown): GoogleDriveInboxItemDto {
+  const record = asRecord(value)
+  if (!GOOGLE_DRIVE_INBOX_STATES.has(String(record.state))) throw new TypeError('google drive inbox state')
+  const state = record.state as GoogleDriveInboxItemDto['state']; const attemptCount = asSafeInteger(record.attemptCount)
+  const importRunId = asNullableString(record.importRunId); const lastErrorCode = asNullableString(record.lastErrorCode)
+  const contentSha256 = record.contentSha256 === null ? null : asCanonicalHash(record.contentSha256)
+  const remoteMd5Checksum = record.remoteMd5Checksum === null ? null : asRequiredString(record.remoteMd5Checksum)
+  if (attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('google drive inbox invariant')
+  if (remoteMd5Checksum !== null && !/^[0-9a-f]{32}$/.test(remoteMd5Checksum)) throw new TypeError('google drive md5')
+  if (contentSha256 !== null && !['READY', 'NEEDS_MAPPING', 'STAGED', 'IGNORED', 'FAILED'].includes(state)) throw new TypeError('google drive content state')
+  return {
+    id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), connectionId: asRequiredString(record.connectionId),
+    fileId: asRequiredString(record.fileId), generationFingerprint: asCanonicalHash(record.generationFingerprint),
+    fileName: asRequiredString(record.fileName), mediaType: asRequiredString(record.mediaType), remoteByteSize: asNullableSafeInteger(record.remoteByteSize),
+    remoteModifiedAt: record.remoteModifiedAt === null ? null : asIsoTimestamp(record.remoteModifiedAt), remoteMd5Checksum,
+    driveVersion: asNullableString(record.driveVersion), contentSha256, state, attemptCount, importRunId, lastErrorCode,
+    discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+function parseGoogleDriveInboxItems(value: unknown): readonly GoogleDriveInboxItemDto[] {
+  if (!Array.isArray(value)) throw new TypeError('google drive inbox')
+  return value.map(parseGoogleDriveInboxItem)
 }
 
 function parseImportSummary(value: unknown): ImportRunCountsDto {

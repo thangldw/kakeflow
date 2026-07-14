@@ -737,6 +737,53 @@ export interface WatchedFileInboxClaimDto {
   readonly leaseToken: string; readonly leaseExpiresAt: string; readonly items: readonly WatchedFileInboxItemDto[]
 }
 
+export type GoogleDriveUnavailableReasonDto = 'CLIENT_ID_NOT_COMPILED' | 'UNSUPPORTED_RUNTIME'
+export interface GoogleDriveAvailabilityDto {
+  readonly available: boolean
+  readonly authorizationMode: 'SYSTEM_BROWSER_LOOPBACK'
+  readonly scopeProfile: 'DRIVE_READONLY'
+  readonly unavailableReason: GoogleDriveUnavailableReasonDto | null
+}
+export type GoogleDriveConnectionStatusDto = 'AUTHORIZING' | 'SELECTING_FOLDER' | 'CONNECTED' | 'AUTH_REQUIRED' | 'DISCONNECTED'
+export interface GoogleDriveConnectionDto {
+  readonly id: string; readonly householdId: string
+  readonly googleAccountId: string | null; readonly accountEmail: string | null
+  readonly clientIdFingerprint: string; readonly driveId: string | null
+  readonly rootFolderId: string | null; readonly rootFolderName: string | null
+  readonly rootResourceKey: string | null; readonly status: GoogleDriveConnectionStatusDto
+  readonly startPageToken: string | null; readonly changePageToken: string | null
+  readonly lastFullScanAt: string | null; readonly lastChangeAt: string | null
+  readonly createdAt: string; readonly updatedAt: string
+}
+export interface BindGoogleDriveFolderInputDto {
+  readonly householdId: string; readonly connectionId: string; readonly folderReference: string
+}
+export type GoogleDriveSyncResultDto = 'NEVER' | 'RUNNING' | 'NO_CHANGES' | 'DISCOVERED' | 'FAILED_RETRYABLE' | 'LEASE_EXPIRED' | 'TERMINAL_SUSPENDED' | 'DISABLED'
+export type GoogleDriveSuspensionReasonDto = 'RETRY_BACKOFF' | 'AUTH_EXPIRED' | 'MISSING_CREDENTIAL' | 'CURSOR_INVALID'
+export interface GoogleDriveSyncScheduleDto {
+  readonly connectionId: string; readonly enabled: boolean; readonly intervalMinutes: 15 | 30 | 60
+  readonly nextDueAt: string | null; readonly running: boolean; readonly leaseExpiresAt: string | null
+  readonly lastAttemptAt: string | null; readonly lastSuccessAt: string | null
+  readonly lastResult: GoogleDriveSyncResultDto; readonly lastDiscoveredCount: number
+  readonly consecutiveFailures: number; readonly suspendedUntil: string | null
+  readonly suspensionReason: GoogleDriveSuspensionReasonDto | null; readonly lastErrorCode: string | null
+  readonly updatedAt: string
+}
+export interface UpdateGoogleDriveScheduleInputDto {
+  readonly householdId: string; readonly connectionId: string
+  readonly enabled: boolean; readonly intervalMinutes: 15 | 30 | 60
+}
+export type GoogleDriveInboxStateDto = WatchedFileInboxStateDto | 'TOO_LARGE' | 'UNSUPPORTED'
+export interface GoogleDriveInboxItemDto {
+  readonly id: string; readonly householdId: string; readonly connectionId: string; readonly fileId: string
+  readonly generationFingerprint: string; readonly fileName: string; readonly mediaType: string
+  readonly remoteByteSize: number | null; readonly remoteModifiedAt: string | null
+  readonly remoteMd5Checksum: string | null; readonly driveVersion: string | null
+  readonly contentSha256: string | null; readonly state: GoogleDriveInboxStateDto
+  readonly attemptCount: number; readonly importRunId: string | null; readonly lastErrorCode: string | null
+  readonly discoveredAt: string; readonly updatedAt: string
+}
+
 export interface TransactionPageDto {
   readonly items: readonly TransactionRowDto[]
   readonly page: number
@@ -889,6 +936,17 @@ export type AppCommand =
   | 'watched_file_inbox_mark_needs_mapping'
   | 'watched_file_inbox_mark_failed'
   | 'watched_file_inbox_mark_staged'
+  | 'google_drive_availability'
+  | 'google_drive_connections_list'
+  | 'google_drive_connect'
+  | 'google_drive_folder_bind'
+  | 'google_drive_disconnect'
+  | 'google_drive_schedule_get'
+  | 'google_drive_schedule_update'
+  | 'google_drive_sync_now'
+  | 'google_drive_inbox_list'
+  | 'google_drive_inbox_ignore'
+  | 'google_drive_inbox_retry'
   | 'dashboard_query'
   | 'dashboard_preferences_get'
   | 'dashboard_preferences_upsert'
@@ -1026,6 +1084,17 @@ export interface PlatformClient {
   markWatchedFileInboxNeedsMapping(householdId: string, itemId: string, leaseToken: string): Promise<WatchedFileInboxItemDto>
   markWatchedFileInboxFailed(householdId: string, itemId: string, leaseToken: string, errorCode: string): Promise<WatchedFileInboxItemDto>
   markWatchedFileInboxStaged(householdId: string, itemId: string, leaseToken: string, importRunId: string): Promise<WatchedFileInboxItemDto>
+  getGoogleDriveAvailability(): Promise<GoogleDriveAvailabilityDto>
+  listGoogleDriveConnections(householdId: string): Promise<readonly GoogleDriveConnectionDto[]>
+  connectGoogleDrive(householdId: string): Promise<GoogleDriveConnectionDto>
+  bindGoogleDriveFolder(input: BindGoogleDriveFolderInputDto): Promise<GoogleDriveConnectionDto>
+  disconnectGoogleDrive(householdId: string, connectionId: string): Promise<GoogleDriveConnectionDto>
+  getGoogleDriveSchedule(householdId: string, connectionId: string): Promise<GoogleDriveSyncScheduleDto>
+  updateGoogleDriveSchedule(input: UpdateGoogleDriveScheduleInputDto): Promise<GoogleDriveSyncScheduleDto>
+  syncGoogleDriveNow(householdId: string, connectionId: string): Promise<GoogleDriveSyncScheduleDto>
+  listGoogleDriveInbox(householdId: string, connectionId?: string, state?: GoogleDriveInboxStateDto, limit?: number): Promise<readonly GoogleDriveInboxItemDto[]>
+  ignoreGoogleDriveInboxItem(householdId: string, itemId: string): Promise<GoogleDriveInboxItemDto>
+  retryGoogleDriveInboxItem(householdId: string, itemId: string): Promise<GoogleDriveInboxItemDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   getDashboardPreferences(householdId: string): Promise<DashboardPreferencesDto>
   upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>
