@@ -185,6 +185,11 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   reconciliation in either source order, immutable row provenance, explicit
   bank-account mapping, and no automatic posting. This does not claim support
   for personal MUFG Direct exports.
+- Dedicated [MUFG BizSTATION deposit/withdrawal import](docs/MUFG_BIZSTATION_DEPOSIT_WITHDRAWAL_IMPORT.md)
+  for the official twenty-field business-account export, with fixed code,
+  padded amount, single-source-account, and bounded Japanese-calendar
+  validation. The source has no balance or durable transaction ID, and
+  era-ambiguous archival dates fail closed instead of being guessed.
 - Opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md) at a persisted 15, 30, or 60 minute interval while the desktop process is open. The native worker refreshes the authenticated household/membership and local public-key registration, records only inbound publication metadata as `AVAILABLE`, uses bounded leases and retry backoff, and suspends for explicit reauthorization after terminal credential or membership failures. Sending, artifact download, `KFE1` decryption, review, and atomic Apply remain manual.
 - Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
 - [Audience-partitioned family schema v3](docs/FAMILY_EVIDENCE_DELIVERY.md) for the core graph, complete planning/configuration aggregates, and seven evidence-backed card/investment aggregates. The binary KFF3 envelope carries origin-qualified immutable documents and raw rows in the same least-widening audience partition, discloses exact included/withheld coverage, preserves V1/V2 compatibility, and materializes evidence only inside one explicit atomic apply.

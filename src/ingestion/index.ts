@@ -3,6 +3,7 @@ export * from './csv'
 export * from './normalize'
 export { japaneseBankAdapter } from './adapters/japaneseBank'
 export { mufgBizstationAllDetailsAdapter } from './adapters/mufgBizstationAllDetails'
+export { mufgBizstationDepositWithdrawalAdapter } from './adapters/mufgBizstationDepositWithdrawal'
 export { yuchoDirectAdapter } from './adapters/yuchoDirect'
 export { payPayAdapter } from './adapters/paypay'
 export { amazonMastercardAdapter } from './adapters/amazonMastercard'
@@ -23,6 +24,7 @@ export * from './adapters/customDelimited'
 import { amazonMastercardAdapter } from './adapters/amazonMastercard'
 import { japaneseBankAdapter } from './adapters/japaneseBank'
 import { mufgBizstationAllDetailsAdapter } from './adapters/mufgBizstationAllDetails'
+import { mufgBizstationDepositWithdrawalAdapter } from './adapters/mufgBizstationDepositWithdrawal'
 import { yuchoDirectAdapter } from './adapters/yuchoDirect'
 import { payPayAdapter } from './adapters/paypay'
 import { rakutenEnaviAdapter } from './adapters/rakuten'
@@ -40,6 +42,7 @@ import { moneyForwardHouseholdLedgerAdapter } from './adapters/moneyForwardHouse
 import type { ImportAdapter, ImportInput } from './types'
 
 export const importAdapters = [
+  mufgBizstationDepositWithdrawalAdapter,
   mufgBizstationAllDetailsAdapter,
   yuchoDirectAdapter,
   japaneseBankAdapter,

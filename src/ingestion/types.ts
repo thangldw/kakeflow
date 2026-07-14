@@ -1,6 +1,7 @@
 export type AdapterId =
   | 'japanese-bank-ledger-v1'
   | 'mufg-bizstation-all-details-v1'
+  | 'mufg-bizstation-deposit-withdrawal-v1'
   | 'yucho-direct-ledger-v1'
   | 'paypay-history-v1'
   | 'amazon-mastercard-statement-v1'
