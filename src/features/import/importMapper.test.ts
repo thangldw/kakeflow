@@ -51,6 +51,21 @@ describe('import mapper', () => {
     expect(result.request.sourceType).toBe('ICLOUD_PICKER')
   })
 
+  it('persists the selected email attachment part beside the immutable email source row', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'japanese-bank-ledger-v1', issues: [], metadata: {}, records: [{
+      kind: 'bank-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['2026/07/27', '給与'], sourcePart: 'bank.csv' },
+      transactionDate: '2026-07-27', description: '給与', descriptionDetail: '', outgoingAmount: null, incomingAmount: 300000,
+      balance: null, memo: '', fundsAvailabilityCode: '', debitCreditCode: 'IN', suggestedType: 'UNKNOWN',
+    }] }
+    const deps = dependencies()
+    const result = await mapParsedImportToStartImport({
+      ...input(parsed), file: { ...input(parsed).file, originalFilename: 'statement.eml', mediaType: 'message/rfc822' },
+    }, deps.ids, deps.hash)
+
+    expect(result.request).toMatchObject({ originalFilename: 'statement.eml', mediaType: 'message/rfc822' })
+    expect(JSON.parse(result.request.records[0].payloadJson)).toMatchObject({ sourcePart: 'bank.csv', sourceRow: 2 })
+  })
+
   it('preserves a custom parser external transaction ID on the review candidate', async () => {
     const parsed: ParsedImport<unknown> = { adapterId: 'custom-delimited-v1', issues: [], metadata: { profileId: 'custom' }, records: [{
       kind: 'bank-transaction', lineage: { sourceRow: 8, sourceRowEnd: 8, rawFields: ['2026-07-12', 'Store', '-1200', 'bank-row-9'] },

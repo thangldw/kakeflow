@@ -2,6 +2,7 @@ import { decodeCsvBytes, detectImportAdapter } from '../../ingestion'
 import type { AdapterId, ParsedImport, ParseIssue } from '../../ingestion'
 import readXlsxFile from 'read-excel-file/browser'
 import { expandZipCsv, ZipImportError } from './zipImport'
+import { EmailImportError, extractSingleEmailTabularAttachment, qualifyEmailParsedImport } from './emailImport'
 import type { ImportSourceType } from './importMapper'
 
 export interface ImportPreview {
@@ -24,6 +25,7 @@ export interface ImportPreview {
   relativePath?: string
   archiveFilename?: string
   archiveEntryName?: string
+  emailAttachmentName?: string
 }
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -79,6 +81,39 @@ export async function previewImportFile(file: File): Promise<ImportPreview> {
     }
     const bytes = await readFileBytes(file)
     id = await sha256Hex(bytes)
+    const isEmail = /^(?:message\/rfc822|application\/eml)$/i.test(file.type) || /\.eml$/i.test(file.name)
+    if (isEmail) {
+      try {
+        const attachment = await extractSingleEmailTabularAttachment(bytes)
+        const attachmentBuffer = new ArrayBuffer(attachment.bytes.byteLength)
+        new Uint8Array(attachmentBuffer).set(attachment.bytes)
+        const child = await previewImportFile(new File([attachmentBuffer], attachment.name, { type: attachment.mediaType, lastModified: file.lastModified }))
+        const parsed = child.parsed ? qualifyEmailParsedImport(child.parsed, attachment.name) : undefined
+        return {
+          ...child,
+          id,
+          filename: file.name,
+          encoding: `eml / ${child.encoding}`,
+          fileBytes: bytes,
+          parsed,
+          mediaType: 'message/rfc822',
+          sourceModifiedAt: new Date(file.lastModified).toISOString(),
+          emailAttachmentName: attachment.name,
+          issues: [
+            ...child.issues,
+            { code: 'EMAIL_ATTACHMENT_SELECTED', message: `メール原本を保持し、添付「${attachment.name}」の行を候補化します。`, severity: 'warning' },
+          ],
+        }
+      } catch (error) {
+        const issue = error instanceof EmailImportError ? error : new EmailImportError('EMAIL_READ_FAILED', 'メール添付を読み取れませんでした。')
+        return {
+          id, filename: file.name, adapterId: null, encoding: 'eml', recordCount: 0,
+          issues: [{ code: issue.code, message: issue.message, severity: 'error' }],
+          status: 'error', parsedAt: new Date().toISOString(), fileBytes: bytes,
+          mediaType: 'message/rfc822', sourceModifiedAt: new Date(file.lastModified).toISOString(),
+        }
+      }
+    }
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
     if (isPdf) {
       return {
