@@ -13,7 +13,7 @@ import type {
 const MAX_PAYLOAD_JSON_BYTES = 1_048_576
 const encoder = new TextEncoder()
 
-export type ImportSourceType = 'LOCAL_FOLDER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
+export type ImportSourceType = 'LOCAL_FOLDER' | 'ICLOUD_PICKER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
 export type EvidenceRole = 'PRIMARY' | 'SUPPORTING' | 'FUNDING_LEG' | 'CONTINUATION'
 
 export interface ImportFileMetadata {

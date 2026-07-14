@@ -122,6 +122,17 @@ describe('receipt text normalization', () => {
     })
   })
 
+  it('preserves iCloud Drive provenance for a receipt imported from a synced folder', async () => {
+    const extracted = { method: 'OCR' as const, confidenceBps: 9000, issues: [], text: 'スーパー\n2026/07/12\n合計 1,480' }
+    const result = await buildReceiptImport(extracted, {
+      householdId: 'family', filename: 'icloud-receipt.jpg', mediaType: 'image/jpeg', byteSize: 100,
+      sha256: 'a'.repeat(64), sourceModifiedAt: '2026-07-12T10:00:00Z', accountId: 'family-cash',
+      sourceType: 'ICLOUD_PICKER',
+    }, () => globalThis.crypto.randomUUID(), async () => 'b'.repeat(64))
+
+    expect(result.request?.sourceType).toBe('ICLOUD_PICKER')
+  })
+
   it('extracts item, Japanese tax, coupon and points evidence with line provenance', () => {
     const receipt = parseReceiptText([
       'スーパー新宿店',

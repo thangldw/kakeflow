@@ -42,6 +42,15 @@ describe('import mapper', () => {
     expect(result.request.cardStatements).toEqual([])
   })
 
+  it('preserves iCloud Drive provenance in the canonical import request', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'japanese-bank-ledger-v1', issues: [], metadata: {}, records: [] }
+    const deps = dependencies()
+    const base = input(parsed)
+    const result = await mapParsedImportToStartImport({ ...base, file: { ...base.file, sourceType: 'ICLOUD_PICKER' } }, deps.ids, deps.hash)
+
+    expect(result.request.sourceType).toBe('ICLOUD_PICKER')
+  })
+
   it('preserves a custom parser external transaction ID on the review candidate', async () => {
     const parsed: ParsedImport<unknown> = { adapterId: 'custom-delimited-v1', issues: [], metadata: { profileId: 'custom' }, records: [{
       kind: 'bank-transaction', lineage: { sourceRow: 8, sourceRowEnd: 8, rawFields: ['2026-07-12', 'Store', '-1200', 'bank-row-9'] },

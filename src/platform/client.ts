@@ -74,7 +74,7 @@ import type {
   MobileCaptureImagePreviewDto,
 } from './types'
 
-export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
+export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE' | 'CLOUD_FILE_UNAVAILABLE'
 
 /** A deliberately sanitized error safe to show or log in the webview. */
 export class PlatformIpcError extends Error {
@@ -82,7 +82,11 @@ export class PlatformIpcError extends Error {
   readonly command: AppCommand
 
   constructor(code: PlatformIpcErrorCode, command: AppCommand) {
-    super(code === 'INVALID_RESPONSE' ? 'The desktop service returned an invalid response.' : 'The desktop service is unavailable.')
+    super(code === 'INVALID_RESPONSE'
+      ? 'The desktop service returned an invalid response.'
+      : code === 'CLOUD_FILE_UNAVAILABLE'
+        ? 'The cloud file is not available locally.'
+        : 'The desktop service is unavailable.')
     this.name = 'PlatformIpcError'
     this.code = code
     this.command = command
@@ -224,6 +228,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listTransactionSourceRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_source_records_list') },
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
+      selectIcloudFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'icloud_folder_select') },
       removeWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_remove') },
       scanWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_scan') },
       readWatchedFile: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_file_read') },
@@ -356,6 +361,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     listTransactionSourceRecords: (householdId, transactionId) => invokeValidated(invoke, 'transaction_source_records_list', parseSourceRecords, { householdId, transactionId }),
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
     selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
+    selectIcloudFolder: (householdId, label) => invokeValidated(invoke, 'icloud_folder_select', parseNullableWatchedFolder, { householdId, label }),
     removeWatchedFolder: async (householdId, watchedFolderId) => { await invokeValidated(invoke, 'watched_folder_remove', parseVoid, { householdId, watchedFolderId }) },
     scanWatchedFolder: (householdId, watchedFolderId) => invokeValidated(invoke, 'watched_folder_scan', parseWatchedFolderScan, { householdId, watchedFolderId }),
     readWatchedFile: (householdId, watchedFolderId, relativePath) => invokeValidated(invoke, 'watched_folder_file_read', parseWatchedFile, { householdId, watchedFolderId, relativePath }),
@@ -417,7 +423,10 @@ async function invokeValidated<T>(
 
   try {
     response = await invoke<unknown>(command, args)
-  } catch {
+  } catch (error) {
+    if (command === 'watched_folder_file_read' && isCloudFileUnavailable(error)) {
+      throw new PlatformIpcError('CLOUD_FILE_UNAVAILABLE', command)
+    }
     // Rust, SQL, filesystem paths, and source data must never cross this boundary.
     throw new PlatformIpcError('COMMAND_FAILED', command)
   }
@@ -427,6 +436,11 @@ async function invokeValidated<T>(
   } catch {
     throw new PlatformIpcError('INVALID_RESPONSE', command)
   }
+}
+
+function isCloudFileUnavailable(error: unknown): boolean {
+  if (error === 'CLOUD_FILE_UNAVAILABLE') return true
+  return error instanceof Error && error.message === 'CLOUD_FILE_UNAVAILABLE'
 }
 
 function parseHouseholds(value: unknown): readonly HouseholdDto[] {
@@ -1757,10 +1771,17 @@ function parseSourceRecordPage(value: unknown): SourceRecordPageDto {
   }
 }
 
+function parseWatchedFolderSource(record: Record<string, unknown>) {
+  if (record.sourceType !== 'LOCAL_FOLDER' && record.sourceType !== 'ICLOUD_PICKER') throw new TypeError('watched folder source type')
+  if (record.provider !== 'LOCAL' && record.provider !== 'ICLOUD') throw new TypeError('watched folder provider')
+  if ((record.sourceType === 'LOCAL_FOLDER') !== (record.provider === 'LOCAL')) throw new TypeError('watched folder source')
+  return { sourceType: record.sourceType, provider: record.provider } as const
+}
 function parseWatchedFolder(value: unknown): WatchedFolderDto {
   const record = asRecord(value)
   if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.label !== 'string' || typeof record.displayName !== 'string' || typeof record.isEnabled !== 'boolean' || typeof record.createdAt !== 'string') throw new TypeError('watched folder')
-  return { id: record.id, householdId: record.householdId, label: record.label, displayName: record.displayName, isEnabled: record.isEnabled, createdAt: record.createdAt }
+  const { sourceType, provider } = parseWatchedFolderSource(record)
+  return { id: record.id, householdId: record.householdId, label: record.label, displayName: record.displayName, sourceType, provider, isEnabled: record.isEnabled, createdAt: record.createdAt }
 }
 function parseWatchedFolders(value: unknown): readonly WatchedFolderDto[] { if (!Array.isArray(value)) throw new TypeError('watched folders'); return value.map(parseWatchedFolder) }
 function parseNullableWatchedFolder(value: unknown): WatchedFolderDto | null { return value === null ? null : parseWatchedFolder(value) }
@@ -1778,9 +1799,11 @@ function parseWatchedFileInboxItem(value: unknown): WatchedFileInboxItemDto {
   const attemptCount = asSafeInteger(record.attemptCount)
   if (attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('watched inbox invariant')
   if (lastErrorCode !== null && !/^[A-Z][A-Z0-9_]{1,63}$/.test(lastErrorCode)) throw new TypeError('watched inbox error code')
+  const { sourceType, provider } = parseWatchedFolderSource(record)
   return {
     id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), watchedFolderId: asRequiredString(record.watchedFolderId),
-    watchedFolderLabel: asRequiredString(record.watchedFolderLabel), relativePath: asRequiredString(record.relativePath), fileName: asRequiredString(record.fileName),
+    watchedFolderLabel: asRequiredString(record.watchedFolderLabel), sourceType, provider,
+    relativePath: asRequiredString(record.relativePath), fileName: asRequiredString(record.fileName),
     mediaType: asRequiredString(record.mediaType), byteSize: asSafeInteger(record.byteSize), modifiedUnixMs: asNullableSafeInteger(record.modifiedUnixMs),
     fingerprint: asCanonicalHash(record.fingerprint), state, attemptCount, importRunId, lastErrorCode,
     discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt),

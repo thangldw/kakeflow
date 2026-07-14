@@ -1,4 +1,5 @@
 import type { ExtractedDocumentDto, StartImportDto } from '../../platform'
+import type { ImportSourceType } from './importMapper'
 
 export interface ReceiptTextFields {
   readonly merchant: string | null
@@ -189,7 +190,7 @@ export async function buildReceiptImport(
     sha256: string
     sourceModifiedAt: string | null
     accountId: string
-    sourceType?: 'MANUAL_UPLOAD' | 'LOCAL_FOLDER' | 'CAMERA_SCAN'
+    sourceType?: ImportSourceType
     audienceVisibility?: 'SHARED' | 'PERSONAL'
     audienceMemberId?: string | null
     attributionKind?: 'HOUSEHOLD' | 'MEMBER'

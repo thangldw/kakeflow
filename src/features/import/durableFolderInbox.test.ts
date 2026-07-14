@@ -4,10 +4,10 @@ import { attachFolderInboxIdentity, folderInboxFailureCode, folderInboxPreviewOu
 import type { ImportPreview } from './importService'
 import type { WatchedFileInboxItemDto } from '../../platform'
 
-const item = (id: string, state: WatchedFileInboxItemDto['state'], discoveredAt = '2026-07-13T00:00:00Z'): WatchedFileInboxItemDto => ({
+const item = (id: string, state: WatchedFileInboxItemDto['state'], discoveredAt = '2026-07-13T00:00:00Z', sourceType: WatchedFileInboxItemDto['sourceType'] = 'LOCAL_FOLDER'): WatchedFileInboxItemDto => ({
   id, householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: `${id}.csv`, fileName: `${id}.csv`,
   mediaType: 'text/csv', byteSize: 10, modifiedUnixMs: 1, fingerprint: `fingerprint-${id}`, state, attemptCount: 0,
-  importRunId: null, lastErrorCode: null, discoveredAt, updatedAt: discoveredAt,
+  importRunId: null, lastErrorCode: null, discoveredAt, updatedAt: discoveredAt, sourceType, provider: sourceType === 'ICLOUD_PICKER' ? 'ICLOUD' : 'LOCAL',
 })
 const preview = (status: ImportPreview['status']): ImportPreview => ({ id: 'sha', filename: 'bank.csv', adapterId: null, encoding: 'utf-8', recordCount: 0, issues: [], status, parsedAt: '2026-07-13T00:00:00Z' })
 
@@ -30,6 +30,11 @@ describe('durable folder inbox coordinator policy', () => {
     const attached = attachFolderInboxIdentity(preview('ready'), item('queue', 'DISCOVERED'))
     expect(attached).toMatchObject({ folderInboxItemId: 'queue', watchedFolderId: 'folder', relativePath: 'queue.csv', sourceType: 'LOCAL_FOLDER' })
     expect(JSON.stringify(attached)).not.toContain('/Users/')
+  })
+
+  it('preserves the provider source type while hydrating an iCloud-synced file', () => {
+    const attached = attachFolderInboxIdentity(preview('ready'), item('icloud', 'DISCOVERED', '2026-07-13T00:00:00Z', 'ICLOUD_PICKER'))
+    expect(attached).toMatchObject({ folderInboxItemId: 'icloud', sourceType: 'ICLOUD_PICKER' })
   })
 
   it('suppresses only items actually returned by a successful claim', () => {

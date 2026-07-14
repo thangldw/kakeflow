@@ -123,6 +123,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0050_family_delivery_schedule.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0051_watched_folder_sources.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1607,6 +1610,54 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_51_backfills_local_watched_folder_source_and_enforces_pairs() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..50].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO watched_folders(id,household_id,label,canonical_path)
+                 VALUES('folder','family','Inbox','/private/inbox');",
+            )
+            .unwrap();
+
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+
+        let pair: (String, String) = connection
+            .query_row(
+                "SELECT source_type,provider FROM watched_folders WHERE id='folder'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pair, ("LOCAL_FOLDER".to_owned(), "LOCAL".to_owned()));
+        assert!(connection
+            .execute(
+                "UPDATE watched_folders SET source_type='ICLOUD_PICKER',provider='ICLOUD'
+                 WHERE id='folder'",
+                [],
+            )
+            .is_ok());
+        assert!(connection
+            .execute(
+                "UPDATE watched_folders SET provider='LOCAL' WHERE id='folder'",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "UPDATE watched_folders SET source_type='GOOGLE_DRIVE' WHERE id='folder'",
+                [],
+            )
+            .is_err());
     }
 
     #[test]

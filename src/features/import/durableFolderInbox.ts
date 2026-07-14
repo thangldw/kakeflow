@@ -22,7 +22,7 @@ export function selectFolderInboxHydrationBatch(
 export function attachFolderInboxIdentity(preview: ImportPreview, item: WatchedFileInboxItemDto): ImportPreview {
   return {
     ...preview,
-    sourceType: 'LOCAL_FOLDER',
+    sourceType: item.sourceType,
     folderInboxItemId: item.id,
     watchedFolderId: item.watchedFolderId,
     relativePath: item.relativePath,

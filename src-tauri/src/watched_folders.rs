@@ -22,6 +22,8 @@ pub enum WatchedFolderError {
     InvalidInput,
     #[error("folder is unavailable")]
     FolderUnavailable,
+    #[error("cloud file is not available locally")]
+    CloudFileUnavailable,
     #[error("folder links are not allowed")]
     SymlinkNotAllowed,
     #[error("record was not found")]
@@ -39,11 +41,60 @@ impl WatchedFolderError {
         match self {
             Self::InvalidInput => "Watched folder input is invalid",
             Self::FolderUnavailable => "Selected folder is unavailable",
+            Self::CloudFileUnavailable => "CLOUD_FILE_UNAVAILABLE",
             Self::SymlinkNotAllowed => "Symbolic-link folders are not allowed",
             Self::NotFound => "Watched folder was not found",
             Self::Conflict => "This folder is already watched for the household",
             Self::ScanLimit => "Folder scan exceeded its safety limit",
             Self::Database => "Watched folders are temporarily unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WatchedFolderSourceType {
+    LocalFolder,
+    IcloudPicker,
+}
+
+impl WatchedFolderSourceType {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalFolder => "LOCAL_FOLDER",
+            Self::IcloudPicker => "ICLOUD_PICKER",
+        }
+    }
+
+    fn from_database(value: &str) -> Option<Self> {
+        match value {
+            "LOCAL_FOLDER" => Some(Self::LocalFolder),
+            "ICLOUD_PICKER" => Some(Self::IcloudPicker),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum WatchedFolderProvider {
+    Local,
+    Icloud,
+}
+
+impl WatchedFolderProvider {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "LOCAL",
+            Self::Icloud => "ICLOUD",
+        }
+    }
+
+    fn from_database(value: &str) -> Option<Self> {
+        match value {
+            "LOCAL" => Some(Self::Local),
+            "ICLOUD" => Some(Self::Icloud),
+            _ => None,
         }
     }
 }
@@ -56,6 +107,8 @@ pub struct WatchedFolderDto {
     pub label: String,
     /// A non-sensitive leaf name for display. The absolute path remains native-only.
     pub display_name: String,
+    pub source_type: WatchedFolderSourceType,
+    pub provider: WatchedFolderProvider,
     pub is_enabled: bool,
     pub created_at: String,
 }
@@ -96,6 +149,8 @@ pub(crate) struct EnabledWatchedFolder {
     pub household_id: String,
     pub watched_folder_id: String,
     pub canonical_root: PathBuf,
+    pub source_type: WatchedFolderSourceType,
+    pub provider: WatchedFolderProvider,
 }
 
 pub(crate) fn list_enabled_registrations(
@@ -103,16 +158,20 @@ pub(crate) fn list_enabled_registrations(
 ) -> Result<Vec<EnabledWatchedFolder>, WatchedFolderError> {
     let mut statement = connection
         .prepare(
-            "SELECT household_id, id, canonical_path FROM watched_folders
+            "SELECT household_id, id, canonical_path, source_type, provider FROM watched_folders
              WHERE is_enabled = 1 ORDER BY household_id, id",
         )
         .map_err(|_| WatchedFolderError::Database)?;
     let rows = statement
         .query_map([], |row| {
+            let source_type = parse_source_type(row.get::<_, String>(3)?)?;
+            let provider = parse_provider(row.get::<_, String>(4)?)?;
             Ok(EnabledWatchedFolder {
                 household_id: row.get(0)?,
                 watched_folder_id: row.get(1)?,
                 canonical_root: PathBuf::from(row.get::<_, String>(2)?),
+                source_type,
+                provider,
             })
         })
         .map_err(|_| WatchedFolderError::Database)?;
@@ -176,12 +235,92 @@ pub fn validate_selected_directory(path: &Path) -> Result<PathBuf, WatchedFolder
     Ok(canonical)
 }
 
+/// Returns the locally synchronized iCloud Drive root for the current OS.
+/// The root must already exist; KakeFlow never creates or guesses a cloud
+/// container because that could silently register an unrelated directory.
+pub fn resolve_icloud_root() -> Result<PathBuf, WatchedFolderError> {
+    #[cfg(target_os = "macos")]
+    let candidate = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join("Library/Mobile Documents/com~apple~CloudDocs"));
+
+    #[cfg(target_os = "windows")]
+    let candidate = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|home| home.join("iCloudDrive"));
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let candidate: Option<PathBuf> = None;
+
+    validate_selected_directory(&candidate.ok_or(WatchedFolderError::FolderUnavailable)?)
+}
+
+pub fn validate_icloud_selection(
+    selected_path: &Path,
+    icloud_root: &Path,
+) -> Result<PathBuf, WatchedFolderError> {
+    let canonical_root = validate_selected_directory(icloud_root)?;
+    let canonical_selected = validate_selected_directory(selected_path)?;
+    if !canonical_selected.starts_with(&canonical_root) {
+        return Err(WatchedFolderError::InvalidInput);
+    }
+    Ok(canonical_selected)
+}
+
+pub fn register_icloud(
+    connection: &Connection,
+    household_id: &str,
+    label: &str,
+    selected_path: &Path,
+    icloud_root: &Path,
+) -> Result<WatchedFolderDto, WatchedFolderError> {
+    let canonical_selected = validate_icloud_selection(selected_path, icloud_root)?;
+    register_with_source(
+        connection,
+        household_id,
+        label,
+        &canonical_selected,
+        WatchedFolderSourceType::IcloudPicker,
+        WatchedFolderProvider::Icloud,
+    )
+}
+
 pub fn register(
     connection: &Connection,
     household_id: &str,
     label: &str,
     selected_path: &Path,
 ) -> Result<WatchedFolderDto, WatchedFolderError> {
+    register_with_source(
+        connection,
+        household_id,
+        label,
+        selected_path,
+        WatchedFolderSourceType::LocalFolder,
+        WatchedFolderProvider::Local,
+    )
+}
+
+pub fn register_with_source(
+    connection: &Connection,
+    household_id: &str,
+    label: &str,
+    selected_path: &Path,
+    source_type: WatchedFolderSourceType,
+    provider: WatchedFolderProvider,
+) -> Result<WatchedFolderDto, WatchedFolderError> {
+    if !matches!(
+        (source_type, provider),
+        (
+            WatchedFolderSourceType::LocalFolder,
+            WatchedFolderProvider::Local
+        ) | (
+            WatchedFolderSourceType::IcloudPicker,
+            WatchedFolderProvider::Icloud
+        )
+    ) {
+        return Err(WatchedFolderError::InvalidInput);
+    }
     if !valid_identifier(household_id, MAX_HOUSEHOLD_ID_LEN) {
         return Err(WatchedFolderError::InvalidInput);
     }
@@ -201,9 +340,17 @@ pub fn register(
     }
     connection
         .execute(
-            "INSERT INTO watched_folders (id, household_id, label, canonical_path)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![id, household_id, label, canonical_text],
+            "INSERT INTO watched_folders (
+                 id, household_id, label, canonical_path, source_type, provider
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id,
+                household_id,
+                label,
+                canonical_text,
+                source_type.as_str(),
+                provider.as_str()
+            ],
         )
         .map_err(map_database_error)?;
     get(connection, household_id, &id)?.ok_or(WatchedFolderError::Database)
@@ -218,7 +365,8 @@ pub fn list(
     }
     let mut statement = connection
         .prepare(
-            "SELECT id, household_id, label, canonical_path, is_enabled, created_at
+            "SELECT id, household_id, label, canonical_path, source_type, provider,
+                    is_enabled, created_at
              FROM watched_folders WHERE household_id = ?1
              ORDER BY created_at ASC, id ASC",
         )
@@ -269,13 +417,24 @@ pub fn read_registered_file(
 ) -> Result<WatchedFileDto, WatchedFolderError> {
     validate_lookup(household_id, watched_folder_id)?;
     let relative = validate_relative_path(relative_path)?;
-    let root = registered_root(connection, household_id, watched_folder_id)?;
+    let (root, source_type) =
+        registered_root_with_source(connection, household_id, watched_folder_id)?;
+    let cloud_backed = source_type == WatchedFolderSourceType::IcloudPicker;
     let path = root.join(relative);
     let media_type = supported_media_type(&path).ok_or(WatchedFolderError::InvalidInput)?;
-    let mut file = open_regular_file_bound_to_path(&root, &path)?;
+    let mut file = match open_regular_file_bound_to_path(&root, &path) {
+        Ok(file) => file,
+        Err(
+            error @ (WatchedFolderError::SymlinkNotAllowed | WatchedFolderError::FolderUnavailable),
+        ) if cloud_backed && validate_path_shape(&root, &path).is_ok() => {
+            let _ = error;
+            return Err(WatchedFolderError::CloudFileUnavailable);
+        }
+        Err(error) => return Err(error),
+    };
     let opened_metadata = file
         .metadata()
-        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+        .map_err(|_| cloud_access_error(cloud_backed))?;
     let opened_identity = file_identity(&file, &opened_metadata)?;
     let opened_modified = opened_metadata.modified().ok();
     if opened_metadata.len() > MAX_WATCHED_FILE_BYTES {
@@ -286,7 +445,7 @@ pub fn read_registered_file(
     (&mut file)
         .take(MAX_WATCHED_FILE_BYTES + 1)
         .read_to_end(&mut file_bytes)
-        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+        .map_err(|_| cloud_access_error(cloud_backed))?;
     if file_bytes.len() as u64 > MAX_WATCHED_FILE_BYTES {
         return Err(WatchedFolderError::ScanLimit);
     }
@@ -333,17 +492,35 @@ fn registered_root(
     household_id: &str,
     watched_folder_id: &str,
 ) -> Result<PathBuf, WatchedFolderError> {
-    let stored: Option<String> = connection
+    registered_root_with_source(connection, household_id, watched_folder_id).map(|(root, _)| root)
+}
+
+fn registered_root_with_source(
+    connection: &Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<(PathBuf, WatchedFolderSourceType), WatchedFolderError> {
+    let stored: Option<(String, String)> = connection
         .query_row(
-            "SELECT canonical_path FROM watched_folders
+            "SELECT canonical_path, source_type FROM watched_folders
              WHERE id = ?1 AND household_id = ?2 AND is_enabled = 1",
             params![watched_folder_id, household_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(|_| WatchedFolderError::Database)?;
-    let stored = stored.ok_or(WatchedFolderError::NotFound)?;
-    validate_selected_directory(Path::new(&stored))
+    let (stored_path, stored_source_type) = stored.ok_or(WatchedFolderError::NotFound)?;
+    let source_type = WatchedFolderSourceType::from_database(&stored_source_type)
+        .ok_or(WatchedFolderError::Database)?;
+    validate_selected_directory(Path::new(&stored_path)).map(|root| (root, source_type))
+}
+
+fn cloud_access_error(cloud_backed: bool) -> WatchedFolderError {
+    if cloud_backed {
+        WatchedFolderError::CloudFileUnavailable
+    } else {
+        WatchedFolderError::FolderUnavailable
+    }
 }
 
 fn validate_relative_path(relative_path: &str) -> Result<&Path, WatchedFolderError> {
@@ -698,7 +875,8 @@ fn get(
 ) -> Result<Option<WatchedFolderDto>, WatchedFolderError> {
     connection
         .query_row(
-            "SELECT id, household_id, label, canonical_path, is_enabled, created_at
+            "SELECT id, household_id, label, canonical_path, source_type, provider,
+                    is_enabled, created_at
              FROM watched_folders WHERE household_id = ?1 AND id = ?2",
             params![household_id, id],
             row_to_dto,
@@ -714,13 +892,29 @@ fn row_to_dto(row: &rusqlite::Row<'_>) -> rusqlite::Result<WatchedFolderDto> {
         .and_then(|value| value.to_str())
         .unwrap_or("Selected folder")
         .to_owned();
+    let source_type = parse_source_type(row.get::<_, String>(4)?)?;
+    let provider = parse_provider(row.get::<_, String>(5)?)?;
     Ok(WatchedFolderDto {
         id: row.get(0)?,
         household_id: row.get(1)?,
         label: row.get(2)?,
         display_name,
-        is_enabled: row.get(4)?,
-        created_at: row.get(5)?,
+        source_type,
+        provider,
+        is_enabled: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
+fn parse_source_type(value: String) -> rusqlite::Result<WatchedFolderSourceType> {
+    WatchedFolderSourceType::from_database(&value).ok_or_else(|| {
+        rusqlite::Error::InvalidColumnType(0, "source_type".to_owned(), rusqlite::types::Type::Text)
+    })
+}
+
+fn parse_provider(value: String) -> rusqlite::Result<WatchedFolderProvider> {
+    WatchedFolderProvider::from_database(&value).ok_or_else(|| {
+        rusqlite::Error::InvalidColumnType(0, "provider".to_owned(), rusqlite::types::Type::Text)
     })
 }
 
@@ -861,6 +1055,11 @@ mod tests {
         connection
             .execute_batch(include_str!("../migrations/0008_watched_folders.sql"))
             .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0051_watched_folder_sources.sql"
+            ))
+            .unwrap();
         let watched = register(&connection, "home", "Inbox", &root).unwrap();
 
         assert_eq!(list(&connection, "home").unwrap().len(), 1);
@@ -875,6 +1074,63 @@ mod tests {
         ));
         remove(&connection, "home", &watched.id).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn icloud_registration_requires_a_canonical_descendant_and_persists_provenance() {
+        let icloud_root = temporary_directory();
+        let inbox = icloud_root.join("KakeFlow Inbox");
+        fs::create_dir(&inbox).unwrap();
+        let outside = temporary_directory();
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=ON;
+                 CREATE TABLE households (id TEXT PRIMARY KEY);
+                 INSERT INTO households (id) VALUES ('home');",
+            )
+            .unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0008_watched_folders.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0051_watched_folder_sources.sql"
+            ))
+            .unwrap();
+
+        assert!(matches!(
+            register_icloud(&connection, "home", "iCloud", &outside, &icloud_root),
+            Err(WatchedFolderError::InvalidInput)
+        ));
+        let watched = register_icloud(&connection, "home", "iCloud", &inbox, &icloud_root).unwrap();
+        assert_eq!(watched.source_type, WatchedFolderSourceType::IcloudPicker);
+        assert_eq!(watched.provider, WatchedFolderProvider::Icloud);
+        let enabled = list_enabled_registrations(&connection).unwrap();
+        assert_eq!(
+            enabled[0].source_type,
+            WatchedFolderSourceType::IcloudPicker
+        );
+        assert_eq!(enabled[0].provider, WatchedFolderProvider::Icloud);
+
+        fs::remove_dir_all(icloud_root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn cloud_file_unavailable_has_a_stable_retryable_public_code() {
+        assert_eq!(
+            WatchedFolderError::CloudFileUnavailable.public_message(),
+            "CLOUD_FILE_UNAVAILABLE"
+        );
+        assert!(matches!(
+            cloud_access_error(true),
+            WatchedFolderError::CloudFileUnavailable
+        ));
+        assert!(matches!(
+            cloud_access_error(false),
+            WatchedFolderError::FolderUnavailable
+        ));
     }
 
     #[test]
@@ -902,6 +1158,11 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(include_str!("../migrations/0008_watched_folders.sql"))
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0051_watched_folder_sources.sql"
+            ))
             .unwrap();
         let watched = register(&connection, "home", "Inbox", &root).unwrap();
 

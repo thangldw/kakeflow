@@ -22,6 +22,7 @@ const desktop = vi.hoisted(() => ({
   updateSourceDocumentAudience: vi.fn(),
   listWatchedFolders: vi.fn(),
   selectWatchedFolder: vi.fn(),
+  selectIcloudFolder: vi.fn(),
   removeWatchedFolder: vi.fn(),
   scanWatchedFolder: vi.fn(),
   readWatchedFile: vi.fn(),
@@ -119,6 +120,7 @@ vi.mock('./platform', async () => {
       updateSourceDocumentAudience: desktop.updateSourceDocumentAudience,
       listWatchedFolders: desktop.listWatchedFolders,
       selectWatchedFolder: desktop.selectWatchedFolder,
+      selectIcloudFolder: desktop.selectIcloudFolder,
       removeWatchedFolder: desktop.removeWatchedFolder,
       scanWatchedFolder: desktop.scanWatchedFolder,
       readWatchedFile: desktop.readWatchedFile,
@@ -170,6 +172,7 @@ vi.mock('./platform', async () => {
 })
 
 import App from './App'
+import { PlatformIpcError } from './platform'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
   FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
@@ -263,6 +266,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.confirmReceiptMatch.mockReset().mockResolvedValue({ runId: 'run-1', candidateId: 'candidate-1', transactionId: 'purchase', resolutionStatus: 'LINKED', evidenceCount: 1, runStatus: 'POSTED' })
     desktop.listWatchedFolders.mockReset().mockResolvedValue([])
     desktop.selectWatchedFolder.mockReset().mockResolvedValue(null)
+    desktop.selectIcloudFolder.mockReset().mockResolvedValue(null)
     desktop.removeWatchedFolder.mockReset().mockResolvedValue(undefined)
     desktop.scanWatchedFolder.mockReset().mockResolvedValue({ watchedFolderId: 'folder', files: [] })
     desktop.readWatchedFile.mockReset()
@@ -879,10 +883,10 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('hydrates a durable folder item in the background without exposing its absolute path or posting it', async () => {
-    desktop.listWatchedFolders.mockResolvedValue([{ id: 'folder', householdId: 'family', label: '家計簿 Inbox', displayName: 'KakeFlow', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }])
+    desktop.listWatchedFolders.mockResolvedValue([{ id: 'folder', householdId: 'family', label: '家計簿 Inbox', displayName: 'KakeFlow', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', isEnabled: true, createdAt: '2026-07-12T00:00:00Z' }])
     desktop.scanWatchedFolder.mockResolvedValue({ watchedFolderId: 'folder', files: [{ relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000 }] })
     desktop.readWatchedFile.mockResolvedValue({ relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fileBytes: [97, 44, 98] })
-    const discovered = { id: 'inbox-1', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }
+    const discovered = { id: 'inbox-1', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'PayPay/history.csv', fileName: 'history.csv', mediaType: 'text/csv', byteSize: 3, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }
     desktop.listWatchedFileInbox.mockResolvedValue([discovered])
     desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 1, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
     desktop.claimWatchedFileInboxItems.mockResolvedValue({ leaseToken: 'lease', leaseExpiresAt: '2026-07-12T00:05:00Z', items: [{ ...discovered, state: 'PROCESSING', attemptCount: 1 }] })
@@ -896,6 +900,63 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: 'インポート（1件の確認対象）' }))
     expect(await screen.findByText('history.csv')).toBeInTheDocument()
     expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
+  })
+
+  it('keeps an unavailable iCloud file retryable with its durable failure code', async () => {
+    const discovered = { id: 'icloud-inbox-1', householdId: 'family', watchedFolderId: 'icloud-folder', watchedFolderLabel: 'iCloud Drive Inbox', sourceType: 'ICLOUD_PICKER', provider: 'ICLOUD', relativePath: 'Receipts/placeholder.jpg', fileName: 'placeholder.jpg', mediaType: 'image/jpeg', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z' }
+    desktop.listWatchedFileInbox.mockResolvedValue([discovered])
+    desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 1, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
+    desktop.claimWatchedFileInboxItems.mockResolvedValue({ leaseToken: 'lease', leaseExpiresAt: '2026-07-15T00:05:00Z', items: [{ ...discovered, state: 'PROCESSING', attemptCount: 1 }] })
+    desktop.readWatchedFile.mockRejectedValue(new PlatformIpcError('CLOUD_FILE_UNAVAILABLE', 'watched_folder_file_read'))
+    desktop.markWatchedFileInboxFailed.mockResolvedValue({ ...discovered, state: 'FAILED', attemptCount: 1, lastErrorCode: 'CLOUD_FILE_UNAVAILABLE' })
+
+    render(<App />)
+    await screen.findByText('生協')
+
+    await waitFor(() => expect(desktop.markWatchedFileInboxFailed).toHaveBeenCalledWith('family', 'icloud-inbox-1', 'lease', 'CLOUD_FILE_UNAVAILABLE'))
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
+
+  it('connects a locally synced iCloud Drive folder with progress and provider provenance', async () => {
+    const selected = { id: 'icloud-folder', householdId: 'family', label: 'iCloud Drive Inbox', displayName: '家計簿', sourceType: 'ICLOUD_PICKER', provider: 'ICLOUD', isEnabled: true, createdAt: '2026-07-15T00:00:00Z' }
+    let resolveSelection!: (folder: typeof selected) => void
+    desktop.selectIcloudFolder.mockReturnValue(new Promise((resolve) => { resolveSelection = resolve }))
+    desktop.scanWatchedFolder.mockResolvedValue({ watchedFolderId: 'icloud-folder', files: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const connect = await screen.findByRole('button', { name: 'iCloud Drive を接続' })
+    fireEvent.click(connect)
+    expect(await screen.findByRole('button', { name: 'iCloud Drive を接続中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '同期フォルダーを追加' })).toBeDisabled()
+    resolveSelection(selected)
+    await waitFor(() => expect(desktop.selectIcloudFolder).toHaveBeenCalledWith('family', 'iCloud Drive Inbox'))
+    await waitFor(() => expect(desktop.scanWatchedFolder).toHaveBeenCalledWith('family', 'icloud-folder'))
+    expect(await screen.findByText(/永続 Inbox に接続しました/)).toBeInTheDocument()
+    expect(screen.getByText(/iCloud Drive ・ 家計簿/)).toBeInTheDocument()
+    expect(screen.getByText(/Apple API へ直接接続しません/)).toBeInTheDocument()
+    expect(screen.queryByText(/Mobile Documents|Users|Documents|C:\\/)).not.toBeInTheDocument()
+  })
+
+  it('reports iCloud Drive picker cancellation without registering or scanning a folder', async () => {
+    desktop.selectIcloudFolder.mockResolvedValue(null)
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'iCloud Drive を接続' }))
+    expect(await screen.findByText('iCloud Drive フォルダーの接続をキャンセルしました。')).toBeInTheDocument()
+    expect(desktop.scanWatchedFolder).not.toHaveBeenCalled()
+  })
+
+  it('shows actionable macOS and Windows guidance when iCloud Drive connection fails', async () => {
+    desktop.selectIcloudFolder.mockRejectedValue(new Error('private native path'))
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'iCloud Drive を接続' }))
+    expect(await screen.findByText(/macOS または Windows の iCloud Drive がローカルに同期済みか確認/)).toBeInTheDocument()
+    expect(screen.queryByText('private native path')).not.toBeInTheDocument()
   })
 
   it('recovers a manually staged review after restart and commits it exactly once', async () => {
@@ -1078,7 +1139,7 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('rehydrates a staged folder review whenever Import Inbox remounts and never auto-posts it', async () => {
-    const stagedItem = { id: 'inbox-staged', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' }
+    const stagedItem = { id: 'inbox-staged', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: '家計簿 Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'STAGED', attemptCount: 2, importRunId: 'run-1', lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:02:00Z' }
     desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-12T00:01:00Z', sourceType: 'LOCAL_FOLDER', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: '2026-07-12T00:00:01Z', recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW' }] })
     desktop.listWatchedFileInbox.mockResolvedValue([stagedItem])
     desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 0, processing: 0, ready: 0, needsMapping: 0, staged: 1, failed: 0, ignored: 0, removed: 0, actionable: 0, total: 1 })
@@ -1102,7 +1163,7 @@ describe('KakeFlow desktop read models', () => {
 
   it('keeps auto-preview off while still exposing an app-wide actionable Inbox badge', async () => {
     localStorage.setItem('kakeflow.folder-auto-scan', 'off')
-    const discovered = { id: 'inbox-off', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }
+    const discovered = { id: 'inbox-off', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:00:00Z' }
     desktop.listWatchedFileInbox.mockResolvedValue([discovered])
     desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 1, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
     render(<App />)
@@ -1116,7 +1177,7 @@ describe('KakeFlow desktop read models', () => {
     localStorage.setItem('kakeflow.folder-auto-scan', 'off')
     const csv = '日付,摘要,支払い金額,預かり金額,差引残高\n2026/07/12,STORE,1200,,10000'
     const bytes = [...new TextEncoder().encode(csv)]
-    const ready = { id: 'inbox-ready', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: bytes.length, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }
+    const ready = { id: 'inbox-ready', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Inbox', sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'bank.csv', fileName: 'bank.csv', mediaType: 'text/csv', byteSize: bytes.length, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'READY', attemptCount: 1, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-12T00:00:00Z', updatedAt: '2026-07-12T00:01:00Z' }
     desktop.listWatchedFileInbox.mockResolvedValue([ready])
     desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 0, processing: 0, ready: 1, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
     desktop.claimWatchedFileInboxItems.mockImplementation(async () => ({ leaseToken: 'lease', leaseExpiresAt: '2026-07-12T00:05:00Z', items: [{ ...ready, state: 'PROCESSING', attemptCount: 2 }] }))
