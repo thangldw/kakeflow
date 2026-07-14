@@ -74,4 +74,18 @@ describe('CaptureInboxPage', () => {
     expect(process).toHaveBeenCalledWith(received)
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' }); expect(close).toHaveBeenCalledOnce()
   })
+
+  it('requires explicit opt-in and keeps background intake separate from OCR', () => {
+    const enable = vi.fn(); const run = vi.fn(); const disable = vi.fn(); const ocr = vi.fn()
+    const { rerender } = render(<CaptureInboxPage householdId="household" items={[]} loading={false} busyArtifactId={null} token="token" preview={null} previewBusy={false} notice={null}
+      background={null} backgroundInterval={30} backgroundBusy={false} onBackgroundIntervalChange={vi.fn()} onEnableBackground={enable} onDisableBackground={disable} onRunBackgroundNow={run}
+      onTokenChange={vi.fn()} onPreview={vi.fn()} onClosePreview={vi.fn()} onRefresh={vi.fn()} onProcess={ocr} onOpenImport={vi.fn()} onRetry={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '自動受信を有効にする' })); expect(enable).toHaveBeenCalledOnce(); expect(ocr).not.toHaveBeenCalled()
+    rerender(<CaptureInboxPage householdId="household" items={[]} loading={false} busyArtifactId={null} token="" preview={null} previewBusy={false} notice={null}
+      background={{ householdId: 'household', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-15T02:00:00Z', running: false, leaseExpiresAt: null, lastAttemptAt: null, lastSuccessAt: null, lastResult: 'NEVER', lastIngestedCount: 0, consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-15T01:00:00Z' }} backgroundInterval={30} backgroundBusy={false} onBackgroundIntervalChange={vi.fn()} onEnableBackground={enable} onDisableBackground={disable} onRunBackgroundNow={run}
+      onTokenChange={vi.fn()} onPreview={vi.fn()} onClosePreview={vi.fn()} onRefresh={vi.fn()} onProcess={ocr} onOpenImport={vi.fn()} onRetry={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '今すぐ確認' })); fireEvent.click(screen.getByRole('button', { name: '自動受信を停止' }))
+    expect(run).toHaveBeenCalledOnce(); expect(disable).toHaveBeenCalledOnce(); expect(ocr).not.toHaveBeenCalled()
+    expect(screen.getByText(/OCR、分類、取引照合、台帳反映は自動実行しません/)).toBeInTheDocument()
+  })
 })

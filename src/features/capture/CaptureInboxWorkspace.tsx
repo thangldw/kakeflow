@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { buildReceiptImport } from '../import/receiptText'
 import { sha256Text } from '../import/importService'
 import { platformClient } from '../../platform'
-import type { AccountDto, MobileCaptureImagePreviewDto, MobileCaptureInboxItemDto } from '../../platform'
+import type { AccountDto, MobileCaptureBackgroundStatusDto, MobileCaptureImagePreviewDto, MobileCaptureInboxItemDto } from '../../platform'
 import { CaptureInboxPage } from './CaptureInboxPage'
 import { downloadRemoteMobileCapture, listRemoteMobileCaptures, MobileCaptureHttpError } from './mobileCaptureHttp'
 
@@ -24,6 +24,9 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
   const [loading, setLoading] = useState(false)
   const [busyArtifactId, setBusyArtifactId] = useState<string | null>(null)
   const [token, setToken] = useState('')
+  const [background, setBackground] = useState<MobileCaptureBackgroundStatusDto | null>(null)
+  const [backgroundInterval, setBackgroundInterval] = useState<15 | 30 | 60>(30)
+  const [backgroundBusy, setBackgroundBusy] = useState(false)
   const [preview, setPreview] = useState<{ readonly item: MobileCaptureInboxItemDto; readonly image: MobileCaptureImagePreviewDto } | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
   const [notice, setNotice] = useState<Notice>(null)
@@ -42,7 +45,53 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
     } finally { if (current === request.current) setLoading(false) }
   }, [householdId])
 
-  useEffect(() => { setItems([]); setNotice(null); setBusyArtifactId(null); setToken(''); setPreview(null); void loadLocal() }, [loadLocal])
+  const loadBackground = useCallback(async () => {
+    if (!householdId || platformClient.runtime !== 'tauri') { setBackground(null); return }
+    try {
+      const next = await platformClient.getMobileCaptureBackgroundStatus(householdId)
+      setBackground(next)
+      setBackgroundInterval(next.intervalMinutes as 15 | 30 | 60)
+    } catch { setBackground(null) }
+  }, [householdId])
+
+  useEffect(() => { setItems([]); setNotice(null); setBusyArtifactId(null); setToken(''); setPreview(null); void loadLocal(); void loadBackground() }, [loadBackground, loadLocal])
+  useEffect(() => {
+    if (!background?.enabled) return
+    const timer = globalThis.setInterval(() => { void loadBackground(); void loadLocal() }, 15_000)
+    return () => globalThis.clearInterval(timer)
+  }, [background?.enabled, loadBackground, loadLocal])
+
+  const enableBackground = async () => {
+    if (!householdId || !token || backgroundBusy) return
+    setBackgroundBusy(true); setNotice(null)
+    try {
+      const next = await platformClient.enableMobileCaptureBackground({ householdId, token, intervalMinutes: backgroundInterval })
+      setBackground(next); setToken('')
+      setNotice({ kind: 'status', text: 'KakeFlowを開いている間の自動受信を有効にしました。画像の保存だけを行い、OCRや台帳反映は行いません。' })
+    } catch { setNotice({ kind: 'error', text: '自動受信を有効にできませんでした。接続トークンと家族スペースを確認してください。' }) }
+    finally { setBackgroundBusy(false) }
+  }
+
+  const disableBackground = async () => {
+    if (!householdId || backgroundBusy) return
+    setBackgroundBusy(true); setNotice(null)
+    try {
+      setBackground(await platformClient.disableMobileCaptureBackground(householdId))
+      setNotice({ kind: 'status', text: '自動受信を停止しました。受信済みの原本画像は削除していません。' })
+    } catch { setNotice({ kind: 'error', text: '自動受信を停止できませんでした。もう一度お試しください。' }) }
+    finally { setBackgroundBusy(false) }
+  }
+
+  const runBackgroundNow = async () => {
+    if (!householdId || backgroundBusy) return
+    setBackgroundBusy(true); setNotice({ kind: 'status', text: '原本画像を確認しています。OCRと台帳反映は行いません。' })
+    try {
+      const next = await platformClient.runMobileCaptureBackgroundNow(householdId)
+      setBackground(next); await loadLocal()
+      setNotice({ kind: 'status', text: next.lastIngestedCount ? `${next.lastIngestedCount}件の原本画像を保存しました。OCRはまだ行っていません。` : '新しい原本画像はありません。' })
+    } catch { await loadBackground(); setNotice({ kind: 'error', text: '自動受信を完了できませんでした。状態を確認して再試行してください。' }) }
+    finally { setBackgroundBusy(false) }
+  }
 
   const openPreview = async (item: MobileCaptureInboxItemDto) => {
     if (!householdId || previewBusy) return
@@ -131,5 +180,7 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
   }
 
   return <CaptureInboxPage householdId={householdId} items={items} loading={loading} busyArtifactId={busyArtifactId} token={token} preview={preview} previewBusy={previewBusy} notice={notice}
+    background={background} backgroundInterval={backgroundInterval} backgroundBusy={backgroundBusy}
+    onBackgroundIntervalChange={setBackgroundInterval} onEnableBackground={() => void enableBackground()} onDisableBackground={() => void disableBackground()} onRunBackgroundNow={() => void runBackgroundNow()}
     onTokenChange={setToken} onPreview={(item) => void openPreview(item)} onClosePreview={() => setPreview(null)} onRefresh={() => void receive()} onProcess={(item) => void process(item)} onOpenImport={onOpenImport} onRetry={(item) => void process(item)} />
 }

@@ -41,4 +41,31 @@ describe('mobile capture platform client', () => {
     await expect(client.promoteMobileCapture({ householdId: 'family', artifactId: 'artifact-1', extractionId: 'extract-1', import: {} as never })).resolves.toMatchObject({ item: { state: 'PROMOTED' }, reusedExisting: false })
     expect(invoke.mock.calls.map(([command]) => command)).toEqual(['mobile_capture_ocr', 'mobile_capture_promote'])
   })
+
+  it('uses strict native contracts for explicit background intake controls', async () => {
+    const schedule = {
+      householdId: 'family', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-15T01:30:00Z', running: false, leaseExpiresAt: null,
+      lastAttemptAt: '2026-07-15T01:00:00Z', lastSuccessAt: '2026-07-15T01:00:01Z', lastResult: 'INGESTED', lastIngestedCount: 2,
+      consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-15T01:00:01Z',
+    }
+    const invoke = vi.fn().mockResolvedValue(schedule); const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.getMobileCaptureBackgroundStatus('family')).resolves.toEqual(schedule)
+    await client.enableMobileCaptureBackground({ householdId: 'family', token: 'secret', intervalMinutes: 30 })
+    await client.runMobileCaptureBackgroundNow('family'); await client.disableMobileCaptureBackground('family')
+    expect(invoke.mock.calls).toEqual([
+      ['mobile_capture_background_status', { householdId: 'family' }],
+      ['mobile_capture_background_enable', { input: { householdId: 'family', token: 'secret', intervalMinutes: 30 } }],
+      ['mobile_capture_background_run_now', { householdId: 'family' }],
+      ['mobile_capture_background_disable', { householdId: 'family' }],
+    ])
+  })
+
+  it('rejects impossible background lease state at the webview boundary', async () => {
+    const client = createPlatformClient({ tauri: true, invoke: vi.fn().mockResolvedValue({
+      householdId: 'family', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-15T01:30:00Z', running: false,
+      leaseExpiresAt: '2026-07-15T01:02:00Z', lastAttemptAt: null, lastSuccessAt: null, lastResult: 'RUNNING', lastIngestedCount: 0,
+      consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-15T01:00:00Z',
+    }) })
+    await expect(client.getMobileCaptureBackgroundStatus('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'mobile_capture_background_status' })
+  })
 })

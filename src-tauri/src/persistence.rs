@@ -126,6 +126,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0051_watched_folder_sources.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0052_mobile_capture_background.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;

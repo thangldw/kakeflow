@@ -144,7 +144,44 @@ pub fn ingest(
     if stored.sha256 != parsed.manifest.image_sha256 {
         return Err(MobileCaptureError::InvalidCapsule);
     }
-    let result = insert_receipt(connection, input, &parsed);
+    let result = insert_receipt(connection, input, &parsed, None);
+    if result.is_err() && !stored.deduplicated {
+        let _ = vault.delete(&stored.sha256);
+    }
+    result
+}
+
+/// Background intake stores the immutable receipt rows and advances the
+/// capture cursor in the same SQLite transaction. The vault object is written
+/// first; a failed database publication removes a newly created object.
+pub fn ingest_with_cursor(
+    connection: &Connection,
+    vault: &DocumentVault,
+    input: &IngestMobileCaptureInput,
+    next_cursor: u64,
+) -> Result<MobileCaptureInboxItemDto> {
+    validate_ingest(input)?;
+    let parsed = mobile_capture_capsule::parse(&input.capsule_bytes)
+        .map_err(|_| MobileCaptureError::InvalidCapsule)?;
+    if parsed.capsule_sha256 != input.claimed_digest
+        || parsed.manifest.household_id != input.household_id
+        || parsed.manifest.origin_device_id != input.origin_device_id
+        || parsed.manifest.audience.visibility != input.audience_visibility
+        || parsed.manifest.audience.member_id != input.audience_member_id
+    {
+        return Err(MobileCaptureError::InvalidCapsule);
+    }
+    if let Some(item) = existing_exact(connection, input, &parsed)? {
+        advance_cursor(connection, &input.household_id, next_cursor)?;
+        return Ok(item);
+    }
+    let stored = vault
+        .put(&parsed.image_bytes, &parsed.manifest.media_type)
+        .map_err(|_| MobileCaptureError::Vault)?;
+    if stored.sha256 != parsed.manifest.image_sha256 {
+        return Err(MobileCaptureError::InvalidCapsule);
+    }
+    let result = insert_receipt(connection, input, &parsed, Some(next_cursor));
     if result.is_err() && !stored.deduplicated {
         let _ = vault.delete(&stored.sha256);
     }
@@ -155,6 +192,7 @@ fn insert_receipt(
     connection: &Connection,
     input: &IngestMobileCaptureInput,
     parsed: &ParsedMobileCapture,
+    next_cursor: Option<u64>,
 ) -> Result<MobileCaptureInboxItemDto> {
     let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .map_err(|_| MobileCaptureError::Database)?;
@@ -174,8 +212,24 @@ fn insert_receipt(
         params![input.household_id, input.artifact_id],
     )
     .map_err(|_| MobileCaptureError::Database)?;
+    if let Some(next_cursor) = next_cursor {
+        let next = i64::try_from(next_cursor).map_err(|_| MobileCaptureError::InvalidInput)?;
+        let changed = tx.execute("UPDATE family_delivery_connections SET capture_inbound_cursor=?2,last_checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1 AND state!='DISCONNECTED' AND capture_inbound_cursor<=?2",params![input.household_id,next]).map_err(|_|MobileCaptureError::Database)?;
+        if changed != 1 {
+            return Err(MobileCaptureError::InvalidState);
+        }
+    }
     tx.commit().map_err(|_| MobileCaptureError::Database)?;
     get(connection, &input.household_id, &input.artifact_id)
+}
+
+fn advance_cursor(connection: &Connection, household_id: &str, next_cursor: u64) -> Result<()> {
+    let next = i64::try_from(next_cursor).map_err(|_| MobileCaptureError::InvalidInput)?;
+    let changed=connection.execute("UPDATE family_delivery_connections SET capture_inbound_cursor=?2,last_checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1 AND state!='DISCONNECTED' AND capture_inbound_cursor<=?2",params![household_id,next]).map_err(|_|MobileCaptureError::Database)?;
+    if changed != 1 {
+        return Err(MobileCaptureError::InvalidState);
+    }
+    Ok(())
 }
 
 fn existing_exact(
@@ -207,7 +261,7 @@ pub fn list(connection: &Connection, household_id: &str) -> Result<Vec<MobileCap
     valid_id(household_id)?;
     let mut statement = connection
         .prepare(&format!(
-            "{} ORDER BY receipt.received_at DESC,receipt.artifact_id LIMIT {}",
+            "{} WHERE receipt.household_id=?1 ORDER BY receipt.received_at DESC,receipt.artifact_id LIMIT {}",
             SELECT_ITEM,
             MAX_INBOX_ITEMS + 1
         ))

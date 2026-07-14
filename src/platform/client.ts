@@ -28,6 +28,7 @@ import type {
   FamilyDeliveryStatusDto,
   FamilyDeliveryPreparedArtifactDto,
   FamilyDeliveryScheduleStatusDto,
+  MobileCaptureBackgroundStatusDto,
   FamilyEnvelopePublicIdentityDto,
   SealFamilyEnvelopeOutputDto,
   PreparedFamilyEnvelopeOutputDto,
@@ -182,6 +183,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       enableFamilyDeliveryBackground: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_enable') },
       disableFamilyDeliveryBackground: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_disable') },
       runFamilyDeliveryBackgroundNow: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_background_run_now') },
+      getMobileCaptureBackgroundStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_background_status') },
+      enableMobileCaptureBackground: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_background_enable') },
+      disableMobileCaptureBackground: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_background_disable') },
+      runMobileCaptureBackgroundNow: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_background_run_now') },
       getActiveFamilySnapshotReview: async () => null,
       resolveFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_resolve') },
       applyFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_apply') },
@@ -315,6 +320,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     enableFamilyDeliveryBackground: (input) => invokeValidated(invoke, 'family_delivery_background_enable', parseFamilyDeliveryScheduleStatus, { input }),
     disableFamilyDeliveryBackground: (householdId) => invokeValidated(invoke, 'family_delivery_background_disable', parseFamilyDeliveryScheduleStatus, { householdId }),
     runFamilyDeliveryBackgroundNow: (householdId) => invokeValidated(invoke, 'family_delivery_background_run_now', parseFamilyDeliveryScheduleStatus, { householdId }),
+    getMobileCaptureBackgroundStatus: (householdId) => invokeValidated(invoke, 'mobile_capture_background_status', parseMobileCaptureBackgroundStatus, { householdId }),
+    enableMobileCaptureBackground: (input) => invokeValidated(invoke, 'mobile_capture_background_enable', parseMobileCaptureBackgroundStatus, { input }),
+    disableMobileCaptureBackground: (householdId) => invokeValidated(invoke, 'mobile_capture_background_disable', parseMobileCaptureBackgroundStatus, { householdId }),
+    runMobileCaptureBackgroundNow: (householdId) => invokeValidated(invoke, 'mobile_capture_background_run_now', parseMobileCaptureBackgroundStatus, { householdId }),
     getActiveFamilySnapshotReview: (householdId) => invokeValidated(invoke, 'family_snapshot_active_review', parseNullableFamilySnapshotReview, { householdId }),
     resolveFamilySnapshot: (packageId, resolutions) => invokeValidated(invoke, 'family_snapshot_resolve', parseFamilySnapshotReview, { packageId, resolutions }),
     applyFamilySnapshot: (packageId) => invokeValidated(invoke, 'family_snapshot_apply', parseFamilySnapshotReview, { packageId }),
@@ -669,6 +678,37 @@ function parseFamilyDeliveryScheduleStatus(value: unknown): FamilyDeliverySchedu
     nextDueAt, running: record.running, leaseExpiresAt, lastAttemptAt, lastSuccessAt,
     lastResult: record.lastResult as FamilyDeliveryScheduleStatusDto['lastResult'],
     lastDiscoveredCount: asSafeInteger(record.lastDiscoveredCount),
+    consecutiveFailures: asSafeInteger(record.consecutiveFailures), suspendedUntil,
+    suspensionReason, lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+const MOBILE_CAPTURE_BACKGROUND_RESULTS = new Set(['NEVER', 'DISABLED', 'RUNNING', 'NO_CHANGES', 'INGESTED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED'])
+
+function parseMobileCaptureBackgroundStatus(value: unknown): MobileCaptureBackgroundStatusDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean'
+      || !MOBILE_CAPTURE_BACKGROUND_RESULTS.has(String(record.lastResult))) throw new TypeError('mobile capture background schedule')
+  const intervalMinutes = asSafeInteger(record.intervalMinutes)
+  if (![15, 30, 60].includes(intervalMinutes)) throw new TypeError('mobile capture background interval')
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
+  const leaseExpiresAt = record.leaseExpiresAt === null ? null : asIsoTimestamp(record.leaseExpiresAt)
+  const lastAttemptAt = record.lastAttemptAt === null ? null : asIsoTimestamp(record.lastAttemptAt)
+  const lastSuccessAt = record.lastSuccessAt === null ? null : asIsoTimestamp(record.lastSuccessAt)
+  const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = asNullableStrictString(record.suspensionReason)
+  const lastErrorCode = asNullableStrictString(record.lastErrorCode)
+  if ((record.running !== true) !== (leaseExpiresAt === null) || (record.running === true) !== (record.lastResult === 'RUNNING')) {
+    throw new TypeError('mobile capture background lease')
+  }
+  if (!record.enabled && (record.running || nextDueAt !== null || record.lastResult !== 'DISABLED')) {
+    throw new TypeError('mobile capture background disabled schedule')
+  }
+  return {
+    householdId: asRequiredString(record.householdId), enabled: record.enabled, intervalMinutes,
+    nextDueAt, running: record.running, leaseExpiresAt, lastAttemptAt, lastSuccessAt,
+    lastResult: record.lastResult as MobileCaptureBackgroundStatusDto['lastResult'],
+    lastIngestedCount: asSafeInteger(record.lastIngestedCount),
     consecutiveFailures: asSafeInteger(record.consecutiveFailures), suspendedUntil,
     suspensionReason, lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
   }
