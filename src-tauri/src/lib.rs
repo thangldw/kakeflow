@@ -25,6 +25,7 @@ pub mod fixed_cost_review;
 mod folder_discovery;
 pub mod forecast_action;
 pub mod google_drive_credentials;
+pub mod google_drive_folder;
 pub mod google_drive_oauth;
 pub mod import_workflow;
 pub mod investment_fx;
