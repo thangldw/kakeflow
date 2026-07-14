@@ -48,6 +48,12 @@ export interface PortfolioSnapshotXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface PortfolioSnapshotPdfSavedDto {
+  readonly fileName: string
+  readonly pageCount: number
+  readonly byteSize: number
+}
+
 export type PortfolioInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function mapPortfolioSnapshotImport(candidate: PortfolioSnapshotCandidate, context: PortfolioImportContext): ImportPortfolioSnapshotDto {
@@ -78,6 +84,10 @@ export function createPortfolioPlatform(invoke: PortfolioInvoke = tauriInvoke) {
       const value = await invoke('portfolio_snapshot_xlsx_save', { request })
       return value === null ? null : parseSnapshotXlsxSaved(value)
     },
+    saveSnapshotPdf: async (request: PortfolioSnapshotXlsxRequest): Promise<PortfolioSnapshotPdfSavedDto | null> => {
+      const value = await invoke('portfolio_snapshot_pdf_save', { request })
+      return value === null ? null : parseSnapshotPdfSaved(value)
+    },
   }
 }
 
@@ -88,6 +98,15 @@ function parseSnapshotXlsxSaved(value: unknown): PortfolioSnapshotXlsxSavedDto {
   if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('portfolio snapshot XLSX filename')
   if ((item.rowCount as number) <= 0 || (item.byteSize as number) <= 0) throw new TypeError('portfolio snapshot XLSX summary')
   return item as unknown as PortfolioSnapshotXlsxSavedDto
+}
+
+function parseSnapshotPdfSaved(value: unknown): PortfolioSnapshotPdfSavedDto {
+  const item = record(value)
+  if (typeof item.fileName !== 'string' || !Number.isSafeInteger(item.pageCount) || !Number.isSafeInteger(item.byteSize)) throw new TypeError('portfolio snapshot PDF summary')
+  const fileName = item.fileName
+  if (fileName.length === 0 || fileName.length > 255 || !/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('portfolio snapshot PDF filename')
+  if ((item.pageCount as number) <= 0 || (item.byteSize as number) <= 0) throw new TypeError('portfolio snapshot PDF summary')
+  return item as unknown as PortfolioSnapshotPdfSavedDto
 }
 
 function parseSummary(value: unknown): PortfolioSnapshotSummaryDto {
