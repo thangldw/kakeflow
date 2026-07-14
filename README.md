@@ -4,6 +4,14 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
+Version 0.80 is the current stable desktop milestone. It adds a native
+[iCloud Drive durable inbox](docs/ICLOUD_DRIVE_INBOX.md) for explicitly selected
+locally synced folders and a crash-safe
+[mobile capture queue](docs/DURABLE_MOBILE_CAPTURE_QUEUE.md) that retains exact
+capsule bytes across bounded retries. The next development batch is 0.90;
+intermediate features are tested and pushed individually, while packaging and
+the complete release audit run once at the milestone.
+
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 
 Version 0.72 adds a source-auditable Investment Performance PDF using the same annual period, optional securities-account scope, FIFO engine, native-currency totals, allocations, and exceptions as the screen and [investment workbook](docs/INVESTMENT_PERFORMANCE_XLSX.md). It keeps JPY, USD, and other currencies separate, carries available Source Document/Row lineage, and explicitly avoids invented FX totals, ROI/TWR/IRR, valuation, unrealized, allocation, return, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for monthly, annual, and investment-performance PDFs before release.
@@ -171,6 +179,12 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 
 ## Current capabilities
 
+- Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
+  for the official Shift_JIS business-account record family, with exact
+  header/detail/footer/final validation, totals and running-balance
+  reconciliation in either source order, immutable row provenance, explicit
+  bank-account mapping, and no automatic posting. This does not claim support
+  for personal MUFG Direct exports.
 - Opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md) at a persisted 15, 30, or 60 minute interval while the desktop process is open. The native worker refreshes the authenticated household/membership and local public-key registration, records only inbound publication metadata as `AVAILABLE`, uses bounded leases and retry backoff, and suspends for explicit reauthorization after terminal credential or membership failures. Sending, artifact download, `KFE1` decryption, review, and atomic Apply remain manual.
 - Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
 - [Audience-partitioned family schema v3](docs/FAMILY_EVIDENCE_DELIVERY.md) for the core graph, complete planning/configuration aggregates, and seven evidence-backed card/investment aggregates. The binary KFF3 envelope carries origin-qualified immutable documents and raw rows in the same least-widening audience partition, discloses exact included/withheld coverage, preserves V1/V2 compatibility, and materializes evidence only inside one explicit atomic apply.
