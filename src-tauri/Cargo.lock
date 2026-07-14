@@ -2409,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "kakeflow"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",

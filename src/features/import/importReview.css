@@ -1,0 +1,21 @@
+.posting-entry-editor,.receipt-review-panel { grid-column: 1 / -1; display: grid; gap: 10px; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbf8; }
+.posting-entry-editor > header,.receipt-review-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.posting-entry-editor header small,.receipt-review-panel header small { display: block; margin-top: 2px; color: var(--muted); }
+.receipt-review-panel header b { padding: 4px 7px; border-radius: 6px; color: #587754; background: #e6efe2; }
+.posting-entry-list { display: grid; gap: 6px; }
+.posting-entry-row { display: grid; grid-template-columns: 24px 90px minmax(190px,1fr) minmax(110px,.45fr) auto; align-items: center; gap: 7px; }
+.posting-entry-row input,.posting-entry-row select,.receipt-item-table select { min-height: 34px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: #fff; color: var(--ink); }
+.posting-entry-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.posting-entry-footer > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 14px; color: var(--muted); font-weight: 700; }
+.posting-entry-error,.receipt-split-notice { margin: 0; padding: 9px 11px; border-radius: 8px; color: #8a5c26; background: #fff5e3; line-height: 1.5; }
+.receipt-item-table { display: grid; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.receipt-item-table > div { display: grid; grid-template-columns: minmax(150px,1.4fr) 65px 55px 90px minmax(150px,1fr); align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--line); }
+.receipt-item-table > div:first-child { border-top: 0; }
+.receipt-item-heading { color: var(--muted); background: #f1f4ee; font-weight: 800; }
+.receipt-item-table strong { text-align: right; }
+.receipt-item-table span:first-child small { display: block; margin-top: 2px; color: var(--muted); }
+.receipt-review-summary { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px 14px; margin: 0; }
+.receipt-review-summary div { display: flex; gap: 5px; }.receipt-review-summary dt { color: var(--muted); }.receipt-review-summary dd { margin: 0; font-weight: 800; }
+.receipt-adjustment-evidence { display: grid; gap: 3px; color: var(--muted); }
+.receipt-review-panel > button { justify-self: end; }
+@media (max-width: 900px) { .posting-entry-row { grid-template-columns: 24px 80px minmax(150px,1fr); }.posting-entry-row input,.posting-entry-row button { grid-column: auto; }.receipt-item-table { overflow-x: auto; }.receipt-item-table > div { min-width: 680px; } }

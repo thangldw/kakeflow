@@ -8,12 +8,15 @@ export interface ReceiptTextFields {
   readonly issues: readonly string[]
   readonly items: readonly ReceiptItemEvidence[]
   readonly taxes: readonly ReceiptTaxEvidence[]
+  readonly couponEvidence: readonly ReceiptAdjustmentEvidence[]
+  readonly pointsUsedEvidence: readonly ReceiptAdjustmentEvidence[]
   readonly couponAmountJpy: number | null
   readonly pointsUsedJpy: number | null
   readonly subtotalJpy: number | null
   readonly changeJpy: number | null
   readonly paymentMethod: string | null
   readonly taxMode: 'INCLUDED' | 'EXCLUDED' | 'MIXED' | null
+  readonly reconciliation: ReceiptReconciliationEvidence
 }
 
 export interface ReceiptEvidenceProvenance {
@@ -26,8 +29,23 @@ export interface ReceiptItemEvidence {
   readonly description: string
   readonly quantity: number | null
   readonly amountJpy: number
+  readonly taxRatePercent: 8 | 10 | null
   readonly confidenceBps: number
   readonly provenance: ReceiptEvidenceProvenance
+}
+
+export interface ReceiptAdjustmentEvidence {
+  readonly amountJpy: number | null
+  readonly confidenceBps: number
+  readonly provenance: ReceiptEvidenceProvenance
+}
+
+export interface ReceiptReconciliationEvidence {
+  readonly status: 'EXACT' | 'DELTA' | 'NO_ITEMS'
+  readonly itemTotalJpy: number | null
+  readonly totalAmountJpy: number | null
+  /** Item total minus the extracted receipt total. No tax/discount allocation is inferred. */
+  readonly deltaJpy: number | null
 }
 
 export interface ReceiptTaxEvidence {
@@ -83,23 +101,47 @@ export function parseReceiptText(text: string): ReceiptTextFields {
       provenance: provenance(lineNumber),
     }]
   })
-  const adjustmentAmount = (pattern: RegExp) => {
-    const line = lines.find(({ text: value }) => pattern.test(value))
-    return line ? parseLineAmount(line.text) : null
+  const adjustmentEvidence = (pattern: RegExp): ReceiptAdjustmentEvidence[] => lines.flatMap(({ text: line, lineNumber }) => {
+    if (!pattern.test(line)) return []
+    const amountJpy = parseLineAmount(line)
+    return [{ amountJpy, confidenceBps: amountJpy === null ? 5000 : 8500, provenance: provenance(lineNumber) }]
+  })
+  const adjustmentTotal = (evidence: readonly ReceiptAdjustmentEvidence[]) => {
+    const amounts = evidence.flatMap((item) => item.amountJpy === null ? [] : [item.amountJpy])
+    if (amounts.length === 0) return null
+    const total = amounts.reduce((sum, amount) => sum + amount, 0)
+    return Number.isSafeInteger(total) ? total : null
   }
-  const couponAmountJpy = adjustmentAmount(/(?:クーポン|値引|割引|COUPON)/i)
-  const pointsUsedJpy = adjustmentAmount(/(?:ポイント利用|ポイント使用|POINTS?\s*(?:USED|REDEEMED))/i)
-  const subtotalJpy = adjustmentAmount(/(?:小計|税抜合計|SUBTOTAL)/i)
-  const changeJpy = adjustmentAmount(/(?:お釣り|おつり|釣銭|CHANGE)/i)
+  const couponEvidence = adjustmentEvidence(/(?:クーポン|値引|割引|COUPON)/i)
+  const pointsUsedEvidence = adjustmentEvidence(/(?:ポイント利用|ポイント使用|POINTS?\s*(?:USED|REDEEMED))/i)
+  const couponAmountJpy = adjustmentTotal(couponEvidence)
+  const pointsUsedJpy = adjustmentTotal(pointsUsedEvidence)
+  const singleAdjustmentAmount = (pattern: RegExp) => adjustmentEvidence(pattern)[0]?.amountJpy ?? null
+  const subtotalJpy = singleAdjustmentAmount(/(?:小計|税抜合計|SUBTOTAL)/i)
+  const changeJpy = singleAdjustmentAmount(/(?:お釣り|おつり|釣銭|CHANGE)/i)
   const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
   const paymentMethod = paymentLine.match(/(PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金)/i)?.[1] ?? null
   const hasIncludedTax = lines.some(({ text: value }) => /(?:内税|税込)/.test(value))
   const hasExcludedTax = lines.some(({ text: value }) => /(?:外税|税抜)/.test(value))
   const taxMode = hasIncludedTax && hasExcludedTax ? 'MIXED' : hasIncludedTax ? 'INCLUDED' : hasExcludedTax ? 'EXCLUDED' : null
+  const markerRates = new Map<string, 8 | 10>()
+  for (const { text: line } of lines) {
+    const marker = line.match(/([*※◇◆])\s*(?:は|:|=)?\s*(?:(?:軽減税率|8\s*%)|10\s*%)/)
+    if (marker) markerRates.set(marker[1], /10\s*%/.test(marker[0]) ? 10 : 8)
+  }
   const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り|おつり|釣銭|CHANGE|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|交通系|領収|レシート|登録番号|TEL|電話)/i
   const items: ReceiptItemEvidence[] = lines.flatMap(({ text: line, lineNumber }) => {
     if (nonItem.test(line) || /(20\d{2})[/.年-]/.test(line)) return []
-    const match = line.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?(?:\s*[*※])?$/)
+    const explicitRate = line.match(/(?:^|\s|\()(8|10)\s*%(?:\)|\s|$)/)
+    const mappedMarker = [...markerRates.entries()].find(([marker]) => line.includes(marker))?.[1] ?? null
+    const taxRatePercent = explicitRate ? Number(explicitRate[1]) as 8 | 10 : /(?:^|\s)軽(?:\s|$)/.test(line) ? 8 : mappedMarker
+    const normalizedItemLine = line
+      .replace(/\(?\s*(?:8|10)\s*%\s*\)?/g, ' ')
+      .replace(/(?:^|\s)軽(?=\s|$)/g, ' ')
+      .replace(/[＊*※◇◆]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const match = normalizedItemLine.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?$/)
     if (!match) return []
     const amount = Number(match[2].replaceAll(',', ''))
     if (!Number.isSafeInteger(amount) || amount <= 0) return []
@@ -115,6 +157,7 @@ export function parseReceiptText(text: string): ReceiptTextFields {
       description,
       quantity: quantityValue,
       amountJpy: amount,
+      taxRatePercent,
       confidenceBps: 8000,
       provenance: provenance(lineNumber),
     }]
@@ -125,7 +168,15 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   if (!occurredOn) issues.push('DATE_MISSING')
   if (!amountJpy) issues.push('TOTAL_MISSING')
   const confidenceBps = Math.max(0, 10_000 - issues.length * 2500)
-  return { merchant, occurredOn, amountJpy, confidenceBps, issues, items, taxes, couponAmountJpy, pointsUsedJpy, subtotalJpy, changeJpy, paymentMethod, taxMode }
+  const itemTotalJpy = items.length === 0 ? null : items.reduce((sum, item) => sum + item.amountJpy, 0)
+  const deltaJpy = itemTotalJpy === null || amountJpy === null ? null : itemTotalJpy - amountJpy
+  const reconciliation: ReceiptReconciliationEvidence = {
+    status: items.length === 0 ? 'NO_ITEMS' : deltaJpy === 0 ? 'EXACT' : 'DELTA',
+    itemTotalJpy: Number.isSafeInteger(itemTotalJpy) ? itemTotalJpy : null,
+    totalAmountJpy: amountJpy,
+    deltaJpy: Number.isSafeInteger(deltaJpy) ? deltaJpy : null,
+  }
+  return { merchant, occurredOn, amountJpy, confidenceBps, issues, items, taxes, couponEvidence, pointsUsedEvidence, couponAmountJpy, pointsUsedJpy, subtotalJpy, changeJpy, paymentMethod, taxMode, reconciliation }
 }
 
 export async function buildReceiptImport(
@@ -185,6 +236,8 @@ export async function buildReceiptImport(
     ...receiptFields,
     items: receiptFields.items.map((item) => ({ ...item, provenance: { ...item.provenance, regionIndexes: regionIndexesForLine(document, item.provenance.lineNumber) } })),
     taxes: receiptFields.taxes.map((tax) => ({ ...tax, provenance: { ...tax.provenance, regionIndexes: regionIndexesForLine(document, tax.provenance.lineNumber) } })),
+    couponEvidence: receiptFields.couponEvidence.map((item) => ({ ...item, provenance: { ...item.provenance, regionIndexes: regionIndexesForLine(document, item.provenance.lineNumber) } })),
+    pointsUsedEvidence: receiptFields.pointsUsedEvidence.map((item) => ({ ...item, provenance: { ...item.provenance, regionIndexes: regionIndexesForLine(document, item.provenance.lineNumber) } })),
   })
   const receiptPages = pageResults.map((pageResult) => {
     const regions = (extracted.regions ?? []).filter((region) => region.pageNumber === pageResult.pageNumber)
@@ -204,7 +257,7 @@ export async function buildReceiptImport(
     ? receiptPages.find((page) => page.candidateCreated)?.receipt ?? null
     : receiptEvidence(extracted, fields)
   const documentPayloadJson = JSON.stringify({
-    evidenceVersion: 4,
+    evidenceVersion: 5,
     extraction: { ...extracted, regions: extracted.regions ?? [], pages: extracted.pages ?? [] },
     receipt: isMultiPageDocument ? null : primaryReceipt,
     receiptPages,
@@ -230,7 +283,7 @@ export async function buildReceiptImport(
     return {
       page,
       recordId: id(),
-      payloadJson: JSON.stringify({ evidenceVersion: 4, extraction: pageExtraction, receipt: receiptPages.find((value) => value.pageNumber === page.pageNumber)?.receipt ?? null, documentPageNumber: page.pageNumber }),
+      payloadJson: JSON.stringify({ evidenceVersion: 5, extraction: pageExtraction, receipt: receiptPages.find((value) => value.pageNumber === page.pageNumber)?.receipt ?? null, documentPageNumber: page.pageNumber }),
     }
   })
   const candidates = candidatePages.map(({ page, recordId }) => ({

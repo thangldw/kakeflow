@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.64.0 — 2026-07-14
+
+- Project a bounded, structured receipt review from persisted primary evidence into Import Preview, including restart recovery, while excluding raw OCR text, pixels, regions, and extraction payloads from the WebView contract.
+- Show receipt items with quantity, amount, explicit 8%/10% tax markers, confidence, and source-line provenance together with tax, coupon, point-use, subtotal, payment, and reconciliation facts.
+- Add exact item-level posting for outgoing expense and card-purchase candidates when the extracted item sum equals the receipt and candidate amount; create one debit per item and preserve the original payment credit without allocating tax, coupon, or points heuristically.
+- Add a manual 2–128-entry posting editor with per-item expense-account selection, balanced-journal validation in both client and native layers, and approval invalidation after every decision edit.
+- Keep mismatched or itemless receipts behind explicit manual review, preserve receipt-to-existing-transaction linking, and verify split commits remain atomic and restart-safe.
+
 ## 0.63.0 — 2026-07-14
 
 - Add the strict `aeon-card-finalized-statement-v1` adapter for one screen-derived synthetic AEON Card finalized-statement contract; AEON confirms CSV/PDF export but does not publish the literal consumer CSV schema, so unfamiliar layouts fail closed.
