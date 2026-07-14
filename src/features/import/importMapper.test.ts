@@ -149,8 +149,37 @@ describe('import mapper', () => {
     expect(result.request.cardStatements).toHaveLength(1)
     expect(result.request.cardStatements[0]).toMatchObject({
       cardAccountId: 'account-1', issuer: 'RAKUTEN_CARD', periodStart: '2026-06-10', periodEnd: '2026-06-20', statementAmountJpy: 4000,
+      paymentDueOn: null,
       lines: [{ statementLineNumber: 1, billedAmountJpy: 5000 }, { statementLineNumber: 2, billedAmountJpy: -1000 }],
     })
+  })
+
+  it('preserves the PayPay Card source payment date and issuer without inferring either value', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'paypay-card-finalized-statement-v1', issues: [], metadata: {}, records: [{
+      kind: 'card-statement', issuer: 'PAYPAY_CARD', paymentDueOn: '2026-07-27', statementTotal: 1000, transactions: [
+        { kind: 'card-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['2026/06/01', '架空ストア', '1200', '2026/07/27'] }, usageDate: '2026-06-01', merchant: '架空ストア', userName: '本人', paymentMethod: '一括', billingAmount: 1200, feeOrInterest: 0, isRefund: false, rawExtra: {} },
+        { kind: 'card-transaction', lineage: { sourceRow: 3, sourceRowEnd: 3, rawFields: ['2026/06/03', '架空返金', '-200', '2026/07/27'] }, usageDate: '2026-06-03', merchant: '架空返金', userName: '本人', paymentMethod: '一括', billingAmount: -200, feeOrInterest: 0, isRefund: true, rawExtra: {} },
+      ],
+    }] }
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+
+    expect(result.issues).toEqual([])
+    expect(result.request.cardStatements).toEqual([expect.objectContaining({
+      cardAccountId: 'account-1', issuer: 'PAYPAY_CARD', statementAmountJpy: 1000,
+      periodStart: '2026-06-01', periodEnd: '2026-06-03', paymentDueOn: '2026-07-27',
+    })])
+  })
+
+  it('rejects a malformed source payment date instead of replacing it with an inferred due date', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'paypay-card-finalized-statement-v1', issues: [], metadata: {}, records: [{
+      kind: 'card-statement', issuer: 'PAYPAY_CARD', paymentDueOn: '2026-07-32', statementTotal: 1200, transactions: [
+        { kind: 'card-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['2026/06/01', '架空ストア', '1200'] }, usageDate: '2026-06-01', merchant: '架空ストア', userName: '本人', paymentMethod: '一括', billingAmount: 1200, feeOrInterest: 0, isRefund: false, rawExtra: {} },
+      ],
+    }] }
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'INVALID_DATE', severity: 'error', message: expect.stringContaining('source payment due date') }))
+    expect(result.request.cardStatements).toEqual([])
   })
 
   it('maps a JCB statement into pending card purchases with exact source-row provenance', async () => {
