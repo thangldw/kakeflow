@@ -2,6 +2,9 @@ import type { FamilyDeliveryPreparedArtifactDto, FamilyDeliveryRemoteArtifactDto
 
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
 const ARTIFACT_SCHEMAS = new Set<FamilyDeliveryPreparedArtifactDto['artifactSchema']>(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2', 'FAMILY_AUDIENCE_PARTITION_V3'])
+const ENVELOPE_SCHEMA = 'FAMILY_ENCRYPTED_ENVELOPE_V1' as const
+const HASH = /^[0-9a-f]{64}$/
+const ENCRYPTION_PUBLIC_KEY = /^[A-Za-z0-9_-]{43}$/
 
 export type FamilyDeliveryHttpErrorCode =
   | 'AUTH_EXPIRED' | 'NETWORK_RETRYABLE' | 'INVITE_EXPIRED' | 'INVITE_USED' | 'INVITE_REVOKED' | 'INVITE_UNAVAILABLE'
@@ -17,6 +20,19 @@ export interface FamilyRemoteMembership {
   readonly membershipId: string; readonly householdId: string; readonly principalId: string
   readonly domainMemberId: string; readonly role: 'OWNER' | 'MEMBER'; readonly state: 'ACTIVE' | 'REVOKED'
   readonly generation: number; readonly joinedAt: string; readonly revokedAt: string | null
+  readonly encryptionKeyId: string | null; readonly encryptionPublicKey: string | null
+  readonly encryptionKeyGeneration: number; readonly encryptionKeyUpdatedAt: string | null
+}
+export interface FamilyEncryptionKeyRegistration {
+  readonly keyId: string; readonly publicKey: string; readonly generation: number
+}
+export interface FamilyEncryptedArtifactUpload {
+  readonly deliveryId: string; readonly artifactId: string; readonly householdId: string
+  readonly originDeviceId: string; readonly audienceKey: string
+  readonly audienceVisibility: FamilyDeliveryPreparedArtifactDto['audienceVisibility']; readonly audienceMemberId: string | null
+  readonly artifactSchema: FamilyDeliveryPreparedArtifactDto['artifactSchema']
+  readonly envelopeSchema: typeof ENVELOPE_SCHEMA; readonly envelopeBytes: readonly number[]
+  readonly transportDigest: string; readonly innerDigest: string; readonly recipientSetDigest: string
 }
 export interface FamilyRemoteInvite {
   readonly inviteId: string; readonly householdId: string; readonly domainMemberId: string
@@ -46,7 +62,7 @@ function mapServerError(code: string, status: number): FamilyDeliveryHttpErrorCo
   if (['MEMBERSHIP_CONFLICT', 'DOMAIN_MEMBER_INVITE_ALREADY_ACTIVE'].includes(code)) return 'PRINCIPAL_ALREADY_LINKED'
   if (['ACTIVE_MEMBERSHIP_REQUIRED', 'HOUSEHOLD_NOT_FOUND', 'MEMBERSHIP_NOT_FOUND'].includes(code)) return 'MEMBERSHIP_REVOKED'
   if (['PERSONAL_AUDIENCE_MISMATCH', 'PUBLICATION_NOT_FOUND'].includes(code)) return 'AUDIENCE_DENIED'
-  if (code === 'NO_ACTIVE_RECIPIENTS') return 'RECIPIENT_UNAVAILABLE'
+  if (['NO_ACTIVE_RECIPIENTS', 'RECIPIENT_KEY_UNAVAILABLE', 'RECIPIENT_SET_CHANGED'].includes(code)) return 'RECIPIENT_UNAVAILABLE'
   if (code === 'OWNER_REQUIRED') return 'OWNER_REQUIRED'
   if (['DIGEST_MISMATCH', 'EMPTY_ARTIFACT', 'INVALID_PUBLICATION_HEADERS', 'ARTIFACT_TOO_LARGE'].includes(code)) return 'INVALID_ARTIFACT'
   return 'REJECTED'
@@ -77,15 +93,43 @@ const string = (value: unknown): string => { if (typeof value !== 'string' || !v
 const nullableString = (value: unknown): string | null => value === null ? null : string(value)
 const integer = (value: unknown): number => { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new FamilyDeliveryHttpError('INVALID_RESPONSE'); return Number(value) }
 const timestamp = (value: unknown): string => { const result = string(value); if (Number.isNaN(Date.parse(result))) throw new FamilyDeliveryHttpError('INVALID_RESPONSE'); return result }
-const hash = (value: unknown): string => { const result = string(value); if (!/^[0-9a-f]{64}$/.test(result)) throw new FamilyDeliveryHttpError('INVALID_RESPONSE'); return result }
+const hash = (value: unknown): string => { const result = string(value); if (!HASH.test(result)) throw new FamilyDeliveryHttpError('INVALID_RESPONSE'); return result }
+const nullableHash = (value: unknown): string | null => value === null || value === undefined ? null : hash(value)
+const nullableTimestamp = (value: unknown): string | null => value === null || value === undefined ? null : timestamp(value)
+
+async function digestBytes(bytes: Uint8Array): Promise<string> {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes).buffer))].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export async function familyRecipientSetDigest(memberships: readonly FamilyRemoteMembership[]): Promise<string> {
+  const canonical = [...memberships].sort((left, right) => left.membershipId.localeCompare(right.membershipId)).map((item) => {
+    if (!item.membershipId || item.encryptionKeyId === null || item.encryptionPublicKey === null
+      || !HASH.test(item.encryptionKeyId) || !ENCRYPTION_PUBLIC_KEY.test(item.encryptionPublicKey)
+      || !Number.isSafeInteger(item.encryptionKeyGeneration) || item.encryptionKeyGeneration < 1) {
+      throw new FamilyDeliveryHttpError('RECIPIENT_UNAVAILABLE')
+    }
+    return `${item.membershipId}\0${item.encryptionKeyGeneration}\0${item.encryptionKeyId}\0${item.encryptionPublicKey}\0`
+  }).join('')
+  return digestBytes(new TextEncoder().encode(canonical))
+}
 
 function parseMembership(value: unknown): FamilyRemoteMembership {
   const item = record(value)
   if (!['OWNER', 'MEMBER'].includes(String(item.role)) || !['ACTIVE', 'REVOKED'].includes(String(item.state))) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+  const encryptionKeyId = nullableHash(item.encryptionKeyId)
+  const encryptionPublicKey = item.encryptionPublicKey === null || item.encryptionPublicKey === undefined ? null : string(item.encryptionPublicKey)
+  const encryptionKeyGeneration = integer(item.encryptionKeyGeneration ?? 0)
+  const encryptionKeyUpdatedAt = nullableTimestamp(item.encryptionKeyUpdatedAt)
+  const hasEncryptionKey = encryptionKeyId !== null
+  if (hasEncryptionKey !== (encryptionPublicKey !== null) || hasEncryptionKey !== (encryptionKeyUpdatedAt !== null)
+    || (hasEncryptionKey ? encryptionKeyGeneration < 1 || !ENCRYPTION_PUBLIC_KEY.test(encryptionPublicKey!) : encryptionKeyGeneration !== 0)) {
+    throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+  }
   return {
     membershipId: string(item.membershipId), householdId: string(item.householdId), principalId: string(item.principalId),
     domainMemberId: string(item.domainMemberId), role: item.role as FamilyRemoteMembership['role'], state: item.state as FamilyRemoteMembership['state'],
     generation: integer(item.generation), joinedAt: timestamp(item.joinedAt), revokedAt: nullableString(item.revokedAt),
+    encryptionKeyId, encryptionPublicKey, encryptionKeyGeneration, encryptionKeyUpdatedAt,
   }
 }
 function parseInvite(value: unknown): FamilyRemoteInvite {
@@ -149,16 +193,45 @@ export async function revokeFamilyMembership(endpoint: string, token: string, ho
   await request(endpoint, `/v2/households/${encodeURIComponent(householdId)}/members/${encodeURIComponent(membershipId)}`, token, { method: 'DELETE' }, fetcher)
 }
 
-export async function uploadFamilyArtifact(endpoint: string, token: string, artifact: FamilyDeliveryPreparedArtifactDto, fetcher?: typeof fetch): Promise<FamilyDeliveryAcceptance> {
+export async function registerFamilyEncryptionKey(endpoint: string, token: string, householdId: string, key: FamilyEncryptionKeyRegistration, fetcher?: typeof fetch): Promise<FamilyRemoteMembership> {
+  if (!HASH.test(key.keyId) || !ENCRYPTION_PUBLIC_KEY.test(key.publicKey) || !Number.isSafeInteger(key.generation) || key.generation < 1) {
+    throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
+  }
+  const response = await request(endpoint, `/v2/households/${encodeURIComponent(householdId)}/members/encryption-key`, token, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(key),
+  }, fetcher)
+  return parseMembership(record(await response.json()).membership)
+}
+
+export async function uploadFamilyArtifact(endpoint: string, token: string, artifact: FamilyDeliveryPreparedArtifactDto | FamilyEncryptedArtifactUpload, fetcher?: typeof fetch): Promise<FamilyDeliveryAcceptance> {
+  const encrypted = 'envelopeBytes' in artifact
+  const packageBytes = new Uint8Array(encrypted ? artifact.envelopeBytes : artifact.packageBytes)
+  const transportDigest = encrypted ? artifact.transportDigest : artifact.digest
+  if (packageBytes.length === 0 || packageBytes.length > MAX_PACKAGE_BYTES || !HASH.test(transportDigest)
+    || (encrypted && (!HASH.test(artifact.innerDigest) || !HASH.test(artifact.recipientSetDigest) || await digestBytes(packageBytes) !== transportDigest))) {
+    throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
+  }
   const headers: Record<string, string> = {
     'Content-Type': 'application/octet-stream', 'x-kakeflow-publication-id': artifact.artifactId,
-    'x-kakeflow-digest': artifact.digest, 'x-kakeflow-origin-device-id': artifact.originDeviceId,
+    'x-kakeflow-digest': transportDigest, 'x-kakeflow-origin-device-id': artifact.originDeviceId,
     'x-kakeflow-audience-visibility': artifact.audienceVisibility, 'x-kakeflow-artifact-schema': artifact.artifactSchema,
   }
   if (artifact.audienceMemberId) headers['x-kakeflow-audience-member-id'] = artifact.audienceMemberId
-  const response = await request(endpoint, `/v2/households/${encodeURIComponent(artifact.householdId)}/publications`, token, { method: 'POST', headers, body: new Uint8Array(artifact.packageBytes) }, fetcher)
+  if (encrypted) {
+    headers['x-kakeflow-envelope-schema'] = artifact.envelopeSchema
+    headers['x-kakeflow-recipient-set-digest'] = artifact.recipientSetDigest
+    headers['x-kakeflow-inner-digest'] = artifact.innerDigest
+  }
+  const response = await request(endpoint, `/v2/households/${encodeURIComponent(artifact.householdId)}/publications`, token, { method: 'POST', headers, body: packageBytes }, fetcher)
   const publication = record(record(await response.json()).publication)
-  return { deliveryId: artifact.deliveryId, artifactId: string(publication.publicationId), digest: hash(publication.digest), acceptedAt: timestamp(publication.createdAt) }
+  const artifactId = string(publication.publicationId)
+  const relayTransportDigest = hash(publication.digest)
+  if (artifactId !== artifact.artifactId || relayTransportDigest !== transportDigest) throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
+  if (encrypted) {
+    if (publication.envelopeSchema !== artifact.envelopeSchema || hash(publication.recipientSetDigest) !== artifact.recipientSetDigest
+      || hash(publication.innerDigest) !== artifact.innerDigest) throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
+  }
+  return { deliveryId: artifact.deliveryId, artifactId, digest: relayTransportDigest, acceptedAt: timestamp(publication.createdAt) }
 }
 
 function parsePublication(value: unknown): FamilyDeliveryRemoteArtifactDto {
@@ -166,11 +239,18 @@ function parsePublication(value: unknown): FamilyDeliveryRemoteArtifactDto {
   if (!['SHARED', 'PERSONAL'].includes(String(audience.visibility)) || !ARTIFACT_SCHEMAS.has(item.artifactSchema as FamilyDeliveryPreparedArtifactDto['artifactSchema'])) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
   const memberId = nullableString(audience.memberId)
   if ((audience.visibility === 'SHARED') !== (memberId === null)) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+  const envelopeSchema = item.envelopeSchema === null || item.envelopeSchema === undefined ? null : string(item.envelopeSchema)
+  const recipientSetDigest = nullableHash(item.recipientSetDigest)
+  const innerDigest = nullableHash(item.innerDigest)
+  if ((envelopeSchema !== null && envelopeSchema !== ENVELOPE_SCHEMA)
+    || (envelopeSchema === null) !== (recipientSetDigest === null)
+    || (envelopeSchema === null) !== (innerDigest === null)) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
   return {
     sequence: integer(item.sequence), artifactId: string(item.publicationId), digest: hash(item.digest), createdAt: timestamp(item.createdAt),
     originDeviceId: string(item.originDeviceId), senderMembershipId: string(item.senderMembershipId),
     audienceVisibility: audience.visibility as FamilyDeliveryRemoteArtifactDto['audienceVisibility'], audienceMemberId: memberId,
     byteSize: integer(item.byteSize), artifactSchema: item.artifactSchema as FamilyDeliveryRemoteArtifactDto['artifactSchema'],
+    envelopeSchema: envelopeSchema as FamilyDeliveryRemoteArtifactDto['envelopeSchema'], transportDigest: envelopeSchema === null ? null : hash(item.digest), recipientSetDigest, innerDigest,
   }
 }
 
@@ -192,8 +272,8 @@ export async function listFamilyArtifacts(endpoint: string, token: string, house
 export async function downloadFamilyArtifact(endpoint: string, token: string, householdId: string, artifact: FamilyDeliveryRemoteArtifactDto, fetcher?: typeof fetch): Promise<readonly number[]> {
   const response = await request(endpoint, `/v2/households/${encodeURIComponent(householdId)}/publications/${encodeURIComponent(artifact.artifactId)}`, token, { headers: { Accept: 'application/octet-stream' } }, fetcher)
   const bytes = new Uint8Array(await response.arrayBuffer())
-  if (bytes.length === 0 || bytes.length > MAX_PACKAGE_BYTES) throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
-  const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  if (bytes.length === 0 || bytes.length > MAX_PACKAGE_BYTES || bytes.length !== artifact.byteSize) throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
+  const digest = await digestBytes(bytes)
   if (digest !== artifact.digest) throw new FamilyDeliveryHttpError('INVALID_ARTIFACT')
   return [...bytes]
 }

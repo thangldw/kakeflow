@@ -2,19 +2,22 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const family = vi.hoisted(() => ({
-  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), registerRemote: vi.fn(), prepare: vi.fn(), accept: vi.fn(), fail: vi.fn(), registerInbound: vi.fn(), stage: vi.fn(),
-  remote: vi.fn(), createHousehold: vi.fn(), previewInvite: vi.fn(), createInvite: vi.fn(), cancelInvite: vi.fn(), redeem: vi.fn(), revoke: vi.fn(), upload: vi.fn(), list: vi.fn(), download: vi.fn(),
+  status: vi.fn(), save: vi.fn(), disconnect: vi.fn(), registerRemote: vi.fn(), prepare: vi.fn(), envelopePrepare: vi.fn(), identity: vi.fn(), accept: vi.fn(), fail: vi.fn(), registerInbound: vi.fn(), stage: vi.fn(), encryptedStage: vi.fn(),
+  remote: vi.fn(), registerKey: vi.fn(), recipientDigest: vi.fn(), createHousehold: vi.fn(), previewInvite: vi.fn(), createInvite: vi.fn(), cancelInvite: vi.fn(), redeem: vi.fn(), revoke: vi.fn(), upload: vi.fn(), list: vi.fn(), download: vi.fn(),
 }))
 vi.mock('../../platform', () => ({ platformClient: {
   runtime: 'tauri', getFamilyDeliveryStatus: (...args: unknown[]) => family.status(...args),
   saveFamilyDeliveryConnection: (...args: unknown[]) => family.save(...args), disconnectFamilyDelivery: (...args: unknown[]) => family.disconnect(...args),
   registerFamilyDeliveryRemoteState: (...args: unknown[]) => family.registerRemote(...args), prepareFamilyDelivery: (...args: unknown[]) => family.prepare(...args),
+  prepareEncryptedFamilyEnvelope: (...args: unknown[]) => family.envelopePrepare(...args), getFamilyEnvelopeIdentity: (...args: unknown[]) => family.identity(...args),
   acceptFamilyDelivery: (...args: unknown[]) => family.accept(...args), failFamilyDelivery: (...args: unknown[]) => family.fail(...args),
   registerFamilyDeliveryInbound: (...args: unknown[]) => family.registerInbound(...args), stageFamilyDeliveryInbound: (...args: unknown[]) => family.stage(...args),
+  stageEncryptedFamilyDeliveryInbound: (...args: unknown[]) => family.encryptedStage(...args),
 } }))
 vi.mock('./familyDeliveryHttp', () => ({
   FamilyDeliveryHttpError: class FamilyDeliveryHttpError extends Error { constructor(readonly code: string) { super(code) } },
   getFamilyRemoteState: (...args: unknown[]) => family.remote(...args), createFamilyHousehold: (...args: unknown[]) => family.createHousehold(...args),
+  registerFamilyEncryptionKey: (...args: unknown[]) => family.registerKey(...args), familyRecipientSetDigest: (...args: unknown[]) => family.recipientDigest(...args),
   previewFamilyInvitation: (...args: unknown[]) => family.previewInvite(...args),
   createFamilyInvitation: (...args: unknown[]) => family.createInvite(...args), cancelFamilyInvitation: (...args: unknown[]) => family.cancelInvite(...args),
   redeemFamilyInvitation: (...args: unknown[]) => family.redeem(...args), revokeFamilyMembership: (...args: unknown[]) => family.revoke(...args),
@@ -29,8 +32,10 @@ const members: readonly HouseholdMemberDto[] = [
   { id: 'member-taro', householdId: 'family', displayName: '太郎', relationshipLabel: '父', sortOrder: 0, status: 'ACTIVE', createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
   { id: 'member-hanako', householdId: 'family', displayName: '花子', relationshipLabel: '母', sortOrder: 1, status: 'ACTIVE', createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-14T00:00:00Z' },
 ]
-const membership = { membershipId: 'membership-owner', householdId: 'family', principalId: 'principal-owner', domainMemberId: 'member-taro', role: 'OWNER' as const, state: 'ACTIVE' as const, generation: 1, joinedAt: '2026-07-14T00:00:00Z', revokedAt: null }
-const remote = { householdId: 'family', remotePrincipalId: 'principal-owner', localMembership: membership, memberships: [membership], invites: [] }
+const keyId = 'e'.repeat(64)
+const membership = { membershipId: 'membership-owner', householdId: 'family', principalId: 'principal-owner', domainMemberId: 'member-taro', role: 'OWNER' as const, state: 'ACTIVE' as const, generation: 1, joinedAt: '2026-07-14T00:00:00Z', revokedAt: null, encryptionKeyId: keyId, encryptionPublicKey: 'public-owner', encryptionKeyGeneration: 1 }
+const recipientMembership = { ...membership, membershipId: 'membership-hanako', principalId: 'principal-hanako', domainMemberId: 'member-hanako', role: 'MEMBER' as const, encryptionPublicKey: 'public-hanako' }
+const remote = { householdId: 'family', remotePrincipalId: 'principal-owner', localMembership: membership, memberships: [membership, recipientMembership], invites: [] }
 const base: FamilyDeliveryStatusDto = {
   householdId: 'family', connectionState: 'NOT_CONFIGURED', endpoint: null, remotePrincipalId: null,
   localDeviceId: 'device-local', inboundCursor: 0, localMemberId: null, localMemberName: null,
@@ -53,9 +58,11 @@ describe('FamilyDeliveryPanel', () => {
   beforeEach(() => {
     for (const mock of Object.values(family)) mock.mockReset()
     family.status.mockResolvedValue(base); family.remote.mockResolvedValue(remote); family.save.mockResolvedValue(connected)
+    family.identity.mockResolvedValue({ keyId, publicKey: 'public-owner', generation: 1 }); family.registerKey.mockResolvedValue(undefined); family.recipientDigest.mockResolvedValue('d'.repeat(64))
     family.disconnect.mockResolvedValue(base); family.registerRemote.mockResolvedValue(connected)
     family.prepare.mockResolvedValue([{ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'a'.repeat(64), householdId: 'family', originDeviceId: 'device-local', audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1', packageBytes: [1] }])
-    family.upload.mockResolvedValue({ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'a'.repeat(64), acceptedAt: '2026-07-14T01:00:00Z' })
+    family.envelopePrepare.mockResolvedValue({ envelopeBytes: [9, 8], envelopeSha256: 'c'.repeat(64), envelopeByteSize: 2, recipientCount: 1 })
+    family.upload.mockResolvedValue({ deliveryId: 'delivery-1', artifactId: 'publication-1', digest: 'c'.repeat(64), acceptedAt: '2026-07-14T01:00:00Z' })
     family.accept.mockResolvedValue({ ...connected, outbound: connected.outbound.map((item) => item.audienceKey === 'SHARED' ? { ...item, pendingChangeCount: 0, state: 'RELAY_ACCEPTED' as const } : item) })
     family.list.mockResolvedValue({ artifacts: [], nextCursor: 0 }); family.registerInbound.mockResolvedValue(connected)
   })

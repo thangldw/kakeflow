@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.58.0 — 2026-07-14
+
+- Add the binary `KFE1` recipient-encrypted family transport envelope, wrapping unchanged KFF1/KFF2/KFF3 artifacts for active X25519 membership keys with XChaCha20-Poly1305 payload encryption and strict metadata binding.
+- Register only the device public identity with the relay; keep the private identity in the operating-system credential store and expose no private key material to the WebView.
+- Make the relay store and route opaque ciphertext, verify immutable outer and inner digests plus the canonical recipient-set digest, and preserve legacy plaintext publications for backwards-compatible receipt.
+- Persist the exact encrypted envelope before upload so retry after a lost response reuses identical bytes; clear cached ciphertext after relay acceptance while retaining inner lineage metadata.
+- Decrypt and verify encrypted inbound artifacts in the native layer before entering the existing non-mutating review workflow; sending, receiving, and decrypting never apply records automatically.
+- Keep the claim bounded: this release provides relay-blind recipient encryption, not sender signatures, background synchronization, automatic apply, remote erasure, or a production-hosted relay.
+
 ## 0.57.0 — 2026-07-14
 
 - Add `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema v3 with an exact 18-kind contract, carrying card statements/payments plus portfolio snapshots, brokerage events, investment FX rates, market prices, and aggregate asset snapshots while retaining V1/V2 decode and apply compatibility.

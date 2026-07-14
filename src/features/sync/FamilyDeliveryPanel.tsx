@@ -6,9 +6,9 @@ import type { FamilyDeliveryMembershipDto, FamilyDeliveryRemoteArtifactDto, Fami
 import {
   cancelFamilyInvitation, createFamilyInvitation, downloadFamilyArtifact, FamilyDeliveryHttpError,
   createFamilyHousehold, getFamilyRemoteState, listFamilyArtifacts, previewFamilyInvitation, redeemFamilyInvitation,
-  revokeFamilyMembership, uploadFamilyArtifact,
+  familyRecipientSetDigest, registerFamilyEncryptionKey, revokeFamilyMembership, uploadFamilyArtifact,
 } from './familyDeliveryHttp'
-import type { FamilyRemoteState } from './familyDeliveryHttp'
+import type { FamilyEncryptedArtifactUpload, FamilyRemoteMembership, FamilyRemoteState } from './familyDeliveryHttp'
 import './FamilyDeliveryPanel.css'
 
 interface Props {
@@ -115,6 +115,24 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
       deviceCount: remote.memberships.filter((item) => item.domainMemberId === member.id && item.state === 'ACTIVE').length, lastDeliveryAt: null,
     }
   })
+  const ensureEncryptionIdentity = async (serviceEndpoint: string, remote: FamilyRemoteState): Promise<FamilyRemoteState> => {
+    if (!householdId || !remote.localMembership) throw new FamilyDeliveryHttpError('MEMBERSHIP_REVOKED')
+    const identity = await platformClient.getFamilyEnvelopeIdentity()
+    await registerFamilyEncryptionKey(serviceEndpoint, token, householdId, identity)
+    const refreshed = await getFamilyRemoteState(serviceEndpoint, token, householdId)
+    if (!refreshed.localMembership || refreshed.localMembership.encryptionKeyId !== identity.keyId) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+    return refreshed
+  }
+  const encryptedRecipients = (remote: FamilyRemoteState, artifact: Awaited<ReturnType<typeof platformClient.prepareFamilyDelivery>>[number]): readonly FamilyRemoteMembership[] => {
+    if (!remote.localMembership) throw new FamilyDeliveryHttpError('MEMBERSHIP_REVOKED')
+    const intended = remote.memberships.filter((membership) => membership.state === 'ACTIVE'
+      && membership.membershipId !== remote.localMembership!.membershipId
+      && (artifact.audienceVisibility === 'SHARED' || membership.domainMemberId === artifact.audienceMemberId))
+    if (intended.length === 0 || intended.some((membership) => !membership.encryptionKeyId || !membership.encryptionPublicKey || membership.encryptionKeyGeneration < 1)) {
+      throw new FamilyDeliveryHttpError('RECIPIENT_UNAVAILABLE')
+    }
+    return intended
+  }
   const registerRemote = async (remote: FamilyRemoteState) => {
     if (!householdId || remote.householdId !== householdId) throw new FamilyDeliveryHttpError('HOUSEHOLD_MISMATCH')
     const localMember = members.find((member) => member.id === remote.localMembership?.domainMemberId)
@@ -136,6 +154,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
         await createFamilyHousehold(normalized, token, householdId, ownerMemberId, `family-create:${householdId}:${ownerMemberId}`)
         remote = await getFamilyRemoteState(normalized, token, householdId)
       }
+      remote = await ensureEncryptionIdentity(normalized, remote)
       const localMember = members.find((member) => member.id === remote.localMembership?.domainMemberId)
       const next = await platformClient.saveFamilyDeliveryConnection({
         householdId, endpoint: normalized, remotePrincipalId: remote.remotePrincipalId,
@@ -157,7 +176,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     if (!householdId || !status?.endpoint || !token) { setNotice({ kind: 'error', text: '受信確認には、この画面で使う接続トークンが必要です。' }); return }
     setBusy('REFRESH'); setNotice({ kind: 'status', text: '家族からの新しいデータを確認しています…' })
     try {
-      await registerRemote(await getFamilyRemoteState(status.endpoint, token, householdId))
+      const remote = await ensureEncryptionIdentity(status.endpoint, await getFamilyRemoteState(status.endpoint, token, householdId))
+      await registerRemote(remote)
       const page = await listFamilyArtifacts(status.endpoint, token, householdId, status.inboundCursor, status.localDeviceId); setRemoteArtifacts(page.artifacts)
       const next = await platformClient.registerFamilyDeliveryInbound({ householdId, artifacts: page.artifacts, nextCursor: page.nextCursor }); setStatus(next)
       setNotice({ kind: 'status', text: `${page.artifacts.length}件を確認しました。台帳へは自動反映していません。` })
@@ -167,14 +187,28 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
   const send = async () => {
     if (!householdId || !status?.endpoint || !token || selected.length === 0) return
     let prepared: Awaited<ReturnType<typeof platformClient.prepareFamilyDelivery>> = []
+    let encrypted: readonly FamilyEncryptedArtifactUpload[] = []
     setBusy('SEND'); setNotice({ kind: 'status', text: '選択した配信範囲を送信しています…' })
     try {
-      await registerRemote(await getFamilyRemoteState(status.endpoint, token, householdId))
+      const remote = await ensureEncryptionIdentity(status.endpoint, await getFamilyRemoteState(status.endpoint, token, householdId))
+      await registerRemote(remote)
       prepared = await platformClient.prepareFamilyDelivery({ householdId, audienceKeys: selected })
-      const receipts = await Promise.all(prepared.map((artifact) => uploadFamilyArtifact(status.endpoint!, token, artifact)))
+      encrypted = await Promise.all(prepared.map(async (artifact): Promise<FamilyEncryptedArtifactUpload> => {
+        const recipients = encryptedRecipients(remote, artifact)
+        const recipientSetDigest = await familyRecipientSetDigest(recipients)
+        const sealed = await platformClient.prepareEncryptedFamilyEnvelope({
+          deliveryId: artifact.deliveryId,
+          metadata: { householdId, publicationId: artifact.artifactId, originInstallationId: artifact.originDeviceId, artifactSchema: artifact.artifactSchema, innerSha256: artifact.digest },
+          recipients: recipients.map((membership) => ({ membershipId: membership.membershipId, keyId: membership.encryptionKeyId!, publicKey: membership.encryptionPublicKey!, generation: membership.encryptionKeyGeneration })),
+          recipientSetDigest,
+        })
+        if (sealed.recipientCount !== recipients.length) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+        return { ...artifact, envelopeSchema: 'FAMILY_ENCRYPTED_ENVELOPE_V1', envelopeBytes: sealed.envelopeBytes, transportDigest: sealed.envelopeSha256, innerDigest: artifact.digest, recipientSetDigest }
+      }))
+      const receipts = await Promise.all(encrypted.map((artifact) => uploadFamilyArtifact(status.endpoint!, token, artifact)))
       for (const receipt of receipts) {
-        const source = prepared.find((item) => item.deliveryId === receipt.deliveryId)
-        if (!source || source.artifactId !== receipt.artifactId || source.digest !== receipt.digest) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
+        const source = encrypted.find((item) => item.deliveryId === receipt.deliveryId)
+        if (!source || source.artifactId !== receipt.artifactId || source.transportDigest !== receipt.digest) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
       }
       setStatus(await platformClient.acceptFamilyDelivery({ householdId, receipts }))
       const sent = status.outbound.filter((part) => selected.includes(part.audienceKey)).map((part) => part.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${part.audienceMemberName}`).join('、')
@@ -192,7 +226,16 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
       if (!artifact) { const page = await listFamilyArtifacts(status.endpoint, token, householdId, 0, status.localDeviceId); setRemoteArtifacts(page.artifacts); artifact = page.artifacts.find((item) => item.artifactId === artifactId) }
       if (!artifact) throw new FamilyDeliveryHttpError('AUDIENCE_DENIED')
       const packageBytes = await downloadFamilyArtifact(status.endpoint, token, householdId, artifact)
-      setStatus(await platformClient.stageFamilyDeliveryInbound({ householdId, artifactId, packageBytes })); onReviewStaged?.()
+      if (artifact.envelopeSchema) {
+        const remote = await ensureEncryptionIdentity(status.endpoint, await getFamilyRemoteState(status.endpoint, token, householdId))
+        if (!remote.localMembership) throw new FamilyDeliveryHttpError('MEMBERSHIP_REVOKED')
+        setStatus(await platformClient.stageEncryptedFamilyDeliveryInbound({
+          householdId, artifactId, envelopeBytes: packageBytes, localMembershipId: remote.localMembership.membershipId,
+        }))
+      } else {
+        setStatus(await platformClient.stageFamilyDeliveryInbound({ householdId, artifactId, packageBytes }))
+      }
+      onReviewStaged?.()
       setNotice({ kind: 'status', text: '内容確認待ちに追加しました。最終確定までは台帳へ反映されません。' })
     } catch (error) { setNotice({ kind: 'error', text: errorCopy(error) }) }
     finally { setBusy('') }
@@ -217,7 +260,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
       } else if (dialog.kind === 'REDEEM') {
         const membership = await redeemFamilyInvitation(endpoint.trim(), token, inviteCode)
         if (membership.householdId !== householdId) throw new FamilyDeliveryHttpError('HOUSEHOLD_MISMATCH')
-        const remote = await getFamilyRemoteState(endpoint.trim(), token, householdId)
+        const remote = await ensureEncryptionIdentity(endpoint.trim(), await getFamilyRemoteState(endpoint.trim(), token, householdId))
         const member = members.find((item) => item.id === membership.domainMemberId)
         const next = await platformClient.saveFamilyDeliveryConnection({ householdId, endpoint: endpoint.trim().replace(/\/$/, ''), remotePrincipalId: remote.remotePrincipalId, localMemberId: member?.id ?? null, localMemberName: member?.displayName ?? null, memberships: localMemberships(remote) })
         setStatus(next); setDialog(null); setInviteCode('')

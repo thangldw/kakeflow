@@ -468,6 +468,26 @@ describe('platform client', () => {
     }
   })
 
+  it('validates the public-only KFE1 identity and native seal/open boundaries', async () => {
+    const digest = 'a'.repeat(64); const publicKey = 'A'.repeat(43)
+    const invoke: Invoke = async <T>(command: AppCommand) => {
+      if (command === 'family_envelope_identity_get') return { keyId: digest, publicKey, generation: 1 } as T
+      if (command === 'family_envelope_seal') return { envelopeBytes: [75, 70, 69, 49], envelopeSha256: digest, envelopeByteSize: 4, recipientCount: 2 } as T
+      if (command === 'family_envelope_open') return { artifactBytes: [75, 70, 70, 51], artifactSha256: digest, artifactByteSize: 4 } as T
+      return undefined as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.getFamilyEnvelopeIdentity()).resolves.toEqual({ keyId: digest, publicKey, generation: 1 })
+    await expect(client.sealFamilyEnvelope({ metadata: { householdId: 'family', publicationId: 'artifact', originInstallationId: 'device', artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V3', innerSha256: digest }, artifactBytes: [1], recipients: [{ membershipId: 'membership-2', keyId: digest, publicKey, generation: 1 }] })).resolves.toMatchObject({ envelopeByteSize: 4, recipientCount: 2 })
+    await expect(client.openFamilyEnvelope({ expectedMetadata: { householdId: 'family', publicationId: 'artifact', originInstallationId: 'device', artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V3', innerSha256: digest }, envelopeBytes: [1], localMembershipId: 'membership-1' })).resolves.toMatchObject({ artifactByteSize: 4 })
+
+    const invalid = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand) => (command === 'family_envelope_identity_get'
+      ? { keyId: digest, publicKey: 'not-base64url', generation: 1 }
+      : { envelopeBytes: [1], envelopeSha256: digest, envelopeByteSize: 2, recipientCount: 1 }) as T })
+    await expect(invalid.getFamilyEnvelopeIdentity()).rejects.toMatchObject({ command: 'family_envelope_identity_get', code: 'INVALID_RESPONSE' })
+    await expect(invalid.sealFamilyEnvelope({} as never)).rejects.toMatchObject({ command: 'family_envelope_seal', code: 'INVALID_RESPONSE' })
+  })
+
   it('loads and persists strictly validated household dashboard preferences', async () => {
     const saved = {
       householdId: 'family', template: 'CASH_FLOW', theme: 'DARK', density: 'COMPACT',

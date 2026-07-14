@@ -306,6 +306,33 @@ export interface FamilyDeliveryPreparedArtifactDto {
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly artifactSchema: FamilyDeliveryArtifactSchemaDto; readonly packageBytes: readonly number[]
 }
+export interface FamilyEnvelopePublicIdentityDto {
+  readonly keyId: string; readonly publicKey: string; readonly generation: number
+}
+export interface FamilyEnvelopeRecipientDto extends FamilyEnvelopePublicIdentityDto { readonly membershipId: string }
+export interface FamilyEnvelopeMetadataDto {
+  readonly householdId: string; readonly publicationId: string; readonly originInstallationId: string
+  readonly artifactSchema: FamilyDeliveryArtifactSchemaDto; readonly innerSha256: string
+}
+export interface SealFamilyEnvelopeInputDto {
+  readonly metadata: FamilyEnvelopeMetadataDto; readonly artifactBytes: readonly number[]
+  readonly recipients: readonly FamilyEnvelopeRecipientDto[]
+}
+export interface PrepareEncryptedFamilyEnvelopeInputDto {
+  readonly deliveryId: string; readonly metadata: FamilyEnvelopeMetadataDto
+  readonly recipients: readonly FamilyEnvelopeRecipientDto[]; readonly recipientSetDigest: string
+}
+export interface SealFamilyEnvelopeOutputDto {
+  readonly envelopeBytes: readonly number[]; readonly envelopeSha256: string
+  readonly envelopeByteSize: number; readonly recipientCount: number
+}
+export interface OpenFamilyEnvelopeInputDto {
+  readonly expectedMetadata: FamilyEnvelopeMetadataDto; readonly envelopeBytes: readonly number[]
+  readonly localMembershipId: string
+}
+export interface OpenFamilyEnvelopeOutputDto {
+  readonly artifactBytes: readonly number[]; readonly artifactSha256: string; readonly artifactByteSize: number
+}
 export interface PrepareFamilyDeliveryInputDto { readonly householdId: string; readonly audienceKeys: readonly string[] }
 export interface AcceptFamilyDeliveryInputDto {
   readonly householdId: string; readonly receipts: readonly { readonly deliveryId: string; readonly artifactId: string; readonly digest: string; readonly acceptedAt: string }[]
@@ -315,9 +342,15 @@ export interface FamilyDeliveryRemoteArtifactDto {
   readonly originDeviceId: string; readonly senderMembershipId: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly byteSize: number; readonly artifactSchema: FamilyDeliveryArtifactSchemaDto
+  readonly envelopeSchema: 'FAMILY_ENCRYPTED_ENVELOPE_V1' | null
+  readonly transportDigest: string | null; readonly recipientSetDigest: string | null; readonly innerDigest: string | null
 }
 export interface RegisterFamilyDeliveryInboundInputDto { readonly householdId: string; readonly artifacts: readonly FamilyDeliveryRemoteArtifactDto[]; readonly nextCursor: number }
 export interface StageFamilyDeliveryInboundInputDto { readonly householdId: string; readonly artifactId: string; readonly packageBytes: readonly number[] }
+export interface StageEncryptedFamilyDeliveryInboundInputDto {
+  readonly householdId: string; readonly artifactId: string; readonly envelopeBytes: readonly number[]
+  readonly localMembershipId: string
+}
 export type FamilySnapshotResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
 export interface FamilySnapshotReviewRecordDto {
   readonly recordOrder: number; readonly entityKind: string; readonly entityId: string; readonly entityLabel: string
@@ -716,10 +749,15 @@ export type AppCommand =
   | 'family_delivery_disconnect'
   | 'family_delivery_remote_state_register'
   | 'family_delivery_send_prepare'
+  | 'family_delivery_envelope_prepare'
+  | 'family_envelope_identity_get'
+  | 'family_envelope_seal'
+  | 'family_envelope_open'
   | 'family_delivery_send_accept'
   | 'family_delivery_send_failed'
   | 'family_delivery_inbound_register'
   | 'family_delivery_inbound_stage'
+  | 'family_delivery_encrypted_inbound_stage'
   | 'family_snapshot_active_review'
   | 'family_snapshot_resolve'
   | 'family_snapshot_apply'
@@ -837,10 +875,15 @@ export interface PlatformClient {
   disconnectFamilyDelivery(householdId: string): Promise<FamilyDeliveryStatusDto>
   registerFamilyDeliveryRemoteState(input: RegisterFamilyDeliveryRemoteStateInputDto): Promise<FamilyDeliveryStatusDto>
   prepareFamilyDelivery(input: PrepareFamilyDeliveryInputDto): Promise<readonly FamilyDeliveryPreparedArtifactDto[]>
+  prepareEncryptedFamilyEnvelope(input: PrepareEncryptedFamilyEnvelopeInputDto): Promise<SealFamilyEnvelopeOutputDto>
+  getFamilyEnvelopeIdentity(): Promise<FamilyEnvelopePublicIdentityDto>
+  sealFamilyEnvelope(input: SealFamilyEnvelopeInputDto): Promise<SealFamilyEnvelopeOutputDto>
+  openFamilyEnvelope(input: OpenFamilyEnvelopeInputDto): Promise<OpenFamilyEnvelopeOutputDto>
   acceptFamilyDelivery(input: AcceptFamilyDeliveryInputDto): Promise<FamilyDeliveryStatusDto>
   failFamilyDelivery(householdId: string, deliveryIds: readonly string[]): Promise<FamilyDeliveryStatusDto>
   registerFamilyDeliveryInbound(input: RegisterFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
   stageFamilyDeliveryInbound(input: StageFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
+  stageEncryptedFamilyDeliveryInbound(input: StageEncryptedFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
   getActiveFamilySnapshotReview(householdId: string): Promise<FamilySnapshotReviewDto | null>
   resolveFamilySnapshot(packageId: string, resolutions: readonly FamilySnapshotResolutionInputDto[]): Promise<FamilySnapshotReviewDto>
   applyFamilySnapshot(packageId: string): Promise<FamilySnapshotReviewDto>

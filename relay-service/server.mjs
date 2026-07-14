@@ -10,7 +10,7 @@ export const MAX_CAPTURE_BYTES = 32 * 1024 * 1024
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/
 const DIGEST = /^[0-9a-f]{64}$/
 const INDEX_VERSION = 1
-const FAMILY_INDEX_VERSION = 2
+const FAMILY_INDEX_VERSION = 3
 const PAGE_SIZE = 100
 const MAX_JSON_BYTES = 64 * 1024
 const FAMILY_AUDIENCES = new Set(['SHARED', 'PERSONAL'])
@@ -19,6 +19,9 @@ const FAMILY_ARTIFACT_SCHEMAS = new Set([
   'FAMILY_AUDIENCE_PARTITION_V2',
   'FAMILY_AUDIENCE_PARTITION_V3',
 ])
+const FAMILY_ENVELOPE_SCHEMA = 'FAMILY_ENCRYPTED_ENVELOPE_V1'
+const ENCRYPTION_KEY_ID = /^[0-9a-f]{64}$/
+const ENCRYPTION_PUBLIC_KEY = /^[A-Za-z0-9_-]{43}$/
 const CAPTURE_CAPSULE_SCHEMA = 'MOBILE_RECEIPT_CAPTURE_V1'
 
 function json(response, status, body) {
@@ -99,6 +102,12 @@ function validFamilyIndex(value) {
     && ID.test(item.domainMemberId) && ['OWNER', 'MEMBER'].includes(item.role)
     && ['ACTIVE', 'REVOKED'].includes(item.state)
     && Number.isSafeInteger(item.generation) && item.generation > 0
+    && (item.encryptionKeyId === null || ENCRYPTION_KEY_ID.test(item.encryptionKeyId))
+    && (item.encryptionPublicKey === null || ENCRYPTION_PUBLIC_KEY.test(item.encryptionPublicKey))
+    && ((item.encryptionKeyId === null) === (item.encryptionPublicKey === null))
+    && Number.isSafeInteger(item.encryptionKeyGeneration) && item.encryptionKeyGeneration >= 0
+    && ((item.encryptionKeyId === null && item.encryptionKeyGeneration === 0 && item.encryptionKeyUpdatedAt === null)
+      || (item.encryptionKeyId !== null && item.encryptionKeyGeneration > 0 && typeof item.encryptionKeyUpdatedAt === 'string'))
     && typeof item.joinedAt === 'string'
     && (item.revokedAt === null || typeof item.revokedAt === 'string'))) return false
   const membershipById = new Map(value.memberships.map((item) => [item.membershipId, item]))
@@ -130,6 +139,11 @@ function validFamilyIndex(value) {
       && ((item.audienceVisibility === 'SHARED' && item.audienceMemberId === null)
         || (item.audienceVisibility === 'PERSONAL' && ID.test(item.audienceMemberId)))
       && FAMILY_ARTIFACT_SCHEMAS.has(item.artifactSchema)
+      && (item.envelopeSchema === null || item.envelopeSchema === FAMILY_ENVELOPE_SCHEMA)
+      && (item.recipientSetDigest === null || DIGEST.test(item.recipientSetDigest))
+      && (item.innerDigest === null || DIGEST.test(item.innerDigest))
+      && ((item.envelopeSchema === null) === (item.recipientSetDigest === null))
+      && ((item.envelopeSchema === null) === (item.innerDigest === null))
       && membershipById.get(item.senderMembershipId)?.householdId === item.householdId
       && membershipById.get(item.senderMembershipId)?.principalId === item.senderPrincipalId
       && ID.test(item.senderPrincipalId)
@@ -179,7 +193,20 @@ async function readFamilyIndex(path) {
   try {
     let parsed = JSON.parse(await readFile(path, 'utf8'))
     if (parsed?.version === 1) {
-      parsed = { ...parsed, version: FAMILY_INDEX_VERSION, nextCaptureSequence: 1, captures: [] }
+      parsed = { ...parsed, version: 2, nextCaptureSequence: 1, captures: [] }
+    }
+    if (parsed?.version === 2) {
+      parsed = {
+        ...parsed,
+        version: FAMILY_INDEX_VERSION,
+        memberships: parsed.memberships.map((item) => ({
+          ...item, encryptionKeyId: null, encryptionPublicKey: null,
+          encryptionKeyGeneration: 0, encryptionKeyUpdatedAt: null,
+        })),
+        publications: parsed.publications.map((item) => ({
+          ...item, envelopeSchema: null, recipientSetDigest: null,
+        })),
+      }
       if (!validFamilyIndex(parsed)) throw new Error('family relay index is invalid')
       await atomicJson(path, parsed)
     }
@@ -213,11 +240,36 @@ function activeMembership(state, householdId, principalId) {
     && item.principalId === principalId && item.state === 'ACTIVE') ?? null
 }
 
+function encryptionFields() {
+  return { encryptionKeyId: null, encryptionPublicKey: null, encryptionKeyGeneration: 0, encryptionKeyUpdatedAt: null }
+}
+
+function publicationRecipients(state, householdId, sender, audienceVisibility, audienceMemberId) {
+  return state.memberships.filter((item) => item.householdId === householdId
+    && item.state === 'ACTIVE' && item.membershipId !== sender.membershipId
+    && (audienceVisibility === 'SHARED' || item.domainMemberId === audienceMemberId))
+}
+
+function recipientSetDigest(recipients) {
+  const hash = createHash('sha256')
+  for (const item of [...recipients].sort((left, right) => left.membershipId.localeCompare(right.membershipId))) {
+    hash.update(item.membershipId).update('\0')
+      .update(String(item.encryptionKeyGeneration)).update('\0')
+      .update(item.encryptionKeyId ?? '').update('\0')
+      .update(item.encryptionPublicKey ?? '').update('\0')
+  }
+  return hash.digest('hex')
+}
+
 function membershipPublic(item) {
   return {
     membershipId: item.membershipId, householdId: item.householdId,
     principalId: item.principalId, domainMemberId: item.domainMemberId,
     role: item.role, state: item.state, generation: item.generation,
+    encryptionKeyId: item.encryptionKeyId,
+    encryptionPublicKey: item.encryptionPublicKey,
+    encryptionKeyGeneration: item.encryptionKeyGeneration,
+    encryptionKeyUpdatedAt: item.encryptionKeyUpdatedAt,
     joinedAt: item.joinedAt, revokedAt: item.revokedAt,
   }
 }
@@ -240,6 +292,9 @@ function publicationPublic(item) {
     originDeviceId: item.originDeviceId,
     audience: { visibility: item.audienceVisibility, memberId: item.audienceMemberId },
     artifactSchema: item.artifactSchema,
+    envelopeSchema: item.envelopeSchema,
+    recipientSetDigest: item.recipientSetDigest,
+    innerDigest: item.innerDigest,
     senderPrincipalId: item.senderPrincipalId,
     senderMembershipId: item.senderMembershipId,
     recipientCount: item.recipientMembershipIds.length,
@@ -334,8 +389,8 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
       }
       if (request.method === 'OPTIONS') {
         response.writeHead(204, {
-          'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-          'access-control-allow-headers': 'Authorization, Content-Type, X-KakeFlow-Artifact-Id, X-KakeFlow-Digest, X-KakeFlow-Household-Id, X-KakeFlow-Origin-Device-Id, X-KakeFlow-Publication-Id, X-KakeFlow-Audience-Visibility, X-KakeFlow-Audience-Member-Id, X-KakeFlow-Artifact-Schema, X-KakeFlow-Capture-Id, X-KakeFlow-Capsule-Schema',
+          'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+          'access-control-allow-headers': 'Authorization, Content-Type, X-KakeFlow-Artifact-Id, X-KakeFlow-Digest, X-KakeFlow-Inner-Digest, X-KakeFlow-Household-Id, X-KakeFlow-Origin-Device-Id, X-KakeFlow-Publication-Id, X-KakeFlow-Audience-Visibility, X-KakeFlow-Audience-Member-Id, X-KakeFlow-Artifact-Schema, X-KakeFlow-Envelope-Schema, X-KakeFlow-Recipient-Set-Digest, X-KakeFlow-Capture-Id, X-KakeFlow-Capsule-Schema',
           'access-control-max-age': '600',
         })
         return response.end()
@@ -383,6 +438,7 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
             membershipId: `membership-${familyIndex.nextMembershipSequence}`,
             householdId, principalId, domainMemberId, role: 'OWNER', state: 'ACTIVE',
             generation: 1, joinedAt: createdAt, revokedAt: null,
+            ...encryptionFields(),
           }
           const next = {
             ...familyIndex, nextMembershipSequence: familyIndex.nextMembershipSequence + 1,
@@ -410,6 +466,37 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
         if (!caller) return failure(response, 404, 'HOUSEHOLD_NOT_FOUND')
         const members = familyIndex.memberships.filter((item) => item.householdId === householdId).map(membershipPublic)
         return json(response, 200, { members })
+      }
+
+      if (parts.length === 5 && parts[0] === 'v2' && parts[1] === 'households' && parts[3] === 'members' && parts[4] === 'encryption-key' && request.method === 'PUT') {
+        const householdId = parts[2]
+        let body
+        try { body = await receiveJson(request) } catch { return failure(response, 400, 'INVALID_JSON') }
+        const { keyId, publicKey, generation } = body
+        if (!ID.test(householdId) || !ENCRYPTION_KEY_ID.test(keyId) || !ENCRYPTION_PUBLIC_KEY.test(publicKey)
+          || !Number.isSafeInteger(generation) || generation < 1) {
+          return failure(response, 400, 'INVALID_ENCRYPTION_KEY')
+        }
+        const result = await mutate(async () => {
+          const current = activeMembership(familyIndex, householdId, principalId)
+          if (!current) return { status: 404, body: { error: 'HOUSEHOLD_NOT_FOUND' } }
+          if (generation < current.encryptionKeyGeneration) return { status: 409, body: { error: 'ENCRYPTION_KEY_ROLLBACK' } }
+          if (generation === current.encryptionKeyGeneration) {
+            if (current.encryptionKeyId !== keyId || current.encryptionPublicKey !== publicKey) {
+              return { status: 409, body: { error: 'ENCRYPTION_KEY_CONFLICT' } }
+            }
+            return { status: 200, body: { membership: membershipPublic(current), updated: false } }
+          }
+          const updated = {
+            ...current, encryptionKeyId: keyId, encryptionPublicKey: publicKey,
+            encryptionKeyGeneration: generation, encryptionKeyUpdatedAt: clock().toISOString(),
+          }
+          const memberships = familyIndex.memberships.map((item) => item.membershipId === current.membershipId ? updated : item)
+          const next = { ...familyIndex, memberships }
+          await atomicJson(familyIndexPath, next); familyIndex = next
+          return { status: 200, body: { membership: membershipPublic(updated), updated: true } }
+        })
+        return json(response, result.status, result.body)
       }
 
       if (parts.length === 4 && parts[0] === 'v2' && parts[1] === 'households' && parts[3] === 'invites' && request.method === 'POST') {
@@ -501,6 +588,7 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
             householdId: invite.householdId, principalId,
             domainMemberId: invite.domainMemberId, role: invite.role, state: 'ACTIVE',
             generation, joinedAt: clock().toISOString(), revokedAt: null,
+            ...encryptionFields(),
           }
           const invites = [...familyIndex.invites]
           invites[position] = { ...invite, state: 'REDEEMED', redeemedByMembershipId: membership.membershipId }
@@ -562,12 +650,20 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
         const audienceVisibility = request.headers['x-kakeflow-audience-visibility']
         const audienceMemberId = request.headers['x-kakeflow-audience-member-id']
         const artifactSchema = request.headers['x-kakeflow-artifact-schema']
+        const envelopeSchema = request.headers['x-kakeflow-envelope-schema'] ?? null
+        const suppliedRecipientSetDigest = request.headers['x-kakeflow-recipient-set-digest'] ?? null
+        const innerDigest = request.headers['x-kakeflow-inner-digest'] ?? null
         if (!ID.test(householdId) || ![publicationId, originDeviceId].every((item) => typeof item === 'string' && ID.test(item))
           || typeof expectedDigest !== 'string' || !DIGEST.test(expectedDigest)
           || !FAMILY_AUDIENCES.has(audienceVisibility)
           || (audienceVisibility === 'SHARED' && audienceMemberId != null)
           || (audienceVisibility === 'PERSONAL' && (typeof audienceMemberId !== 'string' || !ID.test(audienceMemberId)))
-          || !FAMILY_ARTIFACT_SCHEMAS.has(artifactSchema)) {
+          || !FAMILY_ARTIFACT_SCHEMAS.has(artifactSchema)
+          || (envelopeSchema !== null && envelopeSchema !== FAMILY_ENVELOPE_SCHEMA)
+          || ((envelopeSchema === null) !== (suppliedRecipientSetDigest === null))
+          || ((envelopeSchema === null) !== (innerDigest === null))
+          || (suppliedRecipientSetDigest !== null && !DIGEST.test(suppliedRecipientSetDigest))
+          || (innerDigest !== null && !DIGEST.test(innerDigest))) {
           request.resume(); return failure(response, 400, 'INVALID_PUBLICATION_HEADERS')
         }
         const declaredLength = Number(request.headers['content-length'])
@@ -591,7 +687,9 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
             await rm(temporary, { force: true })
             if (existing.digest !== expectedDigest || existing.senderMembershipId !== sender.membershipId
               || existing.originDeviceId !== originDeviceId || existing.artifactSchema !== artifactSchema
-              || existing.audienceVisibility !== audienceVisibility || existing.audienceMemberId !== (audienceMemberId ?? null)) {
+              || existing.audienceVisibility !== audienceVisibility || existing.audienceMemberId !== (audienceMemberId ?? null)
+              || existing.envelopeSchema !== envelopeSchema || existing.recipientSetDigest !== suppliedRecipientSetDigest
+              || existing.innerDigest !== innerDigest) {
               return { status: 409, body: { error: 'PUBLICATION_CONFLICT' } }
             }
             const stored = join(familyArtifactDirectory, familyPublicationStorageName(householdId, publicationId))
@@ -601,16 +699,23 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
           if (audienceVisibility === 'PERSONAL' && audienceMemberId !== sender.domainMemberId) {
             await rm(temporary, { force: true }); return { status: 403, body: { error: 'PERSONAL_AUDIENCE_MISMATCH' } }
           }
-          const recipients = familyIndex.memberships.filter((item) => item.householdId === householdId
-            && item.state === 'ACTIVE' && item.membershipId !== sender.membershipId
-            && (audienceVisibility === 'SHARED' || item.domainMemberId === sender.domainMemberId))
+          const recipients = publicationRecipients(familyIndex, householdId, sender, audienceVisibility, audienceMemberId ?? null)
           if (recipients.length === 0) { await rm(temporary, { force: true }); return { status: 409, body: { error: 'NO_ACTIVE_RECIPIENTS' } } }
+          if (envelopeSchema !== null) {
+            if (recipients.some((item) => item.encryptionKeyId === null)) {
+              await rm(temporary, { force: true }); return { status: 409, body: { error: 'RECIPIENT_KEY_UNAVAILABLE' } }
+            }
+            if (recipientSetDigest(recipients) !== suppliedRecipientSetDigest) {
+              await rm(temporary, { force: true }); return { status: 409, body: { error: 'RECIPIENT_SET_CHANGED' } }
+            }
+          }
           const stored = join(familyArtifactDirectory, familyPublicationStorageName(householdId, publicationId))
           await rm(stored, { force: true }); await rename(temporary, stored)
           const publication = {
             sequence: familyIndex.nextSequence, publicationId, digest: expectedDigest,
             householdId, originDeviceId, audienceVisibility,
             audienceMemberId: audienceMemberId ?? null, artifactSchema,
+            envelopeSchema, recipientSetDigest: suppliedRecipientSetDigest, innerDigest,
             senderPrincipalId: principalId, senderMembershipId: sender.membershipId,
             recipientMembershipIds: recipients.map((item) => item.membershipId),
             byteSize: received.size, createdAt: clock().toISOString(),
@@ -652,6 +757,11 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
           'x-kakeflow-household-id': publication.householdId,
           'x-kakeflow-audience-visibility': publication.audienceVisibility,
           'x-kakeflow-artifact-schema': publication.artifactSchema,
+          ...(publication.envelopeSchema === null ? {} : {
+            'x-kakeflow-envelope-schema': publication.envelopeSchema,
+            'x-kakeflow-recipient-set-digest': publication.recipientSetDigest,
+            'x-kakeflow-inner-digest': publication.innerDigest,
+          }),
           'cache-control': 'no-store',
         })
         return pipeline(createReadStream(path), response).catch(() => response.destroy())
