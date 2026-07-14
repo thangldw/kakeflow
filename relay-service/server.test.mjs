@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, test } from 'node:test'
@@ -14,7 +14,7 @@ afterEach(async () => {
 })
 
 async function start(root, maximum = 1024, allowedOrigins = new Set(), clock = () => new Date()) {
-  const server = await createRelayServer({ dataDirectory: root, tokens: new Map([['token-a', 'principal-a'], ['token-b', 'principal-b'], ['token-c', 'principal-c']]), allowedOrigins, maxArtifactBytes: maximum, clock })
+  const server = await createRelayServer({ dataDirectory: root, tokens: new Map([['token-a', 'principal-a'], ['token-b', 'principal-b'], ['token-c', 'principal-c']]), allowedOrigins, maxArtifactBytes: maximum, maxCaptureBytes: maximum, clock })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   servers.push(server)
   const address = server.address()
@@ -59,6 +59,20 @@ function publish(base, { household = 'family', token = 'token-a', id = 'publicat
       'x-kakeflow-audience-visibility': visibility,
       ...(memberId == null ? {} : { 'x-kakeflow-audience-member-id': memberId }),
       'x-kakeflow-artifact-schema': 'FAMILY_AUDIENCE_PARTITION_V1',
+      ...extraHeaders,
+    }, body: bytes,
+  })
+}
+
+function capture(base, { household = 'family', token = 'token-a', id = 'capture-1', bytes = Buffer.from('receipt-capsule'), claimedDigest = digest(bytes), device = 'phone-a', visibility = 'SHARED', memberId = null, extraHeaders = {} } = {}) {
+  return fetch(`${base}/v2/households/${household}/captures`, {
+    method: 'POST', headers: {
+      ...auth(token), 'content-type': 'application/octet-stream',
+      'x-kakeflow-capture-id': id, 'x-kakeflow-digest': claimedDigest,
+      'x-kakeflow-origin-device-id': device,
+      'x-kakeflow-audience-visibility': visibility,
+      ...(memberId == null ? {} : { 'x-kakeflow-audience-member-id': memberId }),
+      'x-kakeflow-capsule-schema': 'MOBILE_RECEIPT_CAPTURE_V1',
       ...extraHeaders,
     }, body: bytes,
   })
@@ -318,6 +332,106 @@ test('rejects wrong audience tuples, missing recipients, digest tampering, and o
   assert.deepEqual(list.publications, [])
 })
 
+test('routes immutable shared receipt captures through a separate cursor and byte channel', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const bytes = Buffer.from('mobile-receipt-capsule')
+  const accepted = await capture(base, { bytes })
+  assert.equal(accepted.status, 201)
+  const metadata = (await accepted.json()).capture
+  assert.equal(metadata.captureId, 'capture-1')
+  assert.equal(metadata.senderMembershipId, 'membership-1')
+  assert.equal(metadata.recipientCount, 1)
+  assert.deepEqual(metadata.audience, { visibility: 'SHARED', memberId: null })
+  assert.equal(metadata.capsuleSchema, 'MOBILE_RECEIPT_CAPTURE_V1')
+
+  const page = await (await fetch(`${base}/v2/households/family/captures?after=0&excludeOriginDeviceId=desktop-b`, { headers: auth('token-b') })).json()
+  assert.deepEqual(page.captures.map((item) => item.captureId), ['capture-1'])
+  assert.equal(page.nextCursor, '1')
+  const downloaded = await fetch(`${base}/v2/households/family/captures/capture-1`, { headers: auth('token-b') })
+  assert.equal(downloaded.headers.get('x-kakeflow-capsule-schema'), 'MOBILE_RECEIPT_CAPTURE_V1')
+  assert.equal(downloaded.headers.get('x-kakeflow-audience-visibility'), 'SHARED')
+  assert.equal(await downloaded.text(), bytes.toString())
+  const publications = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(publications.publications, [])
+})
+
+test('routes PERSONAL captures only to another active principal mapped to the sender member', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const sameMember = await inviteAndRedeem(base, { domainMemberId: 'family-member-owner', key: 'capture-same-member' })
+  await inviteAndRedeem(base, { domainMemberId: 'family-member-c', memberToken: 'token-c', key: 'capture-other-member' })
+  const personal = await capture(base, { visibility: 'PERSONAL', memberId: 'family-member-owner' })
+  assert.equal(personal.status, 201)
+  assert.equal((await personal.json()).capture.recipientCount, 1)
+  const samePage = await (await fetch(`${base}/v2/households/family/captures`, { headers: auth('token-b') })).json()
+  assert.deepEqual(samePage.captures.map((item) => item.captureId), ['capture-1'])
+  const otherPage = await (await fetch(`${base}/v2/households/family/captures`, { headers: auth('token-c') })).json()
+  assert.deepEqual(otherPage.captures, [])
+  assert.equal((await fetch(`${base}/v2/households/family/captures/capture-1`, { headers: auth('token-c') })).status, 404)
+  assert.equal((await capture(base, { id: 'spoof', visibility: 'PERSONAL', memberId: 'family-member-c' })).status, 403)
+  assert.equal((await fetch(`${base}/v2/households/family/members/${sameMember.membership.membershipId}`, { method: 'DELETE', headers: auth() })).status, 200)
+  assert.equal((await capture(base, { id: 'no-personal-peer', visibility: 'PERSONAL', memberId: 'family-member-owner' })).status, 409)
+})
+
+test('makes capture retries idempotent and rejects malformed, tampered, empty, or oversized capsules', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const bytes = Buffer.from('same-capture')
+  assert.equal((await capture(base, { bytes })).status, 201)
+  const retry = await capture(base, { bytes })
+  assert.equal(retry.status, 200)
+  assert.equal((await retry.json()).created, false)
+  assert.equal((await capture(base, { bytes: Buffer.from('different') })).status, 409)
+  assert.equal((await capture(base, { id: 'same-bytes-new-id', bytes })).status, 201)
+  assert.equal((await capture(base, { id: 'missing-personal-member', visibility: 'PERSONAL' })).status, 400)
+  assert.equal((await capture(base, { id: 'shared-with-member', memberId: 'family-member-owner' })).status, 400)
+  assert.equal((await capture(base, { id: 'bad-digest', claimedDigest: '0'.repeat(64) })).status, 422)
+  assert.equal((await capture(base, { id: 'empty', bytes: Buffer.alloc(0) })).status, 422)
+  assert.equal((await capture(base, { id: 'oversized', bytes: Buffer.alloc(1025, 1) })).status, 413)
+})
+
+test('capture origin exclusion advances its cursor and revoked generations cannot list old captures', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const first = await inviteAndRedeem(base)
+  assert.equal((await capture(base, { id: 'phone-origin', device: 'phone-b' })).status, 201)
+  assert.equal((await capture(base, { id: 'visible', device: 'phone-a' })).status, 201)
+  const page = await (await fetch(`${base}/v2/households/family/captures?after=0&excludeOriginDeviceId=phone-b`, { headers: auth('token-b') })).json()
+  assert.deepEqual(page.captures.map((item) => item.captureId), ['visible'])
+  assert.equal(page.nextCursor, '2')
+  assert.equal((await fetch(`${base}/v2/households/family/members/${first.membership.membershipId}`, { method: 'DELETE', headers: auth() })).status, 200)
+  assert.equal((await fetch(`${base}/v2/households/family/captures?after=0`, { headers: auth('token-b') })).status, 404)
+  assert.equal((await fetch(`${base}/v2/households/family/captures/visible`, { headers: auth('token-b') })).status, 404)
+  const rejoined = await inviteAndRedeem(base, { key: 'capture-rejoin' })
+  assert.equal(rejoined.membership.generation, 2)
+  const after = await (await fetch(`${base}/v2/households/family/captures?after=0`, { headers: auth('token-b') })).json()
+  assert.deepEqual(after.captures, [])
+  assert.equal((await fetch(`${base}/v2/households/family/captures/visible`, { headers: auth('token-b') })).status, 404)
+})
+
+test('migrates a valid family index v1 and persists capture metadata and bytes across restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'kakeflow-capture-relay-restart-'))
+  roots.push(root)
+  await writeFile(join(root, 'family-index.json'), `${JSON.stringify({
+    version: 1, nextSequence: 1, nextMembershipSequence: 1, nextInviteSequence: 1,
+    households: [], memberships: [], invites: [], publications: [],
+  })}\n`)
+  let base = await start(root)
+  assert.equal(JSON.parse(await readFile(join(root, 'family-index.json'), 'utf8')).version, 2)
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  assert.equal((await capture(base)).status, 201)
+  const firstServer = servers.shift()
+  await new Promise((resolve) => firstServer.close(resolve))
+  base = await start(root)
+  const page = await (await fetch(`${base}/v2/households/family/captures`, { headers: auth('token-b') })).json()
+  assert.deepEqual(page.captures.map((item) => item.captureId), ['capture-1'])
+  assert.equal(await (await fetch(`${base}/v2/households/family/captures/capture-1`, { headers: auth('token-b') })).text(), 'receipt-capsule')
+})
+
 test('expires and revokes invites without exposing their code through listing', async () => {
   let now = Date.parse('2026-07-14T00:00:00.000Z')
   const { base } = await fixture({ clock: () => new Date(now) })
@@ -362,4 +476,6 @@ test('includes family DELETE and audience headers in configured WebView CORS', a
   assert.equal(response.status, 204)
   assert.match(response.headers.get('access-control-allow-methods'), /DELETE/)
   assert.match(response.headers.get('access-control-allow-headers'), /X-KakeFlow-Audience-Visibility/i)
+  assert.match(response.headers.get('access-control-allow-headers'), /X-KakeFlow-Capture-Id/i)
+  assert.match(response.headers.get('access-control-allow-headers'), /X-KakeFlow-Capsule-Schema/i)
 })

@@ -110,10 +110,11 @@ membership; this does not change or widen the personal-relay contract.
   initial household/member/account/transaction graph. Unpartitioned schema-v4
   snapshots remain personal-relay-only; evidence-dependent aggregates remain
   withheld from family delivery.
-- **0.55:** add a separate mobile receipt-capture capsule and desktop Capture
-  Inbox. A mobile image enters as immutable pending source evidence, runs
-  through desktop-local OCR and matching, and still requires explicit user
-  confirmation; it never posts a transaction directly.
+- **0.55:** a separate mobile receipt-capture capsule, relay cursor, reference
+  browser uploader, and desktop Capture Inbox are available. A mobile image
+  enters as immutable pending source evidence, runs through desktop-local OCR
+  and matching, and still requires explicit user confirmation; it never posts
+  a transaction directly.
 
 The current `.kakeflow-review` format excludes receipt-only imports, while
 confirmed-evidence capsules apply only to evidence behind confirmed facts.

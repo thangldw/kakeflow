@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.55.0 — 2026-07-14
+
+- Add a separate `MOBILE_RECEIPT_CAPTURE_V1` capsule and relay channel with independent storage, sequence, cursor, immutable retry identity, digest verification, and server-derived `SHARED` or same-member `PERSONAL` recipients.
+- Add a responsive reference mobile-browser uploader that keeps its Bearer token in memory, validates JPEG/PNG signatures and dimensions, preserves an exact retry capsule, and makes no native-app, background-upload, or production-hosting claim.
+- Add a durable desktop Capture Inbox backed by the encrypted source vault and append-only OCR provenance; original images survive OCR failures and can be inspected uncropped before processing.
+- Run receipt OCR only on the desktop and promote a validated result atomically into the existing `REVIEW_REQUIRED` import workflow with `CAMERA_SCAN` provenance and preserved family audience/attribution.
+- Reuse an existing source review for duplicate images and keep receipt-to-transaction matching or balanced ledger posting explicit; receiving, previewing, OCR, and promotion never call ledger commit automatically.
+- Keep the scope bounded: JPEG/PNG only, one image per capsule, session-only relay token, manual receive check, no native iOS/Android binary, remote OCR, push/background delivery, E2E relay encryption, remote erasure, or automatic posting.
+
 ## 0.54.0 — 2026-07-14
 
 - Add a separate `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema-v1 protocol for cross-principal family delivery without changing the byte or deletion semantics of same-principal schema-v4 personal packages.

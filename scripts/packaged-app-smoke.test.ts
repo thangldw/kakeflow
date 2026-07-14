@@ -28,6 +28,7 @@ describe('packaged app smoke harness', () => {
   it('accepts only a complete successful boot, IPC, and migration result', () => {
     const requiredPages = [
       ['ホーム', 'Packaged Smoke Householdの家計'], ['取引', 'すべての取引'], ['インポート', 'インポート Inbox'],
+      ['撮影 Inbox', '撮影 Inbox'],
       ['カード照合', 'カード引落・支払余力'], ['資産・投資', '資産・投資'], ['カレンダー・レポート', 'カレンダー・レポート'],
       ['予算・目標', '予算・貯蓄目標'], ['分類ルール', '分類ルール'], ['家族スペース', '家族スペース'], ['設定', '設定'],
     ]
@@ -35,7 +36,7 @@ describe('packaged app smoke harness', () => {
       onboardingTitle: '家計簿をはじめましょう',
       householdName: 'Packaged Smoke Household',
       navigationLabels: requiredPages.map(([label]) => label),
-      interactionCount: 11,
+      interactionCount: 12,
       viewportWidth: 1280,
       viewportHeight: 800,
       devicePixelRatio: 2,

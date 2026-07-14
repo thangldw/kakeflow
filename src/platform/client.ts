@@ -61,6 +61,11 @@ import type {
   PendingImportApplySummaryDto,
   PendingImportExportSummaryDto,
   PendingImportStageDto,
+  MobileCaptureInboxItemDto,
+  MobileCaptureOcrResultDto,
+  MobileCapturePromoteResultDto,
+  MobileCaptureStatusDto,
+  MobileCaptureImagePreviewDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE'
@@ -160,6 +165,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       resolveFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_resolve') },
       applyFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_apply') },
       discardFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_discard') },
+      listMobileCaptureInbox: async () => [],
+      getMobileCaptureStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_status') },
+      updateMobileCaptureCursor: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_cursor_update') },
+      ingestMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_ingest') },
+      getMobileCaptureImagePreview: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_image_preview') },
+      ocrMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_ocr') },
+      markMobileCaptureOcrReviewRequired: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_mark_ocr_review_required') },
+      promoteMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_promote') },
       exportChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_export_save') },
       pickAndStageChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_pick_and_stage') },
       getActiveChangePackageReview: async () => null,
@@ -273,6 +286,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     resolveFamilySnapshot: (packageId, resolutions) => invokeValidated(invoke, 'family_snapshot_resolve', parseFamilySnapshotReview, { packageId, resolutions }),
     applyFamilySnapshot: (packageId) => invokeValidated(invoke, 'family_snapshot_apply', parseFamilySnapshotReview, { packageId }),
     discardFamilySnapshot: async (packageId) => { await invokeValidated(invoke, 'family_snapshot_discard', parseVoid, { packageId }) },
+    listMobileCaptureInbox: (householdId) => invokeValidated(invoke, 'mobile_capture_inbox_list', parseMobileCaptureInboxItems, { householdId }),
+    getMobileCaptureStatus: (householdId) => invokeValidated(invoke, 'mobile_capture_status', parseMobileCaptureStatus, { householdId }),
+    updateMobileCaptureCursor: (householdId, nextCursor) => invokeValidated(invoke, 'mobile_capture_cursor_update', parseMobileCaptureStatus, { householdId, nextCursor }),
+    ingestMobileCapture: (input) => invokeValidated(invoke, 'mobile_capture_ingest', parseMobileCaptureInboxItem, { input }),
+    getMobileCaptureImagePreview: (householdId, artifactId) => invokeValidated(invoke, 'mobile_capture_image_preview', parseMobileCaptureImagePreview, { householdId, artifactId }),
+    ocrMobileCapture: (householdId, artifactId) => invokeValidated(invoke, 'mobile_capture_ocr', parseMobileCaptureOcrResult, { householdId, artifactId }),
+    markMobileCaptureOcrReviewRequired: (householdId, artifactId) => invokeValidated(invoke, 'mobile_capture_mark_ocr_review_required', parseMobileCaptureInboxItem, { householdId, artifactId }),
+    promoteMobileCapture: (input) => invokeValidated(invoke, 'mobile_capture_promote', parseMobileCapturePromoteResult, { input }),
     exportChangePackage: (householdId) => invokeValidated(invoke, 'change_package_export_save', parseNullableString, { householdId }),
     pickAndStageChangePackage: (householdId) => invokeValidated(invoke, 'change_package_pick_and_stage', parseNullableChangePackageReview, { householdId }),
     getActiveChangePackageReview: (householdId) => invokeValidated(invoke, 'change_package_active_review', parseNullableChangePackageReview, { householdId }),
@@ -604,6 +625,80 @@ function parseFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto {
 
 function parseNullableFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto | null {
   return value === null ? null : parseFamilySnapshotReview(value)
+}
+
+const MOBILE_CAPTURE_STATES = new Set(['RECEIVED', 'OCR_READY', 'OCR_REVIEW_REQUIRED', 'PROMOTED', 'DUPLICATE', 'REJECTED_INVALID', 'FAILED_RETRYABLE'])
+
+function parseMobileCaptureInboxItem(value: unknown): MobileCaptureInboxItemDto {
+  const item = asRecord(value)
+  if (!MOBILE_CAPTURE_STATES.has(String(item.state)) || !['image/png', 'image/jpeg'].includes(String(item.mediaType))
+      || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility))) throw new TypeError('mobile capture item')
+  const audienceVisibility = item.audienceVisibility as MobileCaptureInboxItemDto['audienceVisibility']
+  const audienceMemberId = asNullableStrictString(item.audienceMemberId)
+  if ((audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('mobile capture audience')
+  const byteSize = asSafeInteger(item.byteSize)
+  if (byteSize < 1 || byteSize > 20 * 1024 * 1024) throw new TypeError('mobile capture byte size')
+  const state = item.state as MobileCaptureInboxItemDto['state']
+  const latestExtractionId = asNullableStrictString(item.latestExtractionId)
+  const localRunId = asNullableStrictString(item.localRunId)
+  const localDocumentId = asNullableStrictString(item.localDocumentId)
+  const lastErrorCode = asNullableStrictString(item.lastErrorCode)
+  if ((localRunId === null) !== (localDocumentId === null)
+      || (['PROMOTED', 'DUPLICATE'].includes(state) && localRunId === null)
+      || (state === 'FAILED_RETRYABLE') !== (lastErrorCode !== null)) throw new TypeError('mobile capture state graph')
+  const senderMembershipId = item.senderMembershipId == null ? undefined : asRequiredString(item.senderMembershipId)
+  const senderMemberName = item.senderMemberName == null ? null : asRequiredString(item.senderMemberName)
+  const audienceMemberName = item.audienceMemberName == null ? null : asRequiredString(item.audienceMemberName)
+  const receivedBeforeSenderRevocation = item.receivedBeforeSenderRevocation == null ? false : item.receivedBeforeSenderRevocation
+  if (typeof receivedBeforeSenderRevocation !== 'boolean') throw new TypeError('mobile capture revocation')
+  return {
+    artifactId: asRequiredString(item.artifactId), captureId: asRequiredString(item.captureId), originalFilename: asRequiredString(item.originalFilename),
+    mediaType: item.mediaType as MobileCaptureInboxItemDto['mediaType'], byteSize, sourceSha256: asCanonicalHash(item.sourceSha256),
+    capturedAt: item.capturedAt === null ? null : asIsoTimestamp(item.capturedAt), receivedAt: asIsoTimestamp(item.receivedAt),
+    senderMembershipId, senderMemberName, audienceVisibility, audienceMemberId, audienceMemberName,
+    state, latestExtractionId, localRunId, localDocumentId, lastErrorCode, receivedBeforeSenderRevocation,
+  }
+}
+
+function parseMobileCaptureInboxItems(value: unknown): readonly MobileCaptureInboxItemDto[] {
+  if (!Array.isArray(value) || value.length > 1_000) throw new TypeError('mobile capture items')
+  const ids = new Set<string>()
+  return value.map((entry) => {
+    const item = parseMobileCaptureInboxItem(entry)
+    if (ids.has(item.artifactId)) throw new TypeError('duplicate mobile capture item')
+    ids.add(item.artifactId)
+    return item
+  })
+}
+
+function parseMobileCaptureStatus(value: unknown): MobileCaptureStatusDto {
+  const record = asRecord(value)
+  const endpoint = asNullableStrictString(record.endpoint); const localDeviceId = asRequiredString(record.localDeviceId)
+  const captureInboundCursor = asSafeInteger(record.captureInboundCursor); const items = parseMobileCaptureInboxItems(record.items)
+  return { endpoint, localDeviceId, captureInboundCursor, items }
+}
+
+function parseMobileCaptureImagePreview(value: unknown): MobileCaptureImagePreviewDto {
+  const record = asRecord(value)
+  if (!['image/png', 'image/jpeg'].includes(String(record.mediaType))) throw new TypeError('mobile capture image preview')
+  const byteSize = asSafeInteger(record.byteSize)
+  if (byteSize < 1 || byteSize > 20 * 1024 * 1024 || typeof record.dataUrl !== 'string'
+      || !record.dataUrl.startsWith(`data:${record.mediaType};base64,`) || record.dataUrl.length > 30 * 1024 * 1024) throw new TypeError('mobile capture image preview')
+  return { filename: asRequiredString(record.filename), mediaType: record.mediaType as MobileCaptureImagePreviewDto['mediaType'], byteSize, dataUrl: record.dataUrl }
+}
+
+function parseMobileCaptureOcrResult(value: unknown): MobileCaptureOcrResultDto {
+  const record = asRecord(value)
+  return { item: parseMobileCaptureInboxItem(record.item), extractionId: asRequiredString(record.extractionId), document: parseExtractedDocument(record.document) }
+}
+
+function parseMobileCapturePromoteResult(value: unknown): MobileCapturePromoteResultDto {
+  const record = asRecord(value)
+  if (typeof record.reusedExisting !== 'boolean') throw new TypeError('mobile capture promote result')
+  const item = parseMobileCaptureInboxItem(record.item)
+  const runId = asRequiredString(record.runId); const documentId = asRequiredString(record.documentId)
+  if (item.localRunId !== runId || item.localDocumentId !== documentId || !['PROMOTED', 'DUPLICATE'].includes(item.state)) throw new TypeError('mobile capture promote result')
+  return { item, runId, documentId, reusedExisting: record.reusedExisting }
 }
 
 function parseNullableString(value: unknown): string | null {

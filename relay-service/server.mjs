@@ -6,14 +6,16 @@ import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 export const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+export const MAX_CAPTURE_BYTES = 32 * 1024 * 1024
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/
 const DIGEST = /^[0-9a-f]{64}$/
 const INDEX_VERSION = 1
-const FAMILY_INDEX_VERSION = 1
+const FAMILY_INDEX_VERSION = 2
 const PAGE_SIZE = 100
 const MAX_JSON_BYTES = 64 * 1024
 const FAMILY_AUDIENCES = new Set(['SHARED', 'PERSONAL'])
 const FAMILY_ARTIFACT_SCHEMA = 'FAMILY_AUDIENCE_PARTITION_V1'
+const CAPTURE_CAPSULE_SCHEMA = 'MOBILE_RECEIPT_CAPTURE_V1'
 
 function json(response, status, body) {
   const bytes = Buffer.from(JSON.stringify(body))
@@ -76,8 +78,10 @@ function validFamilyIndex(value) {
     || !Number.isSafeInteger(value.nextSequence) || value.nextSequence < 1
     || !Number.isSafeInteger(value.nextMembershipSequence) || value.nextMembershipSequence < 1
     || !Number.isSafeInteger(value.nextInviteSequence) || value.nextInviteSequence < 1
+    || !Number.isSafeInteger(value.nextCaptureSequence) || value.nextCaptureSequence < 1
     || !Array.isArray(value.households) || !Array.isArray(value.memberships)
-    || !Array.isArray(value.invites) || !Array.isArray(value.publications)) return false
+    || !Array.isArray(value.invites) || !Array.isArray(value.publications)
+    || !Array.isArray(value.captures)) return false
   const ids = (items, key) => new Set(items.map((item) => item?.[key])).size === items.length
   if (!ids(value.households, 'householdId') || !ids(value.memberships, 'membershipId')
     || !ids(value.invites, 'inviteId')) return false
@@ -131,23 +135,57 @@ function validFamilyIndex(value) {
       && Number.isSafeInteger(item.byteSize) && item.byteSize > 0
       && typeof item.createdAt === 'string'
   })) return false
+  const captureSequences = new Set()
+  const captureKeys = new Set()
+  if (!value.captures.every((item) => {
+    const key = `${item?.householdId}\0${item?.captureId}`
+    if (!item || captureSequences.has(item.sequence) || captureKeys.has(key)) return false
+    captureSequences.add(item.sequence); captureKeys.add(key)
+    return Number.isSafeInteger(item.sequence) && item.sequence > 0
+      && householdIds.has(item.householdId) && ID.test(item.captureId)
+      && DIGEST.test(item.digest) && ID.test(item.originDeviceId)
+      && FAMILY_AUDIENCES.has(item.audienceVisibility)
+      && ((item.audienceVisibility === 'SHARED' && item.audienceMemberId === null)
+        || (item.audienceVisibility === 'PERSONAL' && ID.test(item.audienceMemberId)))
+      && item.capsuleSchema === CAPTURE_CAPSULE_SCHEMA
+      && membershipById.get(item.senderMembershipId)?.householdId === item.householdId
+      && membershipById.get(item.senderMembershipId)?.principalId === item.senderPrincipalId
+      && (item.audienceVisibility !== 'PERSONAL'
+        || membershipById.get(item.senderMembershipId)?.domainMemberId === item.audienceMemberId)
+      && ID.test(item.senderPrincipalId)
+      && Array.isArray(item.recipientMembershipIds) && item.recipientMembershipIds.length > 0
+      && new Set(item.recipientMembershipIds).size === item.recipientMembershipIds.length
+      && item.recipientMembershipIds.every((id) => membershipById.get(id)?.householdId === item.householdId
+        && id !== item.senderMembershipId
+        && (item.audienceVisibility !== 'PERSONAL' || membershipById.get(id)?.domainMemberId === item.audienceMemberId))
+      && Number.isSafeInteger(item.byteSize) && item.byteSize > 0
+      && typeof item.createdAt === 'string'
+  })) return false
   const membershipNumbers = value.memberships.map((item) => Number(item.membershipId.slice('membership-'.length)))
   const inviteNumbers = value.invites.map((item) => Number(item.inviteId.slice('invite-'.length)))
   const publicationSequences = value.publications.map((item) => item.sequence)
+  const captureSequenceNumbers = value.captures.map((item) => item.sequence)
   return value.nextMembershipSequence > Math.max(0, ...membershipNumbers)
     && value.nextInviteSequence > Math.max(0, ...inviteNumbers)
     && value.nextSequence > Math.max(0, ...publicationSequences)
+    && value.nextCaptureSequence > Math.max(0, ...captureSequenceNumbers)
 }
 
 async function readFamilyIndex(path) {
   try {
-    const parsed = JSON.parse(await readFile(path, 'utf8'))
+    let parsed = JSON.parse(await readFile(path, 'utf8'))
+    if (parsed?.version === 1) {
+      parsed = { ...parsed, version: FAMILY_INDEX_VERSION, nextCaptureSequence: 1, captures: [] }
+      if (!validFamilyIndex(parsed)) throw new Error('family relay index is invalid')
+      await atomicJson(path, parsed)
+    }
     if (!validFamilyIndex(parsed)) throw new Error('family relay index is invalid')
     return parsed
   } catch (error) {
     if (error?.code === 'ENOENT') return {
       version: FAMILY_INDEX_VERSION, nextSequence: 1, nextMembershipSequence: 1,
-      nextInviteSequence: 1, households: [], memberships: [], invites: [], publications: [],
+      nextInviteSequence: 1, nextCaptureSequence: 1,
+      households: [], memberships: [], invites: [], publications: [], captures: [],
     }
     throw error
   }
@@ -205,8 +243,26 @@ function publicationPublic(item) {
   }
 }
 
+function capturePublic(item) {
+  return {
+    sequence: item.sequence, captureId: item.captureId,
+    digest: item.digest, householdId: item.householdId,
+    originDeviceId: item.originDeviceId,
+    audience: { visibility: item.audienceVisibility, memberId: item.audienceMemberId },
+    capsuleSchema: item.capsuleSchema,
+    senderPrincipalId: item.senderPrincipalId,
+    senderMembershipId: item.senderMembershipId,
+    recipientCount: item.recipientMembershipIds.length,
+    byteSize: item.byteSize, createdAt: item.createdAt,
+  }
+}
+
 function familyPublicationStorageName(householdId, publicationId) {
   return createHash('sha256').update(householdId).update('\0').update(publicationId).digest('hex')
+}
+
+function familyCaptureStorageName(householdId, captureId) {
+  return createHash('sha256').update(householdId).update('\0').update(captureId).digest('hex')
 }
 
 function routeArtifactId(pathname) {
@@ -236,8 +292,10 @@ async function receiveArtifact(request, temporary, maximum) {
   return { tooLarge: false, size, digest: hash.digest('hex') }
 }
 
-export async function createRelayServer({ dataDirectory, tokens, allowedOrigins = new Set(), maxArtifactBytes = MAX_ARTIFACT_BYTES, clock = () => new Date() } = {}) {
-  if (!dataDirectory || !(tokens instanceof Map) || tokens.size === 0 || !(allowedOrigins instanceof Set) || !Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1) throw new Error('relay configuration is invalid')
+export async function createRelayServer({ dataDirectory, tokens, allowedOrigins = new Set(), maxArtifactBytes = MAX_ARTIFACT_BYTES, maxCaptureBytes = MAX_CAPTURE_BYTES, clock = () => new Date() } = {}) {
+  if (!dataDirectory || !(tokens instanceof Map) || tokens.size === 0 || !(allowedOrigins instanceof Set)
+    || !Number.isSafeInteger(maxArtifactBytes) || maxArtifactBytes < 1
+    || !Number.isSafeInteger(maxCaptureBytes) || maxCaptureBytes < 1) throw new Error('relay configuration is invalid')
   if (typeof clock !== 'function') throw new Error('relay configuration is invalid')
   for (const [token, principal] of tokens) {
     if (!token || typeof principal !== 'string' || !ID.test(principal)) throw new Error('relay token mapping is invalid')
@@ -248,8 +306,10 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
   const indexPath = join(dataDirectory, 'index.json')
   const familyIndexPath = join(dataDirectory, 'family-index.json')
   const familyArtifactDirectory = join(dataDirectory, 'family-artifacts')
+  const familyCaptureDirectory = join(dataDirectory, 'family-captures')
   await mkdir(artifactDirectory, { recursive: true, mode: 0o700 })
   await mkdir(familyArtifactDirectory, { recursive: true, mode: 0o700 })
+  await mkdir(familyCaptureDirectory, { recursive: true, mode: 0o700 })
   await mkdir(temporaryDirectory, { recursive: true, mode: 0o700 })
   let index = await readIndex(indexPath)
   let familyIndex = await readFamilyIndex(familyIndexPath)
@@ -271,7 +331,7 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
       if (request.method === 'OPTIONS') {
         response.writeHead(204, {
           'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-          'access-control-allow-headers': 'Authorization, Content-Type, X-KakeFlow-Artifact-Id, X-KakeFlow-Digest, X-KakeFlow-Household-Id, X-KakeFlow-Origin-Device-Id, X-KakeFlow-Publication-Id, X-KakeFlow-Audience-Visibility, X-KakeFlow-Audience-Member-Id, X-KakeFlow-Artifact-Schema',
+          'access-control-allow-headers': 'Authorization, Content-Type, X-KakeFlow-Artifact-Id, X-KakeFlow-Digest, X-KakeFlow-Household-Id, X-KakeFlow-Origin-Device-Id, X-KakeFlow-Publication-Id, X-KakeFlow-Audience-Visibility, X-KakeFlow-Audience-Member-Id, X-KakeFlow-Artifact-Schema, X-KakeFlow-Capture-Id, X-KakeFlow-Capsule-Schema',
           'access-control-max-age': '600',
         })
         return response.end()
@@ -590,6 +650,111 @@ export async function createRelayServer({ dataDirectory, tokens, allowedOrigins 
           'x-kakeflow-artifact-schema': publication.artifactSchema,
           'cache-control': 'no-store',
         })
+        return pipeline(createReadStream(path), response).catch(() => response.destroy())
+      }
+
+      if (parts.length === 4 && parts[0] === 'v2' && parts[1] === 'households' && parts[3] === 'captures' && request.method === 'POST') {
+        const householdId = parts[2]
+        const captureId = request.headers['x-kakeflow-capture-id']
+        const expectedDigest = request.headers['x-kakeflow-digest']
+        const originDeviceId = request.headers['x-kakeflow-origin-device-id']
+        const audienceVisibility = request.headers['x-kakeflow-audience-visibility']
+        const audienceMemberId = request.headers['x-kakeflow-audience-member-id']
+        const capsuleSchema = request.headers['x-kakeflow-capsule-schema']
+        if (!ID.test(householdId) || ![captureId, originDeviceId].every((item) => typeof item === 'string' && ID.test(item))
+          || typeof expectedDigest !== 'string' || !DIGEST.test(expectedDigest)
+          || !FAMILY_AUDIENCES.has(audienceVisibility)
+          || (audienceVisibility === 'SHARED' && audienceMemberId != null)
+          || (audienceVisibility === 'PERSONAL' && (typeof audienceMemberId !== 'string' || !ID.test(audienceMemberId)))
+          || capsuleSchema !== CAPTURE_CAPSULE_SCHEMA) {
+          request.resume(); return failure(response, 400, 'INVALID_CAPTURE_HEADERS')
+        }
+        const declaredLength = Number(request.headers['content-length'])
+        if (Number.isFinite(declaredLength) && declaredLength > maxCaptureBytes) {
+          request.resume(); return failure(response, 413, 'CAPTURE_TOO_LARGE')
+        }
+        const temporary = join(temporaryDirectory, `capture-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+        let received
+        try { received = await receiveArtifact(request, temporary, maxCaptureBytes) } catch {
+          await rm(temporary, { force: true }); return failure(response, 400, 'CAPTURE_READ_FAILED')
+        }
+        if (received.tooLarge) { await rm(temporary, { force: true }); return failure(response, 413, 'CAPTURE_TOO_LARGE') }
+        if (received.size === 0 || received.digest !== expectedDigest) {
+          await rm(temporary, { force: true }); return failure(response, 422, received.size === 0 ? 'EMPTY_CAPTURE' : 'CAPTURE_DIGEST_MISMATCH')
+        }
+        const result = await mutate(async () => {
+          const sender = activeMembership(familyIndex, householdId, principalId)
+          if (!sender) { await rm(temporary, { force: true }); return { status: 403, body: { error: 'ACTIVE_MEMBERSHIP_REQUIRED' } } }
+          const existing = familyIndex.captures.find((item) => item.householdId === householdId && item.captureId === captureId)
+          if (existing) {
+            await rm(temporary, { force: true })
+            if (existing.digest !== expectedDigest || existing.senderMembershipId !== sender.membershipId
+              || existing.originDeviceId !== originDeviceId || existing.capsuleSchema !== capsuleSchema
+              || existing.audienceVisibility !== audienceVisibility || existing.audienceMemberId !== (audienceMemberId ?? null)) {
+              return { status: 409, body: { error: 'CAPTURE_CONFLICT' } }
+            }
+            const stored = join(familyCaptureDirectory, familyCaptureStorageName(householdId, captureId))
+            try { await access(stored) } catch { return { status: 500, body: { error: 'CAPTURE_STORAGE_MISSING' } } }
+            return { status: 200, body: { capture: capturePublic(existing), created: false } }
+          }
+          if (audienceVisibility === 'PERSONAL' && audienceMemberId !== sender.domainMemberId) {
+            await rm(temporary, { force: true }); return { status: 403, body: { error: 'PERSONAL_AUDIENCE_MISMATCH' } }
+          }
+          const recipients = familyIndex.memberships.filter((item) => item.householdId === householdId
+            && item.state === 'ACTIVE' && item.membershipId !== sender.membershipId
+            && (audienceVisibility === 'SHARED' || item.domainMemberId === sender.domainMemberId))
+          if (recipients.length === 0) { await rm(temporary, { force: true }); return { status: 409, body: { error: 'NO_ACTIVE_CAPTURE_RECIPIENTS' } } }
+          const stored = join(familyCaptureDirectory, familyCaptureStorageName(householdId, captureId))
+          await rm(stored, { force: true }); await rename(temporary, stored)
+          const capture = {
+            sequence: familyIndex.nextCaptureSequence, captureId, digest: expectedDigest,
+            householdId, originDeviceId, audienceVisibility,
+            audienceMemberId: audienceMemberId ?? null, capsuleSchema,
+            senderPrincipalId: principalId, senderMembershipId: sender.membershipId,
+            recipientMembershipIds: recipients.map((item) => item.membershipId),
+            byteSize: received.size, createdAt: clock().toISOString(),
+          }
+          const next = { ...familyIndex, nextCaptureSequence: familyIndex.nextCaptureSequence + 1, captures: [...familyIndex.captures, capture] }
+          await atomicJson(familyIndexPath, next); familyIndex = next
+          return { status: 201, body: { capture: capturePublic(capture), created: true } }
+        })
+        return json(response, result.status, result.body)
+      }
+
+      if (parts.length === 4 && parts[0] === 'v2' && parts[1] === 'households' && parts[3] === 'captures' && request.method === 'GET') {
+        const householdId = parts[2]
+        const after = Number(url.searchParams.get('after') ?? '0')
+        const excluded = url.searchParams.get('excludeOriginDeviceId')
+        if (!ID.test(householdId) || !Number.isSafeInteger(after) || after < 0 || (excluded != null && !ID.test(excluded))) return failure(response, 400, 'INVALID_QUERY')
+        const membership = activeMembership(familyIndex, householdId, principalId)
+        if (!membership) return failure(response, 404, 'HOUSEHOLD_NOT_FOUND')
+        const matching = familyIndex.captures.filter((item) => item.householdId === householdId && item.sequence > after)
+        const captures = matching.filter((item) => item.recipientMembershipIds.includes(membership.membershipId) && item.originDeviceId !== excluded).slice(0, PAGE_SIZE)
+        const pageBoundary = captures.length === PAGE_SIZE ? captures.at(-1).sequence : matching.at(-1)?.sequence ?? after
+        return json(response, 200, { captures: captures.map(capturePublic), nextCursor: String(pageBoundary) })
+      }
+
+      if (parts.length === 5 && parts[0] === 'v2' && parts[1] === 'households' && parts[3] === 'captures' && request.method === 'GET') {
+        const householdId = parts[2]; const captureId = parts[4]
+        if (!ID.test(householdId) || !ID.test(captureId)) return failure(response, 400, 'INVALID_CAPTURE_ID')
+        const membership = activeMembership(familyIndex, householdId, principalId)
+        if (!membership) return failure(response, 404, 'CAPTURE_NOT_FOUND')
+        const capture = familyIndex.captures.find((item) => item.householdId === householdId && item.captureId === captureId)
+        if (!capture || (capture.senderMembershipId !== membership.membershipId && !capture.recipientMembershipIds.includes(membership.membershipId))) {
+          return failure(response, 404, 'CAPTURE_NOT_FOUND')
+        }
+        const path = join(familyCaptureDirectory, familyCaptureStorageName(householdId, captureId))
+        const headers = {
+          'content-type': 'application/octet-stream', 'content-length': capture.byteSize,
+          'x-kakeflow-capture-id': capture.captureId,
+          'x-kakeflow-digest': capture.digest,
+          'x-kakeflow-household-id': capture.householdId,
+          'x-kakeflow-audience-visibility': capture.audienceVisibility,
+          'x-kakeflow-capsule-schema': capture.capsuleSchema,
+          'cache-control': 'no-store',
+        }
+        if (capture.audienceMemberId !== null) headers['x-kakeflow-audience-member-id'] = capture.audienceMemberId
+        response.writeHead(200, headers)
         return pipeline(createReadStream(path), response).catch(() => response.destroy())
       }
 

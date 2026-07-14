@@ -322,6 +322,37 @@ export interface FamilySnapshotReviewDto {
   readonly records: readonly FamilySnapshotReviewRecordDto[]
 }
 export interface FamilySnapshotResolutionInputDto { readonly entityKind: string; readonly entityId: string; readonly resolution: Exclude<FamilySnapshotResolutionDto, 'PENDING'> }
+export type MobileCaptureInboxStateDto = 'RECEIVED' | 'OCR_READY' | 'OCR_REVIEW_REQUIRED' | 'PROMOTED' | 'DUPLICATE' | 'REJECTED_INVALID' | 'FAILED_RETRYABLE'
+export interface MobileCaptureInboxItemDto {
+  readonly artifactId: string; readonly captureId: string; readonly originalFilename: string
+  readonly mediaType: 'image/png' | 'image/jpeg'; readonly byteSize: number; readonly sourceSha256: string
+  readonly capturedAt: string | null; readonly receivedAt: string
+  readonly senderMembershipId?: string; readonly senderMemberName?: string | null
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName?: string | null
+  readonly state: MobileCaptureInboxStateDto; readonly latestExtractionId: string | null
+  readonly localRunId: string | null; readonly localDocumentId: string | null; readonly lastErrorCode: string | null
+  readonly receivedBeforeSenderRevocation?: boolean
+}
+export interface MobileCaptureStatusDto {
+  readonly endpoint: string | null; readonly localDeviceId: string; readonly captureInboundCursor: number
+  readonly items: readonly MobileCaptureInboxItemDto[]
+}
+export interface MobileCaptureImagePreviewDto { readonly filename: string; readonly mediaType: 'image/png' | 'image/jpeg'; readonly byteSize: number; readonly dataUrl: string }
+export interface MobileCaptureIngestInputDto {
+  readonly householdId: string; readonly artifactId: string; readonly claimedDigest: string
+  readonly originDeviceId: string; readonly senderMembershipId: string
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
+  readonly capsuleBytes: readonly number[]
+}
+export interface MobileCaptureOcrResultDto {
+  readonly item: MobileCaptureInboxItemDto; readonly extractionId: string; readonly document: ExtractedDocumentDto
+}
+export interface MobileCapturePromoteInputDto {
+  readonly householdId: string; readonly artifactId: string; readonly extractionId: string; readonly import: StartImportDto
+}
+export interface MobileCapturePromoteResultDto {
+  readonly item: MobileCaptureInboxItemDto; readonly runId: string; readonly documentId: string; readonly reusedExisting: boolean
+}
 export type ChangePackageResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
 export interface ChangePackageRecordReviewDto {
   readonly recordOrder: number; readonly entityKind: string; readonly entityId: string
@@ -693,6 +724,14 @@ export type AppCommand =
   | 'pending_import_pick_and_stage'
   | 'pending_import_apply'
   | 'pending_import_discard'
+  | 'mobile_capture_inbox_list'
+  | 'mobile_capture_status'
+  | 'mobile_capture_cursor_update'
+  | 'mobile_capture_ingest'
+  | 'mobile_capture_image_preview'
+  | 'mobile_capture_ocr'
+  | 'mobile_capture_mark_ocr_review_required'
+  | 'mobile_capture_promote'
   | 'households_list'
   | 'household_create'
   | 'household_members_list'
@@ -794,6 +833,14 @@ export interface PlatformClient {
   resolveFamilySnapshot(packageId: string, resolutions: readonly FamilySnapshotResolutionInputDto[]): Promise<FamilySnapshotReviewDto>
   applyFamilySnapshot(packageId: string): Promise<FamilySnapshotReviewDto>
   discardFamilySnapshot(packageId: string): Promise<void>
+  listMobileCaptureInbox(householdId: string): Promise<readonly MobileCaptureInboxItemDto[]>
+  getMobileCaptureStatus(householdId: string): Promise<MobileCaptureStatusDto>
+  updateMobileCaptureCursor(householdId: string, nextCursor: number): Promise<MobileCaptureStatusDto>
+  ingestMobileCapture(input: MobileCaptureIngestInputDto): Promise<MobileCaptureInboxItemDto>
+  getMobileCaptureImagePreview(householdId: string, artifactId: string): Promise<MobileCaptureImagePreviewDto>
+  ocrMobileCapture(householdId: string, artifactId: string): Promise<MobileCaptureOcrResultDto>
+  markMobileCaptureOcrReviewRequired(householdId: string, artifactId: string): Promise<MobileCaptureInboxItemDto>
+  promoteMobileCapture(input: MobileCapturePromoteInputDto): Promise<MobileCapturePromoteResultDto>
   exportChangePackage(householdId: string): Promise<string | null>
   pickAndStageChangePackage(householdId: string): Promise<ChangePackageReviewDto | null>
   getActiveChangePackageReview(householdId: string): Promise<ChangePackageReviewDto | null>

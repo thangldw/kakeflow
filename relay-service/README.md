@@ -41,6 +41,9 @@ DELETE /v2/households/:householdId/members/:membershipId
 POST   /v2/households/:householdId/publications
 GET    /v2/households/:householdId/publications?after=0
 GET    /v2/households/:householdId/publications/:publicationId
+POST   /v2/households/:householdId/captures
+GET    /v2/households/:householdId/captures?after=0
+GET    /v2/households/:householdId/captures/:captureId
 ```
 
 Create a family binding with a stable local household/member identity:
@@ -96,3 +99,46 @@ provide local desktop user authorization, and is not end-to-end encrypted.
 
 The versioned personal and family indexes and all artifact files survive a
 process restart.
+
+## Mobile-browser receipt capture channel
+
+Receipt captures use a separate opaque stream and never enter the family
+snapshot publication format. Upload exact capsule bytes with:
+
+```text
+X-KakeFlow-Capture-Id: <stable retry id>
+X-KakeFlow-Digest: <sha256 of exact capsule bytes>
+X-KakeFlow-Origin-Device-Id: <browser/device session id>
+X-KakeFlow-Audience-Visibility: SHARED | PERSONAL
+X-KakeFlow-Audience-Member-Id: <required only for PERSONAL>
+X-KakeFlow-Capsule-Schema: MOBILE_RECEIPT_CAPTURE_V1
+```
+
+`SHARED` snapshots every other active household membership as a recipient.
+`PERSONAL` is accepted only for the authenticated sender's own
+`domainMemberId` and routes only to another active principal mapped to that
+member. Missing recipients are rejected; a personal capture never falls back
+to household sharing. Capture IDs are immutable within a household, exact
+retries preserve their original recipient snapshot, and capture cursors are
+independent of family-publication cursors. Revoked or rejoined membership
+generations cannot list or download a capture addressed to an older generation.
+
+The default relay limit is 32 MiB per capsule. The v1 capsule is a deterministic
+binary envelope containing a canonical manifest and one exact JPEG/PNG image;
+the reference uploader limits the image itself to 20 MiB to match desktop OCR.
+The relay validates routing metadata, size, and the capsule-byte digest but does
+not inspect or attest the opaque manifest.
+
+For manual testing on a phone browser, run:
+
+```sh
+npm run capture:uploader
+```
+
+Then add `http://127.0.0.1:8790` (or the TLS origin used to expose that page) to
+`KAKEFLOW_RELAY_ALLOWED_ORIGINS`. The page keeps its Bearer token only in the
+current input element and does not use cookies, local storage, or session
+storage. It is a responsive reference uploader, not an iOS/Android native app,
+offline queue, background camera integration, remote OCR service, or production
+authentication surface. Relay acceptance is not a desktop download/read
+receipt and never posts a ledger transaction.

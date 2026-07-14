@@ -35,6 +35,24 @@ describe('receipt text normalization', () => {
     expect(result.request).toMatchObject({ audienceVisibility: 'SHARED', audienceMemberId: null })
   })
 
+  it('preserves a personal mobile capture scope through the review candidate', async () => {
+    const extracted = { method: 'OCR' as const, confidenceBps: 9000, issues: [], text: 'スーパー\n2026/07/12\n合計 1,480' }
+    const result = await buildReceiptImport(extracted, {
+      householdId: 'family', filename: 'mobile.jpg', mediaType: 'image/jpeg', byteSize: 100,
+      sha256: 'a'.repeat(64), sourceModifiedAt: '2026-07-12T10:00:00Z', accountId: 'family-cash',
+      sourceType: 'CAMERA_SCAN', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-a',
+      attributionKind: 'MEMBER', attributedMemberId: 'member-a',
+    }, () => globalThis.crypto.randomUUID(), async () => 'b'.repeat(64))
+
+    expect(result.request).toMatchObject({
+      sourceType: 'CAMERA_SCAN', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-a',
+      candidates: [expect.objectContaining({
+        attributionKind: 'MEMBER', attributedMemberId: 'member-a',
+        audienceVisibility: 'PERSONAL', audienceMemberId: 'member-a', reviewStatus: 'READY',
+      })],
+    })
+  })
+
   it('extracts item, Japanese tax, coupon and points evidence with line provenance', () => {
     const receipt = parseReceiptText([
       'スーパー新宿店',

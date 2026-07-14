@@ -2,7 +2,9 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
-Version 0.53 adds an optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) for manually sending, checking, downloading, and staging schema-v4 change packages between desktops using the same server-derived remote principal. Existing conflict review and explicit atomic apply remain mandatory; this is not cross-member sync, end-to-end encryption, automatic delivery, or cloud backup.
+Version 0.55 adds a dedicated [mobile receipt-capture protocol and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md). A reference mobile-browser uploader sends one immutable JPEG/PNG capsule through a separate authenticated relay channel; the desktop stores and previews the original before local OCR, then creates only a normal `REVIEW_REQUIRED` receipt candidate. Receiving, OCR, matching, and promotion never post a transaction automatically.
+
+![KakeFlow mobile receipt capture](docs/assets/infographics/mobile-capture.svg)
 
 Version 0.52 adds a strict, dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot stock purchases and sales. It preserves source settlement semantics and physical-row evidence, requires an explicit securities-account mapping, and rejects credit/margin, `現引`/`現渡`, and other unsupported rows instead of guessing their investment treatment.
 
@@ -129,6 +131,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
 - Optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) with server-derived Bearer-token principals, manual send/check/stage controls, immutable 64 MiB digest-verified artifacts, retry-safe outbox acknowledgement, and reuse of the existing schema-v4 conflict-review/atomic-apply boundary. The checked-in Node reference relay has an explicit WebView CORS allowlist, must run behind a TLS reverse proxy, and stores package bytes as received; there is no cross-member, E2E-encryption, auto-sync, auto-apply, source-evidence transport, or backup claim.
 - Dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot purchases/sales, with source settlement checks, immutable row provenance, explicit securities-account selection, blocking credit/margin errors, and row-level rejection of `現引`/`現渡` or other unsupported activity; checked-in fixtures are synthetic and contain no customer data.
 - Dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for the official domestic and foreign `約定履歴` CSV structures, limited to supported spot stock purchases and sales with explicit securities-account selection, immutable row provenance, auditable source-settlement adjustments, and rejection of margin, derivatives, and other unsupported rows; checked-in fixtures are synthetic and contain no customer data.
@@ -206,8 +209,8 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Add a separate mobile receipt-capture capsule and desktop Capture Inbox; keep local OCR, receipt matching, and explicit confirmation ahead of any ledger posting.
-3. Extend family delivery to evidence-partitioned card, investment, planning, and configuration aggregates after their complete dependency graphs can travel without widening audience.
+2. Extend family delivery to evidence-partitioned card, investment, planning, and configuration aggregates after their complete dependency graphs can travel without widening audience.
+3. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
 4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
 
 ## Family delivery boundary
