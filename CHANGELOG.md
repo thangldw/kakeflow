@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.65.0 — 2026-07-14
+
+- Export the Annual Household Review as a native `.xlsx` workbook from the same validated yearly report and account-group/member/as-of scope used by the screen and annual CSV.
+- Generate four bounded sheets—Summary, Monthly, Drivers, and Health—with typed JPY, integer, and percentage cells, Japanese labels, explicit completeness states, and the report's data-quality and reconciliation disclosures.
+- Keep all workbook bytes in the native process, return only saved-file metadata over IPC, and treat save-dialog cancellation as a non-error without writing a destination.
+- Reject malformed annual windows, excessive driver/cell/output sizes, and integers that Excel cannot represent exactly instead of silently changing report values.
+- Add strict IPC parsing, independent CSV/Excel progress controls, scope-preserving desktop integration, and structural OOXML regression coverage.
+
 ## 0.64.0 — 2026-07-14
 
 - Project a bounded, structured receipt review from persisted primary evidence into Import Preview, including restart recovery, while excluding raw OCR text, pixels, regions, and extraction payloads from the WebView contract.

@@ -300,6 +300,7 @@ describe('KakeFlow desktop read models', () => {
       }
       if (command === 'export_csv_save') return { fileName: 'transactions.csv', rowCount: 1, byteSize: 100 }
       if (command === 'annual_household_review_csv_save') return { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
+      if (command === 'annual_household_review_xlsx_save') return { fileName: 'kakeflow-annual-review-2026.xlsx', rowCount: 48, byteSize: 8_000 }
       if (command === 'aggregate_asset_history_list') return [{ id: 'aggregate-jul', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 3, asOf: '2026-07-31', totalAssetsJpy: 8700000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2100000 }, { assetClass: 'LISTED_STOCKS', officialHeader: '株式(現物)(円)', valueJpy: 3100000 }] }, { id: 'aggregate-jun', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 2, asOf: '2026-06-30', totalAssetsJpy: 8500000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2000000 }] }]
       if (command === 'aggregate_asset_history_import') {
         const input = args?.input as { snapshots: Array<Record<string, unknown>> }
@@ -570,6 +571,9 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_report_yearly_query', { request: expect.objectContaining({ householdId: 'family', accountGroupId: null, attributionScope: memberScope, year: '2026', asOf: reportAsOf }) }))
     fireEvent.click(screen.getByRole('button', { name: '年次CSVを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('annual_household_review_csv_save', { request: expect.objectContaining({ attributionScope: memberScope, year: '2026', asOf: reportAsOf }) }))
+    fireEvent.click(await screen.findByRole('button', { name: '年次Excelを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('annual_household_review_xlsx_save', { request: expect.objectContaining({ attributionScope: memberScope, year: '2026', asOf: reportAsOf }) }))
+    expect(await screen.findByText(/kakeflow-annual-review-2026\.xlsx（48行）を保存しました/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
     fireEvent.click(await screen.findByRole('button', { name: '保存先を選んでCSV出力' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('export_csv_save', { request: expect.objectContaining({ attributionScope: memberScope }) }))

@@ -184,6 +184,12 @@ export interface AnnualReviewCsvSavedDto {
   readonly byteSize: number
 }
 
+export interface AnnualReviewXlsxSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+}
+
 export type FinancialCalendarInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke = tauriInvoke) {
@@ -199,6 +205,10 @@ export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke 
     saveAnnualReviewCsv: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewCsvSavedDto | null> => {
       const value = await invoke('annual_household_review_csv_save', { request })
       return value === null ? null : parseAnnualReviewCsvSaved(value)
+    },
+    saveAnnualReviewXlsx: async (request: YearlyFinancialReportRequest): Promise<AnnualReviewXlsxSavedDto | null> => {
+      const value = await invoke('annual_household_review_xlsx_save', { request })
+      return value === null ? null : parseAnnualReviewXlsxSaved(value)
     },
   }
 }
@@ -466,4 +476,15 @@ function parseAnnualReviewCsvSaved(value: unknown): AnnualReviewCsvSavedDto {
   const item = record(value, 'saved annual review CSV')
   stringValue(item.fileName, 'saved annual review CSV filename'); nonNegativeInteger(item.rowCount, 'saved annual review CSV rows'); nonNegativeInteger(item.byteSize, 'saved annual review CSV bytes')
   return item as unknown as AnnualReviewCsvSavedDto
+}
+
+function parseAnnualReviewXlsxSaved(value: unknown): AnnualReviewXlsxSavedDto {
+  const item = record(value, 'saved annual review XLSX')
+  stringValue(item.fileName, 'saved annual review XLSX filename')
+  nonNegativeInteger(item.rowCount, 'saved annual review XLSX rows')
+  nonNegativeInteger(item.byteSize, 'saved annual review XLSX bytes')
+  const fileName = item.fileName as string
+  if (fileName.length === 0 || fileName.length > 255 || !/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved annual review XLSX filename')
+  if ((item.rowCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved annual review XLSX')
+  return item as unknown as AnnualReviewXlsxSavedDto
 }
