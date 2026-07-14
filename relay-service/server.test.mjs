@@ -13,18 +13,18 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function start(root, maximum = 1024) {
-  const server = await createRelayServer({ dataDirectory: root, tokens: new Map([['token-a', 'principal-a'], ['token-b', 'principal-b']]), maxArtifactBytes: maximum })
+async function start(root, maximum = 1024, allowedOrigins = new Set()) {
+  const server = await createRelayServer({ dataDirectory: root, tokens: new Map([['token-a', 'principal-a'], ['token-b', 'principal-b']]), allowedOrigins, maxArtifactBytes: maximum })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   servers.push(server)
   const address = server.address()
   return `http://127.0.0.1:${address.port}`
 }
 
-async function fixture() {
+async function fixture({ allowedOrigins = new Set() } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'kakeflow-relay-test-'))
   roots.push(root)
-  return { root, base: await start(root) }
+  return { root, base: await start(root, 1024, allowedOrigins) }
 }
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -40,6 +40,17 @@ test('authenticates whoami and rejects missing or unknown bearer tokens', async 
   const response = await fetch(`${base}/v1/whoami`, { headers: auth() })
   assert.equal(response.status, 200)
   assert.deepEqual(await response.json(), { remotePrincipalId: 'principal-a' })
+})
+
+test('answers configured WebView CORS preflight before bearer authentication', async () => {
+  const origin = 'tauri://localhost'
+  const { base } = await fixture({ allowedOrigins: new Set([origin]) })
+  const accepted = await fetch(`${base}/v1/artifacts`, { method: 'OPTIONS', headers: { Origin: origin } })
+  assert.equal(accepted.status, 204)
+  assert.equal(accepted.headers.get('access-control-allow-origin'), origin)
+  assert.match(accepted.headers.get('access-control-allow-headers'), /X-KakeFlow-Digest/i)
+  const rejected = await fetch(`${base}/v1/whoami`, { headers: { Origin: 'https://unconfigured.example', ...auth() } })
+  assert.equal(rejected.status, 403)
 })
 
 test('isolates stored bytes and listings across derived principals', async () => {

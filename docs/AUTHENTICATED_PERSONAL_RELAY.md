@@ -49,8 +49,9 @@ npm run relay:start
 ```
 
 The service speaks plain HTTP and must be deployed behind a TLS reverse proxy
-with request-size limits and an explicit CORS policy that permits the KakeFlow
-desktop origin, `Authorization`, and the documented `x-kakeflow-*` headers.
+with request-size limits. Its explicit WebView CORS allowlist is configured by
+`KAKEFLOW_RELAY_ALLOWED_ORIGINS` and permits the required authorization and
+`x-kakeflow-*` headers; a reverse proxy must preserve or equivalently enforce it.
 Desktop configuration accepts HTTPS endpoints, plus loopback HTTP for local
 development. The service stores artifact bytes exactly as received, with a
 durable on-disk index; KakeFlow 0.53 does not encrypt a change package end to

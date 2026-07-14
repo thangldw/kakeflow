@@ -209,7 +209,7 @@ pub fn status(connection: &Connection, household_id: &str) -> Result<RelayStatus
     ).optional()?;
     let mut statement = connection.prepare(
         "SELECT artifact_id,package_sha256,created_at,origin_device_id,state
-         FROM relay_inbound_artifacts WHERE household_id=?1 ORDER BY created_at DESC,artifact_id DESC LIMIT 100",
+         FROM relay_inbound_artifacts WHERE household_id=?1 ORDER BY created_at DESC,artifact_id DESC LIMIT 1000",
     )?;
     let inbound = statement
         .query_map([household_id], |row| {
@@ -255,7 +255,7 @@ pub fn prepare_send(
         return Err(RelayError::InvalidInput);
     }
     let connected: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM relay_connections WHERE household_id=?1 AND state='CONNECTED')",
+        "SELECT EXISTS(SELECT 1 FROM relay_connections WHERE household_id=?1 AND state IN ('CONNECTED','DEGRADED'))",
         [household_id], |row| row.get(0),
     )?;
     if !connected {
@@ -315,13 +315,28 @@ fn load_delivery(
     connection: &Connection,
     delivery_id: &str,
 ) -> Result<Option<RelayPreparedDeliveryDto>> {
-    connection.query_row(
+    let delivery = connection.query_row(
         "SELECT d.delivery_id,d.artifact_id,d.package_sha256,d.household_id,c.device_id,d.package_bytes
          FROM relay_deliveries d JOIN local_sync_contexts c ON c.household_id=d.household_id WHERE d.delivery_id=?1",
         [delivery_id], |row| Ok(RelayPreparedDeliveryDto {
             delivery_id: row.get(0)?, artifact_id: row.get(1)?, digest: row.get(2)?, household_id: row.get(3)?, origin_device_id: row.get(4)?, package_bytes: row.get(5)?,
         }),
-    ).optional().map_err(RelayError::from)
+    ).optional()?;
+    let Some(delivery) = delivery else {
+        return Ok(None);
+    };
+    if digest(&delivery.package_bytes) != delivery.digest {
+        return Err(RelayError::Conflict);
+    }
+    let package = change_package::decode_and_validate(&delivery.package_bytes)
+        .map_err(|_| RelayError::Conflict)?;
+    if package.package_id != delivery.artifact_id
+        || package.household_id != delivery.household_id
+        || package.source_installation_id != delivery.origin_device_id
+    {
+        return Err(RelayError::Conflict);
+    }
+    Ok(Some(delivery))
 }
 
 pub fn mark_accepted(
@@ -349,6 +364,10 @@ pub fn mark_accepted(
         params![input.accepted_at, input.delivery_id],
     )?;
     transaction.execute(
+        "UPDATE relay_connections SET state='CONNECTED',last_checked_at=?1 WHERE household_id=?2",
+        params![input.accepted_at, input.household_id],
+    )?;
+    transaction.execute(
         "UPDATE sync_outbox SET state='ACKNOWLEDGED',acknowledged_at=?1
          WHERE state='PENDING' AND envelope_id IN (SELECT envelope_id FROM relay_delivery_envelopes WHERE delivery_id=?2)",
         params![input.accepted_at,input.delivery_id],
@@ -365,10 +384,19 @@ pub fn mark_send_failed(
     if !valid_id(household_id) || !valid_id(delivery_id) {
         return Err(RelayError::InvalidInput);
     }
-    connection.execute(
+    let transaction = connection.unchecked_transaction()?;
+    let changed = transaction.execute(
         "UPDATE relay_deliveries SET state='FAILED_RETRYABLE',accepted_at=NULL WHERE household_id=?1 AND delivery_id=?2 AND state!='ACCEPTED'",
         params![household_id,delivery_id],
     )?;
+    if changed != 1 {
+        return Err(RelayError::Conflict);
+    }
+    transaction.execute(
+        "UPDATE relay_connections SET state='DEGRADED' WHERE household_id=?1",
+        [household_id],
+    )?;
+    transaction.commit()?;
     status(connection, household_id)
 }
 
@@ -380,7 +408,7 @@ pub fn register_inbound(
         return Err(RelayError::InvalidInput);
     }
     let connected: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM relay_connections WHERE household_id=?1 AND state='CONNECTED')",
+        "SELECT EXISTS(SELECT 1 FROM relay_connections WHERE household_id=?1 AND state IN ('CONNECTED','DEGRADED'))",
         [&input.household_id],
         |row| row.get(0),
     )?;
@@ -404,6 +432,10 @@ pub fn register_inbound(
         }
         register_one(&transaction, &input.household_id, artifact)?;
     }
+    transaction.execute(
+        "UPDATE relay_connections SET state='CONNECTED',last_checked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1",
+        [&input.household_id],
+    )?;
     transaction.commit()?;
     status(connection, &input.household_id)
 }
@@ -549,6 +581,14 @@ mod tests {
                     pending > 0,
                     "a change captured after the delivery snapshot must remain pending"
                 );
+                let retained_bytes: i64 = connection
+                    .query_row(
+                        "SELECT count(*) FROM relay_deliveries WHERE package_bytes IS NOT NULL",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(retained_bytes, 0);
                 Ok(())
             })
             .unwrap();
@@ -626,6 +666,27 @@ mod tests {
                         .unwrap(),
                     "WAITING_FOR_REVIEW"
                 );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn retry_refuses_mutated_persisted_package_bytes() {
+        let state = setup(5);
+        state
+            .with_connection(|connection| {
+                let prepared = prepare_send(connection, "family").unwrap();
+                connection
+                    .execute(
+                        "UPDATE relay_deliveries SET package_bytes=zeroblob(length(package_bytes)) WHERE delivery_id=?1",
+                        [&prepared.delivery_id],
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    prepare_send(connection, "family"),
+                    Err(RelayError::Conflict)
+                ));
                 Ok(())
             })
             .unwrap();

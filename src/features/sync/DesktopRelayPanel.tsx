@@ -68,18 +68,28 @@ export function DesktopRelayPanel({ householdId, onReviewStaged }: Props) {
 
   const send = async () => {
     if (!householdId || !status?.endpoint || !bearerToken) { setNotice('送信には、このセッション用の接続トークンが必要です。'); return }
-    const current = ++request.current; setBusy('SEND'); setNotice('変更パッケージをリレーへ送信しています…')
+    const current = ++request.current; let preparedDeliveryId: string | null = null
+    setBusy('SEND'); setNotice('変更パッケージをリレーへ送信しています…')
     try {
       const remotePrincipalId = await identifyDesktopRelay(status.endpoint, bearerToken)
       if (remotePrincipalId !== status.remotePrincipalId) throw new Error('relay principal changed')
       const delivery = await platformClient.prepareDesktopRelaySend(householdId)
+      preparedDeliveryId = delivery.deliveryId
       const accepted = await uploadDesktopRelayArtifact(status.endpoint, bearerToken, delivery)
       if (accepted.artifactId !== delivery.artifactId || accepted.digest !== delivery.digest) throw new Error('relay receipt mismatch')
       if (current !== request.current) return
       const next = await platformClient.acceptDesktopRelaySend({ householdId, deliveryId: delivery.deliveryId, artifactId: accepted.artifactId, digest: accepted.digest, acceptedAt: accepted.acceptedAt })
       if (current !== request.current) return
       setStatus(next); setNotice('リレーが変更パッケージを受理しました。別端末での受信・反映完了を意味しません。')
-    } catch { if (current === request.current) setNotice('送信を完了できませんでした。未送信の変更は残っています。接続を確認して再試行してください。') }
+    } catch {
+      if (preparedDeliveryId) {
+        try {
+          const failed = await platformClient.failDesktopRelaySend(householdId, preparedDeliveryId)
+          if (current === request.current) setStatus(failed)
+        } catch { /* keep the last known state */ }
+      }
+      if (current === request.current) setNotice('送信を完了できませんでした。未送信の変更は残っています。接続を確認して再試行してください。')
+    }
     finally { if (current === request.current) setBusy(null) }
   }
 

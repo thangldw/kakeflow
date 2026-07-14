@@ -571,6 +571,17 @@ fn relay_send_accept(
 }
 
 #[tauri::command]
+fn relay_send_failed(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    delivery_id: String,
+) -> Result<relay_transport::RelayStatusDto, String> {
+    relay_result(&state, |connection| {
+        relay_transport::mark_send_failed(connection, &household_id, &delivery_id)
+    })
+}
+
+#[tauri::command]
 fn relay_inbound_register(
     state: tauri::State<'_, AppState>,
     input: relay_transport::RegisterInboundInput,
@@ -2842,6 +2853,7 @@ pub fn run() {
             relay_disconnect,
             relay_send_prepare,
             relay_send_accept,
+            relay_send_failed,
             relay_inbound_register,
             relay_inbound_stage,
             change_package_export_save,

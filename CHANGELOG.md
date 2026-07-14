@@ -6,7 +6,7 @@
 - Add explicit connect, disconnect, send, receive-check, download, digest-validation, and stage controls while retaining the existing conflict/deletion review and atomic apply boundary; no relay operation applies ledger data automatically.
 - Snapshot pending local envelopes into an immutable retryable delivery, acknowledge only the envelopes accepted by the relay, and leave changes captured after that snapshot pending for the next send.
 - Persist relay endpoint, server-derived principal, delivery receipts, and bounded inbound metadata without persisting the session Bearer token; validate artifact identity, origin, household, digest, size, and package semantics before staging.
-- Include a dependency-free Node reference relay with principal-isolated immutable storage, ordered listing, idempotent retry, digest verification, a 64 MiB limit, and restart-safe index/bytes; require deployment behind a TLS/CORS reverse proxy because the service itself speaks plain HTTP and does not add WebView CORS policy.
+- Include a dependency-free Node reference relay with principal-isolated immutable storage, ordered listing, idempotent retry, digest verification, a 64 MiB limit, restart-safe index/bytes, and an explicit configurable WebView CORS allowlist; require deployment behind a TLS reverse proxy because the service itself speaks plain HTTP.
 - Keep the boundary explicit: whole-household packages are same-principal-only, stored bytes are not end-to-end encrypted, and there is no cross-member audience enforcement, automatic/background sync, source/evidence or pending-review transport, mobile capture, or cloud-backup claim.
 
 ## 0.52.0 — 2026-07-14

@@ -9,6 +9,7 @@ function tokenMappings(raw) {
 const server = await createRelayServer({
   dataDirectory: process.env.KAKEFLOW_RELAY_DATA_DIR ?? './relay-data',
   tokens: tokenMappings(process.env.KAKEFLOW_RELAY_TOKENS_JSON ?? ''),
+  allowedOrigins: new Set((process.env.KAKEFLOW_RELAY_ALLOWED_ORIGINS ?? 'tauri://localhost,http://tauri.localhost,https://tauri.localhost,http://localhost:1420').split(',').map((value) => value.trim()).filter(Boolean)),
 })
 const host = process.env.KAKEFLOW_RELAY_HOST ?? '127.0.0.1'
 const port = Number(process.env.KAKEFLOW_RELAY_PORT ?? '8787')
