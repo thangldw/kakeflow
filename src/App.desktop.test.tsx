@@ -1212,6 +1212,13 @@ describe('KakeFlow desktop read models', () => {
       title: '楽天証券 国内株式 取引履歴CSV',
       csv: '約定日,銘柄,口座,取引,売買,信用区分,弁済期限,数量,単価,手数料,税金,諸費用,税区分,受渡金額\n2026/07/01,トヨタ自動車 7203 東証,特定,現物,買付,,,100,2500,100,10,0,源徴あり,250110',
     },
+    {
+      provider: 'Monex Securities',
+      filename: 'monex-us-stock-history.csv',
+      adapterId: 'monex-us-stock-trade-history-v1',
+      title: 'マネックス証券 米国株 取引履歴CSV',
+      csv: 'ティッカー＋銘柄名（または通貨名）,受渡日,約定日,取引種別,売買,口座区分,取引通貨,約定数量[株],約定値段[ドル],約定金額[ドル],約定金額[円],受渡金額[ドル],受渡金額[円],税計算用受渡金額[円],手数料(税込)[ドル],為替レート\nAAPL Apple Inc.,2026/02/19,2026/02/16,現物,買,特定,米ドル,10,200,2000,300000,2005,300750,300750,5,150',
+    },
   ])('requires an explicit securities account for $provider trades and never posts a household transaction', async ({ filename, adapterId, title, csv }) => {
     desktop.listAccounts.mockResolvedValue([
       { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },

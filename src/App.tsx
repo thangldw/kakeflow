@@ -152,6 +152,12 @@ const DEDICATED_BROKERAGE_IMPORTS: Readonly<Record<string, DedicatedBrokerageImp
     accountHint: '楽天証券の口座を推測または自動作成しません。',
     missingAccountMessage: '楽天証券取引履歴の取込先証券口座を選択してください。',
   },
+  'monex-us-stock-trade-history-v1': {
+    title: 'マネックス証券 米国株 取引履歴CSV',
+    description: '米ドル決済の現物売買を保存する証券口座を原本ごとに明示します。家計簿の取引台帳へは自動反映しません。',
+    accountHint: 'マネックス証券の口座を推測または自動作成せず、円決済・信用取引も取り込みません。',
+    missingAccountMessage: 'マネックス証券取引履歴の取込先証券口座を選択してください。',
+  },
 }
 
 function dedicatedBrokerageImport(adapterId: AdapterId | undefined): DedicatedBrokerageImportConfig | undefined {

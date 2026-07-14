@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.61.0 — 2026-07-14
+
+- Add a dedicated `monex-us-stock-trade-history-v1` importer with an exact 16-field allowlist derived from the current Monex U.S.-stock Trade History detail screen, detected from normalized fields rather than a filename.
+- Make the evidence boundary explicit: Monex does not publish a literal CSV byte schema, so the checked-in parser fixture is labeled synthetic and missing or changed fields fail closed instead of being presented as an official sample.
+- Normalize only post-renewal, U.S.-dollar-settled `現物` buy/sell rows with explicit `一般`, `特定`, or `NISA` account semantics, both trade and settlement dates, leading ticker/name identity, and immutable physical-row provenance.
+- Preserve exported USD gross, settlement, and fee values independently without recomputing an authoritative amount from quantity × unit price; retain any source settlement difference as a balanced auditable adjustment.
+- Block yen-settled, margin/credit, FX, transfer, deposit/withdrawal, position-movement, account-transfer, dividend, sparse, and ambiguous rows rather than coercing them into investment trades.
+- Require an explicit existing securities-account selection, keep restart completion-state recovery aware of the dedicated source, and never post Monex activity into the household income/expense ledger.
+
 ## 0.60.0 — 2026-07-14
 
 - Replay the exact persisted `KFE1` envelope before deriving the current recipient set, so a lost relay response remains idempotent even after membership keys change.

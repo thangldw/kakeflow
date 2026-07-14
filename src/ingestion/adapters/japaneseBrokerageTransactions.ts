@@ -47,6 +47,10 @@ function findHeader(rows: readonly CsvRow[]): number {
   let bestScore = 0
   rows.slice(0, 20).forEach((row, index) => {
     const headers = row.fields.map(normalizeHeader)
+    // Monex U.S.-stock history is intentionally owned by its strict dedicated
+    // adapter. An incomplete or changed Monex field family must not fall back
+    // to this permissive alias mapper.
+    if (headers.includes('ティッカー+銘柄名(または通貨名)') && headers.some((header) => /\[(?:ドル|円)\]$/.test(header))) return
     const has = (key: AliasKey) => Boolean(headerFor(headers, key))
     const score = Number(has('tradeDate')) + Number(has('transactionType')) + Number(has('grossAmount') || has('settlementAmount')) + Number(has('instrumentName'))
     if (score > bestScore) { bestScore = score; bestIndex = index }

@@ -9,6 +9,7 @@ export type AdapterId =
   | 'securities-asset-snapshot-v1'
   | 'sbi-securities-trade-history-v1'
   | 'rakuten-securities-domestic-trade-history-v1'
+  | 'monex-us-stock-trade-history-v1'
   | 'japanese-brokerage-transactions-v1'
   | 'money-forward-me-asset-trend-v1'
   | 'money-forward-me-household-ledger-v1'

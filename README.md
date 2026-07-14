@@ -2,6 +2,8 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Version 0.61 adds a dedicated [Monex U.S.-stock Trade History import](docs/MONEX_US_STOCK_IMPORT.md). It recognizes the complete screen-derived 16-field family without relying on a filename, supports explicit post-renewal U.S.-dollar spot buys and sells, preserves exported gross/settlement/fee values and physical-row evidence, and requires the user to choose an existing securities account. Yen settlement and non-spot activity remain blocking because the public documentation does not establish safe dual-currency or event-specific settlement semantics; the included fixture is explicitly synthetic rather than claimed as a Monex-issued sample.
+
 Version 0.60 makes encrypted family delivery recover correctly when relay membership keys change. KakeFlow first replays the exact persisted `KFE1` bytes, resets an envelope only after the relay returns the exact pre-storage `RECIPIENT_SET_CHANGED` rejection, and then reseals on the next explicit Send. Ambiguous failures retain their immutable retry bytes, mixed upload outcomes are reconciled independently, and interrupted sends recover after restart without automatic delivery or Apply. See [recipient-set recovery](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
 
 Version 0.59 adds opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md). While KakeFlow is open, the native desktop process can periodically authenticate the saved relay connection, refresh membership/public-key state, and register new publication metadata as `AVAILABLE`. It never sends, downloads, decrypts, stages, reviews, or applies an artifact automatically; those actions remain explicit. The relay token is stored in the operating-system credential store only after opt-in and is removed when automatic checks are disabled or the connection is disconnected.
@@ -190,7 +192,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Independent household/member account ownership and shared/personal classification, including atomic account creation and strict same-household active-owner validation.
 - Saved household/personal/daily-spending/custom account scopes across Overview, Transactions, Reports, intelligence, forecasts, Action Center items, and CSV export.
 - Canonical any-journal-entry group membership with no duplicate transaction counts, strict household validation, and legacy all-account behavior when no scope is selected.
-- Monex U.S. stock-history CSV import with source-row provenance and normalized ticker/name fields.
+- Dedicated [Monex U.S. stock-history import](docs/MONEX_US_STOCK_IMPORT.md) for the complete screen-derived field family, with strict USD spot-trade semantics, explicit securities-account mapping, source-row provenance, and blocking disclosure for unverified or dual-currency cases.
 - Spin-off cost allocation, rights-subscription lots, and cash-in-lieu FIFO disposal from explicit source terms, with annual-report explanations and no guessed values.
 - Password-protected PDF extraction and evidence-page rendering with ephemeral credentials and semantic retry states.
 - Read-only DMG mount validation for bundle version, identifier, executable, resources, signature structure, and clean detach.
