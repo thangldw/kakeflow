@@ -8,11 +8,19 @@
 .family-review-summary div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
 .family-review-summary span { color: var(--muted); }
 .family-review-summary strong { font-size: 20px; }
+.family-review-domain-counts { display: flex; flex-wrap: wrap; gap: 8px; }
+.family-review-domain-counts span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
+.family-review-domain-counts b { color: inherit; }
+.family-review-config-warning { margin: 0; padding: 12px 14px; border-left: 3px solid #d18e16; border-radius: 8px; background: #fff6e6; color: #805a24; }
 .family-review-conflicts,.family-review-ready { display: grid; gap: 12px; }
 .family-review-conflicts h3,.family-review-ready h3 { margin: 0; font-size: 15px; }
 .family-review-conflicts > p,.family-review-ready p { margin: 0; color: var(--muted); }
 .family-review-conflicts fieldset { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
 .family-review-conflicts legend { padding: 0 6px; font-size: 13px; font-weight: 700; }
+.family-review-conflicts fieldset > small { color: var(--muted); overflow-wrap: anywhere; }
+.family-review-domain { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 11px; }
+.family-review-domain h4 { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; font-size: 14px; }
+.family-review-domain h4 span { color: var(--muted); font-weight: 600; }
 .family-review-conflicts label { display: flex; align-items: center; gap: 8px; }
 .family-review-conflicts input { width: 18px; height: 18px; }
 .family-review-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

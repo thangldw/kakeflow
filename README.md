@@ -2,6 +2,10 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Version 0.56 adds [audience-partitioned planning and configuration delivery](docs/FAMILY_PLANNING_CONFIG_DELIVERY.md). Family schema v2 carries complete monthly-budget, savings-goal, classification-rule, account-group, settlement-mapping, dashboard-layout, and parser-profile aggregates through the same explicit review/atomic-apply boundary as the core family graph. Least-widening account dependencies select `SHARED` or matching `PERSONAL(member)` delivery; mixed, other-member, unresolved, ownerless personal account groups, and evidence-dependent facts remain visibly withheld.
+
+![KakeFlow family schema v2 planning and configuration delivery](docs/assets/infographics/family-v2-planning.svg)
+
 Version 0.55 adds a dedicated [mobile receipt-capture protocol and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md). A reference mobile-browser uploader sends one immutable JPEG/PNG capsule through a separate authenticated relay channel; the desktop stores and previews the original before local OCR, then creates only a normal `REVIEW_REQUIRED` receipt candidate. Receiving, OCR, matching, and promotion never post a transaction automatically.
 
 ![KakeFlow mobile receipt capture](docs/assets/infographics/mobile-capture.svg)
@@ -132,6 +136,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Current capabilities
 
 - Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
+- [Audience-partitioned family schema v2](docs/FAMILY_PLANNING_CONFIG_DELIVERY.md) for the core graph plus seven complete planning/configuration aggregates, with least-widening dependency resolution, signed entity-audience relocation lineage, reason-specific coverage disclosure, grouped review, schema-v1 compatibility, relay-preserved V1/V2 bytes, and one explicit atomic apply. Card and investment aggregates remain withheld as `EVIDENCE_REQUIRED` until their source-origin-scoped immutable evidence can travel in the same partition.
 - Optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) with server-derived Bearer-token principals, manual send/check/stage controls, immutable 64 MiB digest-verified artifacts, retry-safe outbox acknowledgement, and reuse of the existing schema-v4 conflict-review/atomic-apply boundary. The checked-in Node reference relay has an explicit WebView CORS allowlist, must run behind a TLS reverse proxy, and stores package bytes as received; there is no cross-member, E2E-encryption, auto-sync, auto-apply, source-evidence transport, or backup claim.
 - Dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot purchases/sales, with source settlement checks, immutable row provenance, explicit securities-account selection, blocking credit/margin errors, and row-level rejection of `現引`/`現渡` or other unsupported activity; checked-in fixtures are synthetic and contain no customer data.
 - Dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for the official domestic and foreign `約定履歴` CSV structures, limited to supported spot stock purchases and sales with explicit securities-account selection, immutable row provenance, auditable source-settlement adjustments, and rejection of margin, derivatives, and other unsupported rows; checked-in fixtures are synthetic and contain no customer data.
@@ -183,7 +188,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Dated market-price history, `assetbalance` price reuse, market value, unrealized P&L, and explicit missing-price disclosure by currency.
 - Annual realized P&L, dividend, fee, tax, and FIFO purchase-to-sale source-row reporting.
 - Locally rendered authenticated PDF pages underneath extraction bounding boxes.
-- Packaged-WebView onboarding plus ordered navigation evidence for all ten top-level workspaces, with exact headings, active navigation, and database persistence verification.
+- Packaged-WebView onboarding plus ordered navigation evidence for all eleven top-level workspaces, with exact headings, active navigation, and database persistence verification.
 - Recursive native filesystem notifications with debouncing, duplicate suppression, and bounded polling fallback.
 - Split, reverse-split, and same-currency share-for-share merger events that preserve FIFO lot provenance and total cost.
 - JPY investment reporting from dated direct/inverse FX observations, including the exact selected rate and source provenance.
@@ -203,13 +208,13 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
-- Authenticated cross-principal family delivery for the initial confirmed household/member/account/transaction graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, durable review, and partition-scoped omission lineage.
+- Authenticated cross-principal family delivery for the confirmed household/member/account/transaction graph and complete planning/configuration aggregates, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, durable review, signed relocation-safe audience lineage, and partition-scoped omission handling.
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Extend family delivery to evidence-partitioned card, investment, planning, and configuration aggregates after their complete dependency graphs can travel without widening audience.
+2. Extend family delivery to evidence-partitioned card and investment aggregates after source-origin-scoped document bytes, raw rows, and complete dependency graphs can travel without widening audience.
 3. Add a native mobile capture client, durable offline mobile queue, and background delivery only after their platform-specific lifecycle can preserve the same review boundary.
 4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
 

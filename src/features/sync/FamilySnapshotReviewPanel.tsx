@@ -6,6 +6,11 @@ import './FamilySnapshotReviewPanel.css'
 
 interface Props { readonly householdId: string | null; readonly revision?: number }
 type Choice = FamilySnapshotResolutionInputDto['resolution']
+type ReviewDomain = FamilySnapshotReviewDto['records'][number]['domain']
+const domainOrder: readonly ReviewDomain[] = ['LEDGER', 'CARD', 'INVESTMENT', 'PLANNING', 'CONFIG']
+const domainLabels: Readonly<Record<ReviewDomain, string>> = {
+  LEDGER: '台帳・取引', CARD: 'カード・支払照合', INVESTMENT: '投資・資産', PLANNING: '予算・目標', CONFIG: 'ルール・表示設定',
+}
 
 export function FamilySnapshotReviewPanel({ householdId, revision = 0 }: Props) {
   const [review, setReview] = useState<FamilySnapshotReviewDto | null>(null)
@@ -14,6 +19,8 @@ export function FamilySnapshotReviewPanel({ householdId, revision = 0 }: Props) 
   const [notice, setNotice] = useState<{ readonly kind: 'status' | 'error'; readonly text: string } | null>(null)
   const request = useRef(0); const heading = useRef<HTMLHeadingElement>(null)
   const pending = useMemo(() => review?.records.filter((record) => record.resolution === 'PENDING') ?? [], [review])
+  const domainCounts = useMemo(() => domainOrder.map((domain) => ({ domain, count: review?.records.filter((record) => record.domain === domain).length ?? 0 })).filter((item) => item.count > 0), [review])
+  const pendingGroups = useMemo(() => domainOrder.map((domain) => ({ domain, records: pending.filter((record) => record.domain === domain) })).filter((group) => group.records.length > 0), [pending])
   const key = (kind: string, id: string) => `${kind}\0${id}`
 
   const load = async () => {
@@ -58,11 +65,13 @@ export function FamilySnapshotReviewPanel({ householdId, revision = 0 }: Props) 
       <div className="family-review-source"><strong>{review.senderMemberName}さんから・{review.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${review.audienceMemberName}`}</strong><span>全{review.recordCount}件</span></div>
       <p className="family-review-boundary">このパッケージに含まれる範囲だけを確認します。含まれない個人データは削除・変更しません。</p>
       <div className="family-review-summary" aria-label="家族からの変更内容の集計"><div><span>追加</span><strong>{review.createCount}</strong></div><div><span>更新</span><strong>{review.updateCount}</strong></div><div><span>削除候補</span><strong>{review.deleteCount}</strong></div><div><span>競合</span><strong>{review.conflictCount}</strong></div></div>
-      {pending.length > 0 && <div className="family-review-conflicts"><h3>反映前の確認</h3><p>各項目の現在の内容と、受信した内容を比べて残す方を選んでください。</p>{pending.map((record) => {
+      {domainCounts.length > 0 && <div className="family-review-domain-counts" aria-label="受信内容の分野別内訳">{domainCounts.map((item) => <span key={item.domain}><b>{domainLabels[item.domain]}</b>{item.count}件</span>)}</div>}
+      {review.records.some((record) => record.domain === 'CONFIG') && <p className="family-review-config-warning" role="status">ルールと取込・表示設定は今後の分類、取込、画面表示に影響します。過去の取引は自動変更されません。</p>}
+      {pending.length > 0 && <div className="family-review-conflicts"><h3>反映前の確認</h3><p>各項目の現在の内容と、受信した内容を比べて残す方を選んでください。</p>{pendingGroups.map((group) => <section className="family-review-domain" key={group.domain} aria-labelledby={`family-review-domain-${group.domain}`}><h4 id={`family-review-domain-${group.domain}`}>{domainLabels[group.domain]} <span>{group.records.length}件</span></h4>{group.records.map((record) => {
         const choiceKey = key(record.entityKind, record.entityId); const deletion = record.operation === 'DELETE'
-        return <fieldset key={choiceKey}><legend>{record.entityLabel}</legend><div className="family-review-comparison"><div><span>この端末</span><p>{record.localSummary ?? '該当データなし'}</p></div><div><span>受信内容</span><p>{record.incomingSummary}</p></div></div><label><input type="radio" name={choiceKey} checked={choices[choiceKey] === 'KEEP_LOCAL'} onChange={() => setChoices((current) => ({ ...current, [choiceKey]: 'KEEP_LOCAL' }))} />この端末の内容を残す</label><label><input type="radio" name={choiceKey} checked={choices[choiceKey] === 'APPLY_INCOMING'} onChange={() => setChoices((current) => ({ ...current, [choiceKey]: 'APPLY_INCOMING' }))} />{deletion ? '受信内容に合わせて削除する' : '受信した内容を使う'}</label></fieldset>
-      })}<button className="primary-btn" disabled={busy || pending.some((record) => !choices[key(record.entityKind, record.entityId)])} onClick={() => void resolve()}>選択内容を確定</button></div>}
-      {review.state === 'READY' && <div className="family-review-ready"><h3>反映準備ができました</h3><p>途中で失敗した場合は何も反映されません。送信元へ自動で書き戻しません。</p><button className="primary-btn" disabled={busy} onClick={() => void apply()}>この端末の台帳に反映</button></div>}
+        return <fieldset key={choiceKey}><legend>{record.entitySummary}</legend><small>{record.entityLabel}</small><div className="family-review-comparison"><div><span>この端末</span><p>{record.localSummary ?? '該当データなし'}</p></div><div><span>受信内容</span><p>{record.incomingSummary}</p></div></div><label><input type="radio" name={choiceKey} checked={choices[choiceKey] === 'KEEP_LOCAL'} onChange={() => setChoices((current) => ({ ...current, [choiceKey]: 'KEEP_LOCAL' }))} />この端末の内容を残す</label><label><input type="radio" name={choiceKey} checked={choices[choiceKey] === 'APPLY_INCOMING'} onChange={() => setChoices((current) => ({ ...current, [choiceKey]: 'APPLY_INCOMING' }))} />{deletion ? '受信内容に合わせて削除する' : '受信した内容を使う'}</label></fieldset>
+      })}</section>)}<button className="primary-btn" disabled={busy || pending.some((record) => !choices[key(record.entityKind, record.entityId)])} onClick={() => void resolve()}>選択内容を確定</button></div>}
+      {review.state === 'READY' && <div className="family-review-ready"><h3>反映準備ができました</h3><p>{domainCounts.map((item) => `${domainLabels[item.domain]} ${item.count}件`).join('、')}をこの端末へまとめて反映します。</p><p>途中で失敗した場合は何も反映されません。送信元へ自動で書き戻しません。</p><button className="primary-btn" disabled={busy} onClick={() => void apply()}>この端末の台帳に反映</button></div>}
       {review.state === 'APPLIED' && <p className="family-review-applied" role="status">この家族データは反映済みです。</p>}
       {review.state !== 'APPLIED' && <button className="text-btn" disabled={busy} onClick={() => void discard()}>この確認内容を破棄</button>}
     </>}

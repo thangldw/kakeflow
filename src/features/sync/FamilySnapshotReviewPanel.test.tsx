@@ -14,8 +14,8 @@ const review = {
   packageId: 'family-package-1', householdId: 'family', senderMemberName: '花子', audienceVisibility: 'SHARED' as const, audienceMemberName: null,
   state: 'REVIEW_REQUIRED' as const, recordCount: 2, createCount: 0, updateCount: 1, deleteCount: 1, conflictCount: 2,
   records: [
-    { recordOrder: 0, entityKind: 'TRANSACTION', entityId: 'tx-1', entityLabel: '食費・スーパー', operation: 'UPSERT' as const, reviewState: 'CONFLICT' as const, resolution: 'PENDING' as const, localSummary: '¥4,800・食費', incomingSummary: '¥5,000・食費' },
-    { recordOrder: 1, entityKind: 'TRANSACTION', entityId: 'tx-2', entityLabel: '交通費・電車', operation: 'DELETE' as const, reviewState: 'DELETE' as const, resolution: 'PENDING' as const, localSummary: '¥1,200・交通費', incomingSummary: '削除候補' },
+    { recordOrder: 0, entityKind: 'TRANSACTION', entityId: 'tx-1', entityLabel: '取引・tx-1', domain: 'LEDGER' as const, entitySummary: '食費・スーパー', operation: 'UPSERT' as const, reviewState: 'CONFLICT' as const, resolution: 'PENDING' as const, localSummary: '¥4,800・食費', incomingSummary: '¥5,000・食費' },
+    { recordOrder: 1, entityKind: 'TRANSACTION', entityId: 'tx-2', entityLabel: '取引・tx-2', domain: 'LEDGER' as const, entitySummary: '交通費・電車', operation: 'DELETE' as const, reviewState: 'DELETE' as const, resolution: 'PENDING' as const, localSummary: '¥1,200・交通費', incomingSummary: '削除候補' },
   ],
 }
 
@@ -27,6 +27,7 @@ describe('FamilySnapshotReviewPanel', () => {
     render(<FamilySnapshotReviewPanel householdId="family" />)
     expect(await screen.findByText('花子さんから・世帯共有')).toBeInTheDocument()
     expect(screen.getByText(/含まれない個人データは削除・変更しません/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '台帳・取引 2件' })).toBeInTheDocument()
     expect(screen.getByText('¥4,800・食費')).toBeInTheDocument(); expect(screen.getByText('¥5,000・食費')).toBeInTheDocument()
     const confirm = screen.getByRole('button', { name: '選択内容を確定' }); expect(confirm).toBeDisabled()
     const incoming = screen.getAllByRole('radio', { name: /受信/ }); fireEvent.click(incoming[0]); fireEvent.click(incoming[1]); fireEvent.click(confirm)
@@ -45,5 +46,17 @@ describe('FamilySnapshotReviewPanel', () => {
     await waitFor(() => expect(api.apply).toHaveBeenCalledWith('family-package-1'))
     expect(await screen.findByText('2件をこの端末へ反映しました。')).toBeInTheDocument()
     expect(screen.queryByText(/同期済み/)).not.toBeInTheDocument()
+  })
+
+  it('groups configuration changes and discloses their future effect', async () => {
+    const configuration = {
+      ...review, recordCount: 1, createCount: 0, updateCount: 0, deleteCount: 0, conflictCount: 1,
+      records: [{ recordOrder: 0, entityKind: 'CLASSIFICATION_RULE', entityId: 'rule-1', entityLabel: '分類ルール・rule-1', domain: 'CONFIG' as const, entitySummary: 'NETFLIX → 娯楽 / Subscription', operation: 'UPSERT' as const, reviewState: 'CONFLICT' as const, resolution: 'PENDING' as const, localSummary: '無効', incomingSummary: '有効' }],
+    }
+    api.active.mockResolvedValue(configuration)
+    render(<FamilySnapshotReviewPanel householdId="family" />)
+    expect(await screen.findByRole('heading', { name: 'ルール・表示設定 1件' })).toBeInTheDocument()
+    expect(screen.getByText('NETFLIX → 娯楽 / Subscription')).toBeInTheDocument()
+    expect(screen.getByText(/過去の取引は自動変更されません/)).toBeInTheDocument()
   })
 })

@@ -50,7 +50,7 @@ async function inviteAndRedeem(base, { household = 'family', domainMemberId = `$
   assert.equal(redeemResponse.status, 201)
   return { invite, membership: (await redeemResponse.json()).membership }
 }
-function publish(base, { household = 'family', token = 'token-a', id = 'publication-1', bytes = Buffer.from('shared-package'), claimedDigest = digest(bytes), device = 'device-a', visibility = 'SHARED', memberId = null, extraHeaders = {} } = {}) {
+function publish(base, { household = 'family', token = 'token-a', id = 'publication-1', bytes = Buffer.from('shared-package'), claimedDigest = digest(bytes), device = 'device-a', visibility = 'SHARED', memberId = null, schema = 'FAMILY_AUDIENCE_PARTITION_V1', extraHeaders = {} } = {}) {
   return fetch(`${base}/v2/households/${household}/publications`, {
     method: 'POST', headers: {
       ...auth(token), 'content-type': 'application/octet-stream',
@@ -58,7 +58,7 @@ function publish(base, { household = 'family', token = 'token-a', id = 'publicat
       'x-kakeflow-origin-device-id': device,
       'x-kakeflow-audience-visibility': visibility,
       ...(memberId == null ? {} : { 'x-kakeflow-audience-member-id': memberId }),
-      'x-kakeflow-artifact-schema': 'FAMILY_AUDIENCE_PARTITION_V1',
+      'x-kakeflow-artifact-schema': schema,
       ...extraHeaders,
     }, body: bytes,
   })
@@ -317,6 +317,84 @@ test('publication retries are immutable while a new publication can deliver iden
   assert.equal((await publish(base, { id: 'publication-2', bytes })).status, 201)
   const list = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
   assert.deepEqual(list.publications.map((item) => item.publicationId), ['publication-1', 'publication-2'])
+})
+
+test('routes and downloads FAMILY_AUDIENCE_PARTITION_V2 without reinterpreting its bytes', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const bytes = Buffer.from([0, 255, 17, 42, 0, 128, 99])
+  const accepted = await publish(base, {
+    id: 'family-v2-shared', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V2',
+  })
+  assert.equal(accepted.status, 201)
+  const metadata = (await accepted.json()).publication
+  assert.equal(metadata.artifactSchema, 'FAMILY_AUDIENCE_PARTITION_V2')
+  assert.equal(metadata.digest, digest(bytes))
+
+  const page = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.equal(page.publications[0].artifactSchema, 'FAMILY_AUDIENCE_PARTITION_V2')
+  const downloaded = await fetch(`${base}/v2/households/family/publications/family-v2-shared`, { headers: auth('token-b') })
+  assert.equal(downloaded.status, 200)
+  assert.equal(downloaded.headers.get('x-kakeflow-artifact-schema'), 'FAMILY_AUDIENCE_PARTITION_V2')
+  assert.equal(downloaded.headers.get('x-kakeflow-digest'), digest(bytes))
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes)
+})
+
+test('keeps v2 publication identity immutable and retries byte-identically', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const bytes = Buffer.from('family-v2-current-state')
+  assert.equal((await publish(base, {
+    id: 'family-v2-idempotent', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V2',
+  })).status, 201)
+  const retry = await publish(base, {
+    id: 'family-v2-idempotent', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V2',
+  })
+  assert.equal(retry.status, 200)
+  assert.equal((await retry.json()).created, false)
+  assert.equal((await publish(base, {
+    id: 'family-v2-idempotent', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V1',
+  })).status, 409)
+  assert.equal((await publish(base, {
+    id: 'family-v2-idempotent', bytes: Buffer.from('changed'), schema: 'FAMILY_AUDIENCE_PARTITION_V2',
+  })).status, 409)
+  assert.equal((await publish(base, {
+    id: 'unsupported-family-schema', bytes, schema: 'FAMILY_AUDIENCE_PARTITION_V3',
+  })).status, 400)
+})
+
+test('routes v2 PERSONAL bytes only to the matching membership generation and honors revocation', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const first = await inviteAndRedeem(base, {
+    domainMemberId: 'family-member-owner', key: 'v2-personal-peer',
+  })
+  await inviteAndRedeem(base, {
+    domainMemberId: 'family-member-c', memberToken: 'token-c', key: 'v2-personal-other',
+  })
+  assert.equal((await publish(base, {
+    id: 'family-v2-personal', visibility: 'PERSONAL', memberId: 'family-member-owner',
+    schema: 'FAMILY_AUDIENCE_PARTITION_V2',
+  })).status, 201)
+  const matching = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(matching.publications.map((item) => item.publicationId), ['family-v2-personal'])
+  const other = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-c') })).json()
+  assert.deepEqual(other.publications, [])
+  assert.equal((await fetch(`${base}/v2/households/family/publications/family-v2-personal`, { headers: auth('token-c') })).status, 404)
+
+  assert.equal((await fetch(`${base}/v2/households/family/members/${first.membership.membershipId}`, {
+    method: 'DELETE', headers: auth(),
+  })).status, 200)
+  assert.equal((await fetch(`${base}/v2/households/family/publications/family-v2-personal`, { headers: auth('token-b') })).status, 404)
+  const rejoined = await inviteAndRedeem(base, {
+    domainMemberId: 'family-member-owner', key: 'v2-personal-peer-generation-2',
+  })
+  assert.equal(rejoined.membership.generation, 2)
+  const after = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(after.publications, [])
+  assert.equal((await fetch(`${base}/v2/households/family/publications/family-v2-personal`, { headers: auth('token-b') })).status, 404)
 })
 
 test('rejects wrong audience tuples, missing recipients, digest tampering, and oversized family artifacts', async () => {

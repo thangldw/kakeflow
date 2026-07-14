@@ -43,10 +43,10 @@ const connected: FamilyDeliveryStatusDto = {
     { memberId: 'member-hanako', memberName: '花子', state: 'UNLINKED', remoteMembershipIds: [], inviteId: null, inviteExpiresAt: null, deviceCount: 0, lastDeliveryAt: null },
   ],
   outbound: [
-    { audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, recipientNames: ['花子'], pendingChangeCount: 4, state: 'READY', withheldReason: null },
-    { audienceKey: 'PERSONAL:member-hanako', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-hanako', audienceMemberName: '花子', recipientNames: [], pendingChangeCount: 2, state: 'BLOCKED_NO_RECIPIENT', withheldReason: '配信先未設定' },
+    { audienceKey: 'SHARED', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, recipientNames: ['花子'], pendingChangeCount: 4, state: 'READY', withheldReason: null, domainCounts: { LEDGER: 2, PLANNING: 0, CONFIG: 0, CARD: 1, INVESTMENT: 1 }, evidenceFileCount: 2, evidenceRecordCount: 3, withheldCountsByReason: { EVIDENCE_REQUIRED_CARD: 1, EVIDENCE_REQUIRED_INVESTMENT: 1, UNASSIGNED_SCOPE: 1 }, coverageState: 'PARTIAL' },
+    { audienceKey: 'PERSONAL:member-hanako', audienceVisibility: 'PERSONAL', audienceMemberId: 'member-hanako', audienceMemberName: '花子', recipientNames: [], pendingChangeCount: 2, state: 'BLOCKED_NO_RECIPIENT', withheldReason: '配信先未設定', domainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 1, INVESTMENT: 1 }, evidenceFileCount: 0, evidenceRecordCount: 0, withheldCountsByReason: { EVIDENCE_REQUIRED_CARD: 1, EVIDENCE_REQUIRED_INVESTMENT: 1, UNASSIGNED_SCOPE: 1 }, coverageState: 'PARTIAL' },
   ],
-  withheldChangeCount: 2,
+  withheldChangeCount: 3,
 }
 
 describe('FamilyDeliveryPanel', () => {
@@ -77,7 +77,13 @@ describe('FamilyDeliveryPanel', () => {
     render(<FamilyDeliveryPanel householdId="family" members={members} />)
     expect(await screen.findByText('世帯共有 → 花子')).toBeInTheDocument()
     expect(screen.getByText('個人・花子 → 配信先未設定')).toBeInTheDocument()
-    expect(screen.getByText(/家族には送らず、この端末に保留/)).toBeInTheDocument()
+    expect(screen.getByText((_text, element) => element?.tagName === 'SMALL' && element.textContent === '4件 · 原本 2ファイル / 証跡 3件')).toBeInTheDocument()
+    const withheldPanels = screen.getAllByText((_text, element) => element?.classList.contains('family-withheld-detail') === true)
+    expect(withheldPanels[0]).toHaveTextContent('カードの原本・証跡が必要')
+    expect(withheldPanels[0]).toHaveTextContent('カード 1件 · 投資 1件')
+    expect(withheldPanels[0]).toHaveTextContent('世帯全体の保留内容')
+    expect(screen.getAllByText('一部保留')).toHaveLength(2)
+    expect(screen.getByText(/家族へ送らず、この端末に保留/)).toBeInTheDocument()
     const checkboxes = screen.getAllByRole('checkbox')
     expect(checkboxes[0]).toBeChecked(); expect(checkboxes[1]).toBeDisabled()
     fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
@@ -92,7 +98,7 @@ describe('FamilyDeliveryPanel', () => {
     family.createInvite.mockResolvedValue({ inviteId: 'invite-1', inviteCode: 'kfi_long-invite-code-for-hanako', expiresAt: '2026-07-15T00:00:00Z' })
     family.remote.mockResolvedValue({ ...remote, invites: [{ inviteId: 'invite-1', householdId: 'family', domainMemberId: 'member-hanako', state: 'ACTIVE', expiresAt: '2026-07-15T00:00:00Z' }] })
     render(<FamilyDeliveryPanel householdId="family" members={members} />)
-    await screen.findByText('配信先未設定')
+    await screen.findByRole('button', { name: '招待を作成' })
     fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
     fireEvent.click(screen.getByRole('button', { name: '招待を作成' }))
     const dialog = screen.getByRole('dialog', { name: '花子さんを家族スペースに招待' })

@@ -1218,7 +1218,7 @@ pub fn apply_package(connection: &Connection, package_id: &str) -> Result<Change
     load_package_by_id(connection, package_id)?.ok_or(ChangePackageError::NotFound)
 }
 
-fn materialize_upsert(
+pub(crate) fn materialize_upsert(
     connection: &Connection,
     kind: &str,
     payload: &str,
@@ -2131,7 +2131,7 @@ fn materialize_parser_profile(connection: &Connection, payload: &str) -> Result<
     Ok(())
 }
 
-fn materialize_delete(
+pub(crate) fn materialize_delete(
     connection: &Connection,
     household_id: &str,
     kind: &str,
@@ -2206,7 +2206,7 @@ fn entity_belongs_to_other_household(
         .map_err(ChangePackageError::from)
 }
 
-fn load_entity_payload(
+pub(crate) fn load_entity_payload(
     connection: &Connection,
     household_id: &str,
     kind: &str,
@@ -2571,6 +2571,80 @@ fn push_query_records(
         });
     }
     Ok(())
+}
+
+/// Load the seven user-authored planning/configuration aggregates using the
+/// exact canonical payload contracts used by local change packages. Family
+/// delivery deliberately calls this instead of maintaining a second payload
+/// representation.
+pub(crate) fn load_planning_configuration_records(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<ChangePackageRecordDto>> {
+    let mut records = Vec::new();
+    push_query_records(
+        connection,
+        &mut records,
+        "MONTHLY_BUDGET_PLAN",
+        "SELECT household_id,payload_json FROM sync_monthly_budget_plan_payloads
+         WHERE household_id=?1",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "SAVINGS_GOAL",
+        "SELECT id,json(json_object(
+           'recordKind','SAVINGS_GOAL','id',id,'householdId',household_id,'name',name,
+           'targetJpy',target_jpy,'savedJpy',saved_jpy,'targetDate',target_date,
+           'status',status,'createdAt',created_at,'updatedAt',updated_at))
+         FROM savings_goals WHERE household_id=?1 ORDER BY id",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "CLASSIFICATION_RULE",
+        "SELECT rule_id,payload_json FROM sync_classification_rule_payloads
+         WHERE household_id=?1 ORDER BY rule_id",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "ACCOUNT_GROUP",
+        "SELECT group_id,payload_json FROM sync_account_group_payloads
+         WHERE household_id=?1 ORDER BY group_id",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "CARD_SETTLEMENT_MAPPING",
+        "SELECT card_account_id,json(json_object(
+           'recordKind','CARD_SETTLEMENT_MAPPING','householdId',household_id,
+           'cardAccountId',card_account_id,'bankAccountId',bank_account_id,
+           'createdAt',created_at,'updatedAt',updated_at))
+         FROM card_settlement_bank_mappings WHERE household_id=?1 ORDER BY card_account_id",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "DASHBOARD_PREFERENCES",
+        "SELECT household_id,payload_json FROM sync_dashboard_preferences_v4_payloads
+         WHERE household_id=?1",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "DELIMITED_PARSER_PROFILE",
+        "SELECT profile_id,payload_json FROM sync_parser_profile_payloads
+         WHERE household_id=?1 ORDER BY profile_id",
+        household_id,
+    )?;
+    Ok(records)
 }
 
 #[cfg(test)]

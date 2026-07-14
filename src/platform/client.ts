@@ -506,6 +506,25 @@ const FAMILY_CONNECTION_STATES = new Set(['NOT_CONFIGURED', 'CONNECTED', 'AUTH_E
 const FAMILY_MEMBERSHIP_STATES = new Set(['UNLINKED', 'INVITED', 'ACTIVE', 'REVOKED', 'ARCHIVED_BLOCKED'])
 const FAMILY_OUTBOUND_STATES = new Set(['READY', 'BLOCKED_NO_RECIPIENT', 'SENDING', 'RELAY_ACCEPTED', 'FAILED_RETRYABLE', 'MEMBERSHIP_REVOKED'])
 const FAMILY_INBOUND_STATES = new Set(['AVAILABLE', 'DOWNLOADING', 'WAITING_FOR_REVIEW', 'READY_TO_APPLY', 'APPLIED', 'DUPLICATE', 'REJECTED_INVALID', 'AUDIENCE_DENIED', 'FAILED_RETRYABLE'])
+const FAMILY_ARTIFACT_SCHEMAS = new Set(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2'])
+const FAMILY_DOMAINS = ['LEDGER', 'PLANNING', 'CONFIG', 'CARD', 'INVESTMENT'] as const
+
+function parseFamilyDomainCounts(value: unknown): FamilyDeliveryStatusDto['outbound'][number]['domainCounts'] {
+  const counts = asRecord(value)
+  if (Object.keys(counts).length !== FAMILY_DOMAINS.length || FAMILY_DOMAINS.some((domain) => !(domain in counts))) throw new TypeError('family domain counts')
+  return Object.fromEntries(FAMILY_DOMAINS.map((domain) => [domain, asSafeInteger(counts[domain])])) as unknown as FamilyDeliveryStatusDto['outbound'][number]['domainCounts']
+}
+
+function parseFamilyWithheldCounts(value: unknown): FamilyDeliveryStatusDto['outbound'][number]['withheldCountsByReason'] {
+  const counts = asRecord(value); const entries = Object.entries(counts)
+  if (entries.length > 64) throw new TypeError('family withheld counts')
+  const result: Record<string, number> = {}
+  for (const [reason, count] of entries) {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(reason)) throw new TypeError('family withheld reason')
+    result[reason] = asSafeInteger(count)
+  }
+  return result
+}
 
 function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
   const record = asRecord(value)
@@ -541,11 +560,19 @@ function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
     audienceKeys.add(audienceKey)
     const audienceMemberId = asNullableStrictString(item.audienceMemberId); const audienceMemberName = asNullableStrictString(item.audienceMemberName)
     if (item.audienceVisibility === 'SHARED' ? audienceMemberId !== null || audienceMemberName !== null : audienceMemberId === null || audienceMemberName === null) throw new TypeError('family outbound audience')
+    const domainCounts = parseFamilyDomainCounts(item.domainCounts)
+    const withheldCountsByReason = parseFamilyWithheldCounts(item.withheldCountsByReason)
+    const coverageState = String(item.coverageState)
+    if (!['COMPLETE', 'PARTIAL'].includes(coverageState)) throw new TypeError('family coverage state')
+    const withheldCount = Object.values(withheldCountsByReason).reduce((sum, count) => sum + count, 0)
+    if ((coverageState === 'COMPLETE') !== (withheldCount === 0)) throw new TypeError('family coverage state')
     return {
       audienceKey, audienceVisibility: item.audienceVisibility as AudienceVisibilityDto,
       audienceMemberId, audienceMemberName,
       recipientNames: item.recipientNames.map(asRequiredString), pendingChangeCount: asSafeInteger(item.pendingChangeCount),
       state: item.state as FamilyDeliveryStatusDto['outbound'][number]['state'], withheldReason: asNullableStrictString(item.withheldReason),
+      domainCounts, evidenceFileCount: asSafeInteger(item.evidenceFileCount), evidenceRecordCount: asSafeInteger(item.evidenceRecordCount),
+      withheldCountsByReason, coverageState: coverageState as FamilyDeliveryStatusDto['outbound'][number]['coverageState'],
     }
   })
   const artifactIds = new Set<string>()
@@ -583,11 +610,11 @@ function parseFamilyPreparedArtifacts(value: unknown): readonly FamilyDeliveryPr
     const audienceVisibility = record.audienceVisibility as AudienceVisibilityDto
     const audienceMemberId = asNullableStrictString(record.audienceMemberId)
     if ((audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('family artifact audience')
-    if (record.artifactSchema !== 'FAMILY_AUDIENCE_PARTITION_V1') throw new TypeError('family artifact schema')
+    if (!FAMILY_ARTIFACT_SCHEMAS.has(String(record.artifactSchema))) throw new TypeError('family artifact schema')
     return {
       deliveryId: asRequiredString(record.deliveryId), artifactId, digest: asCanonicalHash(record.digest),
       householdId: asRequiredString(record.householdId), originDeviceId: asRequiredString(record.originDeviceId), audienceKey: asRequiredString(record.audienceKey),
-      audienceVisibility, audienceMemberId, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1' as const,
+      audienceVisibility, audienceMemberId, artifactSchema: record.artifactSchema as FamilyDeliveryPreparedArtifactDto['artifactSchema'],
       packageBytes: record.packageBytes,
     }
   })
@@ -603,11 +630,13 @@ function parseFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto {
   const records = record.records.map((value) => {
     const item = asRecord(value)
     if (!['UPSERT', 'DELETE'].includes(String(item.operation)) || !['CREATE', 'UPDATE', 'DELETE', 'CONFLICT'].includes(String(item.reviewState))
-        || !['PENDING', 'APPLY_INCOMING', 'KEEP_LOCAL', 'SKIP'].includes(String(item.resolution))) throw new TypeError('family snapshot record')
+        || !['PENDING', 'APPLY_INCOMING', 'KEEP_LOCAL', 'SKIP'].includes(String(item.resolution))
+        || !FAMILY_DOMAINS.includes(item.domain as typeof FAMILY_DOMAINS[number])) throw new TypeError('family snapshot record')
     const entityKind = asRequiredString(item.entityKind); const entityId = asRequiredString(item.entityId); const key = `${entityKind}\0${entityId}`
     if (keys.has(key)) throw new TypeError('family snapshot record'); keys.add(key)
     return {
       recordOrder: asSafeInteger(item.recordOrder), entityKind, entityId, entityLabel: asRequiredString(item.entityLabel),
+      domain: item.domain as FamilySnapshotReviewDto['records'][number]['domain'], entitySummary: asRequiredString(item.entitySummary),
       operation: item.operation as FamilySnapshotReviewDto['records'][number]['operation'], reviewState: item.reviewState as FamilySnapshotReviewDto['records'][number]['reviewState'],
       resolution: item.resolution as FamilySnapshotReviewDto['records'][number]['resolution'],
       localSummary: asNullableStrictString(item.localSummary), incomingSummary: asRequiredString(item.incomingSummary),
