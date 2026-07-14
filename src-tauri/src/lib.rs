@@ -30,6 +30,7 @@ pub mod google_drive_folder;
 pub mod google_drive_hydration;
 pub mod google_drive_initial_sync;
 pub mod google_drive_oauth;
+pub mod google_drive_oauth_runtime;
 pub mod google_drive_store;
 pub mod google_drive_sync_adapter;
 pub mod import_workflow;
