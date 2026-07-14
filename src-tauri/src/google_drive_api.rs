@@ -159,6 +159,14 @@ pub struct DriveChangePage {
     pub new_start_page_token: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveUser {
+    pub permission_id: String,
+    pub email_address: String,
+    pub display_name: String,
+}
+
 pub struct DriveApiClient<T> {
     access_token: Zeroizing<String>,
     transport: T,
@@ -188,6 +196,22 @@ impl<T: DriveTransport> DriveApiClient<T> {
         let mut url = api_url(&format!("files/{file_id}"))?;
         append_common_file_params(&mut url);
         self.get_json(url, resource_header(file_id, resource_key)?)
+    }
+
+    pub fn about_user(&self) -> Result<DriveUser, DriveApiError> {
+        let mut url = api_url("about")?;
+        url.query_pairs_mut()
+            .append_pair("fields", "user(permissionId,emailAddress,displayName)");
+        let wire: AboutWire = self.get_json(url, None)?;
+        if validate_id(&wire.user.permission_id).is_err()
+            || !valid_email(&wire.user.email_address)
+            || wire.user.display_name.trim().is_empty()
+            || wire.user.display_name.len() > 256
+            || wire.user.display_name.chars().any(char::is_control)
+        {
+            return Err(DriveApiError::InvalidResponse);
+        }
+        Ok(wire.user)
     }
 
     pub fn list_children_page(
@@ -360,6 +384,10 @@ struct ChangeListWire {
 struct StartTokenWire {
     start_page_token: String,
 }
+#[derive(Deserialize)]
+struct AboutWire {
+    user: DriveUser,
+}
 
 fn api_url(path: &str) -> Result<Url, DriveApiError> {
     Url::parse(API_ROOT)
@@ -440,6 +468,16 @@ fn valid_file(file: &DriveFile) -> bool {
         && file.parents.len() <= 100
         && file.parents.iter().all(|p| validate_id(p).is_ok())
 }
+fn valid_email(value: &str) -> bool {
+    value.len() <= 320
+        && value.split_once('@').is_some_and(|(local, domain)| {
+            !local.is_empty()
+                && !domain.is_empty()
+                && !value
+                    .bytes()
+                    .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+        })
+}
 fn optional_u64_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
     Option::<String>::deserialize(d)?
         .map(|v| v.parse().map_err(serde::de::Error::custom))
@@ -501,6 +539,23 @@ mod tests {
         let req = fake.requests.lock().unwrap();
         assert_eq!(req[0].1.as_deref(), Some("file_1/resource_1"));
         assert!(!req[0].0.contains("access"));
+    }
+
+    #[test]
+    fn about_user_returns_bounded_identity() {
+        let fake = Fake::new(vec![json(serde_json::json!({"user": {
+            "permissionId": "permission_1",
+            "emailAddress": "home@example.com",
+            "displayName": "Home"
+        }}))]);
+        let client = DriveApiClient::new("access", &fake).unwrap();
+        let user = client.about_user().unwrap();
+        assert_eq!(user.permission_id, "permission_1");
+        assert_eq!(user.email_address, "home@example.com");
+        let requests = fake.requests.lock().unwrap();
+        assert!(requests[0]
+            .0
+            .contains("fields=user%28permissionId%2CemailAddress%2CdisplayName%29"));
     }
 
     #[test]
