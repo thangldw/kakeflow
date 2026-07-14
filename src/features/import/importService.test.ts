@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { zipSync } from 'fflate'
 import { excelRowsToCsv, previewImportFile, previewImportFiles } from './importService'
@@ -112,6 +113,16 @@ describe('import preview service', () => {
 
     expect(result).toMatchObject({ adapterId: 'aeon-card-finalized-statement-v1', encoding: 'utf-8-bom', recordCount: 1, status: 'ready' })
     expect(result.parsed?.records[0]).toMatchObject({ kind: 'card-statement', issuer: 'AEON_CARD', statementTotal: 1200 })
+  })
+
+  it('decodes and previews the bounded PayPay Card finalized statement at the file boundary', async () => {
+    const fixture = readFileSync('src/ingestion/fixtures/paypay-card-statement.community-derived.synthetic.csv')
+    const result = await previewImportFile(new File([fixture], 'unrelated-name.csv', { type: 'text/csv' }))
+
+    expect(result).toMatchObject({ adapterId: 'paypay-card-finalized-statement-v1', recordCount: 1, status: 'ready' })
+    expect(result.parsed?.records[0]).toMatchObject({
+      kind: 'card-statement', issuer: 'PAYPAY_CARD', paymentDueOn: '2026-07-27', statementTotal: 5550,
+    })
   })
 
   it('keeps unsupported files in review instead of silently dropping them', async () => {

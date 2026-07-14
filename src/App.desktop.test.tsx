@@ -1235,7 +1235,11 @@ describe('KakeFlow desktop read models', () => {
       name: 'AEON Card', filename: 'aeon-card.csv', accountLabel: 'aeon-card.csvの取込先カード口座', accountId: 'family-card', missing: 'イオンカード確定明細の取込先カード口座を選択してください。', adapterId: 'aeon-card-finalized-statement-v1',
       csv: 'イオンカードご利用明細,2026年7月ご請求分\nカード会員名,架空 太郎\nカード番号,4987-****-****-1234\nご利用日,ご利用先,ご利用金額(円),支払区分,今回ご請求額(円),カード利用者,備考\n2026/06/12,架空ストア,1200,一括,1200,本人,\nお支払い合計,,,,1200,,',
     },
-  ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv }) => {
+    {
+      name: 'PayPay Card', filename: 'paypay-card.csv', accountLabel: 'paypay-card.csvの取込先カード口座', accountId: 'family-card', missing: 'PayPayカード確定明細の取込先カード口座を選択してください。', adapterId: 'paypay-card-finalized-statement-v1', expectedDueOn: '2026-07-27',
+      csv: '利用日/キャンセル日,利用店名・商品名,利用者,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日\n2026/06/12,架空ストア,本人,1回,1200,0,1200,1200,0,0,2026/07/27',
+    },
+  ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv, expectedDueOn }) => {
     const { container } = render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
@@ -1254,7 +1258,7 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
       adapterId,
       candidates: [expect.objectContaining({ accountId })],
-      ...(accountId === 'family-card' ? { cardStatements: [expect.objectContaining({ cardAccountId: accountId })] } : {}),
+      ...(accountId === 'family-card' ? { cardStatements: [expect.objectContaining({ cardAccountId: accountId, ...(expectedDueOn ? { issuer: 'PAYPAY_CARD', paymentDueOn: expectedDueOn } : {}) })] } : {}),
     }), expect.any(Uint8Array)))
   })
 

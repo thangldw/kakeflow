@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.66.0 — 2026-07-14
+
+- Add the strict `paypay-card-finalized-statement-v1` adapter for one exact ordered eleven-column community-derived synthetic PayPay Card contract; official material confirms finalized monthly CSV download but does not publish the literal schema.
+- Detect from content without trusting filenames, preserve quoted multiline physical-row provenance, safe-integer JPY fields, negative refunds, raw payment context, and the exact source `当月お支払日`.
+- Accept only one-time rows with zero fee, carry-forward, and adjustment values and `利用金額 + 手数料 = 支払総額 = 当月支払金額`; calculate a positive statement total from current-payment amounts.
+- Block extra, missing, or reordered headers, malformed rows, deferred/revolving/installment/bonus/partial activity, positive cancellation signs, inconsistent due dates, and non-positive statements.
+- Require explicit active `LIABILITY / CREDIT_CARD` mapping and keep every candidate behind review; the later bank debit remains a liability settlement rather than a second expense.
+
 ## 0.65.0 — 2026-07-14
 
 - Export the Annual Household Review as a native `.xlsx` workbook from the same validated yearly report and account-group/member/as-of scope used by the screen and annual CSV.

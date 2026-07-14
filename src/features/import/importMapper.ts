@@ -318,6 +318,11 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
       else if (isWallet(record)) candidates.push(...await mapPayPay(record, context))
       else if (isMoneyForward(record)) candidates.push(...await mapMoneyForward(record, context))
       else if (isStatement(record)) {
+        const sourcePaymentDueOn = record.paymentDueOn ?? null
+        const paymentDueOn = sourcePaymentDueOn == null ? null : isoDate(sourcePaymentDueOn)
+        if (sourcePaymentDueOn != null && (paymentDueOn == null || paymentDueOn !== sourcePaymentDueOn)) {
+          issueInvalid(context, 'INVALID_DATE', 'Card statement has no valid ISO source payment due date.')
+        }
         const statementCandidates: { candidate: StartImportCandidate; billedAmountJpy: number }[] = []
         for (const transaction of record.transactions) {
           const mapped = await mapCardTransaction(transaction, context)
@@ -327,10 +332,10 @@ export async function mapParsedImportToStartImport(input: ImportMapperInput, ids
         const dates = statementCandidates.map(({ candidate: item }) => item.occurredOn).sort()
         const statementAmount = record.statementTotal != null && Number.isSafeInteger(record.statementTotal) && record.statementTotal > 0
           ? record.statementTotal : null
-        if (input.file.accountId && dates[0] && dates.at(-1) && statementAmount != null) {
+        if (input.file.accountId && dates[0] && dates.at(-1) && statementAmount != null && (sourcePaymentDueOn == null || paymentDueOn != null)) {
           cardStatements.push({
             id: ids.next('statement'), cardAccountId: input.file.accountId, issuer: record.issuer,
-            periodStart: dates[0], periodEnd: dates.at(-1)!, paymentDueOn: null,
+            periodStart: dates[0], periodEnd: dates.at(-1)!, paymentDueOn,
             statementAmountJpy: statementAmount,
             lines: statementCandidates.map(({ candidate: item, billedAmountJpy }, index) => ({ candidateId: item.id, statementLineNumber: index + 1, billedAmountJpy })),
           })

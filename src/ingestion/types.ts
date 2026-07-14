@@ -7,6 +7,7 @@ export type AdapterId =
   | 'jcb-myjcb-statement-v1'
   | 'smbc-vpass-statement-v1'
   | 'aeon-card-finalized-statement-v1'
+  | 'paypay-card-finalized-statement-v1'
   | 'securities-asset-snapshot-v1'
   | 'sbi-securities-trade-history-v1'
   | 'rakuten-securities-domestic-trade-history-v1'
@@ -136,11 +137,13 @@ export interface CardTransactionCandidate {
 
 export interface CardStatementCandidate {
   kind: 'card-statement'
-  issuer: 'AMAZON_MASTERCARD' | 'RAKUTEN_CARD' | 'JCB' | 'SMBC_CARD' | 'AEON_CARD'
+  issuer: 'AMAZON_MASTERCARD' | 'RAKUTEN_CARD' | 'JCB' | 'SMBC_CARD' | 'AEON_CARD' | 'PAYPAY_CARD'
   holderName?: string
   maskedCardNumber?: string
   productName?: string
   statementMonth?: string
+  /** Exact source-provided payment date. Adapters must never infer this value. */
+  paymentDueOn?: string
   statementTotal: number | null
   transactions: readonly CardTransactionCandidate[]
 }
