@@ -4,6 +4,11 @@ KakeFlow can import a locally saved RFC 5322 `.eml` message containing one
 supported tabular financial attachment. This is a local-first evidence path; it
 does not connect to, scan, or retain credentials for an email account.
 
+The desktop Folder Inbox can also watch a user-selected local folder for `.eml`
+files. This supports mail-client export folders and user-configured local mail
+rules: discovery is restart-safe, but it only observes files that already exist
+on the device. KakeFlow does not connect to the mailbox that produced them.
+
 ## Evidence model
 
 The complete `.eml` bytes are hashed, encrypted, and stored as the immutable
@@ -50,4 +55,7 @@ the email container does not bypass adapter validation.
 
 Direct mailbox APIs, background email polling, server-side forwarding, and
 provider OAuth are separate future connector work. KakeFlow currently requires
-the user to export or save the message as `.eml` and select or drop it locally.
+the user or a locally configured mail-client rule to export or save the message
+as `.eml`. The message may then be selected, dropped, or discovered in a watched
+folder. Folder discovery can prepare a preview, but posting still requires the
+same explicit account selection and review approval as every other import.

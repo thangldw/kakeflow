@@ -855,6 +855,7 @@ fn supported_media_type(path: &Path) -> Option<&'static str> {
         "pdf" => Some("application/pdf"),
         "png" => Some("image/png"),
         "jpg" | "jpeg" => Some("image/jpeg"),
+        "eml" => Some("message/rfc822"),
         _ => None,
     }
 }
@@ -974,16 +975,22 @@ mod tests {
             .unwrap()
             .write_all(b"image")
             .unwrap();
+        fs::File::create(root.join("statement.eml"))
+            .unwrap()
+            .write_all(b"From: bank@example.test\r\n\r\nstatement")
+            .unwrap();
         fs::File::create(root.join("ignore.txt")).unwrap();
 
         let files = scan_directory(&root).unwrap();
-        assert_eq!(files.len(), 3);
+        assert_eq!(files.len(), 4);
         assert_eq!(files[0].relative_path, "bank.csv");
         assert_eq!(files[0].byte_size, 11);
         assert_eq!(files[1].relative_path, "nested/receipt.JPG");
         assert_eq!(files[1].media_type, "image/jpeg");
-        assert_eq!(files[2].relative_path, "wallet.tsv");
-        assert_eq!(files[2].media_type, "text/tab-separated-values");
+        assert_eq!(files[2].relative_path, "statement.eml");
+        assert_eq!(files[2].media_type, "message/rfc822");
+        assert_eq!(files[3].relative_path, "wallet.tsv");
+        assert_eq!(files[3].media_type, "text/tab-separated-values");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1140,6 +1147,11 @@ mod tests {
             .unwrap()
             .write_all(b"date,amount")
             .unwrap();
+        let email_bytes = b"From: bank@example.test\r\nSubject: statement\r\n\r\nbody";
+        fs::File::create(root.join("statement.eml"))
+            .unwrap()
+            .write_all(email_bytes)
+            .unwrap();
         fs::File::create(root.join("ignore.txt"))
             .unwrap()
             .write_all(b"private")
@@ -1169,6 +1181,10 @@ mod tests {
         let file = read_registered_file(&connection, "home", &watched.id, "bank.csv").unwrap();
         assert_eq!(file.file_bytes, b"date,amount");
         assert_eq!(file.relative_path, "bank.csv");
+        let email = read_registered_file(&connection, "home", &watched.id, "statement.eml")
+            .unwrap();
+        assert_eq!(email.media_type, "message/rfc822");
+        assert_eq!(email.file_bytes, email_bytes);
         assert!(matches!(
             read_registered_file(&connection, "home", &watched.id, "../bank.csv"),
             Err(WatchedFolderError::InvalidInput)

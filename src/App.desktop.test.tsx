@@ -902,6 +902,60 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.queryByText(/Users|Documents|C:\\/)).not.toBeInTheDocument()
   })
 
+  it('hydrates a watched EML with immutable source bytes and attachment lineage without auto-posting', async () => {
+    const csv = '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n2026/07/27,ラクテンカードサービス,,204987,,100000,,,出'
+    const boundary = 'watched-email-boundary'
+    const source = [
+      'From: bank@example.test', 'To: family@example.test', 'Subject: statement', 'MIME-Version: 1.0',
+      `Content-Type: multipart/mixed; boundary="${boundary}"`, '', `--${boundary}`,
+      'Content-Type: text/csv; name="bank.csv"', 'Content-Disposition: attachment; filename="bank.csv"',
+      'Content-Transfer-Encoding: base64', '', Buffer.from(csv).toString('base64'), `--${boundary}--`, '',
+    ].join('\r\n')
+    const bytes = Array.from(new TextEncoder().encode(source))
+    const discovered = {
+      id: 'email-inbox-1', householdId: 'family', watchedFolderId: 'folder', watchedFolderLabel: 'Mail Drop',
+      sourceType: 'LOCAL_FOLDER', provider: 'LOCAL', relativePath: 'Mail/statement.eml', fileName: 'statement.eml',
+      mediaType: 'message/rfc822', byteSize: bytes.length, modifiedUnixMs: 1000, fingerprint: 'email-fingerprint',
+      state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null,
+      discoveredAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z',
+    } as const
+    desktop.listWatchedFileInbox.mockResolvedValue([discovered])
+    desktop.countWatchedFileInbox.mockResolvedValue({ discovered: 1, processing: 0, ready: 0, needsMapping: 0, staged: 0, failed: 0, ignored: 0, removed: 0, actionable: 1, total: 1 })
+    desktop.claimWatchedFileInboxItems.mockImplementation(async () => ({
+      leaseToken: 'email-lease', leaseExpiresAt: '2026-07-15T00:05:00Z',
+      items: [{ ...discovered, state: 'PROCESSING' as const, attemptCount: 1 }],
+    }))
+    desktop.readWatchedFile.mockResolvedValue({
+      relativePath: discovered.relativePath, fileName: discovered.fileName, mediaType: discovered.mediaType,
+      byteSize: discovered.byteSize, modifiedUnixMs: discovered.modifiedUnixMs, fileBytes: bytes,
+    })
+    desktop.markWatchedFileInboxReady.mockResolvedValue({ ...discovered, state: 'READY', attemptCount: 1 })
+    desktop.previewImport.mockResolvedValue({
+      summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'LOCAL_FOLDER', originalFilename: 'statement.eml', mediaType: 'message/rfc822', byteSize: bytes.length, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-27', postedOn: null, amountJpy: 204987, direction: 'OUT', descriptionRaw: 'ラクテンカードサービス', merchantRaw: 'ラクテンカードサービス', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
+    })
+
+    render(<App />)
+    await screen.findByText('生協')
+    await waitFor(() => expect(desktop.markWatchedFileInboxReady).toHaveBeenCalledWith('family', 'email-inbox-1', 'email-lease'))
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'インポート（1件の確認対象）' }))
+    expect((await screen.findAllByText('statement.eml')).length).toBeGreaterThan(0)
+    expect(screen.getByText(/添付 bank.csv/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('statement.emlの取込先銀行口座'), { target: { value: 'family-bank' } })
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledTimes(1))
+    const [request, storedBytes] = desktop.startImport.mock.calls[0]
+    expect(request).toMatchObject({ sourceType: 'LOCAL_FOLDER', originalFilename: 'statement.eml', mediaType: 'message/rfc822' })
+    expect(Array.from(storedBytes as Uint8Array)).toEqual(bytes)
+    expect(JSON.parse(request.records[0].payloadJson)).toMatchObject({ sourcePart: 'bank.csv', sourceRow: 2 })
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
+
   it('keeps an unavailable iCloud file retryable with its durable failure code', async () => {
     const discovered = { id: 'icloud-inbox-1', householdId: 'family', watchedFolderId: 'icloud-folder', watchedFolderLabel: 'iCloud Drive Inbox', sourceType: 'ICLOUD_PICKER', provider: 'ICLOUD', relativePath: 'Receipts/placeholder.jpg', fileName: 'placeholder.jpg', mediaType: 'image/jpeg', byteSize: 42, modifiedUnixMs: 1000, fingerprint: 'fingerprint', state: 'DISCOVERED', attemptCount: 0, importRunId: null, lastErrorCode: null, discoveredAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z' }
     desktop.listWatchedFileInbox.mockResolvedValue([discovered])

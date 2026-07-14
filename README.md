@@ -181,8 +181,10 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Local [RFC 5322 email attachment import](docs/EMAIL_ATTACHMENT_IMPORT.md) that
   stores the exact `.eml` as immutable evidence and qualifies rows from its one
   selected CSV/TSV/XLSX attachment with `sourcePart`. Multiple importable
-  attachments, unsupported schemas, and ambiguous selection fail closed; this
-  is not mailbox OAuth or background email polling.
+  attachments, unsupported schemas, and ambiguous selection fail closed. The
+  durable Folder Inbox can discover locally saved `.eml` files from a selected
+  mail-drop folder, but this is not mailbox OAuth, mailbox API access, or remote
+  background email polling.
 - Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
   for the official Shift_JIS business-account record family, with exact
   header/detail/footer/final validation, totals and running-balance
