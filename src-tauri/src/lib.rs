@@ -26,6 +26,7 @@ mod folder_discovery;
 pub mod forecast_action;
 pub mod google_drive_credentials;
 pub mod google_drive_folder;
+pub mod google_drive_initial_sync;
 pub mod google_drive_oauth;
 pub mod google_drive_store;
 pub mod import_workflow;
