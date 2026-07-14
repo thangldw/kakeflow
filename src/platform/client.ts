@@ -25,6 +25,9 @@ import type {
   LocalSyncFoundationStatusDto,
   DesktopRelayStatusDto,
   DesktopRelayPreparedDeliveryDto,
+  FamilyDeliveryStatusDto,
+  FamilyDeliveryPreparedArtifactDto,
+  FamilySnapshotReviewDto,
   ImportPreviewDto,
   ImportRunCountsDto,
   ImportSummaryDto,
@@ -144,6 +147,19 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       failDesktopRelaySend: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_send_failed') },
       registerDesktopRelayInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_inbound_register') },
       stageDesktopRelayInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'relay_inbound_stage') },
+      getFamilyDeliveryStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_status') },
+      saveFamilyDeliveryConnection: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_connection_save') },
+      disconnectFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_disconnect') },
+      registerFamilyDeliveryRemoteState: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_remote_state_register') },
+      prepareFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_send_prepare') },
+      acceptFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_send_accept') },
+      failFamilyDelivery: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_send_failed') },
+      registerFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_inbound_register') },
+      stageFamilyDeliveryInbound: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_delivery_inbound_stage') },
+      getActiveFamilySnapshotReview: async () => null,
+      resolveFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_resolve') },
+      applyFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_apply') },
+      discardFamilySnapshot: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'family_snapshot_discard') },
       exportChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_export_save') },
       pickAndStageChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_pick_and_stage') },
       getActiveChangePackageReview: async () => null,
@@ -244,6 +260,19 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     failDesktopRelaySend: (householdId, deliveryId) => invokeValidated(invoke, 'relay_send_failed', parseDesktopRelayStatus, { householdId, deliveryId }),
     registerDesktopRelayInbound: (input) => invokeValidated(invoke, 'relay_inbound_register', parseDesktopRelayStatus, { input }),
     stageDesktopRelayInbound: (input) => invokeValidated(invoke, 'relay_inbound_stage', parseDesktopRelayStatus, { input }),
+    getFamilyDeliveryStatus: (householdId) => invokeValidated(invoke, 'family_delivery_status', parseFamilyDeliveryStatus, { householdId }),
+    saveFamilyDeliveryConnection: (input) => invokeValidated(invoke, 'family_delivery_connection_save', parseFamilyDeliveryStatus, { input }),
+    disconnectFamilyDelivery: (householdId) => invokeValidated(invoke, 'family_delivery_disconnect', parseFamilyDeliveryStatus, { householdId }),
+    registerFamilyDeliveryRemoteState: (input) => invokeValidated(invoke, 'family_delivery_remote_state_register', parseFamilyDeliveryStatus, { input }),
+    prepareFamilyDelivery: (input) => invokeValidated(invoke, 'family_delivery_send_prepare', parseFamilyPreparedArtifacts, { input }),
+    acceptFamilyDelivery: (input) => invokeValidated(invoke, 'family_delivery_send_accept', parseFamilyDeliveryStatus, { input }),
+    failFamilyDelivery: (householdId, deliveryIds) => invokeValidated(invoke, 'family_delivery_send_failed', parseFamilyDeliveryStatus, { householdId, deliveryIds }),
+    registerFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_inbound_register', parseFamilyDeliveryStatus, { input }),
+    stageFamilyDeliveryInbound: (input) => invokeValidated(invoke, 'family_delivery_inbound_stage', parseFamilyDeliveryStatus, { input }),
+    getActiveFamilySnapshotReview: (householdId) => invokeValidated(invoke, 'family_snapshot_active_review', parseNullableFamilySnapshotReview, { householdId }),
+    resolveFamilySnapshot: (packageId, resolutions) => invokeValidated(invoke, 'family_snapshot_resolve', parseFamilySnapshotReview, { packageId, resolutions }),
+    applyFamilySnapshot: (packageId) => invokeValidated(invoke, 'family_snapshot_apply', parseFamilySnapshotReview, { packageId }),
+    discardFamilySnapshot: async (packageId) => { await invokeValidated(invoke, 'family_snapshot_discard', parseVoid, { packageId }) },
     exportChangePackage: (householdId) => invokeValidated(invoke, 'change_package_export_save', parseNullableString, { householdId }),
     pickAndStageChangePackage: (householdId) => invokeValidated(invoke, 'change_package_pick_and_stage', parseNullableChangePackageReview, { householdId }),
     getActiveChangePackageReview: (householdId) => invokeValidated(invoke, 'change_package_active_review', parseNullableChangePackageReview, { householdId }),
@@ -450,6 +479,131 @@ function parseDesktopRelayPreparedDelivery(value: unknown): DesktopRelayPrepared
     digest: asCanonicalHash(record.digest), householdId: asRequiredString(record.householdId),
     originDeviceId: asRequiredString(record.originDeviceId), packageBytes: record.packageBytes,
   }
+}
+
+const FAMILY_CONNECTION_STATES = new Set(['NOT_CONFIGURED', 'CONNECTED', 'AUTH_EXPIRED', 'NETWORK_UNAVAILABLE', 'MEMBERSHIP_REVOKED'])
+const FAMILY_MEMBERSHIP_STATES = new Set(['UNLINKED', 'INVITED', 'ACTIVE', 'REVOKED', 'ARCHIVED_BLOCKED'])
+const FAMILY_OUTBOUND_STATES = new Set(['READY', 'BLOCKED_NO_RECIPIENT', 'SENDING', 'RELAY_ACCEPTED', 'FAILED_RETRYABLE', 'MEMBERSHIP_REVOKED'])
+const FAMILY_INBOUND_STATES = new Set(['AVAILABLE', 'DOWNLOADING', 'WAITING_FOR_REVIEW', 'READY_TO_APPLY', 'APPLIED', 'DUPLICATE', 'REJECTED_INVALID', 'AUDIENCE_DENIED', 'FAILED_RETRYABLE'])
+
+function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
+  const record = asRecord(value)
+  if (!FAMILY_CONNECTION_STATES.has(String(record.connectionState)) || !Array.isArray(record.memberships)
+      || !Array.isArray(record.outbound) || !Array.isArray(record.inbound)) throw new TypeError('family delivery status')
+  const endpoint = asNullableStrictString(record.endpoint)
+  const remotePrincipalId = asNullableStrictString(record.remotePrincipalId)
+  if (record.connectionState === 'NOT_CONFIGURED'
+    ? endpoint !== null || remotePrincipalId !== null
+    : endpoint === null || remotePrincipalId === null) throw new TypeError('family delivery connection')
+  const localMemberId = asNullableStrictString(record.localMemberId)
+  const localMemberName = asNullableStrictString(record.localMemberName)
+  if ((localMemberId === null) !== (localMemberName === null)) throw new TypeError('family local member')
+  const membershipIds = new Set<string>()
+  const memberships = record.memberships.map((value) => {
+    const item = asRecord(value); const memberId = asRequiredString(item.memberId)
+    if (membershipIds.has(memberId) || !FAMILY_MEMBERSHIP_STATES.has(String(item.state))) throw new TypeError('family membership')
+    membershipIds.add(memberId)
+    const inviteId = asNullableStrictString(item.inviteId); const inviteExpiresAt = item.inviteExpiresAt === null ? null : asIsoTimestamp(item.inviteExpiresAt)
+    if (item.state === 'INVITED' ? inviteId === null || inviteExpiresAt === null : inviteId !== null || inviteExpiresAt !== null) throw new TypeError('family invitation state')
+    return {
+      memberId, memberName: asRequiredString(item.memberName), state: item.state as FamilyDeliveryStatusDto['memberships'][number]['state'],
+      remoteMembershipIds: (() => { if (!Array.isArray(item.remoteMembershipIds)) throw new TypeError('family membership ids'); const ids = item.remoteMembershipIds.map(asRequiredString); if (new Set(ids).size !== ids.length) throw new TypeError('family membership ids'); return ids })(),
+      inviteId, inviteExpiresAt, deviceCount: asSafeInteger(item.deviceCount),
+      lastDeliveryAt: item.lastDeliveryAt === null ? null : asIsoTimestamp(item.lastDeliveryAt),
+    }
+  })
+  const audienceKeys = new Set<string>()
+  const outbound = record.outbound.map((value) => {
+    const item = asRecord(value); const audienceKey = asRequiredString(item.audienceKey)
+    if (audienceKeys.has(audienceKey) || !FAMILY_OUTBOUND_STATES.has(String(item.state))
+        || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility)) || !Array.isArray(item.recipientNames)) throw new TypeError('family outbound')
+    audienceKeys.add(audienceKey)
+    const audienceMemberId = asNullableStrictString(item.audienceMemberId); const audienceMemberName = asNullableStrictString(item.audienceMemberName)
+    if (item.audienceVisibility === 'SHARED' ? audienceMemberId !== null || audienceMemberName !== null : audienceMemberId === null || audienceMemberName === null) throw new TypeError('family outbound audience')
+    return {
+      audienceKey, audienceVisibility: item.audienceVisibility as AudienceVisibilityDto,
+      audienceMemberId, audienceMemberName,
+      recipientNames: item.recipientNames.map(asRequiredString), pendingChangeCount: asSafeInteger(item.pendingChangeCount),
+      state: item.state as FamilyDeliveryStatusDto['outbound'][number]['state'], withheldReason: asNullableStrictString(item.withheldReason),
+    }
+  })
+  const artifactIds = new Set<string>()
+  const inbound = record.inbound.map((value) => {
+    const item = asRecord(value); const artifactId = asRequiredString(item.artifactId)
+    if (artifactIds.has(artifactId) || !FAMILY_INBOUND_STATES.has(String(item.state))
+        || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility))) throw new TypeError('family inbound')
+    artifactIds.add(artifactId)
+    const audienceMemberName = asNullableStrictString(item.audienceMemberName)
+    if ((item.audienceVisibility === 'SHARED') !== (audienceMemberName === null)) throw new TypeError('family inbound audience')
+    if (typeof item.receivedBeforeRevocation !== 'boolean') throw new TypeError('family inbound revocation')
+    return {
+      artifactId, senderMemberName: asRequiredString(item.senderMemberName),
+      audienceVisibility: item.audienceVisibility as AudienceVisibilityDto, audienceMemberName,
+      itemCount: asSafeInteger(item.itemCount), createdAt: asIsoTimestamp(item.createdAt),
+      state: item.state as FamilyDeliveryStatusDto['inbound'][number]['state'], receivedBeforeRevocation: item.receivedBeforeRevocation,
+    }
+  })
+  return {
+    householdId: asRequiredString(record.householdId), connectionState: record.connectionState as FamilyDeliveryStatusDto['connectionState'],
+    endpoint, remotePrincipalId, localDeviceId: asRequiredString(record.localDeviceId), inboundCursor: asSafeInteger(record.inboundCursor), localMemberId, localMemberName,
+    memberships, outbound, withheldChangeCount: asSafeInteger(record.withheldChangeCount), inbound,
+  }
+}
+
+function parseFamilyPreparedArtifacts(value: unknown): readonly FamilyDeliveryPreparedArtifactDto[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) throw new TypeError('family prepared artifacts')
+  const ids = new Set<string>()
+  return value.map((entry) => {
+    const record = asRecord(entry); const artifactId = asRequiredString(record.artifactId)
+    if (ids.has(artifactId) || !Array.isArray(record.packageBytes) || record.packageBytes.length === 0 || record.packageBytes.length > 64 * 1024 * 1024
+        || record.packageBytes.some((byte) => typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('family prepared artifact')
+    ids.add(artifactId)
+    if (!['SHARED', 'PERSONAL'].includes(String(record.audienceVisibility))) throw new TypeError('family artifact audience')
+    const audienceVisibility = record.audienceVisibility as AudienceVisibilityDto
+    const audienceMemberId = asNullableStrictString(record.audienceMemberId)
+    if ((audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('family artifact audience')
+    if (record.artifactSchema !== 'FAMILY_AUDIENCE_PARTITION_V1') throw new TypeError('family artifact schema')
+    return {
+      deliveryId: asRequiredString(record.deliveryId), artifactId, digest: asCanonicalHash(record.digest),
+      householdId: asRequiredString(record.householdId), originDeviceId: asRequiredString(record.originDeviceId), audienceKey: asRequiredString(record.audienceKey),
+      audienceVisibility, audienceMemberId, artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1' as const,
+      packageBytes: record.packageBytes,
+    }
+  })
+}
+
+function parseFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto {
+  const record = asRecord(value)
+  if (!['REVIEW_REQUIRED', 'READY', 'APPLIED'].includes(String(record.state))
+      || !['SHARED', 'PERSONAL'].includes(String(record.audienceVisibility)) || !Array.isArray(record.records)) throw new TypeError('family snapshot review')
+  const audienceMemberName = asNullableStrictString(record.audienceMemberName)
+  if ((record.audienceVisibility === 'SHARED') !== (audienceMemberName === null)) throw new TypeError('family snapshot audience')
+  const keys = new Set<string>()
+  const records = record.records.map((value) => {
+    const item = asRecord(value)
+    if (!['UPSERT', 'DELETE'].includes(String(item.operation)) || !['CREATE', 'UPDATE', 'DELETE', 'CONFLICT'].includes(String(item.reviewState))
+        || !['PENDING', 'APPLY_INCOMING', 'KEEP_LOCAL', 'SKIP'].includes(String(item.resolution))) throw new TypeError('family snapshot record')
+    const entityKind = asRequiredString(item.entityKind); const entityId = asRequiredString(item.entityId); const key = `${entityKind}\0${entityId}`
+    if (keys.has(key)) throw new TypeError('family snapshot record'); keys.add(key)
+    return {
+      recordOrder: asSafeInteger(item.recordOrder), entityKind, entityId, entityLabel: asRequiredString(item.entityLabel),
+      operation: item.operation as FamilySnapshotReviewDto['records'][number]['operation'], reviewState: item.reviewState as FamilySnapshotReviewDto['records'][number]['reviewState'],
+      resolution: item.resolution as FamilySnapshotReviewDto['records'][number]['resolution'],
+      localSummary: asNullableStrictString(item.localSummary), incomingSummary: asRequiredString(item.incomingSummary),
+    }
+  })
+  const result = {
+    packageId: asRequiredString(record.packageId), householdId: asRequiredString(record.householdId), senderMemberName: asRequiredString(record.senderMemberName),
+    audienceVisibility: record.audienceVisibility as AudienceVisibilityDto, audienceMemberName,
+    state: record.state as FamilySnapshotReviewDto['state'], recordCount: asSafeInteger(record.recordCount),
+    createCount: asSafeInteger(record.createCount), updateCount: asSafeInteger(record.updateCount), deleteCount: asSafeInteger(record.deleteCount), conflictCount: asSafeInteger(record.conflictCount), records,
+  }
+  if (result.recordCount !== records.length || result.createCount + result.updateCount + result.deleteCount > result.recordCount) throw new TypeError('family snapshot counts')
+  return result
+}
+
+function parseNullableFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto | null {
+  return value === null ? null : parseFamilySnapshotReview(value)
 }
 
 function parseNullableString(value: unknown): string | null {

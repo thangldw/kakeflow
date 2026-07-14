@@ -1,0 +1,63 @@
+# Audience-partitioned family delivery
+
+KakeFlow v0.54 introduces a family-delivery protocol that is deliberately
+separate from the schema-v4 personal change package. Personal relay packages
+remain suitable only for devices authenticated as the same remote principal.
+They must never be filtered and sent to another household member.
+
+## Trust and routing boundary
+
+The reference relay authenticates every request and owns the authoritative
+mapping between a remote principal, a household membership, and a KakeFlow
+member ID. Clients never submit recipient principal IDs. The relay derives the
+audience for list and download requests each time:
+
+- `SHARED` is available to every active membership in the household.
+- `PERSONAL(member)` is available only to an active membership mapped to that
+  member.
+- revocation prevents future list and direct-download access for that
+  membership generation; it cannot erase a copy that was already downloaded.
+
+Rows inside a delivered household snapshot are data. They do not create or
+alter relay membership.
+
+## Family snapshot format
+
+Family delivery uses `KAKEFLOW_FAMILY_SNAPSHOT_SET` schema 1. A snapshot set is
+an immutable, current-state collection of audience partitions. Its identity,
+source revision, hashes, record counts, excluded counts, and partition audience
+are covered by deterministic hashes. Recipient principal IDs are never part of
+the package.
+
+The first supported dependency graph is intentionally narrow:
+
+- household and member directory records are `SHARED`;
+- an account follows its explicit `SHARED` or `PERSONAL(member)` scope;
+- a transaction is deliverable only when its own audience and every journal
+  account dependency resolve to one audience;
+- a dependency graph involving two different personal members is withheld;
+- source links and evidence bytes are not included in v0.54.
+
+Investment and other evidence-dependent records are reported as withheld until
+their evidence capsule can be partitioned by the same rules. The sender UI must
+show those counts and must not describe the snapshot as complete.
+
+## Review and apply
+
+Receiving bytes never changes the ledger. The desktop app validates and stages
+the complete set, shows separate shared and personal partitions, and requires
+an explicit review and apply action. Shared dependencies are applied before the
+matching personal partition.
+
+Lineage is keyed by source installation, household, and exact audience tuple.
+An omission can remove an entity only when an accepted replica head exists from
+the same source and same partition and the local payload still matches that
+head. A record in another partition, a locally created record, or a record with
+no accepted head is never an omission-delete candidate.
+
+## Explicit non-claims
+
+v0.54 does not provide end-to-end encryption, realtime/background sync, remote
+ledger posting, evidence transport, remote deletion, or erasure of downloaded
+copies. The bundled relay is a reference transport that must be operated
+separately from the desktop app.

@@ -248,6 +248,80 @@ export interface RegisterDesktopRelayInboundInputDto {
 export interface StageDesktopRelayInboundInputDto {
   readonly householdId: string; readonly artifactId: string; readonly packageBytes: readonly number[]
 }
+export type FamilyDeliveryConnectionStateDto = 'NOT_CONFIGURED' | 'CONNECTED' | 'AUTH_EXPIRED' | 'NETWORK_UNAVAILABLE' | 'MEMBERSHIP_REVOKED'
+export type FamilyMembershipStateDto = 'UNLINKED' | 'INVITED' | 'ACTIVE' | 'REVOKED' | 'ARCHIVED_BLOCKED'
+export type FamilyOutboundStateDto = 'READY' | 'BLOCKED_NO_RECIPIENT' | 'SENDING' | 'RELAY_ACCEPTED' | 'FAILED_RETRYABLE' | 'MEMBERSHIP_REVOKED'
+export type FamilyInboundStateDto = 'AVAILABLE' | 'DOWNLOADING' | 'WAITING_FOR_REVIEW' | 'READY_TO_APPLY' | 'APPLIED' | 'DUPLICATE' | 'REJECTED_INVALID' | 'AUDIENCE_DENIED' | 'FAILED_RETRYABLE'
+export interface FamilyDeliveryMembershipDto {
+  readonly memberId: string; readonly memberName: string; readonly state: FamilyMembershipStateDto
+  readonly remoteMembershipIds: readonly string[]
+  readonly inviteId: string | null; readonly inviteExpiresAt: string | null
+  readonly deviceCount: number; readonly lastDeliveryAt: string | null
+}
+export interface FamilyDeliveryPartitionDto {
+  readonly audienceKey: string; readonly audienceVisibility: AudienceVisibilityDto
+  readonly audienceMemberId: string | null; readonly audienceMemberName: string | null
+  readonly recipientNames: readonly string[]; readonly pendingChangeCount: number
+  readonly state: FamilyOutboundStateDto; readonly withheldReason: string | null
+}
+export interface FamilyDeliveryInboundDto {
+  readonly artifactId: string; readonly senderMemberName: string
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberName: string | null
+  readonly itemCount: number; readonly createdAt: string; readonly state: FamilyInboundStateDto
+  readonly receivedBeforeRevocation: boolean
+}
+export interface FamilyDeliveryStatusDto {
+  readonly householdId: string; readonly connectionState: FamilyDeliveryConnectionStateDto
+  readonly endpoint: string | null; readonly remotePrincipalId: string | null
+  readonly localDeviceId: string; readonly inboundCursor: number
+  readonly localMemberId: string | null; readonly localMemberName: string | null
+  readonly memberships: readonly FamilyDeliveryMembershipDto[]
+  readonly outbound: readonly FamilyDeliveryPartitionDto[]; readonly withheldChangeCount: number
+  readonly inbound: readonly FamilyDeliveryInboundDto[]
+}
+export interface SaveFamilyDeliveryConnectionInputDto {
+  readonly householdId: string; readonly endpoint: string
+  readonly remotePrincipalId: string
+  readonly localMemberId: string | null; readonly localMemberName: string | null
+  readonly memberships: readonly FamilyDeliveryMembershipDto[]
+}
+export interface RegisterFamilyDeliveryRemoteStateInputDto {
+  readonly householdId: string; readonly remotePrincipalId: string
+  readonly localMemberId: string | null; readonly localMemberName: string | null
+  readonly memberships: readonly FamilyDeliveryMembershipDto[]
+}
+export interface FamilyDeliveryPreparedArtifactDto {
+  readonly deliveryId: string; readonly artifactId: string; readonly digest: string
+  readonly householdId: string; readonly originDeviceId: string; readonly audienceKey: string
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
+  readonly artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1'; readonly packageBytes: readonly number[]
+}
+export interface PrepareFamilyDeliveryInputDto { readonly householdId: string; readonly audienceKeys: readonly string[] }
+export interface AcceptFamilyDeliveryInputDto {
+  readonly householdId: string; readonly receipts: readonly { readonly deliveryId: string; readonly artifactId: string; readonly digest: string; readonly acceptedAt: string }[]
+}
+export interface FamilyDeliveryRemoteArtifactDto {
+  readonly sequence: number; readonly artifactId: string; readonly digest: string; readonly createdAt: string
+  readonly originDeviceId: string; readonly senderMembershipId: string
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
+  readonly byteSize: number; readonly artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V1'
+}
+export interface RegisterFamilyDeliveryInboundInputDto { readonly householdId: string; readonly artifacts: readonly FamilyDeliveryRemoteArtifactDto[]; readonly nextCursor: number }
+export interface StageFamilyDeliveryInboundInputDto { readonly householdId: string; readonly artifactId: string; readonly packageBytes: readonly number[] }
+export type FamilySnapshotResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
+export interface FamilySnapshotReviewRecordDto {
+  readonly recordOrder: number; readonly entityKind: string; readonly entityId: string; readonly entityLabel: string
+  readonly operation: 'UPSERT' | 'DELETE'; readonly reviewState: 'CREATE' | 'UPDATE' | 'DELETE' | 'CONFLICT'
+  readonly resolution: FamilySnapshotResolutionDto; readonly localSummary: string | null; readonly incomingSummary: string
+}
+export interface FamilySnapshotReviewDto {
+  readonly packageId: string; readonly householdId: string; readonly senderMemberName: string
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberName: string | null
+  readonly state: 'REVIEW_REQUIRED' | 'READY' | 'APPLIED'; readonly recordCount: number
+  readonly createCount: number; readonly updateCount: number; readonly deleteCount: number; readonly conflictCount: number
+  readonly records: readonly FamilySnapshotReviewRecordDto[]
+}
+export interface FamilySnapshotResolutionInputDto { readonly entityKind: string; readonly entityId: string; readonly resolution: Exclude<FamilySnapshotResolutionDto, 'PENDING'> }
 export type ChangePackageResolutionDto = 'PENDING' | 'APPLY_INCOMING' | 'KEEP_LOCAL' | 'SKIP'
 export interface ChangePackageRecordReviewDto {
   readonly recordOrder: number; readonly entityKind: string; readonly entityId: string
@@ -594,6 +668,19 @@ export type AppCommand =
   | 'relay_send_failed'
   | 'relay_inbound_register'
   | 'relay_inbound_stage'
+  | 'family_delivery_status'
+  | 'family_delivery_connection_save'
+  | 'family_delivery_disconnect'
+  | 'family_delivery_remote_state_register'
+  | 'family_delivery_send_prepare'
+  | 'family_delivery_send_accept'
+  | 'family_delivery_send_failed'
+  | 'family_delivery_inbound_register'
+  | 'family_delivery_inbound_stage'
+  | 'family_snapshot_active_review'
+  | 'family_snapshot_resolve'
+  | 'family_snapshot_apply'
+  | 'family_snapshot_discard'
   | 'change_package_export_save'
   | 'change_package_pick_and_stage'
   | 'change_package_active_review'
@@ -694,6 +781,19 @@ export interface PlatformClient {
   failDesktopRelaySend(householdId: string, deliveryId: string): Promise<DesktopRelayStatusDto>
   registerDesktopRelayInbound(input: RegisterDesktopRelayInboundInputDto): Promise<DesktopRelayStatusDto>
   stageDesktopRelayInbound(input: StageDesktopRelayInboundInputDto): Promise<DesktopRelayStatusDto>
+  getFamilyDeliveryStatus(householdId: string): Promise<FamilyDeliveryStatusDto>
+  saveFamilyDeliveryConnection(input: SaveFamilyDeliveryConnectionInputDto): Promise<FamilyDeliveryStatusDto>
+  disconnectFamilyDelivery(householdId: string): Promise<FamilyDeliveryStatusDto>
+  registerFamilyDeliveryRemoteState(input: RegisterFamilyDeliveryRemoteStateInputDto): Promise<FamilyDeliveryStatusDto>
+  prepareFamilyDelivery(input: PrepareFamilyDeliveryInputDto): Promise<readonly FamilyDeliveryPreparedArtifactDto[]>
+  acceptFamilyDelivery(input: AcceptFamilyDeliveryInputDto): Promise<FamilyDeliveryStatusDto>
+  failFamilyDelivery(householdId: string, deliveryIds: readonly string[]): Promise<FamilyDeliveryStatusDto>
+  registerFamilyDeliveryInbound(input: RegisterFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
+  stageFamilyDeliveryInbound(input: StageFamilyDeliveryInboundInputDto): Promise<FamilyDeliveryStatusDto>
+  getActiveFamilySnapshotReview(householdId: string): Promise<FamilySnapshotReviewDto | null>
+  resolveFamilySnapshot(packageId: string, resolutions: readonly FamilySnapshotResolutionInputDto[]): Promise<FamilySnapshotReviewDto>
+  applyFamilySnapshot(packageId: string): Promise<FamilySnapshotReviewDto>
+  discardFamilySnapshot(packageId: string): Promise<void>
   exportChangePackage(householdId: string): Promise<string | null>
   pickAndStageChangePackage(householdId: string): Promise<ChangePackageReviewDto | null>
   getActiveChangePackageReview(householdId: string): Promise<ChangePackageReviewDto | null>

@@ -1,0 +1,24 @@
+.family-snapshot-review { display: grid; gap: 14px; }
+.family-snapshot-review p,.family-snapshot-review label,.family-snapshot-review button,.family-snapshot-review span { font-size: 12px; line-height: 1.55; }
+.family-review-source { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.family-review-source strong { font-size: 14px; }
+.family-review-boundary,.family-review-notice,.family-review-error { margin: 0; padding: 12px 14px; border-radius: 9px; background: var(--soft); color: var(--muted); }
+.family-review-error { color: #7b3535; background: #fff0f0; border: 1px solid #e7bcbc; }
+.family-review-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; }
+.family-review-summary div { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; }
+.family-review-summary span { color: var(--muted); }
+.family-review-summary strong { font-size: 20px; }
+.family-review-conflicts,.family-review-ready { display: grid; gap: 12px; }
+.family-review-conflicts h3,.family-review-ready h3 { margin: 0; font-size: 15px; }
+.family-review-conflicts > p,.family-review-ready p { margin: 0; color: var(--muted); }
+.family-review-conflicts fieldset { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.family-review-conflicts legend { padding: 0 6px; font-size: 13px; font-weight: 700; }
+.family-review-conflicts label { display: flex; align-items: center; gap: 8px; }
+.family-review-conflicts input { width: 18px; height: 18px; }
+.family-review-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.family-review-comparison div { padding: 10px; border-radius: 8px; background: var(--soft); }
+.family-review-comparison span { color: var(--muted); font-weight: 700; }
+.family-review-comparison p { margin: 4px 0 0; }
+.family-review-ready { padding: 14px; border: 1px solid #b8d5c0; border-radius: 10px; background: #f1f8f2; }
+.family-review-applied { margin: 0; padding: 12px; border-radius: 9px; color: #315a3d; background: #e5f1e7; font-weight: 700; }
+@media (max-width: 760px) { .family-review-summary,.family-review-comparison { grid-template-columns: 1fr 1fr; } }

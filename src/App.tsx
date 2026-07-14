@@ -85,6 +85,8 @@ import { toTransactionViewModel } from './features/transactions/transactionViewM
 import { FamilyPage } from './features/family/FamilyPage'
 import { LocalSyncFoundationPanel } from './features/sync/LocalSyncFoundationPanel'
 import { DesktopRelayPanel } from './features/sync/DesktopRelayPanel'
+import { FamilyDeliveryPanel } from './features/sync/FamilyDeliveryPanel'
+import { FamilySnapshotReviewPanel } from './features/sync/FamilySnapshotReviewPanel'
 import { LocalChangePackagePanel } from './features/sync/LocalChangePackagePanel'
 import { PortableEvidenceBundlePanel } from './features/sync/PortableEvidenceBundlePanel'
 import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
@@ -2011,12 +2013,14 @@ function defaultDashboardPreferences(householdId = ''): DashboardPreferencesDto 
   }
 }
 
-function SyncSettingsPanels({ householdId }: { readonly householdId: string | null }) {
+function SyncSettingsPanels({ householdId, members }: { readonly householdId: string | null; readonly members: readonly HouseholdMemberDto[] }) {
   const [reviewRevision, setReviewRevision] = useState(0)
   useEffect(() => { setReviewRevision(0) }, [householdId])
   return <>
     <LocalSyncFoundationPanel householdId={householdId} />
     <DesktopRelayPanel householdId={householdId} onReviewStaged={() => setReviewRevision((value) => value + 1)} />
+    <FamilyDeliveryPanel householdId={householdId} members={members} onReviewStaged={() => setReviewRevision((value) => value + 1)} />
+    <FamilySnapshotReviewPanel householdId={householdId} revision={reviewRevision} />
     <PortableEvidenceBundlePanel householdId={householdId} />
     <LocalChangePackagePanel key={`${householdId ?? 'none'}:${reviewRevision}`} householdId={householdId} />
   </>
@@ -2367,7 +2371,7 @@ function App() {
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
-    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SyncSettingsPanels householdId={activeHouseholdId} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
   return <div className="app-shell"><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }

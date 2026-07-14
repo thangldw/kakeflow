@@ -13,24 +13,55 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
-async function start(root, maximum = 1024, allowedOrigins = new Set()) {
-  const server = await createRelayServer({ dataDirectory: root, tokens: new Map([['token-a', 'principal-a'], ['token-b', 'principal-b']]), allowedOrigins, maxArtifactBytes: maximum })
+async function start(root, maximum = 1024, allowedOrigins = new Set(), clock = () => new Date()) {
+  const server = await createRelayServer({ dataDirectory: root, tokens: new Map([['token-a', 'principal-a'], ['token-b', 'principal-b'], ['token-c', 'principal-c']]), allowedOrigins, maxArtifactBytes: maximum, clock })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   servers.push(server)
   const address = server.address()
   return `http://127.0.0.1:${address.port}`
 }
 
-async function fixture({ allowedOrigins = new Set() } = {}) {
+async function fixture({ allowedOrigins = new Set(), clock = () => new Date() } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'kakeflow-relay-test-'))
   roots.push(root)
-  return { root, base: await start(root, 1024, allowedOrigins) }
+  return { root, base: await start(root, 1024, allowedOrigins, clock) }
 }
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const auth = (token = 'token-a') => ({ authorization: `Bearer ${token}` })
 function upload(base, { token = 'token-a', id = 'artifact-1', bytes = Buffer.from('package'), claimedDigest = digest(bytes), household = 'family', device = 'device-a' } = {}) {
   return fetch(`${base}/v1/artifacts`, { method: 'POST', headers: { ...auth(token), 'x-kakeflow-artifact-id': id, 'x-kakeflow-digest': claimedDigest, 'x-kakeflow-household-id': household, 'x-kakeflow-origin-device-id': device }, body: bytes })
+}
+
+function jsonHeaders(token = 'token-a') { return { ...auth(token), 'content-type': 'application/json' } }
+function postJson(base, path, body, token = 'token-a') {
+  return fetch(`${base}${path}`, { method: 'POST', headers: jsonHeaders(token), body: JSON.stringify(body) })
+}
+async function createFamily(base, household = 'family') {
+  const response = await postJson(base, '/v2/households', { householdId: household, domainMemberId: `${household}-member-owner`, idempotencyKey: `create-${household}` })
+  assert.equal(response.status, 201)
+  return (await response.json()).membership
+}
+async function inviteAndRedeem(base, { household = 'family', domainMemberId = `${household}-member-b`, ownerToken = 'token-a', memberToken = 'token-b', key = `invite-${domainMemberId}` } = {}) {
+  const inviteResponse = await postJson(base, `/v2/households/${household}/invites`, { domainMemberId, idempotencyKey: key, expiresInSeconds: 3600 }, ownerToken)
+  assert.equal(inviteResponse.status, 201)
+  const invite = (await inviteResponse.json()).invite
+  const redeemResponse = await postJson(base, '/v2/invites/redeem', { code: invite.code }, memberToken)
+  assert.equal(redeemResponse.status, 201)
+  return { invite, membership: (await redeemResponse.json()).membership }
+}
+function publish(base, { household = 'family', token = 'token-a', id = 'publication-1', bytes = Buffer.from('shared-package'), claimedDigest = digest(bytes), device = 'device-a', visibility = 'SHARED', memberId = null, extraHeaders = {} } = {}) {
+  return fetch(`${base}/v2/households/${household}/publications`, {
+    method: 'POST', headers: {
+      ...auth(token), 'content-type': 'application/octet-stream',
+      'x-kakeflow-publication-id': id, 'x-kakeflow-digest': claimedDigest,
+      'x-kakeflow-origin-device-id': device,
+      'x-kakeflow-audience-visibility': visibility,
+      ...(memberId == null ? {} : { 'x-kakeflow-audience-member-id': memberId }),
+      'x-kakeflow-artifact-schema': 'FAMILY_AUDIENCE_PARTITION_V1',
+      ...extraHeaders,
+    }, body: bytes,
+  })
 }
 
 test('authenticates whoami and rejects missing or unknown bearer tokens', async () => {
@@ -111,4 +142,224 @@ test('enforces the configured artifact size cap', async () => {
   const response = await upload(base, { bytes: Buffer.alloc(1025, 1) })
   assert.equal(response.status, 413)
   assert.equal((await fetch(`${base}/v1/artifacts/artifact-1`, { headers: auth() })).status, 404)
+})
+
+test('creates a family, issues an idempotent invite, and derives member identities from authentication', async () => {
+  const { base } = await fixture()
+  const owner = await createFamily(base)
+  assert.equal(owner.principalId, 'principal-a')
+  assert.equal(owner.role, 'OWNER')
+
+  const request = { domainMemberId: 'family-member-b', idempotencyKey: 'invite-b', expiresInSeconds: 3600 }
+  const first = await postJson(base, '/v2/households/family/invites', request)
+  assert.equal(first.status, 201)
+  const firstBody = await first.json()
+  const retry = await postJson(base, '/v2/households/family/invites', request)
+  assert.equal(retry.status, 200)
+  assert.equal((await retry.json()).invite.code, firstBody.invite.code)
+  assert.equal((await postJson(base, '/v2/households/family/invites', { ...request, idempotencyKey: 'not-owner' }, 'token-b')).status, 403)
+
+  const redeemed = await postJson(base, '/v2/invites/redeem', { code: firstBody.invite.code }, 'token-b')
+  assert.equal(redeemed.status, 201)
+  const member = (await redeemed.json()).membership
+  assert.equal(member.principalId, 'principal-b')
+  assert.equal(member.domainMemberId, 'family-member-b')
+  assert.equal(member.generation, 1)
+  const redeemRetry = await postJson(base, '/v2/invites/redeem', { code: firstBody.invite.code }, 'token-b')
+  assert.equal(redeemRetry.status, 200)
+  assert.equal((await postJson(base, '/v2/invites/redeem', { code: firstBody.invite.code }, 'token-c')).status, 410)
+
+  const members = await (await fetch(`${base}/v2/households/family/members`, { headers: auth('token-b') })).json()
+  assert.deepEqual(members.members.map((item) => item.principalId), ['principal-a', 'principal-b'])
+  const identity = await (await fetch(`${base}/v2/whoami`, { headers: auth('token-b') })).json()
+  assert.equal(identity.remotePrincipalId, 'principal-b')
+  assert.deepEqual(identity.memberships.map((item) => item.membershipId), [member.membershipId])
+  const invites = await (await fetch(`${base}/v2/households/family/invites`, { headers: auth() })).json()
+  assert.equal(invites.invites[0].code, undefined)
+})
+
+test('previews an active invite without redeeming it or returning the code', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const created = await postJson(base, '/v2/households/family/invites', { domainMemberId: 'family-member-b', idempotencyKey: 'preview-b', expiresInSeconds: 3600 })
+  const invite = (await created.json()).invite
+  assert.equal((await fetch(`${base}/v2/invites/preview`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code: invite.code }) })).status, 401)
+
+  const first = await postJson(base, '/v2/invites/preview', { code: invite.code }, 'token-b')
+  assert.equal(first.status, 200)
+  assert.deepEqual(await first.json(), { invite: {
+    householdId: 'family', domainMemberId: 'family-member-b', role: 'MEMBER', expiresAt: invite.expiresAt,
+  } })
+  const second = await postJson(base, '/v2/invites/preview', { code: invite.code }, 'token-b')
+  assert.equal(second.status, 200)
+
+  assert.equal((await postJson(base, '/v2/invites/redeem', { code: invite.code }, 'token-b')).status, 201)
+  assert.equal((await postJson(base, '/v2/invites/preview', { code: invite.code }, 'token-b')).status, 410)
+  assert.equal((await postJson(base, '/v2/invites/preview', { code: 'kfi_unknown_invitation_code_123456' }, 'token-b')).status, 404)
+})
+
+test('routes shared publications only to server-snapshotted active memberships', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const { membership } = await inviteAndRedeem(base)
+  const bytes = Buffer.from('family-shared-snapshot')
+  const accepted = await publish(base, {
+    bytes,
+    extraHeaders: {
+      'x-kakeflow-sender-principal-id': 'principal-c',
+      'x-kakeflow-recipient-principal-id': 'principal-c',
+    },
+  })
+  assert.equal(accepted.status, 201)
+  const metadata = (await accepted.json()).publication
+  assert.equal(metadata.senderPrincipalId, 'principal-a')
+  assert.equal(metadata.senderMembershipId, 'membership-1')
+  assert.equal(metadata.recipientCount, 1)
+  assert.deepEqual(metadata.audience, { visibility: 'SHARED', memberId: null })
+
+  const inbound = await (await fetch(`${base}/v2/households/family/publications?after=0`, { headers: auth('token-b') })).json()
+  assert.deepEqual(inbound.publications.map((item) => item.publicationId), ['publication-1'])
+  assert.equal(inbound.publications[0].senderPrincipalId, 'principal-a')
+  assert.equal(await (await fetch(`${base}/v2/households/family/publications/publication-1`, { headers: auth('token-b') })).text(), bytes.toString())
+
+  assert.equal((await fetch(`${base}/v2/households/family/publications?after=0`, { headers: auth('token-c') })).status, 404)
+  assert.equal((await fetch(`${base}/v2/households/family/publications/publication-1`, { headers: auth('token-c') })).status, 404)
+  assert.equal(membership.membershipId, 'membership-2')
+})
+
+test('routes PERSONAL publications only to the authenticated member tuple with no household fallback', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const sameMember = await inviteAndRedeem(base, { domainMemberId: 'family-member-owner', key: 'invite-owner-second-principal' })
+  await inviteAndRedeem(base, { domainMemberId: 'family-member-c', memberToken: 'token-c', key: 'invite-c' })
+
+  const personal = await publish(base, {
+    id: 'personal-1', visibility: 'PERSONAL', memberId: 'family-member-owner',
+  })
+  assert.equal(personal.status, 201)
+  const personalMetadata = (await personal.json()).publication
+  assert.deepEqual(personalMetadata.audience, { visibility: 'PERSONAL', memberId: 'family-member-owner' })
+  assert.equal(personalMetadata.recipientCount, 1)
+
+  const sameMemberList = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(sameMemberList.publications.map((item) => item.publicationId), ['personal-1'])
+  const otherMemberList = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-c') })).json()
+  assert.deepEqual(otherMemberList.publications, [])
+  assert.equal((await fetch(`${base}/v2/households/family/publications/personal-1`, { headers: auth('token-c') })).status, 404)
+
+  assert.equal((await publish(base, { id: 'spoofed-personal', visibility: 'PERSONAL', memberId: 'family-member-c' })).status, 403)
+  assert.equal((await fetch(`${base}/v2/households/family/members/${sameMember.membership.membershipId}`, { method: 'DELETE', headers: auth() })).status, 200)
+  assert.equal((await publish(base, { id: 'personal-without-recipient', visibility: 'PERSONAL', memberId: 'family-member-owner' })).status, 409)
+  const after = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-c') })).json()
+  assert.deepEqual(after.publications, [])
+})
+
+test('revocation blocks listing and direct download, and a rejoined generation cannot read old bytes', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const first = await inviteAndRedeem(base)
+  assert.equal((await publish(base)).status, 201)
+  const revoked = await fetch(`${base}/v2/households/family/members/${first.membership.membershipId}`, { method: 'DELETE', headers: auth() })
+  assert.equal(revoked.status, 200)
+  assert.equal((await fetch(`${base}/v2/households/family/publications?after=0`, { headers: auth('token-b') })).status, 404)
+  assert.equal((await fetch(`${base}/v2/households/family/publications/publication-1`, { headers: auth('token-b') })).status, 404)
+
+  const second = await inviteAndRedeem(base, { key: 'invite-b-generation-2' })
+  assert.equal(second.membership.generation, 2)
+  const oldList = await (await fetch(`${base}/v2/households/family/publications?after=0`, { headers: auth('token-b') })).json()
+  assert.deepEqual(oldList.publications, [])
+  assert.equal((await fetch(`${base}/v2/households/family/publications/publication-1`, { headers: auth('token-b') })).status, 404)
+
+  assert.equal((await publish(base, { id: 'publication-2' })).status, 201)
+  const current = await (await fetch(`${base}/v2/households/family/publications?after=0`, { headers: auth('token-b') })).json()
+  assert.deepEqual(current.publications.map((item) => item.publicationId), ['publication-2'])
+  assert.equal((await fetch(`${base}/v2/households/family/members/membership-1`, { method: 'DELETE', headers: auth() })).status, 409)
+})
+
+test('serializes publication acceptance with revocation and never grants revoked-generation access', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  const { membership } = await inviteAndRedeem(base)
+  const [publication, revocation] = await Promise.all([
+    publish(base, { id: 'publication-race' }),
+    fetch(`${base}/v2/households/family/members/${membership.membershipId}`, { method: 'DELETE', headers: auth() }),
+  ])
+  assert.ok([201, 409].includes(publication.status))
+  assert.equal(revocation.status, 200)
+  assert.equal((await fetch(`${base}/v2/households/family/publications?after=0`, { headers: auth('token-b') })).status, 404)
+  assert.equal((await fetch(`${base}/v2/households/family/publications/publication-race`, { headers: auth('token-b') })).status, 404)
+})
+
+test('publication retries are immutable while a new publication can deliver identical bytes', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  const bytes = Buffer.from('same-current-state')
+  assert.equal((await publish(base, { bytes })).status, 201)
+  const retry = await publish(base, { bytes })
+  assert.equal(retry.status, 200)
+  assert.equal((await retry.json()).created, false)
+  assert.equal((await publish(base, { bytes: Buffer.from('changed') })).status, 409)
+  assert.equal((await publish(base, { id: 'publication-2', bytes })).status, 201)
+  const list = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(list.publications.map((item) => item.publicationId), ['publication-1', 'publication-2'])
+})
+
+test('rejects wrong audience tuples, missing recipients, digest tampering, and oversized family artifacts', async () => {
+  const { base } = await fixture()
+  await createFamily(base)
+  assert.equal((await publish(base)).status, 409)
+  await inviteAndRedeem(base)
+  assert.equal((await publish(base, { extraHeaders: { 'x-kakeflow-audience-visibility': 'PERSONAL' } })).status, 400)
+  assert.equal((await publish(base, { extraHeaders: { 'x-kakeflow-audience-member-id': 'family-member-b' } })).status, 400)
+  assert.equal((await publish(base, { claimedDigest: '0'.repeat(64) })).status, 422)
+  assert.equal((await publish(base, { bytes: Buffer.alloc(1025, 1) })).status, 413)
+  const list = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(list.publications, [])
+})
+
+test('expires and revokes invites without exposing their code through listing', async () => {
+  let now = Date.parse('2026-07-14T00:00:00.000Z')
+  const { base } = await fixture({ clock: () => new Date(now) })
+  await createFamily(base)
+  const expiring = await postJson(base, '/v2/households/family/invites', { domainMemberId: 'member-b', idempotencyKey: 'expires', expiresInSeconds: 60 })
+  const expiringInvite = (await expiring.json()).invite
+  now += 61_000
+  assert.equal((await postJson(base, '/v2/invites/redeem', { code: expiringInvite.code }, 'token-b')).status, 410)
+  assert.equal((await postJson(base, '/v2/invites/preview', { code: expiringInvite.code }, 'token-b')).status, 410)
+
+  const active = await postJson(base, '/v2/households/family/invites', { domainMemberId: 'member-c', idempotencyKey: 'revoked', expiresInSeconds: 60 })
+  const activeInvite = (await active.json()).invite
+  assert.equal((await fetch(`${base}/v2/households/family/invites/${activeInvite.inviteId}`, { method: 'DELETE', headers: auth() })).status, 200)
+  assert.equal((await postJson(base, '/v2/invites/redeem', { code: activeInvite.code }, 'token-c')).status, 410)
+  assert.equal((await postJson(base, '/v2/invites/preview', { code: activeInvite.code }, 'token-c')).status, 410)
+  const listed = await (await fetch(`${base}/v2/households/family/invites`, { headers: auth() })).json()
+  assert.ok(listed.invites.every((item) => item.code === undefined))
+})
+
+test('persists family memberships, invitations, publications, and access decisions across restart', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'kakeflow-family-relay-restart-'))
+  roots.push(root)
+  let base = await start(root)
+  await createFamily(base)
+  await inviteAndRedeem(base)
+  assert.equal((await publish(base)).status, 201)
+  const firstServer = servers.shift()
+  await new Promise((resolve) => firstServer.close(resolve))
+  base = await start(root)
+
+  const households = await (await fetch(`${base}/v2/households`, { headers: auth('token-b') })).json()
+  assert.equal(households.households[0].membership.principalId, 'principal-b')
+  const publications = await (await fetch(`${base}/v2/households/family/publications`, { headers: auth('token-b') })).json()
+  assert.deepEqual(publications.publications.map((item) => item.publicationId), ['publication-1'])
+  assert.equal(await (await fetch(`${base}/v2/households/family/publications/publication-1`, { headers: auth('token-b') })).text(), 'shared-package')
+})
+
+test('includes family DELETE and audience headers in configured WebView CORS', async () => {
+  const origin = 'tauri://localhost'
+  const { base } = await fixture({ allowedOrigins: new Set([origin]) })
+  const response = await fetch(`${base}/v2/households/family/members/member`, { method: 'OPTIONS', headers: { Origin: origin } })
+  assert.equal(response.status, 204)
+  assert.match(response.headers.get('access-control-allow-methods'), /DELETE/)
+  assert.match(response.headers.get('access-control-allow-headers'), /X-KakeFlow-Audience-Visibility/i)
 })

@@ -200,11 +200,22 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
+- Authenticated cross-principal family delivery for the initial confirmed household/member/account/transaction graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, durable review, and partition-scoped omission lineage.
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Add audience-partitioned relay artifacts, authenticated household membership, and backend-derived `SHARED`/`PERSONAL(member)` recipients before enabling cross-principal family delivery.
-3. Add a separate mobile receipt-capture capsule and desktop Capture Inbox; keep local OCR, receipt matching, and explicit confirmation ahead of any ledger posting.
+2. Add a separate mobile receipt-capture capsule and desktop Capture Inbox; keep local OCR, receipt matching, and explicit confirmation ahead of any ledger posting.
+3. Extend family delivery to evidence-partitioned card, investment, planning, and configuration aggregates after their complete dependency graphs can travel without widening audience.
 4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
+
+## Family delivery boundary
+
+![Audience-partitioned family delivery](docs/assets/infographics/family-delivery.svg)
+
+KakeFlow keeps same-principal desktop relay and cross-principal family delivery
+as separate protocols. Family delivery publishes independent `SHARED` and
+`PERSONAL(member)` artifacts, derives recipients from active relay membership,
+and still requires local review before any ledger change. See the full
+[audience-partitioned family delivery contract](docs/AUDIENCE_PARTITIONED_FAMILY_DELIVERY.md).

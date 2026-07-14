@@ -8,6 +8,8 @@ pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_vault;
 pub mod evidence_bundle;
+pub mod family_delivery_transport;
+pub mod family_snapshot;
 pub mod financial_calendar;
 pub mod fixed_cost_review;
 mod folder_discovery;
@@ -600,6 +602,151 @@ fn relay_inbound_stage(
     relay_result(&state, |connection| {
         relay_transport::stage_inbound(connection, &input)?;
         relay_transport::status(connection, &household_id)
+    })
+}
+
+fn family_delivery_result<T>(
+    state: &AppState,
+    operation: impl FnOnce(&rusqlite::Connection) -> family_delivery_transport::Result<T>,
+) -> Result<T, String> {
+    state
+        .with_connection(|connection| {
+            operation(connection).map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Family delivery operation could not be completed".to_owned())
+}
+
+#[tauri::command]
+fn family_delivery_status(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::status(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_connection_save(
+    state: tauri::State<'_, AppState>,
+    input: family_delivery_transport::SaveFamilyConnectionInput,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::save_connection(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_disconnect(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::disconnect(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_remote_state_register(
+    state: tauri::State<'_, AppState>,
+    input: family_delivery_transport::RegisterRemoteStateInput,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::register_remote_state(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_send_prepare(
+    state: tauri::State<'_, AppState>,
+    input: family_delivery_transport::PrepareFamilyDeliveryInput,
+) -> Result<Vec<family_delivery_transport::PreparedFamilyArtifactDto>, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::prepare_send(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_send_accept(
+    state: tauri::State<'_, AppState>,
+    input: family_delivery_transport::AcceptFamilyDeliveryInput,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::mark_accepted(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_send_failed(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    delivery_ids: Vec<String>,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::mark_failed(connection, &household_id, &delivery_ids)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_inbound_register(
+    state: tauri::State<'_, AppState>,
+    input: family_delivery_transport::RegisterFamilyInboundInput,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::register_inbound(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn family_delivery_inbound_stage(
+    state: tauri::State<'_, AppState>,
+    input: family_delivery_transport::StageFamilyInboundInput,
+) -> Result<family_delivery_transport::FamilyDeliveryStatusDto, String> {
+    let household_id = input.household_id.clone();
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::stage_inbound(connection, &input)?;
+        family_delivery_transport::status(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn family_snapshot_active_review(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Option<family_delivery_transport::FamilySnapshotUiReviewDto>, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::active_ui_review(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn family_snapshot_resolve(
+    state: tauri::State<'_, AppState>,
+    package_id: String,
+    resolutions: Vec<family_delivery_transport::FamilySnapshotUiResolutionInput>,
+) -> Result<family_delivery_transport::FamilySnapshotUiReviewDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::resolve_ui_review(connection, &package_id, &resolutions)
+    })
+}
+
+#[tauri::command]
+fn family_snapshot_apply(
+    state: tauri::State<'_, AppState>,
+    package_id: String,
+) -> Result<family_delivery_transport::FamilySnapshotUiReviewDto, String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::apply_ui_review(connection, &package_id)
+    })
+}
+
+#[tauri::command]
+fn family_snapshot_discard(
+    state: tauri::State<'_, AppState>,
+    package_id: String,
+) -> Result<(), String> {
+    family_delivery_result(&state, |connection| {
+        family_delivery_transport::discard_ui_review(connection, &package_id)
     })
 }
 
@@ -2856,6 +3003,19 @@ pub fn run() {
             relay_send_failed,
             relay_inbound_register,
             relay_inbound_stage,
+            family_delivery_status,
+            family_delivery_connection_save,
+            family_delivery_disconnect,
+            family_delivery_remote_state_register,
+            family_delivery_send_prepare,
+            family_delivery_send_accept,
+            family_delivery_send_failed,
+            family_delivery_inbound_register,
+            family_delivery_inbound_stage,
+            family_snapshot_active_review,
+            family_snapshot_resolve,
+            family_snapshot_apply,
+            family_snapshot_discard,
             change_package_export_save,
             change_package_pick_and_stage,
             change_package_active_review,
