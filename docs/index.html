@@ -43,8 +43,8 @@
           <h1>家計の流れを、<br><em>正しくひとつに。</em></h1>
           <p class="hero-lede">銀行、カード、PayPay、レシート、PDF、証券口座。ばらばらの記録をあなたのパソコンでつなぎ、二重計上を防ぎながら、数字の根拠までたどれる家計簿にします。</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v0.80.0/KakeFlow_0.80.0_aarch64.dmg">macOS ARM64 版をダウンロード</a>
-            <a class="button button-paper" href="https://github.com/thangldw/kakeflow/releases/tag/v0.80.0" target="_blank" rel="noopener noreferrer">v0.80.0 リリースノート</a>
+            <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v0.90.0/KakeFlow_0.90.0_aarch64.dmg">macOS ARM64 版をダウンロード</a>
+            <a class="button button-paper" href="https://github.com/thangldw/kakeflow/releases/tag/v0.90.0" target="_blank" rel="noopener noreferrer">v0.90.0 リリースノート</a>
           </div>
           <p class="release-note">現在の公開バイナリは未署名の macOS ARM64 版です。Windows はソースからビルドできます。</p>
           <ul class="trust-row" aria-label="KakeFlow の基本原則">
@@ -63,7 +63,7 @@
     </section>
 
     <section class="principles" aria-label="KakeFlow が解決する三つの課題">
-      <article><span>01</span><div><b>原本を一つの Inbox へ</b><p>対応 CSV・XLSX・text PDF・画像を同じ場所で確認。</p></div></article>
+      <article><span>01</span><div><b>原本を一つの Inbox へ</b><p>対応 CSV・XLSX・text PDF・画像・EMLを同じ場所で確認。</p></div></article>
       <article><span>02</span><div><b>支払いを二重に数えない</b><p>カード利用と後日の銀行引落を、費用と負債返済に分けます。</p></div></article>
       <article><span>03</span><div><b>数値から原本へ戻れる</b><p>集計から取引、元の CSV 行・PDF・レシートまで掘り下げます。</p></div></article>
     </section>
@@ -84,7 +84,7 @@
             <article class="board-node source-node" data-node="bank"><b>銀行口座</b><span>CSV・取引明細</span></article>
             <article class="board-node source-node" data-node="card"><b>クレジットカード</b><span>CSV・PDF 明細</span></article>
             <article class="board-node source-node" data-node="wallet"><b>PayPay・電子マネー</b><span>複数行イベント</span></article>
-            <article class="board-node source-node" data-node="receipt"><b>レシート・PDF</b><span>画像・スキャン</span></article>
+            <article class="board-node source-node" data-node="receipt"><b>レシート・PDF・EML</b><span>画像・スキャン・メール添付</span></article>
             <article class="board-node source-node" data-node="securities"><b>証券口座</b><span>残高・取引履歴</span></article>
           </div>
         </section>
@@ -165,7 +165,7 @@
       </div>
       <div class="boundary-grid">
         <article class="available">
-          <span>AVAILABLE IN v0.80.0</span>
+          <span>AVAILABLE IN v0.90.0</span>
           <h3>現在の安定版</h3>
           <ul>
             <li>対応 CSV・XLSX・text PDF・スキャン PDF・レシート画像のローカル取り込み</li>
@@ -177,6 +177,8 @@
             <li>フォルダ Inbox、ルール、ラベル、タグ、CSV export</li>
             <li>ローカル同期済み iCloud Drive フォルダの provider-aware 永続 Inbox</li>
             <li>検証用モバイルブラウザーの IndexedDB 送信キューと bounded retry</li>
+            <li>MUFG BizSTATION の公式「全明細」「入出金明細」CSV adapter</li>
+            <li>原本 EML を保持する review-gated CSV・TSV・XLSX メール添付取込</li>
           </ul>
         </article>
         <article>
@@ -186,6 +188,7 @@
             <li>スキャン PDF OCR の Windows 向け独立 packaging 検証</li>
             <li>Windows の署名済み installer と配布検証</li>
             <li>より広い金融機関 adapter と native mobile capture / background delivery</li>
+            <li>Google Drive OAuth と direct mailbox connector</li>
             <li>外部 aggregator は契約・提供条件を確認後に検討</li>
           </ul>
         </article>
@@ -197,6 +200,7 @@
             <li>すべての金融機関や statement 形式を網羅していない</li>
             <li>OCR・自動分類の低 confidence 候補は人の確認が必要</li>
             <li>家計データの完全性は、取り込んだ原本の範囲に依存</li>
+            <li>EML は表形式添付1件のみ。mailboxへの自動接続は未対応</li>
           </ul>
         </article>
       </div>
@@ -205,7 +209,7 @@
     <section class="closing-section">
       <div><p class="eyebrow">OPEN SOURCE · LOCAL-FIRST · REVIEWABLE</p><h2>あなたのパソコンで、<br>正しい家計簿を育てる。</h2></div>
       <div class="closing-actions">
-        <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v0.80.0/KakeFlow_0.80.0_aarch64.dmg">macOS ARM64 版を試す</a>
+        <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v0.90.0/KakeFlow_0.90.0_aarch64.dmg">macOS ARM64 版を試す</a>
         <a class="button button-paper" href="https://github.com/thangldw/kakeflow" target="_blank" rel="noopener noreferrer">GitHub で見る</a>
       </div>
     </section>
