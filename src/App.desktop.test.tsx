@@ -1177,6 +1177,50 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('aggregate_asset_history_list', { request: { householdId: 'family', limit: 240 } }))
   })
 
+  it('exports the selected annual investment performance scope without global household filters', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    const brokerageEvent = {
+      id: 'buy-1', accountId: 'broker', accountName: '証券口座', sourceDocumentId: 'broker-doc', sourceRow: 2,
+      eventType: 'BUY', tradeDate: '2026-01-05', settlementDate: '2026-01-07', instrumentCode: '7203', instrumentName: 'トヨタ自動車', accountType: '特定', currency: 'JPY',
+      quantity: 10, unitPrice: 10_000, grossAmount: 100_000, feeAmount: 0, taxAmount: 0, settlementAmount: 100_000,
+      reconciliationStatus: 'BALANCED', reconciliationDifference: 0, affectsHouseholdExpense: false, rawTransactionType: '買付',
+      corporateActionRatio: null, targetInstrumentCode: null, targetInstrumentName: null, targetCurrency: null, costBasisAllocationRatio: null,
+      subscriptionAmount: null, cashInLieuAmount: null, cashInLieuQuantity: null, mergerCashAmount: null, mergerCashCurrency: null,
+      mergerStockCostBasisRatio: null, sourceToTargetFxRate: null, sourceToCashFxRate: null,
+      legs: [{ id: 'cash-1', lineNumber: 1, kind: 'CASH', signedAmount: -100_000, currency: 'JPY', description: 'Cash' }],
+    }
+    const performance = {
+      dateFrom: '2025-01-01', dateTo: '2025-12-31', costBasisMethod: 'FIFO',
+      totalsByCurrency: [{ currency: 'JPY', buyGross: 100_000, sellGross: 140_000, realizedPnl: 40_000, dividendGross: 0, fees: 0, taxes: 0 }],
+      realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [],
+    }
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'brokerage_history_query') return { events: [brokerageEvent], totalsByCurrency: [{ currency: 'JPY', buyGross: 100_000, sellGross: 0, dividendGross: 0, fees: 0, taxes: 0, deposits: 0, withdrawals: 0, netCashMovement: -100_000 }] }
+      if (command === 'investment_holdings_query') return { asOf: '2026-07-31', costBasisMethod: 'FIFO', positions: [], openLots: [], realizedAllocations: [], uncoveredSales: [], skippedEventIds: [], corporateActionEventIds: [], corporateActionAllocations: [] }
+      if (command === 'investment_performance_query') return performance
+      if (command === 'investment_performance_xlsx_save') return { fileName: 'kakeflow-investment-performance-2025.xlsx', rowCount: 24, byteSize: 8_000, sheetCount: 4 }
+      return fallback(command, args)
+    })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.change(screen.getByLabelText('家族集計範囲'), { target: { value: 'MEMBER:taro' } })
+    fireEvent.click(screen.getByRole('button', { name: '資産・投資' }))
+    expect(await screen.findByRole('heading', { name: '年間投資実績・税金' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('投資実績の対象年'), { target: { value: '2025' } })
+    fireEvent.click(await screen.findByRole('button', { name: '年間投資Excelを保存' }))
+
+    const request = { householdId: 'family', dateFrom: '2025-01-01', dateTo: '2025-12-31' }
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('investment_performance_xlsx_save', { request }))
+    expect(request).not.toHaveProperty('accountGroupId')
+    expect(request).not.toHaveProperty('attributionScope')
+    expect(request).not.toHaveProperty('asOf')
+    expect(request).not.toHaveProperty('fxAsOf')
+    expect(request).not.toHaveProperty('reportingCurrency')
+    expect(await screen.findByText('kakeflow-investment-performance-2025.xlsx（24行）を保存しました。')).toBeInTheDocument()
+    expect(screen.getByText('実現損益 ¥40,000')).toBeInTheDocument()
+  })
+
   it('delegates restore selection and destructive confirmation to the native backend', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')

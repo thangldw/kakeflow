@@ -4,19 +4,24 @@ import {
   createInvestmentPerformancePlatform,
   type InvestmentPerformanceDto,
   type InvestmentPerformanceRequest,
+  type InvestmentPerformanceXlsxSavedDto,
 } from './investmentPerformancePlatform'
 import './investmentPeriodReport.css'
 
 export type InvestmentPerformanceQuery = (request: InvestmentPerformanceRequest) => Promise<InvestmentPerformanceDto>
+export type InvestmentPerformanceXlsxSave = (request: InvestmentPerformanceRequest) => Promise<InvestmentPerformanceXlsxSavedDto | null>
 
 export interface InvestmentPeriodReportProps {
   readonly householdId: string | null
   readonly revision: number
   readonly initialYear?: number
   readonly queryPerformance?: InvestmentPerformanceQuery
+  readonly savePerformanceXlsx?: InvestmentPerformanceXlsxSave
 }
 
-const defaultQuery = createInvestmentPerformancePlatform().queryPerformance
+const defaultPlatform = createInvestmentPerformancePlatform()
+const defaultQuery = defaultPlatform.queryPerformance
+const defaultXlsxSave = defaultPlatform.savePerformanceXlsx
 
 function formatAmount(currency: string, value: number): string {
   const sign = value < 0 ? '−' : ''
@@ -24,11 +29,13 @@ function formatAmount(currency: string, value: number): string {
   return currency === 'JPY' ? `${sign}¥${amount}` : `${sign}${currency} ${amount}`
 }
 
-export function InvestmentPeriodReport({ householdId, revision, initialYear = new Date().getFullYear(), queryPerformance = defaultQuery }: InvestmentPeriodReportProps) {
+export function InvestmentPeriodReport({ householdId, revision, initialYear = new Date().getFullYear(), queryPerformance = defaultQuery, savePerformanceXlsx = defaultXlsxSave }: InvestmentPeriodReportProps) {
   const [year, setYear] = useState(initialYear)
   const [report, setReport] = useState<InvestmentPerformanceDto | null>(null)
   const [notice, setNotice] = useState('')
+  const [exportNotice, setExportNotice] = useState('')
   const [loading, setLoading] = useState(false)
+  const [savingXlsx, setSavingXlsx] = useState(false)
 
   useEffect(() => {
     if (!householdId) {
@@ -46,13 +53,40 @@ export function InvestmentPeriodReport({ householdId, revision, initialYear = ne
     return () => { active = false }
   }, [householdId, queryPerformance, revision, year])
 
+  const saveXlsx = async () => {
+    if (!householdId || savingXlsx || !report) return
+    setSavingXlsx(true)
+    setExportNotice('')
+    try {
+      const saved = await savePerformanceXlsx({ householdId, dateFrom: `${year}-01-01`, dateTo: `${year}-12-31` })
+      setExportNotice(saved === null
+        ? '投資Excelエクスポートをキャンセルしました。'
+        : `${saved.fileName}（${saved.rowCount.toLocaleString('ja-JP')}行）を保存しました。`)
+    } catch {
+      setExportNotice('投資Excelを書き出せませんでした。対象年と確定した証券取引を確認してください。')
+    } finally {
+      setSavingXlsx(false)
+    }
+  }
+
   if (!householdId) return null
+  const hasReportData = report != null && (
+    report.totalsByCurrency.length > 0
+    || report.realizedAllocations.length > 0
+    || report.uncoveredSales.length > 0
+    || report.skippedEventIds.length > 0
+    || report.corporateActionAllocations.length > 0
+  )
   return <section className="panel investment-period-report" aria-label="年間投資実績">
     <div className="panel-head">
       <div><h2>年間投資実績・税金</h2><p>確定した証券取引を元通貨別に集計</p></div>
-      <label>対象年<input aria-label="投資実績の対象年" type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(Number(event.target.value))} /></label>
+      <div className="investment-period-actions">
+        <label>対象年<input aria-label="投資実績の対象年" type="number" min="2000" max="2100" value={year} onChange={(event) => setYear(Number(event.target.value))} /></label>
+        <button className="secondary-btn" disabled={loading || savingXlsx || !hasReportData} onClick={() => void saveXlsx()}>{savingXlsx ? 'Excelを作成中…' : '年間投資Excelを保存'}</button>
+      </div>
     </div>
-    {loading && !report ? <p role="status">投資実績を集計しています…</p> : notice ? <p role="status">{notice}</p> : report && (report.totalsByCurrency.length > 0 || report.corporateActionAllocations.length > 0) ? <>
+    {exportNotice && <p className="investment-export-notice" role="status">{exportNotice}</p>}
+    {loading && !report ? <p role="status">投資実績を集計しています…</p> : notice ? <p role="status">{notice}</p> : hasReportData && report ? <>
       <div className="investment-period-totals">
         {report.totalsByCurrency.map((total) => <article key={total.currency}>
           <span>{total.currency}</span>

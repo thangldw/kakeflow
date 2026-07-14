@@ -39,6 +39,39 @@ describe('InvestmentPeriodReport', () => {
     await waitFor(() => expect(query).toHaveBeenLastCalledWith({ householdId: 'home', dateFrom: '2025-01-01', dateTo: '2025-12-31' }))
   })
 
+  it('saves the exact selected annual scope with progress and keeps the report visible', async () => {
+    let finishSave: ((value: { fileName: string; rowCount: number; byteSize: number }) => void) | undefined
+    const save = vi.fn(() => new Promise<{ fileName: string; rowCount: number; byteSize: number }>((resolve) => { finishSave = resolve }))
+    render(<InvestmentPeriodReport householdId="home" revision={1} initialYear={2026} queryPerformance={vi.fn().mockResolvedValue(report)} savePerformanceXlsx={save} />)
+    await screen.findByText('実現損益 ¥35,000')
+    fireEvent.change(screen.getByLabelText('投資実績の対象年'), { target: { value: '2025' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '年間投資Excelを保存' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '年間投資Excelを保存' }))
+
+    expect(save).toHaveBeenCalledWith({ householdId: 'home', dateFrom: '2025-01-01', dateTo: '2025-12-31' })
+    expect(screen.getByRole('button', { name: 'Excelを作成中…' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Excelを作成中…' }))
+    expect(save).toHaveBeenCalledTimes(1)
+    finishSave?.({ fileName: 'kakeflow-investment-performance-2025.xlsx', rowCount: 42, byteSize: 9_000 })
+
+    expect(await screen.findByText('kakeflow-investment-performance-2025.xlsx（42行）を保存しました。')).toBeInTheDocument()
+    expect(screen.getByText('実現損益 ¥35,000')).toBeInTheDocument()
+  })
+
+  it('reports canceled and failed saves without hiding the loaded report', async () => {
+    const save = vi.fn().mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('disk full'))
+    render(<InvestmentPeriodReport householdId="home" revision={1} initialYear={2026} queryPerformance={vi.fn().mockResolvedValue(report)} savePerformanceXlsx={save} />)
+    await screen.findByText('実現損益 ¥35,000')
+
+    fireEvent.click(screen.getByRole('button', { name: '年間投資Excelを保存' }))
+    expect(await screen.findByText('投資Excelエクスポートをキャンセルしました。')).toBeInTheDocument()
+    expect(screen.getByText('実現損益 ¥35,000')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '年間投資Excelを保存' }))
+    expect(await screen.findByText('投資Excelを書き出せませんでした。対象年と確定した証券取引を確認してください。')).toBeInTheDocument()
+    expect(screen.getByText('実現損益 ¥35,000')).toBeInTheDocument()
+  })
+
   it('keeps unavailable reporting nonfatal', async () => {
     render(<InvestmentPeriodReport householdId="home" revision={1} initialYear={2026} queryPerformance={vi.fn().mockRejectedValue(new Error('offline'))} />)
     expect(await screen.findByRole('status')).toHaveTextContent('期間別の投資実績を読み込めませんでした。')
