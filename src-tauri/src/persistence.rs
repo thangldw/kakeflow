@@ -101,6 +101,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0042_replicable_dashboard_layouts.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0043_authenticated_personal_relay.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -448,6 +451,27 @@ fn validate_restored_semantics(
                e.envelope_id IS NULL OR e.household_id!=c.household_id
                OR e.entity_kind!=c.entity_kind OR e.entity_id!=c.entity_id
              )) LIMIT 1",
+        )?;
+    }
+    if schema_version >= 43 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM relay_delivery_envelopes de
+             JOIN relay_deliveries d ON d.delivery_id=de.delivery_id
+             JOIN sync_change_envelopes e ON e.envelope_id=de.envelope_id
+             WHERE d.household_id!=e.household_id LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM relay_deliveries d
+             LEFT JOIN relay_connections c ON c.household_id=d.household_id
+             WHERE c.household_id IS NULL LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM relay_inbound_artifacts i
+             LEFT JOIN relay_connections c ON c.household_id=i.household_id
+             WHERE c.household_id IS NULL LIMIT 1",
         )?;
     }
     if schema_version >= 33 {

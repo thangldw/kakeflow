@@ -67,6 +67,13 @@ const desktop = vi.hoisted(() => ({
   ocrDocument: vi.fn(),
   suggestReceiptMatches: vi.fn(),
   confirmReceiptMatch: vi.fn(),
+  getDesktopRelayStatus: vi.fn(),
+  saveDesktopRelayConnection: vi.fn(),
+  disconnectDesktopRelay: vi.fn(),
+  prepareDesktopRelaySend: vi.fn(),
+  acceptDesktopRelaySend: vi.fn(),
+  registerDesktopRelayInbound: vi.fn(),
+  stageDesktopRelayInbound: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -145,6 +152,13 @@ vi.mock('./platform', async () => {
       ocrDocument: desktop.ocrDocument,
       suggestReceiptMatches: desktop.suggestReceiptMatches,
       confirmReceiptMatch: desktop.confirmReceiptMatch,
+      getDesktopRelayStatus: desktop.getDesktopRelayStatus,
+      saveDesktopRelayConnection: desktop.saveDesktopRelayConnection,
+      disconnectDesktopRelay: desktop.disconnectDesktopRelay,
+      prepareDesktopRelaySend: desktop.prepareDesktopRelaySend,
+      acceptDesktopRelaySend: desktop.acceptDesktopRelaySend,
+      registerDesktopRelayInbound: desktop.registerDesktopRelayInbound,
+      stageDesktopRelayInbound: desktop.stageDesktopRelayInbound,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -207,6 +221,13 @@ describe('KakeFlow desktop read models', () => {
     desktop.queryCardSettlementBalanceCoverage.mockReset().mockResolvedValue({ asOf: '2026-07-13', historyFrom: '2026-07-13', horizonThrough: '2026-08-27', horizonDays: 45, banks: [], unmappedStatements: [], missingDueStatements: [] })
     desktop.stageBackupRestore.mockReset().mockResolvedValue({ formatVersion: 2, entryCount: 4, plaintextBytes: 4096 })
     desktop.restartForRestore.mockReset().mockResolvedValue(undefined)
+    desktop.getDesktopRelayStatus.mockReset().mockResolvedValue({ householdId: 'family', connectionState: 'NOT_CONFIGURED', localDeviceId: 'device-local', remotePrincipalId: null, endpoint: null, outbound: { pendingEnvelopeCount: 0, totalEnvelopeCount: 0, deliveryState: 'IDLE', latestAcceptedAt: null }, inbound: [] })
+    desktop.saveDesktopRelayConnection.mockReset()
+    desktop.disconnectDesktopRelay.mockReset()
+    desktop.prepareDesktopRelaySend.mockReset()
+    desktop.acceptDesktopRelaySend.mockReset()
+    desktop.registerDesktopRelayInbound.mockReset()
+    desktop.stageDesktopRelayInbound.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -1076,6 +1097,16 @@ describe('KakeFlow desktop read models', () => {
     expect(desktop.restartForRestore).toHaveBeenCalledOnce()
     expect(dialog.open).not.toHaveBeenCalled()
     expect(container.querySelector('.restore-panel input[type="checkbox"]')).not.toBeInTheDocument()
+  })
+
+  it('mounts the desktop relay beside the local sync settings', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(await screen.findByRole('heading', { name: 'デスクトップ リレー' })).toBeInTheDocument()
+    expect(screen.getByText(/接続、送信、受信だけでは台帳を変更しません/)).toBeInTheDocument()
+    expect(desktop.getDesktopRelayStatus).toHaveBeenCalledWith('family')
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {

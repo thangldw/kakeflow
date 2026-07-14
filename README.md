@@ -2,6 +2,8 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Version 0.53 adds an optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) for manually sending, checking, downloading, and staging schema-v4 change packages between desktops using the same server-derived remote principal. Existing conflict review and explicit atomic apply remain mandatory; this is not cross-member sync, end-to-end encryption, automatic delivery, or cloud backup.
+
 Version 0.52 adds a strict, dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot stock purchases and sales. It preserves source settlement semantics and physical-row evidence, requires an explicit securities-account mapping, and rejects credit/margin, `現引`/`現渡`, and other unsupported rows instead of guessing their investment treatment.
 
 Version 0.51 adds a strict, dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for supported domestic and foreign spot stock purchases and sales. It preserves the official export fields and physical-row evidence, requires an explicit securities-account mapping, and rejects margin and other unsupported transaction types instead of guessing their accounting treatment.
@@ -127,6 +129,7 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 
 ## Current capabilities
 
+- Optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) with server-derived Bearer-token principals, manual send/check/stage controls, immutable 64 MiB digest-verified artifacts, retry-safe outbox acknowledgement, and reuse of the existing schema-v4 conflict-review/atomic-apply boundary. The checked-in Node reference relay must run behind a TLS/CORS reverse proxy and stores package bytes as received; there is no cross-member, E2E-encryption, auto-sync, auto-apply, source-evidence transport, or backup claim.
 - Dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot purchases/sales, with source settlement checks, immutable row provenance, explicit securities-account selection, blocking credit/margin errors, and row-level rejection of `現引`/`現渡` or other unsupported activity; checked-in fixtures are synthetic and contain no customer data.
 - Dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for the official domestic and foreign `約定履歴` CSV structures, limited to supported spot stock purchases and sales with explicit securities-account selection, immutable row provenance, auditable source-settlement adjustments, and rejection of margin, derivatives, and other unsupported rows; checked-in fixtures are synthetic and contain no customer data.
 - [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, evidence-first investment dependencies, idempotent content reuse, atomic database publication, and source-viewer hydration without change-package hash drift. Schema-v1 capsules remain compatible; pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
@@ -202,5 +205,6 @@ Receipt OCR is offline. Development builds use `tesseract` from `PATH` and requi
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Build optional remote transport on top of the completed schema-v4 confirmed-household aggregate and local pending-import handoff formats, with authenticated remote-principal mapping, backend-derived audience enforcement, and mobile receipt capture.
-3. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.
+2. Add audience-partitioned relay artifacts, authenticated household membership, and backend-derived `SHARED`/`PERSONAL(member)` recipients before enabling cross-principal family delivery.
+3. Add a separate mobile receipt-capture capsule and desktop Capture Inbox; keep local OCR, receipt matching, and explicit confirmation ahead of any ledger posting.
+4. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel.

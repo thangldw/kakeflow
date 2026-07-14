@@ -1,0 +1,30 @@
+.desktop-relay { display: grid; gap: 14px; }
+.relay-state { align-self: start; padding: 5px 9px; border-radius: 999px; font-size: 9px; }
+.relay-state-CONNECTED { color: #315a3d; background: #e5f1e7; }
+.relay-state-DEGRADED { color: #855d22; background: #fff0d5; }
+.relay-state-NOT_CONFIGURED,.relay-state-loading { color: var(--muted); background: var(--soft); }
+.relay-boundary,.relay-warning,.relay-notice { margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--muted); background: var(--soft); font-size: 9px; line-height: 1.55; }
+.relay-warning { color: #805a24; background: #fff6e6; }
+.relay-connection-form { display: grid; grid-template-columns: minmax(220px,1fr) minmax(220px,1fr) auto; align-items: end; gap: 10px; }
+.relay-connection-form label { display: grid; gap: 5px; color: var(--muted); font-size: 9px; }
+.relay-connection-form input { min-width: 0; }
+.relay-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin: 0; }
+.relay-summary div { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 8px; }
+.relay-summary dt { color: var(--muted); font-size: 8px; }
+.relay-summary dd { overflow: hidden; margin: 4px 0 0; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.relay-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.relay-actions button,.relay-connection-form button,.relay-inbox button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.relay-inbox { display: grid; gap: 7px; }
+.relay-inbox h3 { margin: 0; font-size: 11px; }
+.relay-inbox article { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.relay-inbox article span { display: grid; gap: 3px; min-width: 0; }
+.relay-inbox article strong { font-size: 10px; }
+.relay-inbox article small { overflow: hidden; color: var(--muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.relay-retry { display: grid; justify-items: start; gap: 8px; }
+@media (max-width: 900px) {
+  .relay-connection-form,.relay-summary { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 640px) {
+  .relay-connection-form,.relay-summary { grid-template-columns: 1fr; }
+  .relay-inbox article { align-items: stretch; flex-direction: column; }
+}
