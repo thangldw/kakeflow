@@ -8,6 +8,7 @@ export { amazonMastercardAdapter } from './adapters/amazonMastercard'
 export { rakutenEnaviAdapter } from './adapters/rakuten'
 export { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
 export { smbcVpassAdapter } from './adapters/smbcVpass'
+export { aeonCardAdapter } from './adapters/aeonCard'
 export { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 export { sbiSecuritiesTradeHistoryAdapter } from './adapters/sbiSecuritiesTradeHistory'
 export { rakutenSecuritiesDomesticTradeHistoryAdapter } from './adapters/rakutenSecuritiesDomesticTradeHistory'
@@ -24,6 +25,7 @@ import { payPayAdapter } from './adapters/paypay'
 import { rakutenEnaviAdapter } from './adapters/rakuten'
 import { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
 import { smbcVpassAdapter } from './adapters/smbcVpass'
+import { aeonCardAdapter } from './adapters/aeonCard'
 import { securitiesAssetSnapshotAdapter } from './adapters/securitiesAssetSnapshot'
 import { sbiSecuritiesTradeHistoryAdapter } from './adapters/sbiSecuritiesTradeHistory'
 import { rakutenSecuritiesDomesticTradeHistoryAdapter } from './adapters/rakutenSecuritiesDomesticTradeHistory'
@@ -41,6 +43,7 @@ export const importAdapters = [
   rakutenEnaviAdapter,
   jcbMyJcbAdapter,
   smbcVpassAdapter,
+  aeonCardAdapter,
   securitiesAssetSnapshotAdapter,
   sbiSecuritiesTradeHistoryAdapter,
   rakutenSecuritiesDomesticTradeHistoryAdapter,

@@ -97,6 +97,23 @@ describe('import preview service', () => {
     expect(result).toMatchObject({ adapterId: 'smbc-vpass-statement-v1', encoding: 'shift_jis', recordCount: 1, status: 'ready' })
   })
 
+  it('decodes and previews an AEON finalized statement at the file boundary', async () => {
+    const csv = [
+      'イオンカードご利用明細,2026年7月ご請求分',
+      'カード会員名,架空 太郎',
+      'カード番号,4987-****-****-1234',
+      'ご利用日,ご利用先,ご利用金額(円),支払区分,今回ご請求額(円),カード利用者,備考',
+      '2026/06/12,架空ストア,1200,一括,1200,本人,',
+      'お支払い合計,,,,1200,,',
+    ].join('\n')
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(csv)])
+
+    const result = await previewImportFile(new File([bytes], 'aeon-card.csv', { type: 'text/csv' }))
+
+    expect(result).toMatchObject({ adapterId: 'aeon-card-finalized-statement-v1', encoding: 'utf-8-bom', recordCount: 1, status: 'ready' })
+    expect(result.parsed?.records[0]).toMatchObject({ kind: 'card-statement', issuer: 'AEON_CARD', statementTotal: 1200 })
+  })
+
   it('keeps unsupported files in review instead of silently dropping them', async () => {
     const result = await previewImportFile(new File(['unknown,data\n1,2'], 'unknown.csv'))
 

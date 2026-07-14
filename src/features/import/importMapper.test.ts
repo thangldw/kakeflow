@@ -198,6 +198,27 @@ describe('import mapper', () => {
     })
   })
 
+  it('retains the AEON issuer while mapping finalized statement lines to the selected card liability', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'aeon-card-finalized-statement-v1', issues: [], metadata: {}, records: [{
+      kind: 'card-statement', issuer: 'AEON_CARD', statementTotal: 1000, transactions: [
+        { kind: 'card-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['2026/06/01', '架空ストア', '1200'] }, usageDate: '2026-06-01', merchant: '架空ストア', userName: '', paymentMethod: '一括', billingAmount: 1200, feeOrInterest: 0, isRefund: false, rawExtra: {} },
+        { kind: 'card-transaction', lineage: { sourceRow: 3, sourceRowEnd: 3, rawFields: ['2026/06/03', '架空返金', '-200'] }, usageDate: '2026-06-03', merchant: '架空返金', userName: '', paymentMethod: '一括', billingAmount: -200, feeOrInterest: 0, isRefund: true, rawExtra: {} },
+      ],
+    }] }
+    const deps = dependencies(); const result = await mapParsedImportToStartImport(input(parsed), deps.ids, deps.hash)
+
+    expect(result.issues).toEqual([])
+    expect(result.request.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ accountId: 'account-1', direction: 'OUT', amountJpy: 1200, merchantRaw: '架空ストア' }),
+      expect.objectContaining({ accountId: 'account-1', direction: 'IN', amountJpy: 200, merchantRaw: '架空返金' }),
+    ]))
+    expect(result.request.cardStatements[0]).toMatchObject({
+      cardAccountId: 'account-1', issuer: 'AEON_CARD', statementAmountJpy: 1000,
+      periodStart: '2026-06-01', periodEnd: '2026-06-03',
+      lines: [{ statementLineNumber: 1, billedAmountJpy: 1200 }, { statementLineNumber: 2, billedAmountJpy: -200 }],
+    })
+  })
+
   it.each([
     ['invalid date', { transactionDate: '2026-02-30', outgoingAmount: 500, incomingAmount: null }, 'INVALID_DATE'],
     ['fractional amount', { transactionDate: '2026-02-20', outgoingAmount: 1.5, incomingAmount: null }, 'INVALID_AMOUNT'],
