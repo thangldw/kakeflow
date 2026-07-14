@@ -158,6 +158,11 @@ describe('familyDeliveryHttp v2 contract', () => {
     const denied = vi.fn().mockResolvedValue(json({ error: 'NO_ACTIVE_RECIPIENTS' }, 409))
     await expect(listFamilyArtifacts('https://relay.example', 'secret', 'family', 0, 'device-local', denied)).rejects.toEqual(expect.objectContaining<Partial<FamilyDeliveryHttpError>>({ code: 'RECIPIENT_UNAVAILABLE' }))
 
+    const changed = vi.fn().mockResolvedValue(json({ error: 'RECIPIENT_SET_CHANGED' }, 409))
+    await expect(listFamilyArtifacts('https://relay.example', 'secret', 'family', 0, 'device-local', changed)).rejects.toEqual(expect.objectContaining<Partial<FamilyDeliveryHttpError>>({ code: 'RECIPIENT_SET_CHANGED' }))
+    const malformedChanged = vi.fn().mockResolvedValue(json({ error: 'RECIPIENT_SET_CHANGED' }, 400))
+    await expect(listFamilyArtifacts('https://relay.example', 'secret', 'family', 0, 'device-local', malformedChanged)).rejects.toEqual(expect.objectContaining<Partial<FamilyDeliveryHttpError>>({ code: 'REJECTED' }))
+
     const unavailable = vi.fn().mockResolvedValue(json({ error: 'INVITE_UNAVAILABLE' }, 410))
     await expect(previewFamilyInvitation('https://relay.example', 'secret', 'expired-code', unavailable)).rejects.toEqual(expect.objectContaining<Partial<FamilyDeliveryHttpError>>({ code: 'INVITE_UNAVAILABLE' }))
   })
