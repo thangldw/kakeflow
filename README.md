@@ -2,6 +2,8 @@
 
 KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
 
+Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
+
 Version 0.61 adds a dedicated [Monex U.S.-stock Trade History import](docs/MONEX_US_STOCK_IMPORT.md). It recognizes the complete screen-derived 16-field family without relying on a filename, supports explicit post-renewal U.S.-dollar spot buys and sells, preserves exported gross/settlement/fee values and physical-row evidence, and requires the user to choose an existing securities account. Yen settlement and non-spot activity remain blocking because the public documentation does not establish safe dual-currency or event-specific settlement semantics; the included fixture is explicitly synthetic rather than claimed as a Monex-issued sample.
 
 Version 0.60 makes encrypted family delivery recover correctly when relay membership keys change. KakeFlow first replays the exact persisted `KFE1` bytes, resets an envelope only after the relay returns the exact pre-storage `RECIPIENT_SET_CHANGED` rejection, and then reseals on the next explicit Send. Ambiguous failures retain their immutable retry bytes, mixed upload outcomes are reconciled independently, and interrupted sends recover after restart without automatic delivery or Apply. See [recipient-set recovery](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
