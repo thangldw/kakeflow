@@ -72,6 +72,7 @@ const disabledSchedule = {
   householdId: 'family', enabled: false, intervalMinutes: 30, nextDueAt: null, running: false, leaseExpiresAt: null,
   lastAttemptAt: null, lastSuccessAt: null, lastResult: 'DISABLED' as const, lastDiscoveredCount: 0,
   consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-14T00:00:00Z',
+  intakeEnabled: false, lastIntakeResult: 'DISABLED' as const, lastStagedCount: 0, lastIntakeErrorCode: null,
 }
 const enabledSchedule = {
   ...disabledSchedule, enabled: true, nextDueAt: '2026-07-14T01:30:00Z', lastAttemptAt: '2026-07-14T01:00:00Z',
@@ -124,7 +125,7 @@ describe('FamilyDeliveryPanel', () => {
     expect(withheldPanels[0]).not.toHaveTextContent('世帯全体')
     expect(screen.getAllByText('一部保留')).toHaveLength(2)
     expect(screen.getByText(/家族へ送らず、この端末に保留/)).toBeInTheDocument()
-    const checkboxes = screen.getAllByRole('checkbox')
+    const checkboxes = screen.getAllByRole('checkbox').slice(-2)
     expect(checkboxes[0]).toBeChecked(); expect(checkboxes[1]).toBeDisabled()
     fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
     fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
@@ -307,14 +308,14 @@ describe('FamilyDeliveryPanel', () => {
     render(<FamilyDeliveryPanel householdId="family" members={members} />)
     expect(await screen.findByText('オプトイン未設定')).toBeInTheDocument()
     expect(screen.getByText(/KakeFlowが開いている間だけ/)).toBeInTheDocument()
-    expect(screen.getByText(/受信・内容確認・台帳への反映はすべて手動/)).toBeInTheDocument()
+    expect(screen.getByText(/既定ではメタデータだけを登録/)).toBeInTheDocument()
     expect(screen.getByText(/自動チェック専用に使います/)).toBeInTheDocument()
     expect(screen.getByText(/手動の送信・受信・内容確認には、引き続きこの画面へのトークン入力が必要/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('自動受信チェックの間隔'), { target: { value: '15' } })
     fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
     fireEvent.click(screen.getByRole('button', { name: '自動チェックを有効にする' }))
-    await waitFor(() => expect(family.backgroundEnable).toHaveBeenCalledWith({ householdId: 'family', token: 'session-secret', intervalMinutes: 15 }))
+    await waitFor(() => expect(family.backgroundEnable).toHaveBeenCalledWith({ householdId: 'family', token: 'session-secret', intervalMinutes: 15, intakeEnabled: false }))
     expect(await screen.findByText('新着なし')).toBeInTheDocument()
     expect(screen.getByText('前回の結果')).toBeInTheDocument()
     expect(screen.getByText('次回予定')).toBeInTheDocument()
@@ -329,6 +330,24 @@ describe('FamilyDeliveryPanel', () => {
     await waitFor(() => expect(family.backgroundDisable).toHaveBeenCalledWith('family'))
     expect(JSON.stringify(family.backgroundDisable.mock.calls)).not.toContain('session-secret')
     expect(await screen.findByText(/OSの資格情報に保存した接続トークンを削除/)).toBeInTheDocument()
+  })
+
+  it('requires a separate explicit opt-in before encrypted artifacts are prepared', async () => {
+    family.status.mockResolvedValue(connected)
+    family.backgroundEnable.mockResolvedValue({
+      ...enabledSchedule, intakeEnabled: true, lastIntakeResult: 'NO_AVAILABLE',
+    })
+    render(<FamilyDeliveryPanel householdId="family" members={members} />)
+    const intake = await screen.findByRole('checkbox', { name: /暗号化された新着を自動でダウンロード/ })
+    expect(intake).not.toBeChecked()
+    expect(screen.getByText(/競合の選択や台帳への反映は自動実行しません/)).toBeInTheDocument()
+    fireEvent.click(intake)
+    fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
+    fireEvent.click(screen.getByRole('button', { name: '自動チェックを有効にする' }))
+    await waitFor(() => expect(family.backgroundEnable).toHaveBeenCalledWith({
+      householdId: 'family', token: 'session-secret', intervalMinutes: 30, intakeEnabled: true,
+    }))
+    expect(await screen.findByText(/自動準備: 準備できる暗号化データなし/)).toBeInTheDocument()
   })
 
   it('shows the user action required for a terminally suspended background check', async () => {

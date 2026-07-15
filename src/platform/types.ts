@@ -380,9 +380,13 @@ export interface FamilyDeliveryScheduleStatusDto {
   readonly lastResult: FamilyDeliveryScheduleResultDto; readonly lastDiscoveredCount: number
   readonly consecutiveFailures: number; readonly suspendedUntil: string | null
   readonly suspensionReason: string | null; readonly lastErrorCode: string | null; readonly updatedAt: string
+  readonly intakeEnabled: boolean
+  readonly lastIntakeResult: 'NEVER' | 'DISABLED' | 'NO_AVAILABLE' | 'REVIEW_PENDING' | 'STAGED_FOR_REVIEW' | 'FAILED_RETRYABLE' | 'REJECTED_INVALID' | 'AUDIENCE_DENIED'
+  readonly lastStagedCount: number; readonly lastIntakeErrorCode: string | null
 }
 export interface EnableFamilyDeliveryBackgroundInputDto {
   readonly householdId: string; readonly token: string; readonly intervalMinutes: 15 | 30 | 60
+  readonly intakeEnabled: boolean
 }
 export type MobileCaptureBackgroundResultDto = 'NEVER' | 'DISABLED' | 'RUNNING' | 'NO_CHANGES' | 'INGESTED' | 'FAILED_RETRYABLE' | 'LEASE_EXPIRED' | 'TERMINAL_SUSPENDED'
 export interface MobileCaptureBackgroundStatusDto {

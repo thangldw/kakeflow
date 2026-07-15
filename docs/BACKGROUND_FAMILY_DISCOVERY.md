@@ -1,9 +1,9 @@
 # Background family-delivery discovery
 
-KakeFlow v0.59 adds an optional native schedule for discovering new family
-publications. It is a metadata check, not automatic synchronization. When a
-check succeeds, the desktop registers newly visible relay publications as
-`AVAILABLE`; it does not download or decrypt their `KFE1` envelopes.
+KakeFlow first introduced an optional native schedule for discovering new
+family publications. Metadata-only discovery remains the default. A second,
+separate opt-in can now download, decrypt, and stage at most one encrypted
+`KFE1` publication for manual review after each successful discovery.
 
 ## Explicit opt-in and lifetime
 
@@ -36,6 +36,13 @@ household:
 7. register new metadata in the local Family Delivery inbox as `AVAILABLE`;
 8. advance the cursor and record the result of the check.
 
+When the separate automatic-preparation switch is enabled, the same leased run
+then checks that no family review is already active, selects the oldest
+`AVAILABLE` encrypted publication, downloads exactly its declared bytes (up to
+64 MiB), verifies its transport SHA-256, opens it for the currently validated
+remote membership, and stages the inner artifact. Legacy plaintext
+publications remain manual. A run prepares at most one artifact.
+
 The database is not held across network requests. A lease prevents overlapping
 checks for the same schedule, and an expired lease is recovered after a process
 interruption. Repeated network failures use bounded retry backoff. An expired
@@ -44,29 +51,28 @@ schedule until the user explicitly reconnects or re-enables it.
 
 ## Manual review boundary
 
-Background discovery is deliberately read-only with respect to artifact bytes
-and household finance data. It never:
+Metadata-only discovery remains read-only with respect to artifact bytes. The
+separate automatic-preparation option may download/decrypt one encrypted item
+and move it to `WAITING_FOR_REVIEW` or `READY_TO_APPLY`. Neither mode ever:
 
 - prepares or sends an outbound family artifact;
-- downloads an available publication;
-- decrypts a `KFE1` envelope;
-- stages an inner KFF1, KFF2, or KFF3 artifact;
 - resolves review conflicts or omission decisions;
 - applies records to the household ledger, planning data, card data, or
   investment data.
 
-The user must still choose **Receive and review**, provide the session token for
-that manual action, inspect the staged content, resolve any conflicts, and
-explicitly Apply. Existing audience partitioning, evidence provenance,
-recipient encryption, and atomic-apply rules are unchanged.
+With automatic preparation off, the user still chooses **Receive and review**.
+With it on, the user opens the prepared review. In both cases they inspect the
+content, resolve conflicts where needed, and explicitly Apply. `READY_TO_APPLY`
+does not mean automatically applied.
 
 ## Status and recovery
 
 The Family Delivery workspace shows whether the schedule is enabled, its
 interval, previous attempt and result, next due time, discovered count, and
-consecutive failures. Discovery distinguishes no changes, newly available
-metadata, retryable failure, interrupted lease recovery, and a terminal state
-that requires user action.
+consecutive failures. When automatic preparation is enabled it also shows the
+last bounded intake result and whether one item was staged. Discovery
+distinguishes no changes, newly available metadata, retryable failure,
+interrupted lease recovery, and a terminal state that requires user action.
 
 Disabling the schedule leaves already discovered `AVAILABLE` rows and locally
 pending outbound changes untouched. Disconnecting also leaves local household
@@ -79,13 +85,14 @@ Background discovery uses the v0.54-v0.57 family artifact contracts and the
 v0.58 `KFE1` relay-blind recipient-encryption transport without changing their
 bytes. Schema v1, v2, and v3 review/apply compatibility is unchanged.
 
-Version 0.59 does not claim push delivery, realtime synchronization, automatic
-send, automatic download, automatic decryption, automatic staging, automatic
-conflict resolution, automatic apply, remote erasure, sender signatures, a
+This feature does not claim push delivery, realtime synchronization, automatic
+send, plaintext automatic intake, automatic conflict resolution, automatic
+apply, remote erasure, sender signatures, a
 production-hosted relay, or a background service that runs while KakeFlow is
 closed.
 
 KakeFlow v0.60 adds recovery for an explicitly initiated send whose encrypted
 recipient set becomes stale. That recovery remains separate from this
-metadata-only schedule: background discovery never retries, resets, or reseals
-an outbound delivery. See [recipient-set recovery](FAMILY_RECIPIENT_SET_RECOVERY.md).
+inbound workflow: background discovery and preparation never retry, reset, or
+reseal an outbound delivery. See
+[recipient-set recovery](FAMILY_RECIPIENT_SET_RECOVERY.md).

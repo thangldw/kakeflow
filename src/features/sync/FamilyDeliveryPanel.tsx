@@ -8,6 +8,7 @@ import {
   createFamilyHousehold, getFamilyRemoteState, listFamilyArtifacts, previewFamilyInvitation, redeemFamilyInvitation,
   familyRecipientSetDigest, registerFamilyEncryptionKey, revokeFamilyMembership, uploadFamilyArtifact,
 } from './familyDeliveryHttp'
+import { familyDeliveryEventPlatform } from './familyDeliveryEventPlatform'
 import type { FamilyEncryptedArtifactUpload, FamilyRemoteMembership, FamilyRemoteState } from './familyDeliveryHttp'
 import './FamilyDeliveryPanel.css'
 
@@ -56,6 +57,11 @@ const scheduleSuspensionLabels: Readonly<Record<string, string>> = {
   MEMBERSHIP_REVOKED: '家族スペースへの参加が停止されました。参加状態を確認してください。',
   MISSING_CREDENTIAL: '保存済みの接続トークンが見つかりません。トークンを入力して自動チェックを更新してください。',
 }
+const intakeResultLabels: Readonly<Record<FamilyDeliveryScheduleStatusDto['lastIntakeResult'], string>> = {
+  NEVER: 'まだ実行していません', DISABLED: '自動準備は停止中', NO_AVAILABLE: '準備できる暗号化データなし',
+  REVIEW_PENDING: '先に確認待ちの内容があります', STAGED_FOR_REVIEW: '内容確認の準備完了',
+  FAILED_RETRYABLE: '次回再試行', REJECTED_INVALID: '検証できないデータを拒否', AUDIENCE_DENIED: '配信対象外として拒否',
+}
 
 function displayScheduleTime(value: string | null): string {
   if (!value) return '—'
@@ -100,6 +106,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
   const [remoteArtifacts, setRemoteArtifacts] = useState<readonly FamilyDeliveryRemoteArtifactDto[]>([])
   const [schedule, setSchedule] = useState<FamilyDeliveryScheduleStatusDto | null>(null)
   const [scheduleInterval, setScheduleInterval] = useState<15 | 30 | 60>(30)
+  const [intakeEnabled, setIntakeEnabled] = useState(false)
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState<Notice>(null)
   const [dialog, setDialog] = useState<DialogState>(null)
@@ -117,13 +124,23 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
       if (next.connectionState !== 'NOT_CONFIGURED') {
         try {
           const background = await platformClient.getFamilyDeliveryBackgroundStatus(householdId)
-          if (id === request.current) { setSchedule(background); setScheduleInterval(background.intervalMinutes as 15 | 30 | 60) }
+          if (id === request.current) { setSchedule(background); setScheduleInterval(background.intervalMinutes as 15 | 30 | 60); setIntakeEnabled(background.intakeEnabled) }
         } catch { if (id === request.current) setSchedule(null) }
       } else setSchedule(null)
     } catch { if (id === request.current) setNotice({ kind: 'error', text: '家族配信の状態を確認できませんでした。' }) }
     finally { if (id === request.current) setBusy('') }
   }
   useEffect(() => { setStatus(null); setSchedule(null); setToken(''); setInviteCode(''); setDialog(null); pendingRecipientSetChanges.current = []; void load(); return () => { request.current += 1 } }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    let disposed = false; let stop: (() => void) | undefined
+    void familyDeliveryEventPlatform.subscribe((event) => {
+      if (disposed || event.householdId !== householdId) return
+      void load()
+      if (event.stagedCount === 1) onReviewStaged?.()
+    }).then((unlisten) => { if (disposed) unlisten(); else stop = unlisten }).catch(() => undefined)
+    return () => { disposed = true; stop?.() }
+  }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setSelected((current) => status?.outbound.filter((part) => part.pendingChangeCount > 0 && ['READY', 'FAILED_RETRYABLE'].includes(part.state))
       .map((part) => part.audienceKey).filter((key) => current.length === 0 || current.includes(key)) ?? [])
@@ -315,9 +332,9 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     if (!householdId || !token) { setNotice({ kind: 'error', text: '自動確認を有効化または更新するには、現在の接続トークンを入力してください。' }); return }
     setBusy('BACKGROUND_ENABLE')
     try {
-      const next = await platformClient.enableFamilyDeliveryBackground({ householdId, token, intervalMinutes: scheduleInterval })
+      const next = await platformClient.enableFamilyDeliveryBackground({ householdId, token, intervalMinutes: scheduleInterval, intakeEnabled })
       setSchedule(next)
-      setNotice({ kind: 'status', text: `自動受信チェックを${scheduleInterval}分間隔で有効にしました。KakeFlowが開いている間だけ確認します。` })
+      setNotice({ kind: 'status', text: `自動受信チェックを${scheduleInterval}分間隔で有効にしました。${intakeEnabled ? '暗号化データは1件ずつ内容確認待ちまで準備します。' : '新着メタデータだけを確認します。'}` })
     } catch { setNotice({ kind: 'error', text: '自動受信チェックを設定できませんでした。接続トークンを確認してください。' }) }
     finally { setBusy('') }
   }
@@ -399,7 +416,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
     {connected && <>
       <dl className="family-identity-summary"><div><dt>接続中のアカウント</dt><dd>確認済み</dd></div><div><dt>このアカウントのメンバー</dt><dd>{status.localMemberName ?? '未参加'}</dd></div></dl>
       <section className="family-background-section" aria-labelledby="family-background-heading">
-        <div className="family-section-head"><div><h3 id="family-background-heading">自動受信チェック</h3><p>KakeFlowが開いている間だけ、暗号化された新着の有無を確認します。発見したデータは「受信可能」のまま残り、受信・内容確認・台帳への反映はすべて手動です。</p></div><b className={schedule?.enabled ? 'background-enabled' : 'background-disabled'}>{schedule?.enabled ? '有効' : 'オプトイン未設定'}</b></div>
+        <div className="family-section-head"><div><h3 id="family-background-heading">自動受信チェック</h3><p>KakeFlowが開いている間だけ新着を確認します。既定ではメタデータだけを登録し、ファイルは受信しません。</p></div><b className={schedule?.enabled ? 'background-enabled' : 'background-disabled'}>{schedule?.enabled ? '有効' : 'オプトイン未設定'}</b></div>
         <p className="family-background-credential">有効化した場合だけ接続トークンをOSの資格情報に保存し、自動チェック専用に使います。手動の送信・受信・内容確認には、引き続きこの画面へのトークン入力が必要です。停止時には保存したトークンを削除します。</p>
         <div className="family-background-controls">
           <label>確認間隔<select aria-label="自動受信チェックの間隔" value={scheduleInterval} disabled={Boolean(busy)} onChange={(event) => setScheduleInterval(Number(event.target.value) as 15 | 30 | 60)}><option value={15}>15分</option><option value={30}>30分</option><option value={60}>60分</option></select></label>
@@ -407,7 +424,10 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
           {schedule?.enabled && <button className="text-btn" disabled={Boolean(busy)} onClick={() => void disableBackground()}>自動チェックを停止</button>}
           {schedule?.enabled && <button className="secondary-btn" disabled={Boolean(busy) || schedule.running || schedule.lastResult === 'TERMINAL_SUSPENDED'} onClick={() => void runBackgroundNow()}><RefreshCw size={16} /> {busy === 'BACKGROUND_NOW' ? '確認中…' : '今すぐ確認'}</button>}
         </div>
+        <label className="family-background-credential"><input type="checkbox" checked={intakeEnabled} disabled={Boolean(busy)} onChange={(event) => setIntakeEnabled(event.target.checked)} /> 暗号化された新着を自動でダウンロード・復号し、1件ずつ「内容確認待ち」まで準備する</label>
+        <p className="family-background-credential">この追加オプトインを有効にしても、競合の選択や台帳への反映は自動実行しません。確認待ちがある間は次のファイルを受信せず、旧形式の暗号化されていないデータは手動のままです。</p>
         {schedule && <dl className="family-background-status"><div><dt>前回の結果</dt><dd>{scheduleResultLabels[schedule.lastResult]}{schedule.lastResult === 'DISCOVERED' ? `（${schedule.lastDiscoveredCount}件）` : ''}</dd></div><div><dt>前回の確認</dt><dd>{displayScheduleTime(schedule.lastAttemptAt)}</dd></div><div><dt>次回予定</dt><dd>{displayScheduleTime(schedule.nextDueAt)}</dd></div><div><dt>連続失敗</dt><dd>{schedule.consecutiveFailures}回</dd></div></dl>}
+        {schedule?.intakeEnabled && <p className="family-delivery-notice" role="status">自動準備: {intakeResultLabels[schedule.lastIntakeResult]}{schedule.lastStagedCount ? `（${schedule.lastStagedCount}件）` : ''}</p>}
         {schedule?.suspensionReason && <p className={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'family-delivery-error' : 'family-delivery-notice'} role={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'alert' : 'status'}>{scheduleSuspensionLabels[schedule.suspensionReason] ?? `自動チェックを一時停止しています（${schedule.suspensionReason}）。`}</p>}
       </section>
       {status.connectionState === 'AUTH_EXPIRED' && <p className="family-delivery-error" role="alert">接続の有効期限が切れました。トークンを入力し直して再接続してください。</p>}

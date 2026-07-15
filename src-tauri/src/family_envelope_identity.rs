@@ -32,6 +32,8 @@ pub enum FamilyEnvelopeIdentityError {
     Seal,
     #[error("the family artifact could not be decrypted")]
     Open,
+    #[error("the local family member is not an envelope recipient")]
+    AudienceDenied,
 }
 
 impl From<KeyStoreError> for FamilyEnvelopeIdentityError {
@@ -205,6 +207,9 @@ fn map_open_error(error: FamilyEnvelopeError) -> FamilyEnvelopeIdentityError {
         FamilyEnvelopeError::InvalidInput | FamilyEnvelopeError::SizeLimit => {
             FamilyEnvelopeIdentityError::InvalidInput
         }
+        FamilyEnvelopeError::RecipientNotFound | FamilyEnvelopeError::RecipientKeyMismatch => {
+            FamilyEnvelopeIdentityError::AudienceDenied
+        }
         _ => FamilyEnvelopeIdentityError::Open,
     }
 }
@@ -362,7 +367,7 @@ mod tests {
                 envelope_bytes: sealed.envelope_bytes.clone(),
                 local_membership_id: "member-b".into(),
             }),
-            Err(FamilyEnvelopeIdentityError::Open)
+            Err(FamilyEnvelopeIdentityError::AudienceDenied)
         );
         let mut wrong_metadata = metadata;
         wrong_metadata.publication_id = "publication-other".into();

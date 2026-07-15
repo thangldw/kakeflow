@@ -562,17 +562,19 @@ describe('platform client', () => {
       householdId: 'family', enabled: true, intervalMinutes: 30, nextDueAt: '2026-07-14T02:00:00.000Z',
       running: false, leaseExpiresAt: null, lastAttemptAt: '2026-07-14T01:30:00.000Z',
       lastSuccessAt: '2026-07-14T01:30:00.000Z', lastResult: 'DISCOVERED', lastDiscoveredCount: 2,
-      consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-14T01:30:00.000Z',
+      consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null,
+      intakeEnabled: false, lastIntakeResult: 'DISABLED', lastStagedCount: 0, lastIntakeErrorCode: null,
+      updatedAt: '2026-07-14T01:30:00.000Z',
     }
     const invokeSpy = vi.fn()
     const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => { invokeSpy(command, args); return schedule as T } })
 
     await expect(client.getFamilyDeliveryBackgroundStatus('family')).resolves.toEqual(schedule)
-    await expect(client.enableFamilyDeliveryBackground({ householdId: 'family', token: 'session-secret', intervalMinutes: 30 })).resolves.toEqual(schedule)
+    await expect(client.enableFamilyDeliveryBackground({ householdId: 'family', token: 'session-secret', intervalMinutes: 30, intakeEnabled: false })).resolves.toEqual(schedule)
     await expect(client.disableFamilyDeliveryBackground('family')).resolves.toEqual(schedule)
     await expect(client.runFamilyDeliveryBackgroundNow('family')).resolves.toEqual(schedule)
     expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_status', { householdId: 'family' })
-    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_enable', { input: { householdId: 'family', token: 'session-secret', intervalMinutes: 30 } })
+    expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_enable', { input: { householdId: 'family', token: 'session-secret', intervalMinutes: 30, intakeEnabled: false } })
     expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_disable', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('family_delivery_background_run_now', { householdId: 'family' })
 

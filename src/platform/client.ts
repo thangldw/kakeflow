@@ -742,11 +742,14 @@ function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
 }
 
 const FAMILY_SCHEDULE_RESULTS = new Set(['NEVER', 'DISABLED', 'RUNNING', 'NO_CHANGES', 'DISCOVERED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED'])
+const FAMILY_INTAKE_RESULTS = new Set(['NEVER', 'DISABLED', 'NO_AVAILABLE', 'REVIEW_PENDING', 'STAGED_FOR_REVIEW', 'FAILED_RETRYABLE', 'REJECTED_INVALID', 'AUDIENCE_DENIED'])
 
 function parseFamilyDeliveryScheduleStatus(value: unknown): FamilyDeliveryScheduleStatusDto {
   const record = asRecord(value)
   if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean'
-      || !FAMILY_SCHEDULE_RESULTS.has(String(record.lastResult))) throw new TypeError('family delivery schedule')
+      || typeof record.intakeEnabled !== 'boolean'
+      || !FAMILY_SCHEDULE_RESULTS.has(String(record.lastResult))
+      || !FAMILY_INTAKE_RESULTS.has(String(record.lastIntakeResult))) throw new TypeError('family delivery schedule')
   const intervalMinutes = asSafeInteger(record.intervalMinutes)
   if (![15, 30, 60].includes(intervalMinutes)) throw new TypeError('family delivery interval')
   const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
@@ -756,6 +759,7 @@ function parseFamilyDeliveryScheduleStatus(value: unknown): FamilyDeliverySchedu
   const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
   const suspensionReason = asNullableStrictString(record.suspensionReason)
   const lastErrorCode = asNullableStrictString(record.lastErrorCode)
+  const lastIntakeErrorCode = asNullableStrictString(record.lastIntakeErrorCode)
   if ((record.running !== true) !== (leaseExpiresAt === null) || (record.running === true) !== (record.lastResult === 'RUNNING')) {
     throw new TypeError('family delivery schedule lease')
   }
@@ -768,7 +772,10 @@ function parseFamilyDeliveryScheduleStatus(value: unknown): FamilyDeliverySchedu
     lastResult: record.lastResult as FamilyDeliveryScheduleStatusDto['lastResult'],
     lastDiscoveredCount: asSafeInteger(record.lastDiscoveredCount),
     consecutiveFailures: asSafeInteger(record.consecutiveFailures), suspendedUntil,
-    suspensionReason, lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
+    suspensionReason, lastErrorCode, intakeEnabled: record.intakeEnabled,
+    lastIntakeResult: record.lastIntakeResult as FamilyDeliveryScheduleStatusDto['lastIntakeResult'],
+    lastStagedCount: asSafeInteger(record.lastStagedCount), lastIntakeErrorCode,
+    updatedAt: asIsoTimestamp(record.updatedAt),
   }
 }
 

@@ -1339,6 +1339,62 @@ pub fn load_inbound_transport_metadata(
     }))
 }
 
+pub fn oldest_encrypted_available(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Option<InboundTransportMetadataDto>> {
+    if !valid_id(household_id) {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    let artifact_id = connection
+        .query_row(
+            "SELECT artifact_id FROM family_delivery_inbound
+             WHERE household_id=?1 AND state='AVAILABLE'
+               AND envelope_schema='FAMILY_ENCRYPTED_ENVELOPE_V1'
+             ORDER BY sequence,artifact_id LIMIT 1",
+            [household_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    artifact_id
+        .as_deref()
+        .map(|id| load_inbound_transport_metadata(connection, household_id, id))
+        .transpose()
+        .map(Option::flatten)
+}
+
+pub fn has_active_review(connection: &Connection, household_id: &str) -> Result<bool> {
+    if !valid_id(household_id) {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    Ok(family_snapshot::get_active_review(connection, household_id)
+        .map_err(|_| FamilyDeliveryError::Snapshot)?
+        .is_some())
+}
+
+pub fn reject_inbound(
+    connection: &Connection,
+    household_id: &str,
+    artifact_id: &str,
+    state: &str,
+) -> Result<()> {
+    if !valid_id(household_id)
+        || !valid_id(artifact_id)
+        || !matches!(state, "REJECTED_INVALID" | "AUDIENCE_DENIED")
+    {
+        return Err(FamilyDeliveryError::InvalidInput);
+    }
+    let changed = connection.execute(
+        "UPDATE family_delivery_inbound SET state=?3
+         WHERE household_id=?1 AND artifact_id=?2 AND state='AVAILABLE'",
+        params![household_id, artifact_id, state],
+    )?;
+    if changed != 1 {
+        return Err(FamilyDeliveryError::Conflict);
+    }
+    Ok(())
+}
+
 pub fn mark_accepted(
     connection: &Connection,
     input: &AcceptFamilyDeliveryInput,
