@@ -66,6 +66,7 @@ const calendar: FinancialCalendarDto = {
 const metrics = { incomeJpy: 300_000, expenseJpy: 120_000, savingsJpy: 180_000, savingsRateBps: 6000, postedTransactionCount: 30 } as const
 const report: MonthlyReportDto = {
   period: '2026-07',
+  asOf: '2026-07-31',
   current: metrics,
   priorMonth: { incomeJpy: 280_000, expenseJpy: 100_000, savingsJpy: 180_000, savingsRateBps: 6429, postedTransactionCount: 27 },
   priorYear: { incomeJpy: 290_000, expenseJpy: 130_000, savingsJpy: 160_000, savingsRateBps: 5517, postedTransactionCount: 29 },
@@ -142,9 +143,10 @@ describe('MonthlyReportView', () => {
     const openGoals = vi.fn()
     const openImports = vi.fn()
     const openReconciliation = vi.fn()
+    const saveCsv = vi.fn()
     const saveXlsx = vi.fn()
     const savePdf = vi.fn()
-    render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" onComparisonChange={setComparison} onSelectDriver={selectDriver} onOpenBudget={openBudget} onOpenGoals={openGoals} onOpenImports={openImports} onOpenReconciliation={openReconciliation} onSaveXlsx={saveXlsx} onSavePdf={savePdf} />)
+    render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" onComparisonChange={setComparison} onSelectDriver={selectDriver} onOpenBudget={openBudget} onOpenGoals={openGoals} onOpenImports={openImports} onOpenReconciliation={openReconciliation} onSaveCsv={saveCsv} onSaveXlsx={saveXlsx} onSavePdf={savePdf} />)
 
     fireEvent.click(screen.getByRole('button', { name: '前月比' }))
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
@@ -153,6 +155,7 @@ describe('MonthlyReportView', () => {
     fireEvent.click(screen.getByRole('button', { name: '目標を見る' }))
     fireEvent.click(screen.getByRole('button', { name: '取込状況を見る' }))
     fireEvent.click(screen.getByRole('button', { name: '照合を見る' }))
+    fireEvent.click(screen.getByRole('button', { name: '月次CSVを保存' }))
     fireEvent.click(screen.getByRole('button', { name: '月次Excelを保存' }))
     fireEvent.click(screen.getByRole('button', { name: '月次PDFを保存' }))
 
@@ -163,15 +166,20 @@ describe('MonthlyReportView', () => {
     expect(openGoals).toHaveBeenCalledOnce()
     expect(openImports).toHaveBeenCalledOnce()
     expect(openReconciliation).toHaveBeenCalledOnce()
+    expect(saveCsv).toHaveBeenCalledOnce()
     expect(saveXlsx).toHaveBeenCalledOnce()
     expect(savePdf).toHaveBeenCalledOnce()
     expect(screen.getByText('−¥10,000')).toBeInTheDocument()
   })
 
-  it('shows monthly Excel progress without changing the selected comparison', () => {
-    render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" savingXlsx savingPdf onComparisonChange={vi.fn()} onSaveXlsx={vi.fn()} onSavePdf={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Excelを作成中…' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'PDFを作成中…' })).toBeDisabled()
+  it('mutually disables monthly exports without changing the selected comparison', () => {
+    const { rerender } = render(<MonthlyReportView data={report} comparison="PRIOR_YEAR" savingCsv onComparisonChange={vi.fn()} onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} onSavePdf={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'CSVを作成中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '月次Excelを保存' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '月次PDFを保存' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '前年同月比' })).toHaveAttribute('aria-pressed', 'true')
+
+    rerender(<MonthlyReportView data={report} comparison="PRIOR_YEAR" savingXlsx onComparisonChange={vi.fn()} onSaveCsv={vi.fn()} onSaveXlsx={vi.fn()} onSavePdf={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'Excelを作成中…' })).toBeDisabled()
   })
 })

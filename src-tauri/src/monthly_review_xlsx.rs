@@ -769,6 +769,7 @@ mod tests {
         let prior_year = metrics(480_000, 310_000, 19);
         MonthlyFinancialReportDto {
             period: "2026-07".to_owned(),
+            as_of: "2026-07-31".to_owned(),
             vs_prior_month: deltas(&current, &prior_month),
             vs_prior_year: deltas(&current, &prior_year),
             current,

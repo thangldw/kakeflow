@@ -12,6 +12,8 @@ const MAX_ID_LEN: usize = 64;
 const TOP_DRIVER_LIMIT: i64 = 8;
 const MAX_ANNUAL_REVIEW_CSV_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ANNUAL_REVIEW_CSV_ROWS: usize = 512;
+const MAX_MONTHLY_REVIEW_CSV_BYTES: usize = 1024 * 1024;
+const MAX_MONTHLY_REVIEW_CSV_ROWS: usize = 128;
 
 #[derive(Debug)]
 pub enum FinancialCalendarError {
@@ -222,6 +224,7 @@ pub struct ReconciliationSummaryDto {
 #[serde(rename_all = "camelCase")]
 pub struct MonthlyFinancialReportDto {
     pub period: String,
+    pub as_of: String,
     pub current: PeriodMetricsDto,
     pub prior_month: PeriodMetricsDto,
     pub prior_year: PeriodMetricsDto,
@@ -308,6 +311,24 @@ pub struct AnnualReviewCsvDto {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnualReviewCsvSavedDto {
+    pub file_name: String,
+    pub row_count: u32,
+    pub byte_size: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyReviewCsvDto {
+    pub file_name: String,
+    pub media_type: &'static str,
+    pub row_count: u32,
+    pub byte_size: u32,
+    pub utf8_bom_csv: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MonthlyReviewCsvSavedDto {
     pub file_name: String,
     pub row_count: u32,
     pub byte_size: u32,
@@ -525,6 +546,7 @@ pub fn monthly_report(
     )?;
     Ok(MonthlyFinancialReportDto {
         period: request.month.clone(),
+        as_of: as_of.clone(),
         vs_prior_month: metric_deltas(&current, &prior_month),
         vs_prior_year: metric_deltas(&current, &prior_year),
         top_category_drivers: category_drivers(
@@ -735,6 +757,462 @@ pub fn yearly_report(
         current,
         prior_year,
     })
+}
+
+pub fn monthly_household_review_csv(
+    connection: &Connection,
+    request: &MonthlyFinancialReportRequest,
+) -> Result<MonthlyReviewCsvDto, FinancialCalendarError> {
+    let report = monthly_report(connection, request)?;
+    monthly_household_review_csv_from_report(request, &report)
+}
+
+pub fn monthly_household_review_csv_from_report(
+    request: &MonthlyFinancialReportRequest,
+    report: &MonthlyFinancialReportDto,
+) -> Result<MonthlyReviewCsvDto, FinancialCalendarError> {
+    if !is_iso_month_value(&request.month)
+        || report.period != request.month
+        || !is_iso_date_value(&report.as_of)
+        || request
+            .as_of
+            .as_deref()
+            .is_some_and(|as_of| as_of != report.as_of || !is_iso_date_value(as_of))
+    {
+        return Err(FinancialCalendarError::InvalidInput(
+            "Monthly review CSV data is invalid",
+        ));
+    }
+    let header = [
+        "section",
+        "period",
+        "comparison",
+        "metric",
+        "label",
+        "current_value",
+        "previous_value",
+        "delta_value",
+        "rate_bps",
+        "household_id",
+        "account_group_id",
+        "attribution_scope",
+        "attribution_member_id",
+        "as_of",
+    ];
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let scope = request.attribution_scope.sql_kind();
+    let member_id = request.attribution_scope.member_id().unwrap_or_default();
+    let group_id = request.account_group_id.as_deref().unwrap_or_default();
+    let mut push_row = |section: &str,
+                        comparison: &str,
+                        metric: &str,
+                        label: &str,
+                        current: String,
+                        previous: String,
+                        delta: String,
+                        rate: String| {
+        rows.push(vec![
+            section.to_owned(),
+            report.period.clone(),
+            comparison.to_owned(),
+            metric.to_owned(),
+            label.to_owned(),
+            current,
+            previous,
+            delta,
+            rate,
+            request.household_id.clone(),
+            group_id.to_owned(),
+            scope.to_owned(),
+            member_id.to_owned(),
+            report.as_of.clone(),
+        ]);
+    };
+    for (comparison, previous, deltas) in [
+        ("PRIOR_MONTH", &report.prior_month, &report.vs_prior_month),
+        ("PRIOR_YEAR", &report.prior_year, &report.vs_prior_year),
+    ] {
+        for (metric, label, current, previous, delta, rate) in [
+            (
+                "income_jpy",
+                "Income",
+                report.current.income_jpy.to_string(),
+                previous.income_jpy.to_string(),
+                deltas.income.amount_jpy.to_string(),
+                deltas
+                    .income
+                    .rate_bps
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "expense_jpy",
+                "Expense",
+                report.current.expense_jpy.to_string(),
+                previous.expense_jpy.to_string(),
+                deltas.expense.amount_jpy.to_string(),
+                deltas
+                    .expense
+                    .rate_bps
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "savings_jpy",
+                "Savings",
+                report.current.savings_jpy.to_string(),
+                previous.savings_jpy.to_string(),
+                deltas.savings.amount_jpy.to_string(),
+                deltas
+                    .savings
+                    .rate_bps
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "savings_rate_bps",
+                "Savings rate",
+                report
+                    .current
+                    .savings_rate_bps
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                previous
+                    .savings_rate_bps
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                String::new(),
+                String::new(),
+            ),
+            (
+                "posted_transaction_count",
+                "Posted transactions",
+                report.current.posted_transaction_count.to_string(),
+                previous.posted_transaction_count.to_string(),
+                String::new(),
+                String::new(),
+            ),
+        ] {
+            push_row(
+                "SUMMARY", comparison, metric, label, current, previous, delta, rate,
+            );
+        }
+    }
+    for driver in &report.top_category_drivers {
+        push_row(
+            "CATEGORY_DRIVER",
+            "PRIOR_MONTH",
+            "expense_jpy",
+            &driver.name,
+            driver.current_jpy.to_string(),
+            driver.previous_jpy.to_string(),
+            driver.delta_jpy.to_string(),
+            String::new(),
+        );
+    }
+    for driver in &report.top_merchant_drivers {
+        push_row(
+            "MERCHANT_DRIVER",
+            "PRIOR_MONTH",
+            "expense_jpy",
+            &driver.merchant,
+            driver.current_jpy.to_string(),
+            driver.previous_jpy.to_string(),
+            driver.delta_jpy.to_string(),
+            String::new(),
+        );
+    }
+    for (section, metric, label, value) in [
+        (
+            "BUDGET",
+            "budget_jpy",
+            "Budget",
+            report.budget.budget_jpy.to_string(),
+        ),
+        (
+            "BUDGET",
+            "actual_jpy",
+            "Actual",
+            report.budget.actual_jpy.to_string(),
+        ),
+        (
+            "BUDGET",
+            "remaining_jpy",
+            "Remaining",
+            report.budget.remaining_jpy.to_string(),
+        ),
+        (
+            "BUDGET",
+            "category_count",
+            "Categories",
+            report.budget.category_count.to_string(),
+        ),
+        (
+            "BUDGET",
+            "over_budget_count",
+            "Over budget",
+            report.budget.over_budget_count.to_string(),
+        ),
+        (
+            "GOALS",
+            "active_count",
+            "Active goals",
+            report.goals.active_count.to_string(),
+        ),
+        (
+            "GOALS",
+            "target_jpy",
+            "Target",
+            report.goals.target_jpy.to_string(),
+        ),
+        (
+            "GOALS",
+            "saved_jpy",
+            "Saved",
+            report.goals.saved_jpy.to_string(),
+        ),
+        (
+            "GOALS",
+            "remaining_jpy",
+            "Remaining",
+            report.goals.remaining_jpy.to_string(),
+        ),
+        (
+            "GOALS",
+            "due_within_period_count",
+            "Due within period",
+            report.goals.due_within_period_count.to_string(),
+        ),
+    ] {
+        push_row(
+            section,
+            "",
+            metric,
+            label,
+            value,
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+    }
+    for (metric, label, value) in [
+        (
+            "total_imports",
+            "Total imports",
+            report.data_quality.total_imports.to_string(),
+        ),
+        (
+            "posted_imports",
+            "Posted imports",
+            report.data_quality.posted_imports.to_string(),
+        ),
+        (
+            "review_required_imports",
+            "Review required imports",
+            report.data_quality.review_required_imports.to_string(),
+        ),
+        (
+            "failed_imports",
+            "Failed imports",
+            report.data_quality.failed_imports.to_string(),
+        ),
+        (
+            "in_progress_imports",
+            "In-progress imports",
+            report.data_quality.in_progress_imports.to_string(),
+        ),
+        (
+            "import_completion_bps",
+            "Import completion",
+            report
+                .data_quality
+                .import_completion_bps
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "latest_imported_at",
+            "Latest import",
+            report
+                .data_quality
+                .latest_imported_at
+                .clone()
+                .unwrap_or_default(),
+        ),
+        (
+            "stale_days",
+            "Stale days",
+            report
+                .data_quality
+                .stale_days
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+        ),
+        (
+            "has_unresolved_imports",
+            "Has unresolved imports",
+            report.data_quality.has_unresolved_imports.to_string(),
+        ),
+    ] {
+        push_row(
+            "DATA_QUALITY",
+            "",
+            metric,
+            label,
+            value,
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+    }
+    for (metric, label, value) in [
+        (
+            "total_statements",
+            "Total statements",
+            report.reconciliation.total_statements.to_string(),
+        ),
+        (
+            "fully_reconciled",
+            "Fully reconciled",
+            report.reconciliation.fully_reconciled.to_string(),
+        ),
+        (
+            "possible_matches",
+            "Possible matches",
+            report.reconciliation.possible_matches.to_string(),
+        ),
+        (
+            "partially_reconciled",
+            "Partially reconciled",
+            report.reconciliation.partially_reconciled.to_string(),
+        ),
+        (
+            "unmatched",
+            "Unmatched",
+            report.reconciliation.unmatched.to_string(),
+        ),
+        (
+            "mismatch_count",
+            "Mismatches",
+            report.reconciliation.mismatch_count.to_string(),
+        ),
+        (
+            "payment_total_jpy",
+            "Card payments",
+            report.reconciliation.payment_total_jpy.to_string(),
+        ),
+    ] {
+        push_row(
+            "RECONCILIATION",
+            "",
+            metric,
+            label,
+            value,
+            String::new(),
+            String::new(),
+            String::new(),
+        );
+    }
+    if rows.len() > MAX_MONTHLY_REVIEW_CSV_ROWS {
+        return Err(FinancialCalendarError::InvalidInput(
+            "Monthly review CSV is too large",
+        ));
+    }
+    let mut output = String::from('\u{feff}');
+    append_monthly_csv_row(&mut output, &header)?;
+    for row in &rows {
+        append_monthly_csv_row(&mut output, row)?;
+    }
+    Ok(MonthlyReviewCsvDto {
+        file_name: format!(
+            "kakeflow-monthly-household-review-{}-as-of-{}.csv",
+            report.period, report.as_of
+        ),
+        media_type: "text/csv;charset=utf-8",
+        row_count: rows.len() as u32,
+        byte_size: output.len() as u32,
+        utf8_bom_csv: output,
+    })
+}
+
+fn append_monthly_csv_row(
+    output: &mut String,
+    fields: &[impl AsRef<str>],
+) -> Result<(), FinancialCalendarError> {
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        let field = field.as_ref();
+        if field
+            .chars()
+            .any(|character| matches!(character, ',' | '"' | '\r' | '\n'))
+        {
+            output.push('"');
+            for character in field.chars() {
+                if character == '"' {
+                    output.push('"');
+                }
+                output.push(character);
+            }
+            output.push('"');
+        } else {
+            output.push_str(field);
+        }
+        if output.len() > MAX_MONTHLY_REVIEW_CSV_BYTES {
+            return Err(FinancialCalendarError::InvalidInput(
+                "Monthly review CSV is too large",
+            ));
+        }
+    }
+    output.push_str("\r\n");
+    if output.len() > MAX_MONTHLY_REVIEW_CSV_BYTES {
+        return Err(FinancialCalendarError::InvalidInput(
+            "Monthly review CSV is too large",
+        ));
+    }
+    Ok(())
+}
+
+fn is_iso_month_value(value: &str) -> bool {
+    value.len() == 7
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || byte.is_ascii_digit())
+        && value[5..7]
+            .parse::<u8>()
+            .is_ok_and(|month| (1..=12).contains(&month))
+}
+
+fn is_iso_date_value(value: &str) -> bool {
+    if !(value.len() == 10
+        && value.as_bytes().get(4) == Some(&b'-')
+        && value.as_bytes().get(7) == Some(&b'-')
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit()))
+    {
+        return false;
+    }
+    let (Ok(year), Ok(month), Ok(day)) = (
+        value[0..4].parse::<u16>(),
+        value[5..7].parse::<u8>(),
+        value[8..10].parse::<u8>(),
+    ) else {
+        return false;
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days).contains(&day)
 }
 
 pub fn annual_household_review_csv(
@@ -1734,6 +2212,20 @@ pub fn financial_report_monthly_query(
 }
 
 #[tauri::command]
+pub fn monthly_household_review_csv_generate(
+    state: tauri::State<'_, AppState>,
+    request: MonthlyFinancialReportRequest,
+) -> Result<MonthlyReviewCsvDto, String> {
+    let result =
+        state.with_connection(|connection| Ok(monthly_household_review_csv(connection, &request)));
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => Err(error.public_message().to_owned()),
+        Err(_) => Err("Monthly household review export is temporarily unavailable".to_owned()),
+    }
+}
+
+#[tauri::command]
 pub fn financial_report_yearly_query(
     state: tauri::State<'_, AppState>,
     request: YearlyFinancialReportRequest,
@@ -2373,6 +2865,13 @@ mod tests {
                 ["Groceries, \"home\""],
             )
             .unwrap();
+        connection
+            .execute(
+                "UPDATE transactions SET attribution_kind = 'MEMBER',
+                 attributed_member_id = 'family-member'",
+                [],
+            )
+            .unwrap();
         let request = YearlyFinancialReportRequest {
             household_id: "family".into(),
             account_group_id: None,
@@ -2405,6 +2904,78 @@ mod tests {
         let mut output = String::new();
         assert!(matches!(
             append_annual_csv_row(&mut output, &[oversized]),
+            Err(FinancialCalendarError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn monthly_review_csv_is_deterministic_scoped_escaped_and_bounded() {
+        let connection = database();
+        connection
+            .execute(
+                "UPDATE accounts SET name = ?1 WHERE id = 'groceries'",
+                ["Groceries, \"home\""],
+            )
+            .unwrap();
+        connection
+            .execute_batch(
+                "UPDATE transactions SET attribution_kind='MEMBER',
+                   attributed_member_id='family-member';
+                 INSERT INTO account_groups VALUES
+                   ('spending','family','Spending','CUSTOM',0);
+                 INSERT INTO account_group_members VALUES
+                   ('family','spending','bank',0),
+                   ('family','spending','income',1),
+                   ('family','spending','groceries',2),
+                   ('family','spending','card',3);",
+            )
+            .unwrap();
+        let request = MonthlyFinancialReportRequest {
+            household_id: "family".into(),
+            account_group_id: Some("spending".into()),
+            attribution_scope: AttributionScope::Member {
+                member_id: "family-member".into(),
+            },
+            month: "2026-07".into(),
+            as_of: Some("2026-07-31".into()),
+        };
+        let first = monthly_household_review_csv(&connection, &request).unwrap();
+        let second = monthly_household_review_csv(&connection, &request).unwrap();
+        assert_eq!(first, second);
+        assert!(first.utf8_bom_csv.starts_with('\u{feff}'));
+        assert!(first.utf8_bom_csv.contains("\r\n"));
+        assert!(first
+            .utf8_bom_csv
+            .contains("SUMMARY,2026-07,PRIOR_MONTH,income_jpy"));
+        assert!(first
+            .utf8_bom_csv
+            .contains("SUMMARY,2026-07,PRIOR_YEAR,income_jpy"));
+        assert!(first
+            .utf8_bom_csv
+            .contains("CATEGORY_DRIVER,2026-07,PRIOR_MONTH"));
+        assert!(first.utf8_bom_csv.contains("\"Groceries, \"\"home\"\"\""));
+        assert!(first
+            .utf8_bom_csv
+            .contains(",family,spending,MEMBER,family-member,2026-07-31\r\n"));
+        assert_eq!(first.byte_size as usize, first.utf8_bom_csv.len());
+        assert!(first.row_count > 30);
+
+        let report = monthly_report(&connection, &request).unwrap();
+        assert_eq!(
+            first,
+            monthly_household_review_csv_from_report(&request, &report).unwrap()
+        );
+        let mut mismatched = request;
+        mismatched.month = "2026-08".into();
+        assert!(matches!(
+            monthly_household_review_csv_from_report(&mismatched, &report),
+            Err(FinancialCalendarError::InvalidInput(_))
+        ));
+
+        let oversized = "x".repeat(MAX_MONTHLY_REVIEW_CSV_BYTES + 1);
+        let mut output = String::new();
+        assert!(matches!(
+            append_monthly_csv_row(&mut output, &[oversized]),
             Err(FinancialCalendarError::InvalidInput(_))
         ));
     }

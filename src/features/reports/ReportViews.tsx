@@ -103,6 +103,7 @@ export interface ReconciliationSummaryDto {
 
 export interface MonthlyReportDto {
   readonly period: string
+  readonly asOf: string
   readonly current: MonthlyMetricsDto
   readonly priorMonth: MonthlyMetricsDto
   readonly priorYear: MonthlyMetricsDto
@@ -128,6 +129,7 @@ export interface FinancialCalendarViewProps {
 export interface MonthlyReportViewProps {
   readonly data: MonthlyReportDto
   readonly comparison?: 'PRIOR_MONTH' | 'PRIOR_YEAR'
+  readonly savingCsv?: boolean
   readonly savingXlsx?: boolean
   readonly savingPdf?: boolean
   readonly onComparisonChange?: (comparison: 'PRIOR_MONTH' | 'PRIOR_YEAR') => void
@@ -136,6 +138,7 @@ export interface MonthlyReportViewProps {
   readonly onOpenGoals?: () => void
   readonly onOpenImports?: () => void
   readonly onOpenReconciliation?: () => void
+  readonly onSaveCsv?: () => void
   readonly onSaveXlsx?: () => void
   readonly onSavePdf?: () => void
 }
@@ -236,14 +239,15 @@ function DriverTable({ title, kind, rows, onSelect }: { readonly title: string; 
   })}</tbody></table></div>}</section>
 }
 
-export function MonthlyReportView({ data, comparison = 'PRIOR_MONTH', savingXlsx = false, savingPdf = false, onComparisonChange, onSelectDriver, onOpenBudget, onOpenGoals, onOpenImports, onOpenReconciliation, onSaveXlsx, onSavePdf }: MonthlyReportViewProps) {
+export function MonthlyReportView({ data, comparison = 'PRIOR_MONTH', savingCsv = false, savingXlsx = false, savingPdf = false, onComparisonChange, onSelectDriver, onOpenBudget, onOpenGoals, onOpenImports, onOpenReconciliation, onSaveCsv, onSaveXlsx, onSavePdf }: MonthlyReportViewProps) {
   const delta = comparison === 'PRIOR_MONTH' ? data.vsPriorMonth : data.vsPriorYear
   const comparisonLabel = comparison === 'PRIOR_MONTH' ? '前月比' : '前年同月比'
   const goalProgress = data.goals.targetJpy > 0 ? Math.round(data.goals.savedJpy / data.goals.targetJpy * 10_000) : 0
   const reconciledBps = data.reconciliation.totalStatements > 0 ? Math.round(data.reconciliation.fullyReconciled / data.reconciliation.totalStatements * 10_000) : 0
+  const savingExport = savingCsv || savingXlsx || savingPdf
 
   return <div className="report-view monthly-report-view">
-    <header className="report-view-head"><div><p>Monthly Review</p><h2>{monthLabel(data.period)}</h2><span>{data.current.postedTransactionCount}件の計算対象の確定取引（集計対象外を除く）</span></div><div className="monthly-review-head-actions"><div className="report-segmented" aria-label="レポートの比較期間"><button type="button" aria-pressed={comparison === 'PRIOR_MONTH'} onClick={() => onComparisonChange?.('PRIOR_MONTH')}>前月比</button><button type="button" aria-pressed={comparison === 'PRIOR_YEAR'} onClick={() => onComparisonChange?.('PRIOR_YEAR')}>前年同月比</button></div><div className="monthly-review-export-actions">{onSaveXlsx && <button type="button" className="primary-btn" disabled={savingXlsx} onClick={onSaveXlsx}>{savingXlsx ? 'Excelを作成中…' : '月次Excelを保存'}</button>}{onSavePdf && <button type="button" className="secondary-btn" disabled={savingPdf} onClick={onSavePdf}>{savingPdf ? 'PDFを作成中…' : '月次PDFを保存'}</button>}</div></div></header>
+    <header className="report-view-head"><div><p>Monthly Review</p><h2>{monthLabel(data.period)}</h2><span>{data.current.postedTransactionCount}件の計算対象の確定取引（集計対象外を除く）・データ品質基準日 {data.asOf}</span></div><div className="monthly-review-head-actions"><div className="report-segmented" aria-label="レポートの比較期間"><button type="button" aria-pressed={comparison === 'PRIOR_MONTH'} onClick={() => onComparisonChange?.('PRIOR_MONTH')}>前月比</button><button type="button" aria-pressed={comparison === 'PRIOR_YEAR'} onClick={() => onComparisonChange?.('PRIOR_YEAR')}>前年同月比</button></div><div className="monthly-review-export-actions">{onSaveCsv && <button type="button" className="secondary-btn" disabled={savingExport} onClick={onSaveCsv}>{savingCsv ? 'CSVを作成中…' : '月次CSVを保存'}</button>}{onSaveXlsx && <button type="button" className="primary-btn" disabled={savingExport} onClick={onSaveXlsx}>{savingXlsx ? 'Excelを作成中…' : '月次Excelを保存'}</button>}{onSavePdf && <button type="button" className="secondary-btn" disabled={savingExport} onClick={onSavePdf}>{savingPdf ? 'PDFを作成中…' : '月次PDFを保存'}</button>}</div></div></header>
     <DataQualityWarning quality={data.dataQuality} onOpenImports={onOpenImports} />
     <section className="report-kpi-grid" aria-label="月次KPI">
       <article><span>収入</span><strong>{yen(data.current.incomeJpy)}</strong><Delta delta={delta.income} /></article>

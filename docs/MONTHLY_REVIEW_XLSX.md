@@ -1,6 +1,6 @@
 # Monthly Household Review XLSX
 
-KakeFlow 0.67 can save the validated Monthly Household Review as a native Excel workbook. The export runs the same `MonthlyFinancialReportRequest` and report query as the visible monthly screen, including the selected calendar month, saved account group, and household/member attribution scope. Monthly Review does not currently have a parallel CSV export, and this workbook does not claim CSV parity.
+KakeFlow 0.67 can save the validated Monthly Household Review as a native Excel workbook. The export runs the same `MonthlyFinancialReportRequest` and report query as the visible monthly screen, including the selected calendar month, saved account group, and household/member attribution scope. The later [Monthly Household Review CSV](MONTHLY_REVIEW_CSV.md) uses that same request and resolved data-quality `asOf` date without changing the workbook contract.
 
 ## Reporting period and scope
 
@@ -31,4 +31,4 @@ The workbook is generated and written by the native desktop process. Binary work
 
 Generation is bounded to four sheets, at most eight category drivers and eight merchant drivers, bounded cell text, an 8 MiB workbook, and integers that Excel can represent exactly. Invalid, inconsistent, or oversized report data fails instead of being silently truncated, rounded, or reinterpreted.
 
-This release exports only the source-backed Monthly Household Review to XLSX. Annual investment performance is available from KakeFlow 0.68 and explicit portfolio snapshots from 0.69. Visually verified PDF reports with deterministic Japanese font embedding remain a separate milestone.
+The source-backed Monthly Household Review is also available as deterministic CSV and as a visually verified PDF with embedded Japanese fonts. All three formats retain their own structural validation while sharing the same report request and metric semantics.
