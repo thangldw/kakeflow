@@ -3857,6 +3857,98 @@ pub fn confirm_card_payment_link(
         .ok_or(RepositoryError::NotFound)
 }
 
+pub fn unlink_card_payment_link(
+    connection: &Connection,
+    household_id: &str,
+    statement_id: &str,
+    payment_id: &str,
+) -> Result<CardSettlementDto, RepositoryError> {
+    validate_id(household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    validate_id(statement_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(payment_id, MAX_LOOKUP_ID_LEN)?;
+
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+        .map_err(map_database_error)?;
+    let statement_amount_jpy: i64 = tx
+        .query_row(
+            "SELECT statement_amount_jpy FROM card_statements
+             WHERE id = ?1 AND household_id = ?2",
+            params![statement_id, household_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    let payment: (Option<String>, String, Option<String>) = tx
+        .query_row(
+            "SELECT statement_id, bank_transaction_id, confirmed_at
+             FROM card_payments WHERE id = ?1 AND household_id = ?2",
+            params![payment_id, household_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()
+        .map_err(map_database_error)?
+        .ok_or(RepositoryError::NotFound)?;
+    if payment.0.as_deref() != Some(statement_id) || payment.2.is_none() {
+        return Err(RepositoryError::Conflict);
+    }
+    let confirmed_at = payment.2.as_deref().ok_or(RepositoryError::Conflict)?;
+
+    tx.execute(
+        "INSERT INTO card_payment_link_corrections(
+           id,household_id,statement_id,payment_id,bank_transaction_id,
+           previous_confirmed_at,correction_kind)
+         VALUES(lower(hex(randomblob(16))),?1,?2,?3,?4,?5,'UNLINK')",
+        params![
+            household_id,
+            statement_id,
+            payment_id,
+            payment.1,
+            confirmed_at
+        ],
+    )
+    .map_err(map_database_error)?;
+    let changed = tx
+        .execute(
+            "UPDATE card_payments
+             SET statement_id = NULL, match_score_bps = NULL,
+                 reconciliation_status = 'UNMATCHED', confirmed_at = NULL
+             WHERE id = ?1 AND household_id = ?2
+               AND statement_id = ?3 AND confirmed_at = ?4",
+            params![payment_id, household_id, statement_id, confirmed_at],
+        )
+        .map_err(map_database_error)?;
+    if changed != 1 {
+        return Err(RepositoryError::Conflict);
+    }
+
+    let confirmed_total: i64 = tx
+        .query_row(
+            "SELECT COALESCE(SUM(payment_amount_jpy), 0)
+             FROM card_payments
+             WHERE statement_id = ?1 AND household_id = ?2 AND confirmed_at IS NOT NULL",
+            params![statement_id, household_id],
+            |row| row.get(0),
+        )
+        .map_err(map_database_error)?;
+    tx.execute(
+        "UPDATE card_statements SET reconciliation_status = ?1
+         WHERE id = ?2 AND household_id = ?3",
+        params![
+            reconciliation_status_for_total(statement_amount_jpy, confirmed_total),
+            statement_id,
+            household_id
+        ],
+    )
+    .map_err(map_database_error)?;
+    tx.commit().map_err(map_database_error)?;
+
+    list_card_settlements(connection, household_id)?
+        .into_iter()
+        .find(|settlement| settlement.id == statement_id)
+        .ok_or(RepositoryError::NotFound)
+}
+
 fn reconciliation_status_for_total(
     statement_amount_jpy: i64,
     confirmed_total: i64,
@@ -4248,6 +4340,8 @@ mod tests {
                    payment_amount_jpy INTEGER NOT NULL, payment_on TEXT NOT NULL,
                    match_score_bps INTEGER, reconciliation_status TEXT NOT NULL,
                    confirmed_at TEXT);
+                 CREATE TABLE sync_apply_guard (
+                   household_id TEXT PRIMARY KEY, package_id TEXT NOT NULL);
                  CREATE TABLE staged_card_statements (
                    id TEXT PRIMARY KEY, import_run_id TEXT NOT NULL, household_id TEXT NOT NULL,
                    card_account_id TEXT NOT NULL REFERENCES accounts(id), issuer TEXT NOT NULL,
@@ -4280,6 +4374,11 @@ mod tests {
                 "../migrations/0062_recurring_series_preferences.sql"
             ))
             .expect("recurring series preference schema");
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0065_card_payment_link_corrections.sql"
+            ))
+            .expect("card payment correction schema");
         connection
     }
 
@@ -6619,6 +6718,100 @@ mod tests {
         assert_eq!(result.paid_amount_jpy, 110_000);
         assert_eq!(result.outstanding_amount_jpy, 0);
         assert_eq!(result.overpaid_amount_jpy, 10_000);
+    }
+
+    #[test]
+    fn confirmed_card_payment_can_be_audited_and_unlinked_without_mutating_journal() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".into(),
+                name: "Family".into(),
+            },
+        )
+        .unwrap();
+        connection.execute_batch("INSERT INTO card_statements
+            (id,household_id,card_account_id,period_start,period_end,statement_amount_jpy,reconciliation_status)
+            VALUES ('statement','family','family-rakuten-card','2026-06-01','2026-06-30',100000,'UNMATCHED')").unwrap();
+        insert_card_payment(
+            &connection,
+            "family",
+            "bank-100",
+            "payment-100",
+            "family-rakuten-card",
+            "family-bank",
+            "2026-07-27",
+            100_000,
+        );
+        let journal_before: Vec<(String, String, i64)> = connection
+            .prepare(
+                "SELECT account_id,entry_side,amount_jpy FROM journal_entries
+                 WHERE transaction_id='bank-100' ORDER BY entry_side,account_id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        confirm_card_payment_link(&connection, "family", "statement", "payment-100").unwrap();
+
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM sync_apply_guard WHERE household_id='family'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+
+        assert!(connection
+            .execute(
+                "UPDATE card_payments SET statement_id=NULL,match_score_bps=NULL,
+                 reconciliation_status='UNMATCHED',confirmed_at=NULL WHERE id='payment-100'",
+                [],
+            )
+            .is_err());
+
+        let result =
+            unlink_card_payment_link(&connection, "family", "statement", "payment-100").unwrap();
+        assert_eq!(result.reconciliation_status, "UNMATCHED");
+        assert_eq!(result.paid_amount_jpy, 0);
+        assert_eq!(result.outstanding_amount_jpy, 100_000);
+        assert!(result.payments.is_empty());
+        assert_eq!(result.eligible_payments.len(), 1);
+        assert_eq!(result.eligible_payments[0].payment_id, "payment-100");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT household_id||':'||statement_id||':'||payment_id||':'||correction_kind
+                     FROM card_payment_link_corrections",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "family:statement:payment-100:UNLINK"
+        );
+        assert!(connection
+            .execute("DELETE FROM card_payment_link_corrections", [])
+            .is_err());
+        let journal_after: Vec<(String, String, i64)> = connection
+            .prepare(
+                "SELECT account_id,entry_side,amount_jpy FROM journal_entries
+                 WHERE transaction_id='bank-100' ORDER BY entry_side,account_id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(journal_after, journal_before);
+        assert!(matches!(
+            unlink_card_payment_link(&connection, "family", "statement", "payment-100"),
+            Err(RepositoryError::Conflict)
+        ));
     }
 
     #[test]

@@ -38,6 +38,7 @@ const desktop = vi.hoisted(() => ({
   listCardSettlements: vi.fn(),
   confirmCardMatch: vi.fn(),
   confirmCardPaymentLink: vi.fn(),
+  unlinkCardPaymentLink: vi.fn(),
   updateCardStatementDueDate: vi.fn(),
   listCardSettlementBankMappings: vi.fn(),
   upsertCardSettlementBankMapping: vi.fn(),
@@ -150,6 +151,7 @@ vi.mock('./platform', async () => {
       listCardSettlements: desktop.listCardSettlements,
       confirmCardMatch: desktop.confirmCardMatch,
       confirmCardPaymentLink: desktop.confirmCardPaymentLink,
+      unlinkCardPaymentLink: desktop.unlinkCardPaymentLink,
       updateCardStatementDueDate: desktop.updateCardStatementDueDate,
       listCardSettlementBankMappings: desktop.listCardSettlementBankMappings,
       upsertCardSettlementBankMapping: desktop.upsertCardSettlementBankMapping,
@@ -263,6 +265,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.listPendingReviews.mockReset().mockImplementation(async (householdId: string) => ({ householdId, runs: [] }))
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
+    desktop.unlinkCardPaymentLink.mockReset().mockResolvedValue({})
     desktop.updateCardStatementDueDate.mockReset().mockImplementation(async (input) => ({
       id: input.statementId, cardAccountId: 'family-card', cardName: '期日未登録カード', maskedIdentifier: null,
       periodStart: '2026-06-01', periodEnd: '2026-06-30', paymentDueOn: input.paymentDueOn,
@@ -1549,6 +1552,13 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getAllByText('¥104,987').length).toBeGreaterThan(0)
     expect(screen.getByText(/一致度未算出/)).toBeInTheDocument()
     expect(screen.getAllByText('確認済み').length).toBe(3)
+    const firstUnlink = screen.getAllByRole('button', { name: '紐付けを解除' })[0]
+    fireEvent.click(firstUnlink)
+    expect(desktop.unlinkCardPaymentLink).not.toHaveBeenCalled()
+    expect(await screen.findByText('解除すると請求の照合合計を再計算します。もう一度押して確定してください。')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '解除を確定' }))
+    await waitFor(() => expect(desktop.unlinkCardPaymentLink).toHaveBeenCalledWith('family', 'statement-1', 'payment-1'))
+    expect(await screen.findByText('誤って紐付けた口座引落を解除しました。銀行取引と仕訳は変更していません。')).toBeInTheDocument()
     expect(desktop.confirmCardPaymentLink).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'この引落を確認して紐付け' }))
 

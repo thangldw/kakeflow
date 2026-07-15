@@ -1055,6 +1055,7 @@ export type AppCommand =
   | 'cards_list'
   | 'card_match_confirm'
   | 'card_payment_link_confirm'
+  | 'card_payment_link_unlink'
   | 'card_statement_due_date_update'
   | 'card_settlement_bank_mappings_list'
   | 'card_settlement_bank_mapping_upsert'
@@ -1225,6 +1226,7 @@ export interface PlatformClient {
   listCardSettlements(householdId: string): Promise<readonly CardSettlementDto[]>
   confirmCardMatch(householdId: string, statementId: string, paymentId: string): Promise<CardMatchConfirmationDto>
   confirmCardPaymentLink(householdId: string, statementId: string, paymentId: string): Promise<CardSettlementDto>
+  unlinkCardPaymentLink(householdId: string, statementId: string, paymentId: string): Promise<CardSettlementDto>
   updateCardStatementDueDate(input: UpdateCardStatementDueDateInputDto): Promise<CardSettlementDto>
   listCardSettlementBankMappings(householdId: string): Promise<readonly CardSettlementBankMappingDto[]>
   upsertCardSettlementBankMapping(input: UpsertCardSettlementBankMappingInputDto): Promise<CardSettlementBankMappingDto>
