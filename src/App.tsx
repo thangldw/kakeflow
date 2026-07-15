@@ -82,6 +82,7 @@ import type { PdfPasswordStatus } from './features/source-viewer/protectedPdfPla
 import type { AdapterId, AggregateAssetSnapshotCandidate, BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
 import { DEFAULT_FOLDER_SCAN_INTERVAL_MS } from './features/import/folderAutomation'
 import { attachFolderInboxIdentity, folderInboxFailureCode, folderInboxPreviewOutcome, recordClaimedFolderItems, retainActiveFolderPreviews, selectFolderInboxHydrationBatch } from './features/import/durableFolderInbox'
+import { attachGoogleDriveInboxIdentity, googleDriveInboxFileIsImmutable, googleDriveInboxStateLabel, isGoogleDriveInboxPreviewable, retainActiveGoogleDrivePreviews } from './features/import/googleDriveInbox'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { FamilyPage } from './features/family/FamilyPage'
 import { LocalSyncFoundationPanel } from './features/sync/LocalSyncFoundationPanel'
@@ -104,7 +105,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient, PlatformIpcError } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -1005,6 +1006,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const [notice, setNotice] = useState('')
   const [watchedFolders, setWatchedFolders] = useState<readonly WatchedFolderDto[]>([])
   const [folderBusy, setFolderBusy] = useState<string | null>(null)
+  const [driveInboxItems, setDriveInboxItems] = useState<readonly GoogleDriveInboxItemDto[]>([])
+  const [driveInboxBusy, setDriveInboxBusy] = useState(false)
   const [portfolioImported, setPortfolioImported] = useState<ReadonlySet<string>>(() => new Set())
   const [aggregateAssetImported, setAggregateAssetImported] = useState<ReadonlySet<string>>(() => new Set())
   const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
@@ -1026,6 +1029,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const rescueTriggerRef = useRef<HTMLButtonElement | null>(null)
   const hydratedStagedRunsRef = useRef(new Set<string>())
   const inFlightRunsRef = useRef(new Set<string>())
+  const hydratedDriveItemsRef = useRef(new Set<string>())
   const recoveredReviewCount = Object.keys(staged).filter((key) => key.startsWith('recovered:')).length
 
   useEffect(() => {
@@ -1036,6 +1040,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     setRecoveredReceiptRunIds(new Set())
     setSourceResumeRequiredRunIds(new Set())
     setPendingReviewRuns([])
+    setDriveInboxItems([])
+    hydratedDriveItemsRef.current.clear()
     setMoneyForwardAccounts({})
     setStandardImportAccounts({})
     setInvestmentImportAccounts({})
@@ -1099,6 +1105,72 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     setBusy(false)
   }
 
+  const refreshGoogleDriveInbox = useCallback(async (hydrate = true) => {
+    if (platformClient.runtime !== 'tauri' || !householdId) { setDriveInboxItems([]); return }
+    setDriveInboxBusy(true)
+    try {
+      const items = await platformClient.listGoogleDriveInbox(householdId, undefined, undefined, 200)
+      setDriveInboxItems(items)
+      setPreviews((current) => retainActiveGoogleDrivePreviews(current, items))
+      if (!hydrate) return
+      const previewable = items.filter((item) => isGoogleDriveInboxPreviewable(item) && !hydratedDriveItemsRef.current.has(item.id)).slice(0, 20)
+      for (const expected of previewable) {
+        hydratedDriveItemsRef.current.add(expected.id)
+        try {
+          const loaded = await platformClient.readGoogleDriveInboxFile(householdId, expected.id)
+          if (!googleDriveInboxFileIsImmutable(expected, loaded.item, loaded.fileBytes.length)) throw new Error('Google Drive generation changed during preview')
+          const bytes = new Uint8Array(loaded.fileBytes)
+          const lastModified = loaded.item.remoteModifiedAt ? Date.parse(loaded.item.remoteModifiedAt) : Date.now()
+          const file = new File([bytes], loaded.item.fileName, { type: loaded.item.mediaType, lastModified })
+          const parsed = (await previewImportFiles([file]))[0]
+          if (!parsed || parsed.id !== loaded.item.contentSha256) throw new Error('Google Drive content hash mismatch')
+          const preview = attachGoogleDriveInboxIdentity(parsed, loaded.item)
+          setPreviews((current) => [...current.filter((candidate) => candidate.driveInboxItemId !== expected.id), preview])
+        } catch {
+          hydratedDriveItemsRef.current.delete(expected.id)
+          setNotice(`Google Drive の「${expected.fileName}」を安全にプレビューできませんでした。同期後に再試行してください。`)
+        }
+      }
+    } catch {
+      setNotice('Google Drive Inbox を読み込めませんでした。接続状態を確認してください。')
+    } finally {
+      setDriveInboxBusy(false)
+    }
+  }, [householdId, setPreviews])
+
+  const retryGoogleDriveInboxItem = async (itemId: string) => {
+    if (!householdId) return
+    setDriveInboxBusy(true)
+    try {
+      await platformClient.retryGoogleDriveInboxItem(householdId, itemId)
+      hydratedDriveItemsRef.current.delete(itemId)
+      await refreshGoogleDriveInbox(true)
+    } catch { setNotice('Google Drive のファイルを再試行できませんでした。') }
+    finally { setDriveInboxBusy(false) }
+  }
+
+  const ignoreGoogleDriveInboxItem = async (itemId: string) => {
+    if (!householdId) return
+    setDriveInboxBusy(true)
+    try {
+      await platformClient.ignoreGoogleDriveInboxItem(householdId, itemId)
+      hydratedDriveItemsRef.current.add(itemId)
+      setPreviews((current) => current.filter((preview) => preview.driveInboxItemId !== itemId))
+      await refreshGoogleDriveInbox(false)
+    } catch { setNotice('Google Drive のファイルを無視できませんでした。') }
+    finally { setDriveInboxBusy(false) }
+  }
+
+  const repreviewGoogleDriveInboxItem = async (itemId: string) => {
+    hydratedDriveItemsRef.current.delete(itemId)
+    await refreshGoogleDriveInbox(true)
+  }
+
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) return
+    void refreshGoogleDriveInbox(true)
+  }, [householdId, refreshGoogleDriveInbox])
+
   useEffect(() => {
     if (platformClient.runtime !== 'tauri' || !householdId) { setWatchedFolders([]); return }
     void platformClient.listWatchedFolders(householdId).then(setWatchedFolders).catch(() => setNotice('監視フォルダーを読み込めませんでした。'))
@@ -1124,6 +1196,20 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     }
     return () => { active = false }
   }, [folderInbox.items, householdId])
+
+  useEffect(() => {
+    if (!householdId) return
+    let active = true
+    for (const item of driveInboxItems) {
+      if (item.householdId !== householdId || item.state !== 'STAGED' || !item.importRunId || hydratedStagedRunsRef.current.has(item.importRunId)) continue
+      hydratedStagedRunsRef.current.add(item.importRunId)
+      void platformClient.previewImport(item.importRunId).then((preview) => {
+        if (!active || preview.summary.status !== 'REVIEW_REQUIRED') return
+        setStaged((current) => Object.values(current).some((existing) => existing.summary.runId === preview.summary.runId) ? current : ({ ...current, [`drive:${item.id}`]: preview }))
+      }).catch(() => { hydratedStagedRunsRef.current.delete(item.importRunId!) })
+    }
+    return () => { active = false }
+  }, [driveInboxItems, householdId])
 
   const applyCustomParserProfile = (item: ImportPreview, explicitProfile?: DelimitedParserProfileDto, explicitAccountId?: string) => {
     const profile = explicitProfile ?? parserProfiles.find((candidate) => candidate.id === selectedParserProfiles[item.id])
@@ -1208,7 +1294,22 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   }
 
   const startTrackedImport = async (item: ImportPreview, request: Parameters<typeof platformClient.startImport>[0], bytes: Uint8Array) => {
-    if (!householdId || !item.folderInboxItemId) return platformClient.startImport(request, bytes)
+    if (!householdId) return platformClient.startImport(request, bytes)
+    if (item.driveInboxItemId) {
+      const claim = await platformClient.claimGoogleDriveInboxItems(householdId, [item.driveInboxItemId])
+      if (claim.items.length !== 1 || claim.items[0].id !== item.driveInboxItemId) throw new Error('Google Drive Inbox item was not claimed')
+      let started: Awaited<ReturnType<typeof platformClient.startImport>>
+      try {
+        started = await platformClient.startImport(request, bytes)
+      } catch (error) {
+        try { await platformClient.markGoogleDriveInboxFailed(householdId, item.driveInboxItemId, claim.leaseToken, 'IMPORT_START_FAILED'); await refreshGoogleDriveInbox(false) } catch { /* native lease recovery keeps the generation durable */ }
+        throw error
+      }
+      await platformClient.markGoogleDriveInboxStaged(householdId, item.driveInboxItemId, claim.leaseToken, started.runId)
+      await refreshGoogleDriveInbox(false)
+      return started
+    }
+    if (!item.folderInboxItemId) return platformClient.startImport(request, bytes)
     const claim = await platformClient.claimWatchedFileInboxItems(householdId, [item.folderInboxItemId])
     if (claim.items.length !== 1 || claim.items[0].id !== item.folderInboxItemId) throw new Error('Folder Inbox item was not claimed')
     let started: Awaited<ReturnType<typeof platformClient.startImport>>
@@ -1466,7 +1567,16 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
         : previews.find((preview) => preview.id === previewId)?.folderInboxItemId
           ?? folderInbox.items.find((item) => item.householdId === householdId && item.importRunId === runId)?.id
       if (folderInboxItemId) await folderInbox.retry(folderInboxItemId)
-      setNotice('未確定のインポートを取り消しました。')
+      const driveInboxItemId = previewId.startsWith('drive:')
+        ? previewId.slice('drive:'.length)
+        : previews.find((preview) => preview.id === previewId)?.driveInboxItemId
+          ?? driveInboxItems.find((item) => item.householdId === householdId && item.importRunId === runId)?.id
+      if (driveInboxItemId && householdId) {
+        await platformClient.reopenGoogleDriveInboxItem(householdId, driveInboxItemId, runId)
+        hydratedDriveItemsRef.current.delete(driveInboxItemId)
+        await refreshGoogleDriveInbox(true)
+      }
+      setNotice(driveInboxItemId ? '未確定のインポートを取り消し、Google Drive Inbox に戻しました。' : '未確定のインポートを取り消しました。')
     } catch {
       setNotice('インポートを取り消せませんでした。')
     } finally {
@@ -1504,9 +1614,15 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
     <PendingImportHandoffPanel householdId={householdId} accounts={accounts} members={members} pendingRuns={pendingReviewRuns} onApplied={() => { setRecoveryRevision((value) => value + 1); onChanged() }} />
+    {platformClient.runtime === 'tauri' && driveInboxItems.length > 0 && <section className="panel watched-folders" aria-labelledby="google-drive-inbox-title"><div className="panel-head"><div><h2 id="google-drive-inbox-title">Google Drive Inbox</h2><p>同期済みの原本世代を端末内でプレビューします。取引はレビューで承認するまで台帳へ反映しません。</p></div><button className="secondary-btn" disabled={driveInboxBusy} onClick={() => void refreshGoogleDriveInbox(true)}>{driveInboxBusy ? '更新中…' : 'Inbox を更新'}</button></div><div className="watched-folder"><div><strong>接続フォルダーの原本</strong><span>{driveInboxItems.length}件 ・ Google Drive 読み取り専用</span></div>{driveInboxItems.filter((item) => item.state !== 'REMOVED').map((item) => {
+      const drivePreview = previews.find((preview) => preview.driveInboxItemId === item.id)
+      const previewFailed = drivePreview?.status === 'error' || drivePreview?.status === 'unsupported'
+      const displayState = previewFailed ? 'プレビューで確認が必要' : googleDriveInboxStateLabel(item.state)
+      return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>Google Drive ・ {item.remoteByteSize === null ? 'サイズ未取得' : `${(item.remoteByteSize / 1024).toFixed(1)} KB`} ・ 世代 {item.driveVersion ?? '—'}</small></span><b className={!previewFailed && ['READY', 'STAGED'].includes(item.state) ? 'ready' : 'review'}>{displayState}</b><span className="folder-inbox-actions">{previewFailed && <button className="mini-btn" disabled={driveInboxBusy} onClick={() => void repreviewGoogleDriveInboxItem(item.id)}>再プレビュー</button>}{item.state === 'FAILED' && <button className="mini-btn" disabled={driveInboxBusy} onClick={() => void retryGoogleDriveInboxItem(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" disabled={driveInboxBusy} onClick={() => void ignoreGoogleDriveInboxItem(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div>
+    })}</div></section>}
     {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>変更履歴と処理状態は端末内データベースに保持され、再起動後も復元されます。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={folderInbox.autoScan} onChange={(event) => folderInbox.setAutoScan(event.target.checked)} /><span>自動プレビュー</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.provider === 'ICLOUD' ? 'iCloud Drive' : 'ローカル同期'} ・ {folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{folderInbox.items.filter((item) => item.watchedFolderId === folder.id && item.state !== 'REMOVED').map((item) => { const stateLabel = { DISCOVERED: '検出済み', PROCESSING: '解析中', READY: 'プレビュー完了', NEEDS_MAPPING: '形式の対応付けが必要', STAGED: '取込処理に接続済み', FAILED: '失敗', IGNORED: '無視', REMOVED: '削除済み' }[item.state]; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>{item.provider === 'ICLOUD' ? 'iCloud Drive' : 'ローカル同期'} ・ {(item.byteSize / 1024).toFixed(1)} KB ・ 試行 {item.attemptCount}</small></span><b className={item.state === 'READY' || item.state === 'STAGED' ? 'ready' : 'review'}>{stateLabel}</b><span className="folder-inbox-actions">{(item.state === 'FAILED' || item.state === 'IGNORED') && <button className="mini-btn" onClick={() => void folderInbox.retry(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" onClick={() => void folderInbox.ignore(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div>)}</section>}
     <section className="panel import-panel">
-      <div className="panel-head"><div><h2>最近のファイル</h2><p>選択またはドロップしたローカルファイル</p></div></div>
+      <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルで選択したファイルと Google Drive Inbox のプレビュー</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / TSV / Excel / PDF / レシート画像 / ZIP / EMLをここにドロップ</span><small>PayPay・銀行・カード・ゆうちょ公式CSV一括ZIP・メール添付・PNG / JPEGレシート</small></button>
       {parserProfiles.length > 0 && previews.some((item) => /\.(?:csv|tsv)$/i.test(item.filename) && item.fileBytes) && <div className="custom-parser-files">
         <div><strong>保存済みプロファイルを明示的に適用</strong><small>組み込み判定を上書きする場合、ファイルとプロファイルを選んで実データをプレビューします。</small></div>

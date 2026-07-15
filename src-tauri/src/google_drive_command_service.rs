@@ -7,7 +7,7 @@ use crate::{
     },
     google_drive_store::{
         self, GoogleDriveConnectionDto, GoogleDriveInboxItemDto, GoogleDriveStoreError,
-        SyncScheduleDto,
+        InboxLeaseDto, SyncScheduleDto,
     },
 };
 use rusqlite::Connection;
@@ -203,6 +203,64 @@ pub fn list_inbox(
         household_id,
         connection_id,
         limit,
+    )?)
+}
+
+pub fn claim_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_ids: &[String],
+) -> Result<InboxLeaseDto, GoogleDriveCommandServiceError> {
+    Ok(google_drive_store::claim_household_inbox(
+        connection,
+        household_id,
+        item_ids,
+    )?)
+}
+
+pub fn mark_inbox_staged(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+    lease_token: &str,
+    import_run_id: &str,
+) -> Result<GoogleDriveInboxItemDto, GoogleDriveCommandServiceError> {
+    Ok(google_drive_store::mark_inbox_staged(
+        connection,
+        household_id,
+        item_id,
+        lease_token,
+        import_run_id,
+    )?)
+}
+
+pub fn mark_inbox_failed(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+    lease_token: &str,
+    error_code: &str,
+) -> Result<GoogleDriveInboxItemDto, GoogleDriveCommandServiceError> {
+    Ok(google_drive_store::fail_inbox(
+        connection,
+        household_id,
+        item_id,
+        lease_token,
+        error_code,
+    )?)
+}
+
+pub fn reopen_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+    import_run_id: &str,
+) -> Result<GoogleDriveInboxItemDto, GoogleDriveCommandServiceError> {
+    Ok(google_drive_store::reopen_staged_inbox(
+        connection,
+        household_id,
+        item_id,
+        import_run_id,
     )?)
 }
 

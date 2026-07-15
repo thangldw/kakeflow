@@ -204,4 +204,6 @@ export type {
   UpdateGoogleDriveScheduleInputDto,
   GoogleDriveInboxStateDto,
   GoogleDriveInboxItemDto,
+  GoogleDriveInboxFileDto,
+  GoogleDriveInboxClaimDto,
 } from './types'

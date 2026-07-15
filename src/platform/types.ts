@@ -95,7 +95,7 @@ export interface NormalizedCandidateDto {
 }
 export interface StartImportDto {
   readonly runId: string; readonly documentId: string; readonly householdId: string
-  readonly sourceType: 'LOCAL_FOLDER' | 'ICLOUD_PICKER' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
+  readonly sourceType: 'LOCAL_FOLDER' | 'ICLOUD_PICKER' | 'GOOGLE_DRIVE' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
   readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly sourceModifiedAt: string | null; readonly adapterId: string | null; readonly adapterVersion: string | null
@@ -781,6 +781,15 @@ export interface GoogleDriveInboxItemDto {
   readonly attemptCount: number; readonly importRunId: string | null; readonly lastErrorCode: string | null
   readonly discoveredAt: string; readonly updatedAt: string
 }
+export interface GoogleDriveInboxFileDto {
+  readonly item: GoogleDriveInboxItemDto
+  readonly fileBytes: readonly number[]
+}
+export interface GoogleDriveInboxClaimDto {
+  readonly leaseToken: string
+  readonly leaseExpiresAt: string
+  readonly items: readonly GoogleDriveInboxItemDto[]
+}
 
 export interface TransactionPageDto {
   readonly items: readonly TransactionRowDto[]
@@ -945,6 +954,11 @@ export type AppCommand =
   | 'google_drive_inbox_list'
   | 'google_drive_inbox_ignore'
   | 'google_drive_inbox_retry'
+  | 'google_drive_inbox_file_read'
+  | 'google_drive_inbox_claim'
+  | 'google_drive_inbox_mark_staged'
+  | 'google_drive_inbox_mark_failed'
+  | 'google_drive_inbox_reopen'
   | 'dashboard_query'
   | 'dashboard_preferences_get'
   | 'dashboard_preferences_upsert'
@@ -1093,6 +1107,11 @@ export interface PlatformClient {
   listGoogleDriveInbox(householdId: string, connectionId?: string, state?: GoogleDriveInboxStateDto, limit?: number): Promise<readonly GoogleDriveInboxItemDto[]>
   ignoreGoogleDriveInboxItem(householdId: string, itemId: string): Promise<GoogleDriveInboxItemDto>
   retryGoogleDriveInboxItem(householdId: string, itemId: string): Promise<GoogleDriveInboxItemDto>
+  readGoogleDriveInboxFile(householdId: string, itemId: string): Promise<GoogleDriveInboxFileDto>
+  claimGoogleDriveInboxItems(householdId: string, itemIds: readonly string[]): Promise<GoogleDriveInboxClaimDto>
+  markGoogleDriveInboxStaged(householdId: string, itemId: string, leaseToken: string, importRunId: string): Promise<GoogleDriveInboxItemDto>
+  markGoogleDriveInboxFailed(householdId: string, itemId: string, leaseToken: string, errorCode: string): Promise<GoogleDriveInboxItemDto>
+  reopenGoogleDriveInboxItem(householdId: string, itemId: string, importRunId: string): Promise<GoogleDriveInboxItemDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   getDashboardPreferences(householdId: string): Promise<DashboardPreferencesDto>
   upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>

@@ -1879,7 +1879,12 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
     validate_text("media type", &request.media_type, 255)?;
     if !matches!(
         request.source_type.as_str(),
-        "LOCAL_FOLDER" | "ICLOUD_PICKER" | "MANUAL_UPLOAD" | "CAMERA_SCAN" | "OTHER"
+        "LOCAL_FOLDER"
+            | "ICLOUD_PICKER"
+            | "GOOGLE_DRIVE"
+            | "MANUAL_UPLOAD"
+            | "CAMERA_SCAN"
+            | "OTHER"
     ) {
         return Err(ImportWorkflowError::Validation(
             "unsupported source type".into(),
@@ -2512,6 +2517,29 @@ mod tests {
             .expect("iCloud run must remain reviewable");
         assert_eq!(recovered.document_id, "icloud-document");
         assert_eq!(recovered.source_type, "ICLOUD_PICKER");
+    }
+
+    #[test]
+    fn google_drive_source_type_is_preserved_across_persistence_views() {
+        let connection = database();
+        let mut input = request("drive-run", "drive-document", 'e');
+        input.source_type = "GOOGLE_DRIVE".into();
+
+        start_import(&connection, &input, "vault://drive-document").unwrap();
+
+        let persisted: String = connection
+            .query_row(
+                "SELECT source_type FROM source_documents WHERE id='drive-document'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted, "GOOGLE_DRIVE");
+        let preview = preview_import(&connection, "drive-run").unwrap();
+        assert_eq!(preview.source.source_type, "GOOGLE_DRIVE");
+        let pending = list_pending_reviews(&connection, "household").unwrap();
+        assert_eq!(pending.runs.len(), 1);
+        assert_eq!(pending.runs[0].source_type, "GOOGLE_DRIVE");
     }
 
     #[test]

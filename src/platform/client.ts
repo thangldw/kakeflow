@@ -77,6 +77,8 @@ import type {
   GoogleDriveConnectionDto,
   GoogleDriveSyncScheduleDto,
   GoogleDriveInboxItemDto,
+  GoogleDriveInboxFileDto,
+  GoogleDriveInboxClaimDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE' | 'CLOUD_FILE_UNAVAILABLE'
@@ -268,6 +270,11 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listGoogleDriveInbox: async () => [],
       ignoreGoogleDriveInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_ignore') },
       retryGoogleDriveInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_retry') },
+      readGoogleDriveInboxFile: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_file_read') },
+      claimGoogleDriveInboxItems: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_claim') },
+      markGoogleDriveInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_mark_staged') },
+      markGoogleDriveInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_mark_failed') },
+      reopenGoogleDriveInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_reopen') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', templateLayouts: defaultDashboardTemplateLayouts(), updatedAt: new Date(0).toISOString() }),
       upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
@@ -416,6 +423,11 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     listGoogleDriveInbox: (householdId, connectionId, state, limit) => invokeValidated(invoke, 'google_drive_inbox_list', parseGoogleDriveInboxItems, { householdId, connectionId: connectionId ?? null, state: state ?? null, limit: limit ?? null }),
     ignoreGoogleDriveInboxItem: (householdId, itemId) => invokeValidated(invoke, 'google_drive_inbox_ignore', parseGoogleDriveInboxItem, { householdId, itemId }),
     retryGoogleDriveInboxItem: (householdId, itemId) => invokeValidated(invoke, 'google_drive_inbox_retry', parseGoogleDriveInboxItem, { householdId, itemId }),
+    readGoogleDriveInboxFile: (householdId, itemId) => invokeValidated(invoke, 'google_drive_inbox_file_read', parseGoogleDriveInboxFile, { householdId, itemId }),
+    claimGoogleDriveInboxItems: (householdId, itemIds) => invokeValidated(invoke, 'google_drive_inbox_claim', parseGoogleDriveInboxClaim, { householdId, itemIds }),
+    markGoogleDriveInboxStaged: (householdId, itemId, leaseToken, importRunId) => invokeValidated(invoke, 'google_drive_inbox_mark_staged', parseGoogleDriveInboxItem, { householdId, itemId, leaseToken, importRunId }),
+    markGoogleDriveInboxFailed: (householdId, itemId, leaseToken, errorCode) => invokeValidated(invoke, 'google_drive_inbox_mark_failed', parseGoogleDriveInboxItem, { householdId, itemId, leaseToken, errorCode }),
+    reopenGoogleDriveInboxItem: (householdId, itemId, importRunId) => invokeValidated(invoke, 'google_drive_inbox_reopen', parseGoogleDriveInboxItem, { householdId, itemId, importRunId }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     getDashboardPreferences: (householdId) => invokeValidated(invoke, 'dashboard_preferences_get', parseDashboardPreferences, { householdId }),
     upsertDashboardPreferences: (input) => invokeValidated(invoke, 'dashboard_preferences_upsert', parseDashboardPreferences, { input }),
@@ -1976,7 +1988,7 @@ function parseGoogleDriveInboxItem(value: unknown): GoogleDriveInboxItemDto {
   const remoteMd5Checksum = record.remoteMd5Checksum === null ? null : asRequiredString(record.remoteMd5Checksum)
   if (attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('google drive inbox invariant')
   if (remoteMd5Checksum !== null && !/^[0-9a-f]{32}$/.test(remoteMd5Checksum)) throw new TypeError('google drive md5')
-  if (contentSha256 !== null && !['READY', 'NEEDS_MAPPING', 'STAGED', 'IGNORED', 'FAILED'].includes(state)) throw new TypeError('google drive content state')
+  if (contentSha256 !== null && !['PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'IGNORED', 'FAILED'].includes(state)) throw new TypeError('google drive content state')
   return {
     id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), connectionId: asRequiredString(record.connectionId),
     fileId: asRequiredString(record.fileId), generationFingerprint: asCanonicalHash(record.generationFingerprint),
@@ -1989,7 +2001,25 @@ function parseGoogleDriveInboxItem(value: unknown): GoogleDriveInboxItemDto {
 
 function parseGoogleDriveInboxItems(value: unknown): readonly GoogleDriveInboxItemDto[] {
   if (!Array.isArray(value)) throw new TypeError('google drive inbox')
-  return value.map(parseGoogleDriveInboxItem)
+  const items = value.map(parseGoogleDriveInboxItem)
+  if (new Set(items.map((item) => item.id)).size !== items.length) throw new TypeError('duplicate google drive inbox item')
+  return items
+}
+
+function parseGoogleDriveInboxFile(value: unknown): GoogleDriveInboxFileDto {
+  const record = asRecord(value)
+  const item = parseGoogleDriveInboxItem(record.item)
+  if (!['READY', 'NEEDS_MAPPING'].includes(item.state) || item.contentSha256 === null) throw new TypeError('google drive inbox readable state')
+  if (!Array.isArray(record.fileBytes) || record.fileBytes.length > 25 * 1024 * 1024 || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('google drive inbox file')
+  if (item.remoteByteSize !== null && record.fileBytes.length !== item.remoteByteSize) throw new TypeError('google drive inbox file size')
+  return { item, fileBytes: record.fileBytes as number[] }
+}
+
+function parseGoogleDriveInboxClaim(value: unknown): GoogleDriveInboxClaimDto {
+  const record = asRecord(value)
+  const items = parseGoogleDriveInboxItems(record.items)
+  if (items.length < 1 || items.length > 20 || items.some((item) => item.state !== 'PROCESSING' || item.contentSha256 === null)) throw new TypeError('google drive inbox claim')
+  return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
 }
 
 function parseImportSummary(value: unknown): ImportRunCountsDto {
