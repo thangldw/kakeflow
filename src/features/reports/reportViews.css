@@ -34,37 +34,37 @@
 .calendar-day--no-spend { background: #f7fbf5; border-color: #d6e6d0; }
 .calendar-date { align-items: center; background: transparent; border: 0; cursor: pointer; display: flex; justify-content: space-between; padding: 0; width: 100%; }
 .calendar-date b { font-size: 12px; }
-.calendar-date span { background: #dcebd5; border-radius: 99px; color: #4d7041; font-size: 8px; font-weight: 800; padding: 3px 5px; text-transform: uppercase; }
+.calendar-date span { background: #dcebd5; border-radius: 99px; color: #4d7041; font-size: 10px; font-weight: 800; padding: 3px 5px; text-transform: uppercase; }
 .calendar-day-totals { display: grid; gap: 1px; margin-top: 6px; min-height: 29px; }
-.calendar-day-totals span { font-size: 10px; font-weight: 750; }
-.calendar-day-totals small { color: #89938f; font-size: 9px; }
+.calendar-day-totals span { font-size: 12px; font-weight: 750; }
+.calendar-day-totals small { color: #89938f; font-size: 11px; }
 .calendar-income { color: #367563; }
 .calendar-expense { color: #b4534d; }
 .calendar-events { display: grid; gap: 3px; margin-top: 5px; }
 .calendar-event { background: #f4eee1; border: 0; border-left: 3px solid #b79148; border-radius: 4px; color: #5f553f; display: grid; font-style: normal; gap: 1px; min-width: 0; padding: 4px 5px; text-align: left; width: 100%; }
 button.calendar-event { cursor: pointer; }
-.calendar-event > span { font-size: 7px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
-.calendar-event > strong, .calendar-event > em { font-size: 8px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-event > span { font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.calendar-event > strong, .calendar-event > em { font-size: 10px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .calendar-event--cash_inflow { background: #e7f3ef; border-color: #5e9581; }
 .calendar-event--cash_outflow { background: #f9ece9; border-color: #c37368; }
 .calendar-event--card_payment { background: #e9eef5; border-color: #66809d; }
 .calendar-legend { display: flex; flex-wrap: wrap; gap: 13px; justify-content: flex-end; }
-.calendar-legend span { align-items: center; color: #77847f; display: inline-flex; font-size: 10px; gap: 5px; }
+.calendar-legend span { align-items: center; color: #77847f; display: inline-flex; font-size: 12px; gap: 5px; }
 .calendar-legend i { border-radius: 2px; display: inline-block; height: 7px; width: 7px; }
 .legend-income { background: #5e9581; }.legend-expense { background: #c37368; }.legend-card { background: #b79148; }.legend-no-spend { background: #b8d4ae; }
 .report-kpi-grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .report-kpi-grid article { background: #fff; border: 1px solid #e2e8e4; border-radius: 14px; display: grid; gap: 5px; padding: 17px; }
 .report-kpi-grid article > span:first-child { color: #73817c; font-size: 11px; font-weight: 800; }
 .report-kpi-grid article > strong { font-size: clamp(19px, 2.3vw, 27px); letter-spacing: -.04em; }
-.report-kpi-grid article > small { color: #87928e; font-size: 10px; }
+.report-kpi-grid article > small { color: #87928e; font-size: 12px; }
 .report-delta { font-size: 11px; font-weight: 750; }.report-delta small { color: inherit; }.report-delta--positive { color: #3d7a67; }.report-delta--negative { color: #bd5e55; }
 .report-driver-grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .report-section { background: #fff; border: 1px solid #e2e8e4; border-radius: 15px; min-width: 0; padding: 17px; }
 .report-section-head { align-items: center; display: flex; justify-content: space-between; margin-bottom: 12px; }
-.report-section-head h3 { font-size: 15px; margin: 0; }.report-section-head p { color: #84908b; font-size: 10px; margin: 3px 0 0; }
+.report-section-head h3 { font-size: 15px; margin: 0; }.report-section-head p { color: #84908b; font-size: 12px; margin: 3px 0 0; }
 .report-section table { border-collapse: collapse; min-width: 460px; width: 100%; }
 .report-section th, .report-section td { border-bottom: 1px solid #edf0ee; font-size: 11px; padding: 9px 7px; text-align: right; }
-.report-section thead th { color: #85918c; font-size: 9px; letter-spacing: .04em; }
+.report-section thead th { color: #85918c; font-size: 11px; letter-spacing: .04em; }
 .report-section th:first-child { text-align: left; }
 .report-section tbody th { color: #35433e; font-weight: 700; }
 .report-section tbody th button { background: transparent; border: 0; color: #365f54; cursor: pointer; font-weight: inherit; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
@@ -79,12 +79,12 @@ button.calendar-event { cursor: pointer; }
 .annual-bars { align-items: flex-end; background: #f3f5f3; border-radius: 7px 7px 3px 3px; display: flex; gap: 3px; justify-content: center; min-height: 160px; overflow: hidden; padding: 5px 5px 0; }
 .annual-bars i { border-radius: 4px 4px 0 0; display: block; min-height: 2px; width: min(14px, 42%); }
 .annual-income { background: #5d8e7d; }.annual-expense { background: #c7766b; }
-.annual-month b { font-size: 10px; }.annual-month small { color: #76857f; font-size: 8px; min-height: 12px; white-space: nowrap; }
+.annual-month b { font-size: 12px; }.annual-month small { color: #76857f; font-size: 10px; min-height: 12px; white-space: nowrap; }
 .annual-month--partial .annual-bars, .annual-month--future .annual-bars { background: repeating-linear-gradient(135deg, #f6f7f6, #f6f7f6 6px, #e8ece9 6px, #e8ece9 9px); border: 1px dashed #cad2cd; }
 .annual-month--partial .annual-bars::after, .annual-month--future .annual-bars::after { align-self: center; color: #7f8c87; content: '—'; font-size: 14px; }
 .annual-month--future { opacity: .62; }
 .annual-chart-legend { display: flex; flex-wrap: wrap; gap: 14px; justify-content: flex-end; margin-top: 12px; }
-.annual-chart-legend span { align-items: center; color: #71817a; display: inline-flex; font-size: 10px; gap: 5px; }.annual-chart-legend i { border-radius: 2px; display: inline-block; height: 8px; width: 8px; }
+.annual-chart-legend span { align-items: center; color: #71817a; display: inline-flex; font-size: 12px; gap: 5px; }.annual-chart-legend i { border-radius: 2px; display: inline-block; height: 8px; width: 8px; }
 .annual-limitations ul { color: #6f7e78; font-size: 11px; line-height: 1.7; margin: 0; padding-left: 20px; }
 .report-visually-hidden { border: 0; clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; white-space: nowrap; width: 1px; }
 

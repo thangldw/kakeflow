@@ -15,16 +15,18 @@ translation.
 
 The implementation carries the source's warm paper canvas, deep green-black ink,
 olive structure, restrained borders, pastel lavender/cream/peach surfaces,
-monospaced section labels, low elevation, and left-edge semantic accents into the
+compact section labels, low elevation, and left-edge semantic accents into the
 existing KakeFlow application shell. It intentionally preserves the product's
 sidebar, dashboard grid, charts, data density, and financial workflows rather
 than copying the reference infographic composition.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: `Avenir Next`/system UI plus Hiragino/Noto Japanese
-  fallbacks reproduce the friendly editorial body style; monospaced brand,
-  eyebrow, and navigation captions reproduce the source's canvas labels.
+- Fonts and typography: a cross-platform system stack uses Inter when available,
+  native macOS/Windows UI fonts next, and Noto Sans JP/Hiragino Sans/Yu Gothic
+  UI/Meiryo for Japanese. Brand, navigation, and section labels use the same
+  friendly sans-serif system; monospace is reserved for source data, invite
+  codes, keyboard hints, and technical identifiers.
 - Spacing and layout rhythm: existing desktop information architecture remains
   intact; cards use 8–12 px radii, thin borders, low shadow, and dashed section
   separation consistent with the reference.

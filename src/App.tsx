@@ -112,6 +112,7 @@ import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRat
 import { platformClient, PlatformIpcError } from './platform'
 import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
+import { useI18n } from './i18n'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const portfolioPlatform = createPortfolioPlatform()
@@ -312,41 +313,42 @@ const navigation: NavigationItem[] = [
 function householdInitials(name: string): string { return name.trim().slice(0, 2) || '家計' }
 
 function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold, importActionableCount }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; importActionableCount: number }) {
+  const { locale, text } = useI18n()
   const activeHouseholdName = households.find((household) => household.id === activeHouseholdId)?.name ?? '家計'
   return (
     <>
-      {open && <button className="sidebar-backdrop" aria-label="メニューを閉じる" onClick={close} />}
-      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-label="メインナビゲーション">
+      {open && <button className="sidebar-backdrop" aria-label={text('メニューを閉じる')} onClick={close} />}
+      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-label={text('メインナビゲーション')}>
         <div className="brand">
           <div className="brand-mark"><Leaf size={21} strokeWidth={2.4} /></div>
           <span>kake<span>flow</span></span>
-          <button className="icon-btn mobile-close" aria-label="メニューを閉じる" onClick={close}><X size={19} /></button>
+          <button className="icon-btn mobile-close" aria-label={text('メニューを閉じる')} onClick={close}><X size={19} /></button>
         </div>
 
         <div className="household-picker">
           <div className="avatar" aria-hidden="true">{householdInitials(activeHouseholdName)}</div>
-          <div><select aria-label="世帯を切り替える" value={activeHouseholdId ?? ''} disabled={households.length < 2} onChange={(event) => selectHousehold(event.target.value)}>{households.length === 0 ? <option value="">家計</option> : households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select><small>{households.length > 1 ? `${households.length}世帯` : 'ローカル世帯'}</small></div>
+          <div><select aria-label={text('世帯を切り替える')} value={activeHouseholdId ?? ''} disabled={households.length < 2} onChange={(event) => selectHousehold(event.target.value)}>{households.length === 0 ? <option value="">{text('家計')}</option> : households.map((household) => <option key={household.id} value={household.id}>{household.name}</option>)}</select><small>{households.length > 1 ? `${households.length}世帯` : text('ローカル世帯')}</small></div>
         </div>
 
         <nav>
-          <p className="nav-caption">メニュー</p>
+          <p className="nav-caption">{text('メニュー')}</p>
           {navigation.map((item) => (
             <button
               key={item.id}
               className={`nav-item ${page === item.id ? 'active' : ''}`}
-              aria-label={item.id === 'import' && importActionableCount > 0 ? `${item.label}（${importActionableCount}件の確認対象）` : item.label}
+              aria-label={item.id === 'import' && importActionableCount > 0 ? locale === 'ja' ? `${item.label}（${importActionableCount}件の確認対象）` : `${text(item.label)} (${importActionableCount})` : text(item.label)}
               onClick={() => { setPage(item.id); close() }}
             >
               <item.icon size={19} />
-              <span>{item.label}</span>
+              <span>{text(item.label)}</span>
               {item.id === 'import' && importActionableCount > 0 ? <b aria-hidden="true">{importActionableCount > 99 ? '99+' : importActionableCount}</b> : item.badge && <b>{item.badge}</b>}
             </button>
           ))}
         </nav>
 
         <div className="sidebar-foot">
-          <div className={`sync-status ${bootstrap?.database.healthy ? '' : 'sync-status--offline'}`}><span /><div><strong>{bootstrap?.database.healthy ? '暗号化DB 接続済み' : platformClient.runtime === 'web' ? 'ブラウザプレビュー' : 'データベース確認中'}</strong><small>{bootstrap?.database.healthy ? `スキーマ v${bootstrap.database.schemaVersion}` : 'デスクトップ版で安全に保存'}</small></div></div>
-          <button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => { setPage('settings'); close() }}><Settings size={19} /><span>設定</span></button>
+          <div className={`sync-status ${bootstrap?.database.healthy ? '' : 'sync-status--offline'}`}><span /><div><strong>{text(bootstrap?.database.healthy ? '暗号化DB 接続済み' : platformClient.runtime === 'web' ? 'ブラウザプレビュー' : 'データベース確認中')}</strong><small>{bootstrap?.database.healthy ? `Schema v${bootstrap.database.schemaVersion}` : text('デスクトップ版で安全に保存')}</small></div></div>
+          <button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => { setPage('settings'); close() }}><Settings size={19} /><span>{text('設定')}</span></button>
         </div>
       </aside>
     </>
@@ -354,34 +356,38 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
 }
 
 function Topbar({ openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, attributionScope, setAttributionScope, members, showAccountScope, householdName }: { openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; attributionScope: AttributionScopeDto; setAttributionScope: (scope: AttributionScopeDto) => void; members: readonly HouseholdMemberDto[]; showAccountScope: boolean; householdName: string }) {
+  const { locale, setLocale, text } = useI18n()
   return (
     <header className="topbar">
-      <button className="icon-btn menu-btn" aria-label="メニューを開く" onClick={openMenu}><Menu size={21} /></button>
-      <div className="top-actions">{showAccountScope && <><label className="scope-picker"><span>口座スコープ</span><select aria-label="口座スコープ" value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">すべての口座</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="scope-picker"><span>家族集計範囲</span><select aria-label="家族集計範囲" value={attributionScopeValue(attributionScope)} onChange={(event) => setAttributionScope(attributionScopeFromValue(event.target.value))}><option value="ALL">世帯全体</option><option value="HOUSEHOLD_COMMON">世帯共通</option>{members.map((member) => <option key={member.id} value={`MEMBER:${member.id}`}>{member.displayName}{member.status === 'ARCHIVED' ? '（アーカイブ済み）' : ''}</option>)}</select></label></>}<label className="period-picker"><span>対象月</span><input aria-label="対象月" type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="top-avatar" aria-label={`${householdName}のローカル家計`}>{householdInitials(householdName)}</div></div>
+      <button className="icon-btn menu-btn" aria-label={text('メニューを開く')} onClick={openMenu}><Menu size={21} /></button>
+      <div className="top-actions">{showAccountScope && <><label className="scope-picker"><span>{text('口座スコープ')}</span><select aria-label={text('口座スコープ')} value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">{text('すべての口座')}</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="scope-picker"><span>{text('家族集計範囲')}</span><select aria-label={text('家族集計範囲')} value={attributionScopeValue(attributionScope)} onChange={(event) => setAttributionScope(attributionScopeFromValue(event.target.value))}><option value="ALL">{text('世帯全体')}</option><option value="HOUSEHOLD_COMMON">{text('世帯共通')}</option>{members.map((member) => <option key={member.id} value={`MEMBER:${member.id}`}>{member.displayName}{member.status === 'ARCHIVED' ? ' (archived)' : ''}</option>)}</select></label></>}<label className="period-picker"><span>{text('対象月')}</span><input aria-label={text('対象月')} type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><label className="language-picker"><span>{text('言語')}</span><select aria-label={text('言語')} value={locale} onChange={(event) => setLocale(event.target.value as 'ja' | 'en' | 'vi')}><option value="ja">日本語</option><option value="en">English</option><option value="vi">Tiếng Việt</option></select></label><div className="top-avatar" aria-label={householdName}>{householdInitials(householdName)}</div></div>
     </header>
   )
 }
 
 function PageHeader({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children?: React.ReactNode }) {
+  const { text } = useI18n()
   return (
     <div className="page-header">
-      <div><p>{eyebrow}</p><h1>{title}</h1><span>{description}</span></div>
+      <div><p>{text(eyebrow)}</p><h1>{text(title)}</h1><span>{text(description)}</span></div>
       <div className="page-actions">{children}</div>
     </div>
   )
 }
 
 function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: string; value: string; meta: string; trend?: string; icon: typeof TrendingUp; accent: string }) {
+  const { locale, text } = useI18n()
   return (
     <article className="kpi-card">
-      <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{label}</span></div>
+      <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{text(label)}</span></div>
       <strong>{value}</strong>
-      <div className="kpi-meta">{trend && <em aria-label={`${trend} 増加`}><ArrowUpRight aria-hidden="true" size={13} /><span aria-hidden="true">{trend}</span></em>}<span>{meta}</span></div>
+      <div className="kpi-meta">{trend && <em aria-label={locale === 'ja' ? `${trend} 増加` : trend}><ArrowUpRight aria-hidden="true" size={13} /><span aria-hidden="true">{trend}</span></em>}<span>{text(meta)}</span></div>
     </article>
   )
 }
 
 function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month, income: point.income * 1000, expense: point.expense * 1000 })), incomeLabel = '収入', expenseLabel = '支出' }: { data?: readonly { month: string; income: number; expense: number }[]; incomeLabel?: string; expenseLabel?: string }) {
+  const { locale, text } = useI18n()
   if (data.length === 0) return <p className="empty-state">トレンドを表示する取引はまだありません。</p>
   const max = Math.max(1, ...data.flatMap((point) => [point.income, point.expense])) * 1.08
   const width = 620
@@ -393,7 +399,7 @@ function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month,
   return (
     <div className="chart-wrap">
       <div className="chart-y"><span>{yen(Math.round(max))}</span><span>{yen(Math.round(max * .67))}</span><span>{yen(Math.round(max * .34))}</span><span>¥0</span></div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`直近6か月の${incomeLabel}と${expenseLabel}`}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={locale === 'ja' ? `直近6か月の${incomeLabel}と${expenseLabel}` : `${text(incomeLabel)} / ${text(expenseLabel)}, last 6 months`}>
         {[44, 87, 130, 173].map((line) => <line key={line} x1="18" y1={line} x2="602" y2={line} className="gridline" />)}
         <path d={`${path('income')} L ${x(data.length - 1)} ${height - 10} L ${x(0)} ${height - 10} Z`} className="area-income" />
         <path d={path('income')} className="line-income" />
@@ -401,13 +407,14 @@ function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month,
         {data.map((d, i) => <circle key={`i${d.month}`} cx={x(i)} cy={y(d.income)} r="3.5" className="dot-income" />)}
         {data.map((d, i) => <circle key={`e${d.month}`} cx={x(i)} cy={y(d.expense)} r="3.5" className="dot-expense" />)}
       </svg>
-      <table className="visually-hidden"><caption>{`直近6か月の${incomeLabel}と${expenseLabel}`}</caption><thead><tr><th>月</th><th>{incomeLabel}</th><th>{expenseLabel}</th></tr></thead><tbody>{data.map((point) => <tr key={`table-${point.month}`}><th>{point.month}</th><td>{point.income}円</td><td>{point.expense}円</td></tr>)}</tbody></table>
+      <table className="visually-hidden"><caption>{locale === 'ja' ? `直近6か月の${incomeLabel}と${expenseLabel}` : `${text(incomeLabel)} / ${text(expenseLabel)}`}</caption><thead><tr><th>{locale === 'ja' ? '月' : text('対象月')}</th><th>{text(incomeLabel)}</th><th>{text(expenseLabel)}</th></tr></thead><tbody>{data.map((point) => <tr key={`table-${point.month}`}><th>{point.month}</th><td>{point.income}{locale === 'ja' ? '円' : ' JPY'}</td><td>{point.expense}{locale === 'ja' ? '円' : ' JPY'}</td></tr>)}</tbody></table>
       <div className="chart-x">{data.map((d) => <span key={d.month}>{d.month.includes('-') ? `${Number(d.month.slice(5))}月` : d.month}</span>)}</div>
     </div>
   )
 }
 
 function SpendingCard({ expense = currentMonthMetrics.expense, categories, onDetails }: { expense?: number; categories?: readonly { name: string; amount: number }[]; onDetails: () => void }) {
+  const { text } = useI18n()
   const palette = ['#ed714d', '#6f7d57', '#e4aa45', '#7f9ba5', '#c7b8a0', '#8d7ca8']
   const source = categories ? categories.filter((item) => item.amount > 0).slice(0, 6).map((item, index) => ({ ...item, color: palette[index % palette.length] })) : categoryData
   const categoryTotal = source.reduce((total, item) => total + item.amount, 0)
@@ -415,10 +422,10 @@ function SpendingCard({ expense = currentMonthMetrics.expense, categories, onDet
   const gradient = legend.length > 0 ? `conic-gradient(${legend.map((d, i) => `${d.color} ${legend.slice(0, i).reduce((a, b) => a + b.pct, 0)}% ${legend.slice(0, i + 1).reduce((a, b) => a + b.pct, 0)}%`).join(',')})` : '#e8ebe4'
   return (
     <article className="panel spending-card">
-      <div className="panel-head"><div><h2>支出の内訳</h2><p>今月のカテゴリー別</p></div><button className="text-btn" onClick={onDetails}>詳細を見る <ArrowRight size={14} /></button></div>
+      <div className="panel-head"><div><h2>{text('支出の内訳')}</h2><p>{text('今月のカテゴリー別')}</p></div><button className="text-btn" onClick={onDetails}>{text('詳細を見る')} <ArrowRight size={14} /></button></div>
       <div className="spending-body">
-        <div className="donut" style={{ background: gradient }}><div><small>合計</small><strong>{yen(expense)}</strong></div></div>
-        <div className="legend">{legend.length > 0 ? legend.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{item.name}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>) : <p className="empty-state">支出はまだありません。</p>}</div>
+        <div className="donut" style={{ background: gradient }}><div><small>{text('合計')}</small><strong>{yen(expense)}</strong></div></div>
+        <div className="legend">{legend.length > 0 ? legend.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{text(item.name)}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>) : <p className="empty-state">—</p>}</div>
       </div>
     </article>
   )
@@ -432,15 +439,16 @@ const transactionLabelNames: Readonly<Record<TransactionLabelDto, string>> = {
 }
 
 function TransactionRows({ rows = transactions, onSelect, selectedIds, onToggleSelection }: { rows?: readonly Transaction[]; onSelect?: (id: string, trigger: HTMLButtonElement) => void; selectedIds?: ReadonlySet<string>; onToggleSelection?: (id: string, selected: boolean) => void }) {
+  const { text } = useI18n()
   return <div className="transaction-list">{rows.map((tx) => {
     const Icon = txIcons[tx.icon]
     const content = <>
       <div className={`transaction-icon ${tx.amount > 0 ? 'positive' : ''}`}><Icon size={18} /></div>
-      <div className="transaction-main"><strong>{tx.merchant}</strong><span>{tx.date} ・ {tx.detail}</span><div className="transaction-family-labels"><span className={tx.calculationTarget === false ? 'calculation-badge excluded' : 'calculation-badge included'}>{tx.calculationTarget === false ? '集計対象外' : '計算対象'}</span>{tx.attributionLabel && tx.audienceLabel && <><span>帰属: {tx.attributionLabel}</span><span>表示: {tx.audienceLabel}</span></>}{tx.labels?.map((label) => <span className="metadata-label" key={label}>{transactionLabelNames[label as TransactionLabelDto] ?? label}</span>)}{tx.tags?.map((tag) => <span className="metadata-tag" key={tag}>#{tag}</span>)}</div></div>
-      <span className="category-pill">{tx.category}</span>
+      <div className="transaction-main"><strong>{tx.merchant}</strong><span>{tx.date} ・ {tx.detail}</span><div className="transaction-family-labels"><span className={tx.calculationTarget === false ? 'calculation-badge excluded' : 'calculation-badge included'}>{text(tx.calculationTarget === false ? '集計対象外' : '計算対象')}</span>{tx.attributionLabel && tx.audienceLabel && <><span>{text('帰属')}: {tx.attributionLabel}</span><span>{text('表示')}: {tx.audienceLabel}</span></>}{tx.labels?.map((label) => <span className="metadata-label" key={label}>{text(transactionLabelNames[label as TransactionLabelDto] ?? label)}</span>)}{tx.tags?.map((tag) => <span className="metadata-tag" key={tag}>#{tag}</span>)}</div></div>
+      <span className="category-pill">{text(tx.category)}</span>
       <span className="account-label">{tx.account}</span>
       <strong className={tx.amount > 0 ? 'amount-positive' : ''}>{yen(tx.amount)}</strong>
-      {tx.status === 'review' && <span className="review-dot" title="要確認" />}
+      {tx.status === 'review' && <span className="review-dot" title={text('要確認')} />}
     </>
     const row = onSelect
       ? <button type="button" className="transaction-row selectable" onClick={(event) => onSelect(tx.id, event.currentTarget)}>{content}</button>
@@ -452,6 +460,7 @@ function TransactionRows({ rows = transactions, onSelect, selectedIds, onToggleS
 }
 
 function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonly CardSettlementDto[]; desktop: boolean; onOpen: () => void }) {
+  const { text } = useI18n()
   const cards = desktop ? liveCards.map((card) => ({
     name: card.cardName, mask: card.maskedIdentifier ?? '番号未設定', dueDate: card.paymentDueOn ?? card.periodEnd,
     statement: card.statementAmountJpy, bankDebit: card.paidAmountJpy || undefined,
@@ -461,10 +470,10 @@ function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonl
   })) : cardSettlements
   return (
     <article className="panel reconciliation">
-      <div className="panel-head"><div><h2>カード支払い</h2><p>請求と口座引落の照合</p></div><button className="text-btn" onClick={onOpen}>照合を開く <ArrowRight size={14} /></button></div>
+      <div className="panel-head"><div><h2>{text('カード支払い')}</h2><p>{text('請求と口座引落の照合')}</p></div><button className="text-btn" onClick={onOpen}>{text('照合を開く')} <ArrowRight size={14} /></button></div>
       <div className="card-stack">{cards.length > 0 ? cards.map((card) => <div className="settlement" key={card.name}>
-        <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{card.status === 'reconciled' ? '全額照合' : card.status === 'possible' ? '一部・候補あり' : '引落待ち'}</b></div>
-        <div className="settlement-values"><span>請求額 <strong>{yen(card.statement)}</strong></span><span>口座引落 <strong>{card.bankDebit ? yen(card.bankDebit) : '—'}</strong></span></div>
+        <div className="settlement-title"><i style={{ background: card.color }} /><div><strong>{card.name}</strong><span>{card.mask} ・ {card.dueDate}</span></div><b className={card.status}>{text(card.status === 'reconciled' ? '全額照合' : card.status === 'possible' ? '一部・候補あり' : '引落待ち')}</b></div>
+        <div className="settlement-values"><span>{text('請求額')} <strong>{yen(card.statement)}</strong></span><span>{text('口座引落')} <strong>{card.bankDebit ? yen(card.bankDebit) : '—'}</strong></span></div>
         <div className="progress"><span style={{ width: `${card.progress}%` }} /></div>
       </div>) : <p className="empty-state">カード明細はまだありません。</p>}</div>
     </article>
@@ -472,14 +481,15 @@ function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonl
 }
 
 function DashboardDataQuality({ counts, desktop, onOpenImport }: { counts: ImportRunCountsDto | null; desktop: boolean; onOpenImport: () => void }) {
+  const { localeCode, text } = useI18n()
   const data = desktop ? counts : { sourceDocuments: 12, sourceRecords: 1_248, pendingCandidates: 4, readyCandidates: 2, failed: 0, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho-202607.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 4 } as ImportRunCountsDto
   const reviewCount = (data?.pendingCandidates ?? 0) + (data?.readyCandidates ?? 0)
   const state = !data || data.sourceDocuments === 0 ? '原本データなし' : data.failed > 0 ? '取込エラーあり' : reviewCount > 0 ? '確認待ちあり' : '確認済みデータを反映'
-  const latest = data?.latestSuccessfulImportAt ? new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.latestSuccessfulImportAt)) : 'まだありません'
+  const latest = data?.latestSuccessfulImportAt ? new Intl.DateTimeFormat(localeCode, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.latestSuccessfulImportAt)) : text('まだありません')
   return <section className="panel dashboard-data-quality" aria-labelledby="dashboard-data-quality-title">
-    <div className="panel-head"><div><h2 id="dashboard-data-quality-title">データ品質</h2><p>{desktop ? 'この端末の原本・取込・確認状態' : 'ブラウザプレビュー用のサンプル状態'}</p></div><b className={data?.failed ? 'error' : reviewCount ? 'review' : 'ready'}>{state}</b></div>
-    <div className="data-quality-grid"><div><span>最終確定取込</span><strong>{latest}</strong><small>{data?.latestSourceFilename ?? '原本未登録'}{data?.latestSourceType ? ` ・ ${data.latestSourceType}` : ''}</small></div><div><span>原本とソース行</span><strong>{data?.sourceDocuments ?? 0}原本</strong><small>{(data?.sourceRecords ?? 0).toLocaleString('ja-JP')}行 ・ {data?.distinctSourceTypes ?? 0}種類</small></div><div><span>確認待ち候補</span><strong>{reviewCount}件</strong><small>確定するまでダッシュボード集計外</small></div><div><span>失敗した取込</span><strong>{data?.failed ?? 0}件</strong><small>再実行または原本確認が必要</small></div></div>
-    <button className="secondary-btn" onClick={onOpenImport}>インポート Inboxを確認 <ArrowRight size={14} /></button>
+    <div className="panel-head"><div><h2 id="dashboard-data-quality-title">{text('データ品質')}</h2><p>{text(desktop ? 'この端末の原本・取込・確認状態' : 'ブラウザプレビュー用のサンプル状態')}</p></div><b className={data?.failed ? 'error' : reviewCount ? 'review' : 'ready'}>{text(state)}</b></div>
+    <div className="data-quality-grid"><div><span>{text('最終確定取込')}</span><strong>{latest}</strong><small>{data?.latestSourceFilename ?? text('原本未登録')}{data?.latestSourceType ? ` ・ ${data.latestSourceType}` : ''}</small></div><div><span>{text('原本とソース行')}</span><strong>{data?.sourceDocuments ?? 0}{text('原本')}</strong><small>{(data?.sourceRecords ?? 0).toLocaleString(localeCode)}{text('行')} ・ {data?.distinctSourceTypes ?? 0}{text('種類')}</small></div><div><span>{text('確認待ち候補')}</span><strong>{reviewCount}{text('件')}</strong><small>{text('確定するまでダッシュボード集計外')}</small></div><div><span>{text('失敗した取込')}</span><strong>{data?.failed ?? 0}{text('件')}</strong><small>{text('再実行または原本確認が必要')}</small></div></div>
+    <button className="secondary-btn" onClick={onOpenImport}>{text('インポート Inboxを確認')} <ArrowRight size={14} /></button>
   </section>
 }
 
@@ -584,6 +594,7 @@ function DashboardControls({ preferences, disabled, onChange }: { preferences: D
 }
 
 function Overview({ setPage, openAllActions, householdId, accountGroupId, attributionScope, revision, liveDashboard, liveTransactions, liveCards, importCounts, desktop, householdName, month, preferences, preferencesBusy, updatePreferences }: { setPage: (page: PageId) => void; openAllActions: () => void; householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; revision: number; liveDashboard: DashboardMonthlyTotalsDto | null; liveTransactions: readonly TransactionRowDto[]; liveCards: readonly CardSettlementDto[]; importCounts: ImportRunCountsDto | null; desktop: boolean; householdName: string; month: string; preferences: DashboardPreferencesDto; preferencesBusy: boolean; updatePreferences: (change: DashboardPreferenceChange) => void }) {
+  const { locale, localeCode, text } = useI18n()
   const cashFlow = preferences.template === 'CASH_FLOW'
   const income = desktop ? liveDashboard?.incomeJpy ?? 0 : currentMonthMetrics.income
   const expense = desktop ? liveDashboard?.expenseJpy ?? 0 : currentMonthMetrics.expense
@@ -606,20 +617,25 @@ function Overview({ setPage, openAllActions, householdId, accountGroupId, attrib
         ? [<KpiCard key="liabilities" label="カードを含む負債" value={yen(liabilities)} meta={`${liveDashboard?.netWorthAsOf ?? '月末'} 現在`} icon={CreditCard} accent="#f7e3d9" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta="カード購入は利用日に計上" icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="assets" label="支払原資を含む資産" value={yen(assets)} meta="台帳上の資産残高" icon={WalletCards} accent="#dce9e6" />, <KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta="支払い後も二重計上しません" icon={TrendingUp} accent="#e4edda" />]
         : [<KpiCard key="net-worth" label="純資産" value={yen(netWorth)} meta={desktop ? `${liveDashboard?.netWorthAsOf ?? '月末'} 現在` : '前月比'} trend={desktop ? undefined : '2.8%'} icon={TrendingUp} accent="#e4edda" />, <KpiCard key="income" label="今月の収入" value={yen(income)} meta={desktop ? '発生ベース' : '予定の 104%'} trend={desktop ? undefined : '4.2%'} icon={ArrowDownLeft} accent="#dce9e6" />, <KpiCard key="expense" label="今月の支出" value={yen(expense)} meta={desktop ? 'カード引落は二重計上しません' : `予算 ${yen(currentMonthMetrics.budget)}`} icon={ArrowUpRight} accent="#f7e3d9" />, <KpiCard key="savings" label="貯蓄見込み" value={yen(projectedSavings)} meta={desktop ? '収入 − 支出' : `貯蓄率 ${(savingsRate * 100).toFixed(1)}%`} trend={desktop ? undefined : '6.1%'} icon={CircleDollarSign} accent="#eee5cf" />]
   const panels: Record<DashboardWidgetIdDto, React.ReactNode> = {
-    TREND: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>{cashFlow ? '入出金の推移' : '収支の推移'}</h2><p>{cashFlow ? '資金移動ベース' : '発生ベース'}・直近6か月</p></div><div className="chart-legend"><span className="income">{cashFlow ? '入金' : '収入'}</span><span className="expense">{cashFlow ? '出金' : '支出'}</span></div></div><TrendChart data={trend} incomeLabel={cashFlow ? '入金' : '収入'} expenseLabel={cashFlow ? '出金' : '支出'} /></article>,
+    TREND: <article key="trend" className="panel trend-panel dashboard-widget dashboard-widget--trend"><div className="panel-head"><div><h2>{text(cashFlow ? '入出金の推移' : '収支の推移')}</h2><p>{text(cashFlow ? '資金移動' : '発生ベース')} · 6 months</p></div><div className="chart-legend"><span className="income">{text(cashFlow ? '入金' : '収入')}</span><span className="expense">{text(cashFlow ? '出金' : '支出')}</span></div></div><TrendChart data={trend} incomeLabel={cashFlow ? '入金' : '収入'} expenseLabel={cashFlow ? '出金' : '支出'} /></article>,
     SPENDING: <div key="spending" className="dashboard-widget dashboard-widget--spending"><SpendingCard expense={expense} categories={categories} onDetails={() => setPage('transactions')} /></div>,
-    RECENT: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>{cashFlow ? '最近の資金移動' : '最近の取引'}</h2><p>{cashFlow ? 'カード購入を除く実際の入出金' : '確認済みの最新データ'}</p></div><button className="text-btn" onClick={() => setPage('transactions')}>すべて見る <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">確定した取引はまだありません。</p>}</article>,
+    RECENT: <article key="recent" className="panel recent-panel dashboard-widget dashboard-widget--recent"><div className="panel-head"><div><h2>{text(cashFlow ? '最近の資金移動' : '最近の取引')}</h2><p>{text('確認済みの最新データ')}</p></div><button className="text-btn" onClick={() => setPage('transactions')}>{text('すべて見る')} <ArrowRight size={14} /></button></div>{displayTransactions.length > 0 ? <TransactionRows rows={displayTransactions} /> : <p className="empty-state">—</p>}</article>,
     CARDS: <div key="cards" className="dashboard-widget dashboard-widget--cards"><ReconciliationMini liveCards={liveCards} desktop={desktop} onOpen={() => setPage('cards')} /></div>,
   }
   const activeLayout = activeDashboardLayout(preferences)
   const availablePanels = activeLayout.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
   const visiblePanels = availablePanels.filter((widget) => !effectiveHiddenWidgets(preferences).includes(widget))
   const panelOrder = visiblePanels.map((widget) => panels[widget])
+  const monthLabel = new Intl.DateTimeFormat(localeCode, { year: 'numeric', month: 'long' }).format(new Date(`${month}-01T00:00:00`))
+  const overviewDescription = locale === 'ja'
+    ? (desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を${cashFlow ? '資金移動' : '発生'}ベースで集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`)
+    : locale === 'vi' ? `Tổng hợp ${desktop ? liveDashboard?.postedTransactionCount ?? 0 : transactions.length} giao dịch đã xác nhận trong tháng đã chọn.`
+      : `Summarizing ${desktop ? liveDashboard?.postedTransactionCount ?? 0 : transactions.length} confirmed transactions for the selected month.`
   return <div className={`overview overview--${preferences.template.toLowerCase().replaceAll('_', '-')}`}>
-    <PageHeader eyebrow={`${month.replace('-', '年')}月`} title={householdName === '家計' ? '家計の概要' : `${householdName}の家計`} description={desktop ? `選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を${cashFlow ? '資金移動' : '発生'}ベースで集計しています（集計対象外を除く）。` : `家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`}>
+    <PageHeader eyebrow={monthLabel} title={householdName === '家計' ? '家計の概要' : locale === 'ja' ? `${householdName}の家計` : `${householdName} · ${text('家計の概要')}`} description={overviewDescription}>
       <DashboardControls preferences={preferences} disabled={preferencesBusy || !desktop} onChange={updatePreferences} />
-      {!desktop && <span className="dashboard-preview-note">表示設定の保存はデスクトップ版で利用できます。</span>}
-      {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> 資産・投資を見る</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> カード照合を開く</button> : cashFlow ? <button className="primary-btn" onClick={() => setPage('transactions')}><WalletCards size={17} /> 資金移動を見る</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> ファイルを取り込む</button>}
+      {!desktop && <span className="dashboard-preview-note">{text('表示設定の保存はデスクトップ版で利用できます。')}</span>}
+      {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> {text('資産・投資を見る')}</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> {text('カード照合を開く')}</button> : cashFlow ? <button className="primary-btn" onClick={() => setPage('transactions')}><WalletCards size={17} /> {text('資金移動を見る')}</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> {text('ファイルを取り込む')}</button>}
     </PageHeader>
     <HomeActionCenter householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} asOf={periodFromMonth(month).toDate} revision={revision} desktop={desktop} onAction={(action) => setPage(pageForAction(action))} onViewAll={openAllActions} />
     <section className="kpi-grid">{kpis}</section>
@@ -739,6 +755,7 @@ function TransactionDetailPanel({ detail, accounts, members, returnFocus, onClos
 }
 
 function TransactionsPage({ householdId, accountGroupId, attributionScope, revision, month, accounts, members, onChanged }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; revision: number; month: string; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; onChanged: () => void }) {
+  const { text } = useI18n()
   const [query, setQuery] = useState('')
   const [basis, setBasis] = useState<'ACCRUAL' | 'CASH'>('ACCRUAL')
   const [calculationFilter, setCalculationFilter] = useState<'ALL' | 'INCLUDED' | 'EXCLUDED'>('ALL')
@@ -877,13 +894,13 @@ function TransactionsPage({ householdId, accountGroupId, attributionScope, revis
     {!showManual && manualNotice && <div className="import-notice" role="status">{manualNotice}</div>}
     {detailNotice && <div className="import-notice" role="status">{detailNotice}</div>}
     <section className="panel table-panel">
-      <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="店舗、カテゴリー、口座を検索" /></div><div className="calculation-filter" aria-label="計算対象フィルター"><button className={calculationFilter === 'ALL' ? 'active' : ''} aria-pressed={calculationFilter === 'ALL'} onClick={() => setCalculationFilter('ALL')}>すべて</button><button className={calculationFilter === 'INCLUDED' ? 'active' : ''} aria-pressed={calculationFilter === 'INCLUDED'} onClick={() => setCalculationFilter('INCLUDED')}>計算対象</button><button className={calculationFilter === 'EXCLUDED' ? 'active' : ''} aria-pressed={calculationFilter === 'EXCLUDED'} onClick={() => setCalculationFilter('EXCLUDED')}>集計対象外</button></div><div className="basis-toggle" aria-label="計上基準"><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>発生ベース</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>資金移動</button></div></div>
+      <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={text('店舗、カテゴリー、口座を検索')} /></div><div className="calculation-filter" aria-label={text('計算対象フィルター')}><button className={calculationFilter === 'ALL' ? 'active' : ''} aria-pressed={calculationFilter === 'ALL'} onClick={() => setCalculationFilter('ALL')}>{text('すべて')}</button><button className={calculationFilter === 'INCLUDED' ? 'active' : ''} aria-pressed={calculationFilter === 'INCLUDED'} onClick={() => setCalculationFilter('INCLUDED')}>{text('計算対象')}</button><button className={calculationFilter === 'EXCLUDED' ? 'active' : ''} aria-pressed={calculationFilter === 'EXCLUDED'} onClick={() => setCalculationFilter('EXCLUDED')}>{text('集計対象外')}</button></div><div className="basis-toggle" aria-label={text('計上基準')}><button className={basis === 'ACCRUAL' ? 'active' : ''} aria-pressed={basis === 'ACCRUAL'} onClick={() => setBasis('ACCRUAL')}>{text('発生ベース')}</button><button className={basis === 'CASH' ? 'active' : ''} aria-pressed={basis === 'CASH'} onClick={() => setBasis('CASH')}>{text('資金移動')}</button></div></div>
       {desktop && <div className="metadata-filters" aria-label="ラベルとタグの絞り込み"><label>ラベル<select aria-label="ラベルで絞り込み" value={labelFilter} onChange={(event) => setLabelFilter(event.target.value as TransactionLabelDto | '')}><option value="">すべて</option>{Object.entries(transactionLabelNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>タグ<input aria-label="タグで絞り込み" value={tagFilter} onChange={(event) => setTagFilter(event.target.value.replace(/^#/, ''))} placeholder="旅行" /></label>{(labelFilter || tagFilter) && <button className="text-btn" onClick={() => { setLabelFilter(''); setTagFilter('') }}>絞り込みを解除</button>}</div>}
       {desktop && <section className="bulk-metadata-toolbar" aria-label="ラベルとタグの一括編集"><div className="bulk-selection"><button type="button" className="secondary-btn" onClick={toggleVisibleTransactions}>{visible.length > 0 && visible.every((row) => selectedTransactionIds.has(row.id)) ? '表示中の選択を解除' : '表示中を選択'}</button><strong>{selectedTransactionIds.size}件選択</strong><small>最大200件</small></div><label>操作<select aria-label="ラベルとタグの操作" value={metadataOperation} onChange={(event) => setMetadataOperation(event.target.value as 'ADD' | 'REMOVE')}><option value="ADD">追加</option><option value="REMOVE">削除</option></select></label><label>ラベル<select aria-label="一括編集するラベル" value={metadataLabel} onChange={(event) => setMetadataLabel(event.target.value as TransactionLabelDto | '')}><option value="">変更なし</option>{Object.entries(transactionLabelNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>タグ<input aria-label="一括編集するタグ" value={metadataTags} onChange={(event) => setMetadataTags(event.target.value)} placeholder="旅行, 子ども（カンマ区切り）" /></label><button type="button" className="primary-btn" disabled={metadataBusy || selectedTransactionIds.size === 0} onClick={() => void applyBulkMetadata()}>{metadataBusy ? '更新中…' : `${metadataOperation === 'ADD' ? '追加' : '削除'}を適用`}</button><p>ラベルは業務状態、タグは自由な整理軸です。カテゴリーや仕訳は変更しません。</p></section>}
       {metadataNotice && <div className="bulk-metadata-notice" role="status">{metadataNotice}</div>}
       <div className="table-summary"><span>{month}・{basis === 'ACCRUAL' ? '発生ベース' : '資金移動ベース'}・家計集計は計算対象のみ</span><strong>収入 {yen(basisIncome)}</strong><strong>{basis === 'ACCRUAL' ? '支出' : '現金流出'} {yen(basisExpense)}</strong><em>{desktop ? `${totalItems}件中 ${visible.length}件` : `${visible.length}件を表示`}</em></div>
-      {loadError ? <p className="empty-state">台帳を読み込めませんでした。</p> : visible.length > 0 ? <TransactionRows rows={visible} onSelect={desktop ? (id, trigger) => void openDetail(id, trigger) : undefined} selectedIds={selectedTransactionIds} onToggleSelection={desktop ? toggleTransactionSelection : undefined} /> : <p className="empty-state">条件に一致する取引はありません。</p>}
-      {desktop && totalPages > 1 && <div className="pagination"><button className="secondary-btn" disabled={ledgerPage <= 1} onClick={() => setLedgerPage((value) => value - 1)}>前へ</button><span>{ledgerPage} / {totalPages}</span><button className="secondary-btn" disabled={ledgerPage >= totalPages} onClick={() => setLedgerPage((value) => value + 1)}>次へ</button></div>}
+      {loadError ? <p className="empty-state">{text('台帳を読み込めませんでした。')}</p> : visible.length > 0 ? <TransactionRows rows={visible} onSelect={desktop ? (id, trigger) => void openDetail(id, trigger) : undefined} selectedIds={selectedTransactionIds} onToggleSelection={desktop ? toggleTransactionSelection : undefined} /> : <p className="empty-state">{text('条件に一致する取引はありません。')}</p>}
+      {desktop && totalPages > 1 && <div className="pagination"><button className="secondary-btn" disabled={ledgerPage <= 1} onClick={() => setLedgerPage((value) => value - 1)}>{text('前へ')}</button><span>{ledgerPage} / {totalPages}</span><button className="secondary-btn" disabled={ledgerPage >= totalPages} onClick={() => setLedgerPage((value) => value + 1)}>{text('次へ')}</button></div>}
     </section>
     {selectedDetail && <TransactionDetailPanel key={selectedDetail.updatedAt} detail={selectedDetail} accounts={accounts} members={members} returnFocus={detailReturnFocus.current} onClose={() => setSelectedDetail(null)} onSave={saveDetail} onChanged={onChanged} />}
   </>
