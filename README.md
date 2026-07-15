@@ -19,7 +19,9 @@ and a source-backed [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md),
 plus a detailed [Portfolio Snapshot CSV](docs/PORTFOLIO_SNAPSHOT_CSV.md) for the
 exact selected snapshot and a native-currency
 [Investment Performance CSV](docs/INVESTMENT_PERFORMANCE_CSV.md) for the exact
-selected annual FIFO report.
+selected annual FIFO report, plus a strict
+[Resona Web入出金明細PLUS CSV adapter](docs/RESONA_WEB_MEISAI_PLUS_IMPORT.md)
+based on the bank's published fourteen-column record format.
 Family schema v4 carries the complete explicit `CONFIRMED`/`IGNORED` household
 preference set as one `SHARED` aggregate inside `KFF4`; it never transports
 detected cadence, predicted amounts, local optimistic versions, or timestamps.
@@ -37,6 +39,11 @@ corporate-action allocations, uncovered sales, skipped events, unallocated
 actions, lineage, and explicit disclosures in one BOM-prefixed table. It does
 not combine currencies or infer valuation, unrealized P&L, allocation,
 ROI/TWR/IRR, or forecast metrics.
+The Resona adapter validates one exact account, sequential source numbers,
+debit/credit direction, running-balance continuity, published blank fields,
+and physical-row provenance. Cancellation rows remain blocking because the
+public record format does not establish enough reversal linkage to post them
+safely.
 
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 
