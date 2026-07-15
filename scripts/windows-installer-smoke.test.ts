@@ -18,6 +18,7 @@ describe('Windows installer acceptance helpers', () => {
 
   it('resolves the exact Tauri NSIS artifact and isolated installation layout', () => {
     expect(installerForVersion('0.90.0', 'x64', 'C:\\repo')).toMatch(/KakeFlow_0\.90\.0_x64-setup\.exe$/u)
+    expect(() => installerForVersion('0.90.0', 'arm64', 'C:\\repo')).toThrow(/Unsupported Windows/u)
     expect(() => installerForVersion('../escape', 'x64', 'C:\\repo')).toThrow(/Invalid KakeFlow version/u)
     expect(() => installerForVersion('0.90.0', 'ia32', 'C:\\repo')).toThrow(/Unsupported Windows/u)
 

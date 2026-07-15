@@ -10,6 +10,7 @@ const execFile = promisify(execFileCallback)
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 const resourceRoot = path.resolve(process.env.KAKEFLOW_OCR_RESOURCE_ROOT || path.join(root, 'src-tauri', 'generated-resources', 'ocr'))
 const target = process.env.KAKEFLOW_OCR_TARGET || hostOcrTarget()
+const allowLegacyMacDiagnostic = process.env.KAKEFLOW_OCR_ALLOW_LEGACY_MAC_DIAGNOSTIC === '1'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -31,7 +32,7 @@ async function filesBelow(directory, prefix = '') {
 }
 
 const manifest = JSON.parse(await readFile(path.join(resourceRoot, 'manifest.json'), 'utf8'))
-const expected = assertOcrManifestContract(manifest, target)
+const expected = assertOcrManifestContract(manifest, target, { allowLegacyMacDiagnostic })
 const actualFiles = (await filesBelow(resourceRoot)).sort()
 const manifestedFiles = Object.keys(manifest.files ?? {}).sort()
 assert(JSON.stringify(actualFiles) === JSON.stringify(manifestedFiles), 'OCR resource tree and manifest file list differ')

@@ -83,6 +83,11 @@ reviewed on macOS, but successful Windows staging, runtime verification, NSIS
 installation, and installed-app execution are evidence only when run on native
 Windows x64.
 
+Release verification requires OCR manifest schema 2 on both platforms. Schema 1
+is accepted only when `KAKEFLOW_OCR_ALLOW_LEGACY_MAC_DIAGNOSTIC=1` is explicitly
+set to inspect an older macOS stable artifact; staging and every build command
+leave that diagnostic override unset and therefore fail closed on legacy data.
+
 Then build the unsigned artifact for the current platform and launch it through
 the harness:
 

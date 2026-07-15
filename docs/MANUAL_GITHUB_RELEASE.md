@@ -19,21 +19,30 @@ The requirement classification and platform evidence boundary are maintained in
 ## Required local gates
 
 ```bash
-npm run check:update-channel
-npm run ocr:stage:mac
-npm run ocr:verify
-npm run desktop:smoke
-APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac:dmg
-npm run test:dmg
-APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac
-npm run test:packaged
-codesign --verify --deep --strict --verbose=2 src-tauri/target/release/bundle/macos/KakeFlow.app
-shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_VERSION_aarch64.dmg
+set -euo pipefail
+EVIDENCE_ROOT="${PWD}/release-artifacts/v1.0.0/macos"
+mkdir -p "${EVIDENCE_ROOT}"
+git rev-parse HEAD | tee "${EVIDENCE_ROOT}/commit.txt"
+npm run check:update-channel 2>&1 | tee "${EVIDENCE_ROOT}/update-channel.log"
+npm run check:versions 2>&1 | tee "${EVIDENCE_ROOT}/version-contract.log"
+npm run ocr:stage:mac 2>&1 | tee "${EVIDENCE_ROOT}/ocr-stage.log"
+npm run ocr:verify 2>&1 | tee "${EVIDENCE_ROOT}/ocr-verify.log"
+npm run desktop:smoke 2>&1 | tee "${EVIDENCE_ROOT}/desktop-smoke.log"
+APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac:dmg 2>&1 | tee "${EVIDENCE_ROOT}/build-dmg.log"
+KAKEFLOW_SMOKE_ARTIFACT_DIR="${EVIDENCE_ROOT}" npm run test:dmg 2>&1 | tee "${EVIDENCE_ROOT}/dmg-smoke.log"
+APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac 2>&1 | tee "${EVIDENCE_ROOT}/build-app.log"
+KAKEFLOW_SMOKE_ARTIFACT_DIR="${EVIDENCE_ROOT}" npm run test:packaged 2>&1 | tee "${EVIDENCE_ROOT}/packaged-smoke.log"
+codesign --verify --deep --strict --verbose=2 src-tauri/target/release/bundle/macos/KakeFlow.app 2>&1 | tee "${EVIDENCE_ROOT}/codesign.log"
+shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_1.0.0_aarch64.dmg | tee "${EVIDENCE_ROOT}/SHA256SUMS.txt"
 ```
 
 The generated OCR runtime is intentionally not stored in Git. A clean release
 checkout must stage it first; both macOS bundle commands fail before packaging
 when the pinned manifest, binary, models, or TSV configuration are absent.
+The `release-artifacts/` evidence directory is also intentionally ignored by
+Git. Copy the complete evidence directory to durable release storage before
+cleaning the worktree; do not commit financial test data, credentials, generated
+binaries, or release evidence to the repository.
 
 The update-channel check must report `DISABLED_UNCONFIGURED` unless the complete
 signed updater track has separately passed the activation and platform gates in

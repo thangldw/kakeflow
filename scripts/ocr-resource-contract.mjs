@@ -57,9 +57,9 @@ export function requiredOcrFiles(target) {
   ]
 }
 
-export function assertOcrManifestContract(manifest, target) {
+export function assertOcrManifestContract(manifest, target, { allowLegacyMacDiagnostic = false } = {}) {
   const expected = ocrTargetContract(target)
-  const legacyMacManifest = manifest?.schemaVersion === 1 && target === 'macos-arm64'
+  const legacyMacManifest = allowLegacyMacDiagnostic && manifest?.schemaVersion === 1 && target === 'macos-arm64'
   if (manifest?.schemaVersion !== 2 && !legacyMacManifest) throw new Error('Unsupported OCR resource manifest')
   for (const key of ['target', 'minimumSystemVersion', 'triplet', 'vcpkgCommit', 'tesseractVersion']) {
     if (manifest[key] !== expected[key]) throw new Error(`Unexpected OCR ${key}: ${manifest[key]}`)

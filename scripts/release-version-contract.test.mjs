@@ -29,6 +29,8 @@ describe('release version contract', () => {
     })
     expect(macDmgArtifactName('1.2.3', 'aarch64')).toBe('KakeFlow_1.2.3_aarch64.dmg')
     expect(windowsInstallerArtifactName('1.2.3', 'x64')).toBe('KakeFlow_1.2.3_x64-setup.exe')
+    expect(() => macDmgArtifactName('1.2.3', 'x64')).toThrow('Unsupported macOS DMG architecture')
+    expect(() => windowsInstallerArtifactName('1.2.3', 'arm64')).toThrow('Unsupported Windows installer architecture')
   })
 
   it('rejects drift in either package-lock version', () => {
@@ -72,5 +74,16 @@ describe('release version contract', () => {
     expect(() => validateReleaseVersionContract(fixture({
       projectPage: '<a href="https://github.com/thangldw/kakeflow/releases/tag/v1.2.3">v1.2.3 notes</a><a href="https://github.com/thangldw/kakeflow/releases/download/v1.2.3/KakeFlow-latest.dmg">macOS</a>',
     }))).toThrow('Unexpected production artifact name')
+    for (const unsupported of ['KakeFlow_1.2.3_x64.dmg', 'KakeFlow_1.2.3_arm64-setup.exe']) {
+      expect(() => validateReleaseVersionContract(fixture({
+        projectPage: `<a href="https://github.com/thangldw/kakeflow/releases/tag/v1.2.3">v1.2.3 notes</a><a href="https://github.com/thangldw/kakeflow/releases/download/v1.2.3/${unsupported}">unsupported</a>`,
+      }))).toThrow('Unexpected production artifact name')
+    }
+  })
+
+  it('rejects GitHub release CTAs outside exact version tags and artifact downloads', () => {
+    expect(() => validateReleaseVersionContract(fixture({
+      projectPage: `${fixture().projectPage}<a href="https://github.com/thangldw/kakeflow/releases/latest">latest</a>`,
+    }))).toThrow('unclassified production release CTA')
   })
 })
