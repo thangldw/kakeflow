@@ -32,7 +32,7 @@ alter relay membership.
 ## Family snapshot format
 
 Family delivery uses the versioned `KAKEFLOW_FAMILY_SNAPSHOT_SET` format. New
-v0.57 exports use schema 3 while schema 1 and schema 2 remain readable. A snapshot set is
+exports use schema 4 while schemas 1, 2, and 3 remain readable. A snapshot set is
 an immutable, current-state collection of audience partitions. Its identity,
 source revision, hashes, record counts, excluded counts, and partition audience
 are covered by deterministic hashes. Recipient principal IDs are never part of
@@ -58,6 +58,12 @@ scoped immutable evidence, complete raw rows, and dependency graph fit the same
 audience partition. Missing, mismatched, or oversized evidence is disclosed and
 withheld rather than silently omitted or widened. See the full
 [family evidence delivery contract](FAMILY_EVIDENCE_DELIVERY.md).
+
+Schema v4 retains that evidence graph and adds exactly one complete
+`RECURRING_SERIES_PREFERENCES` aggregate to `SHARED`. The aggregate carries only
+ordered normalized payees and explicit `CONFIRMED`/`IGNORED` decisions; an empty
+list is authoritative, while schemas 1–3 have no authority over this state.
+See the [family recurring-preference contract](FAMILY_RECURRING_PREFERENCES_DELIVERY.md).
 
 ## Review and apply
 

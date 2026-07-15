@@ -61,6 +61,24 @@ describe('FamilySnapshotReviewPanel', () => {
     expect(screen.getByText(/過去の取引は自動変更されません/)).toBeInTheDocument()
   })
 
+  it('reviews recurring preferences as one shared aggregate and discloses normalized payees', async () => {
+    const recurring = {
+      ...review, recordCount: 1, createCount: 0, updateCount: 0, deleteCount: 0, conflictCount: 1,
+      records: [{ recordOrder: 0, entityKind: 'RECURRING_SERIES_PREFERENCES', entityId: 'family', entityLabel: '定期支出の確認状態', domain: 'CONFIG' as const, entitySummary: '確認済み 2件・対象外 1件', operation: 'UPSERT' as const, reviewState: 'CONFLICT' as const, resolution: 'PENDING' as const, localSummary: '確認済み 1件・対象外 1件', incomingSummary: '確認済み 2件・対象外 1件' }],
+    }
+    api.active.mockResolvedValue(recurring)
+    api.resolve.mockResolvedValue({ ...recurring, state: 'READY', records: recurring.records.map((record) => ({ ...record, resolution: 'APPLY_INCOMING' })) })
+    render(<FamilySnapshotReviewPanel householdId="family" />)
+    expect((await screen.findAllByText('確認済み 2件・対象外 1件')).length).toBe(2)
+    expect(screen.getByText(/正規化した支払先名/)).toBeInTheDocument()
+    expect(screen.getByText(/予測と固定費表示/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: '受信した内容を使う' }))
+    fireEvent.click(screen.getByRole('button', { name: '選択内容を確定' }))
+    await waitFor(() => expect(api.resolve).toHaveBeenCalledWith('family-package-1', [
+      { entityKind: 'RECURRING_SERIES_PREFERENCES', entityId: 'family', resolution: 'APPLY_INCOMING' },
+    ]))
+  })
+
   it('groups card and investment facts and discloses their partition evidence', async () => {
     const financial = {
       ...review, recordCount: 2, createCount: 0, updateCount: 0, deleteCount: 0, conflictCount: 2,

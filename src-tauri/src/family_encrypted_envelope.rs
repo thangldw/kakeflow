@@ -580,6 +580,7 @@ fn validate_metadata(metadata: &FamilyEnvelopeMetadata) -> Result<(), FamilyEnve
         "FAMILY_AUDIENCE_PARTITION_V1"
             | "FAMILY_AUDIENCE_PARTITION_V2"
             | "FAMILY_AUDIENCE_PARTITION_V3"
+            | "FAMILY_AUDIENCE_PARTITION_V4"
     ) {
         return Err(FamilyEnvelopeError::InvalidInput);
     }
@@ -741,6 +742,25 @@ mod tests {
         assert_eq!(
             open_family_envelope(&encoded, &recipient, &wrong_metadata),
             Err(FamilyEnvelopeError::MetadataMismatch)
+        );
+    }
+
+    #[test]
+    fn metadata_accepts_family_v4_without_widening_to_unknown_versions() {
+        let bytes = b"KFF4 recurring preferences and evidence";
+        let v4 = FamilyEnvelopeMetadata::new(
+            "household-1",
+            "publication-v4",
+            "installation-a",
+            "FAMILY_AUDIENCE_PARTITION_V4",
+            bytes,
+        );
+        assert_eq!(validate_metadata(&v4), Ok(()));
+        let mut unknown = v4;
+        unknown.artifact_schema = "FAMILY_AUDIENCE_PARTITION_V5".to_owned();
+        assert_eq!(
+            validate_metadata(&unknown),
+            Err(FamilyEnvelopeError::InvalidInput)
         );
     }
 

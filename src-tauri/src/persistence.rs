@@ -158,6 +158,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0063_replicable_recurring_preferences.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0064_family_recurring_preferences.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -3245,6 +3248,166 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn migration_64_preserves_v3_delivery_and_gates_family_recurring_preferences() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 63)
+            .expect("schema sixty three");
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('family-64','Family');
+                 INSERT INTO household_members(id,household_id,display_name,status,sort_order)
+                 VALUES('member-64','family-64','Member','ACTIVE',1);
+                 INSERT INTO family_delivery_connections(
+                   household_id,endpoint,remote_principal_id,local_member_id,local_member_name,state)
+                 VALUES('family-64','https://relay.example','principal','member-64','Member','CONNECTED');
+                 INSERT INTO family_delivery_partition_state(
+                   household_id,audience_key,visibility,member_id,member_key,dirty)
+                 VALUES
+                   ('family-64','SHARED','SHARED',NULL,'',0),
+                   ('family-64','PERSONAL:member-64','PERSONAL','member-64','member-64',0);
+                 INSERT INTO family_snapshot_sets(
+                   snapshot_set_id,target_household_id,source_installation_id,
+                   source_principal_id,publisher_member_id,source_revision,set_sha256,
+                   manifest_json,state,record_count,conflict_count,delete_count,
+                   source_created_at,reviewed_at,schema_version)
+                 VALUES('legacy-v3','family-64','origin-v3','principal','member-64',1,
+                   'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                   '{}','REJECTED',0,0,0,'2026-07-14T00:00:00Z','2026-07-14T00:00:00Z',3);
+                 INSERT INTO family_snapshot_partitions(
+                   snapshot_set_id,partition_order,visibility,member_id,member_key,package_id,
+                   snapshot_sha256,package_sha256,authoritative_kinds_json,record_count)
+                 VALUES('legacy-v3',0,'SHARED',NULL,'','partition-v3-64',
+                   '3434343434343434343434343434343434343434343434343434343434343434',
+                   '3535353535353535353535353535353535353535353535353535353535353535',
+                   '[]',0);
+                 INSERT INTO family_delivery_deliveries(
+                   delivery_id,household_id,audience_key,artifact_id,package_sha256,
+                   origin_device_id,visibility,member_id,item_count,excluded_count,
+                   package_bytes,state,artifact_schema)
+                 VALUES('delivery-v3-64','family-64','SHARED','artifact-v3-64',
+                   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                   'origin-v3','SHARED',NULL,0,0,x'4b464633','FAILED_RETRYABLE',
+                   'FAMILY_AUDIENCE_PARTITION_V3');
+                 INSERT INTO family_delivery_inbound(
+                   artifact_id,household_id,sequence,package_sha256,created_at,
+                   origin_device_id,sender_membership_id,sender_member_id,sender_member_name,
+                   visibility,member_id,member_key,member_name,byte_size,artifact_schema,state,
+                   pending_package_bytes)
+                 VALUES('inbound-v3-64','family-64',1,
+                   'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                   '2026-07-14T00:00:00Z','origin-v3','membership-v3','member-64','Member',
+                   'SHARED',NULL,'',NULL,4,'FAMILY_AUDIENCE_PARTITION_V3','AVAILABLE',x'4b464633');",
+            )
+            .expect("legacy family v3 state");
+
+        migrations
+            .to_version(&mut connection, 64)
+            .expect("schema sixty four");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT
+                       (SELECT schema_version FROM family_snapshot_sets WHERE snapshot_set_id='legacy-v3'),
+                       (SELECT artifact_schema FROM family_delivery_deliveries WHERE delivery_id='delivery-v3-64'),
+                       (SELECT hex(pending_package_bytes) FROM family_delivery_inbound WHERE artifact_id='inbound-v3-64')",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+                )
+                .unwrap(),
+            (3, "FAMILY_AUDIENCE_PARTITION_V3".to_owned(), "4B464633".to_owned())
+        );
+
+        connection
+            .execute_batch(
+                "INSERT INTO family_snapshot_sets(
+                   snapshot_set_id,target_household_id,source_installation_id,
+                   source_principal_id,publisher_member_id,source_revision,set_sha256,
+                   manifest_json,state,record_count,conflict_count,delete_count,
+                   source_created_at,schema_version)
+                 VALUES('current-v4','family-64','origin-v4','principal','member-64',2,
+                   'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                   '{}','REVIEW_REQUIRED',1,0,0,'2026-07-15T00:00:00Z',4);
+                 INSERT INTO family_snapshot_partitions(
+                   snapshot_set_id,partition_order,visibility,member_id,member_key,package_id,
+                   snapshot_sha256,package_sha256,authoritative_kinds_json,record_count)
+                 VALUES('current-v4',0,'SHARED',NULL,'','partition-v4',
+                   'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+                   'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                   '[\"RECURRING_SERIES_PREFERENCES\"]',1);
+                 INSERT INTO family_snapshot_records(
+                   snapshot_set_id,partition_order,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution)
+                 VALUES('current-v4',0,0,'RECURRING_SERIES_PREFERENCES','family-64','UPSERT',
+                   '{\"recordKind\":\"RECURRING_SERIES_PREFERENCES\",\"householdId\":\"family-64\",\"preferences\":[]}',
+                   '1111111111111111111111111111111111111111111111111111111111111111',
+                   'CREATE','APPLY_INCOMING');
+                 INSERT INTO family_delivery_deliveries(
+                   delivery_id,household_id,audience_key,artifact_id,package_sha256,
+                   origin_device_id,visibility,member_id,item_count,excluded_count,
+                   package_bytes,state,artifact_schema)
+                 VALUES('delivery-v4-64','family-64','SHARED','artifact-v4-64',
+                   '2222222222222222222222222222222222222222222222222222222222222222',
+                   'origin-v4','SHARED',NULL,1,0,x'4b464634','FAILED_RETRYABLE',
+                   'FAMILY_AUDIENCE_PARTITION_V4');",
+            )
+            .expect("family v4 state");
+        assert!(connection
+            .execute(
+                "INSERT INTO family_snapshot_records(
+                   snapshot_set_id,partition_order,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution)
+                 VALUES('legacy-v3',0,0,'RECURRING_SERIES_PREFERENCES','family-64','UPSERT',
+                   '{}','3333333333333333333333333333333333333333333333333333333333333333',
+                   'CREATE','APPLY_INCOMING')",
+                [],
+            )
+            .is_err());
+
+        connection
+            .execute(
+                "INSERT INTO recurring_series_preferences(
+                   household_id,normalized_payee,decision) VALUES('family-64','netflix','CONFIRMED')",
+                [],
+            )
+            .expect("local recurring preference");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT group_concat(audience_key || ':' || dirty, ',')
+                     FROM (SELECT audience_key,dirty FROM family_delivery_partition_state
+                           WHERE household_id='family-64' ORDER BY audience_key)",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "PERSONAL:member-64:0,SHARED:1"
+        );
+        connection
+            .execute_batch(
+                "UPDATE family_delivery_partition_state SET dirty=0 WHERE household_id='family-64';
+                 INSERT INTO sync_apply_guard(household_id,package_id) VALUES('family-64','apply-v4');
+                 UPDATE recurring_series_preferences SET decision='IGNORED'
+                 WHERE household_id='family-64' AND normalized_payee='netflix';",
+            )
+            .expect("guarded family apply");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT sum(dirty) FROM family_delivery_partition_state WHERE household_id='family-64'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            0
+        );
+        assert!(integrity_check(&connection).unwrap());
     }
 
     #[test]
