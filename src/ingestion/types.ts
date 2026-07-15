@@ -4,6 +4,7 @@ export type AdapterId =
   | 'mufg-bizstation-all-details-v1'
   | 'mufg-bizstation-deposit-withdrawal-v1'
   | 'yucho-direct-ledger-v1'
+  | 'paypay-history-v2'
   | 'paypay-history-v1'
   | 'amazon-mastercard-statement-v1'
   | 'rakuten-enavi-v1'

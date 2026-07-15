@@ -146,6 +146,31 @@ describe('import mapper', () => {
     expect(result.request.cardStatements).toEqual([])
   })
 
+  it('maps every PayPay v2 non-supporting leg once and keeps point rows as supporting evidence without invented semantics', async () => {
+    const parsed: ParsedImport<unknown> = { adapterId: 'paypay-history-v2', issues: [], metadata: {}, records: [{
+      kind: 'wallet-event', transactionId: 'pay-v2-1', occurredAt: '2026-07-10T12:30:00+09:00', counterparty: '店舗',
+      eventType: 'Payment + Unrecognized Future Event + Points, Balance Earned', totalOutgoing: 998, totalIncoming: 501,
+      legs: [
+        { lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['payment'] }, transactionType: 'Payment', outgoingAmount: 998, incomingAmount: null, paymentOption: 'Point (41yen), VISA (957yen)', funding: [{ method: 'Point', amount: 41, currency: 'JPY' }, { method: 'VISA', amount: 957, currency: 'JPY' }] },
+        { lineage: { sourceRow: 3, sourceRowEnd: 3, rawFields: ['unknown'] }, transactionType: 'Unrecognized Future Event', outgoingAmount: null, incomingAmount: 500, paymentOption: '', funding: [] },
+        { lineage: { sourceRow: 4, sourceRowEnd: 4, rawFields: ['points'] }, transactionType: 'Points, Balance Earned', outgoingAmount: null, incomingAmount: 1, paymentOption: '', funding: [] },
+      ],
+    }] }
+    const deps = dependencies()
+    const base = input(parsed)
+    const result = await mapParsedImportToStartImport({ ...base, file: { ...base.file, adapterVersion: '2' } }, deps.ids, deps.hash)
+
+    expect(result.issues).toEqual([])
+    expect(result.request).toMatchObject({ adapterId: 'paypay-history-v2', adapterVersion: '2' })
+    expect(result.request.records.map((record) => record.rowNumber)).toEqual([2, 3, 4])
+    expect(result.request.candidates).toHaveLength(2)
+    expect(result.request.candidates[0]).toMatchObject({ direction: 'OUT', amountJpy: 998, descriptionRaw: 'Payment', suggestedTransactionType: null })
+    expect(result.request.candidates[0].evidence.map(({ role }) => role)).toEqual(['FUNDING_LEG', 'SUPPORTING'])
+    expect(result.request.candidates[1]).toMatchObject({ direction: 'IN', amountJpy: 500, descriptionRaw: 'Unrecognized Future Event', suggestedTransactionType: null })
+    expect(result.request.candidates[1].evidence.map(({ role }) => role)).toEqual(['PRIMARY', 'SUPPORTING'])
+    expect(result.request.candidates.flatMap(({ evidence }) => evidence).filter(({ sourceRecordId }) => sourceRecordId === result.request.records[2].id)).toHaveLength(2)
+  })
+
   it('maps card refunds and marks merged Rakuten lineage as continuation evidence', async () => {
     const parsed: ParsedImport<unknown> = { adapterId: 'rakuten-enavi-v1', issues: [], metadata: {}, records: [{
       kind: 'card-statement', issuer: 'RAKUTEN_CARD', statementTotal: -3666, transactions: [{

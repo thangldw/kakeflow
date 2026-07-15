@@ -48,6 +48,19 @@ describe('import preview service', () => {
     expect(result.status).toBe('ready')
   })
 
+  it('previews the exact PayPay history contract with v2 ahead of legacy v1', async () => {
+    const file = new File([
+      'Date & Time,Amount Outgoing (Yen),Amount Incoming (Yen),Transaction Type,Payment Option,Transaction ID,Description\n' +
+      '2026/07/12 12:30,998,,Payment,"PayPay Point (41yen), Credit VISA 8106 (957yen)",P-1,"Shop, Tokyo"\n' +
+      '2026/07/12 12:30,,4,"Points, Balance Earned",,P-1,"Shop, Tokyo"',
+    ], 'paypay.csv', { type: 'text/csv' })
+
+    const result = await previewImportFile(file)
+
+    expect(result).toMatchObject({ adapterId: 'paypay-history-v2', recordCount: 1, status: 'ready' })
+    expect(result.parsed?.metadata).toMatchObject({ schemaBasis: 'EXACT_SEVEN_COLUMN_HISTORY', businessEvents: 1 })
+  })
+
   it('decodes a CP932 strict personal-bank ledger before exact v2 detection', async () => {
     const bytes = new Uint8Array([
       0x93, 0xfa, 0x95, 0x74, 0x2c, 0x93, 0x45, 0x97, 0x76, 0x2c, 0x93, 0x45,

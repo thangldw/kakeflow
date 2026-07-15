@@ -213,7 +213,11 @@ async function mapBank(record: BankTransactionCandidate, context: MappingContext
 }
 
 function isSupportingPayPayLeg(leg: WalletEventLegCandidate): boolean {
-  return /Point|ポイント|Balance Earned|Balance Removed|Expired/i.test(leg.transactionType)
+  const type = leg.transactionType.normalize('NFKC').trim().toLowerCase()
+  return new Set([
+    'points, balance earned', 'points, balance removed', 'expired time limited points',
+    'ポイント付与', 'ポイント取消', '期間限定ポイント失効',
+  ]).has(type)
 }
 
 async function mapPayPay(event: WalletEventCandidate, context: MappingContext): Promise<StartImportCandidate[]> {

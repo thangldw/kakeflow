@@ -4,7 +4,7 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
-Version 0.90 is the current stable desktop milestone. It adds two strict MUFG
+Version 0.90.0 is the current stable desktop milestone. It adds two strict MUFG
 BizSTATION business-account adapters based on official export specifications and
 a local [RFC 5322 email attachment path](docs/EMAIL_ATTACHMENT_IMPORT.md) that
 retains the complete `.eml` as immutable evidence. Exact account mapping and
@@ -208,6 +208,13 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   row provenance, duplicate/summary rejection, and chronology plus running-
   balance proof in either source order. It is ranked ahead of generic v1 while
   leaving v1 intact and cannot collide with BizSTATION or Yucho Direct.
+- Strict [PayPay transaction-history v2 import](docs/PAYPAY_HISTORY_IMPORT.md)
+  for the exact ordered seven-column contract, with bounded rows/events/legs,
+  safe-integer one-sided amounts, consistent Transaction ID grouping, complete
+  physical-row provenance, duplicate rejection, and exact split-funding
+  reconciliation. It is ranked ahead of legacy v1, remains separate from
+  PayPay Card billing, requires an explicit wallet account, and leaves unknown
+  transaction types as review data instead of inventing accounting semantics.
 - Reproducible [Windows x64 offline OCR packaging foundation](docs/PACKAGED_APP_TESTING.md)
   with a pinned static vcpkg triplet, file-level manifest, PE dependency checks,
   `eng`/`jpn` model loading, TSV execution, and installed-NSIS resource
@@ -222,7 +229,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, evidence-first investment dependencies, idempotent content reuse, atomic database publication, and source-viewer hydration without change-package hash drift. Schema-v1 capsules remain compatible; pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
 - [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v4 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 18-kind household snapshot spanning ledger, card reconciliation, confirmed investment facts, and all five dashboard layouts, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind, schema-v2 13-kind, and schema-v3 18-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
-- [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for strict personal Japanese bank v2, legacy generic Japanese bank v1, PayPay, Rakuten Card, Amazon Mastercard, JCB MyJCB, SMBC Vpass, the strict [AEON finalized-statement contract](docs/AEON_CARD_IMPORT.md), and the strict [PayPay Card community-derived finalized-statement contract](docs/PAYPAY_CARD_IMPORT.md), with adapter-compatible account filtering, per-preview selection, and no default or name-based inference. The AEON and PayPay Card fixtures are synthetic because official materials confirm the relevant export capability but do not publish the literal consumer schemas.
+- [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for strict personal Japanese bank v2, legacy generic Japanese bank v1, strict/legacy PayPay history, Rakuten Card, Amazon Mastercard, JCB MyJCB, SMBC Vpass, the strict [AEON finalized-statement contract](docs/AEON_CARD_IMPORT.md), and the strict [PayPay Card community-derived finalized-statement contract](docs/PAYPAY_CARD_IMPORT.md), with adapter-compatible account filtering, per-preview selection, and no default or name-based inference. The AEON and PayPay Card fixtures are synthetic because official materials confirm the relevant export capability but do not publish the literal consumer schemas.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
 - User-confirmed [credit-card statement due dates](docs/CARD_DUE_DATES.md) with set/correct/clear controls, household-scoped validation, explicit no-inference labeling, and immediate coverage/forecast refresh without ledger mutation.
 - Bounded [Yucho bulk ZIP import](docs/YUCHO_BULK_ZIP_IMPORT.md) for manual upload and drop, with deterministic per-CSV previews, archive-entry provenance, atomic archive rejection, CRC verification, explicit review, and no automatic ledger posting.

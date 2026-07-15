@@ -7,6 +7,7 @@ export { mufgBizstationAllDetailsAdapter } from './adapters/mufgBizstationAllDet
 export { mufgBizstationDepositWithdrawalAdapter } from './adapters/mufgBizstationDepositWithdrawal'
 export { yuchoDirectAdapter } from './adapters/yuchoDirect'
 export { payPayAdapter } from './adapters/paypay'
+export { payPayHistoryV2Adapter } from './adapters/paypayHistoryV2'
 export { amazonMastercardAdapter } from './adapters/amazonMastercard'
 export { rakutenEnaviAdapter } from './adapters/rakuten'
 export { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
@@ -29,6 +30,7 @@ import { mufgBizstationAllDetailsAdapter } from './adapters/mufgBizstationAllDet
 import { mufgBizstationDepositWithdrawalAdapter } from './adapters/mufgBizstationDepositWithdrawal'
 import { yuchoDirectAdapter } from './adapters/yuchoDirect'
 import { payPayAdapter } from './adapters/paypay'
+import { payPayHistoryV2Adapter } from './adapters/paypayHistoryV2'
 import { rakutenEnaviAdapter } from './adapters/rakuten'
 import { jcbMyJcbAdapter } from './adapters/jcbMyJcb'
 import { smbcVpassAdapter } from './adapters/smbcVpass'
@@ -49,6 +51,7 @@ export const importAdapters = [
   yuchoDirectAdapter,
   personalJapaneseBankAdapter,
   japaneseBankAdapter,
+  payPayHistoryV2Adapter,
   payPayAdapter,
   amazonMastercardAdapter,
   rakutenEnaviAdapter,

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { macDmgArtifactName } from './release-version-contract.mjs'
 
 const execFile = promisify(execFileCallback)
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
@@ -11,7 +12,7 @@ const root = path.resolve(process.env.INIT_CWD || process.cwd())
 export function dmgForVersion(version, architecture = process.arch, repositoryRoot = root) {
   const tauriArchitecture = architecture === 'arm64' ? 'aarch64' : architecture === 'x64' ? 'x64' : null
   if (!tauriArchitecture) throw new Error(`Unsupported macOS DMG architecture: ${architecture}`)
-  return path.join(repositoryRoot, 'src-tauri', 'target', 'release', 'bundle', 'dmg', `KakeFlow_${version}_${tauriArchitecture}.dmg`)
+  return path.join(repositoryRoot, 'src-tauri', 'target', 'release', 'bundle', 'dmg', macDmgArtifactName(version, tauriArchitecture))
 }
 
 export function validateBundleMetadata(metadata, expectedVersion) {
