@@ -2011,6 +2011,15 @@ describe('KakeFlow desktop read models', () => {
 
   it.each([
     {
+      name: 'Resona Web deposit/withdrawal Meisai Plus',
+      filename: 'resona.csv',
+      accountLabel: 'resona.csvの取込先銀行口座',
+      accountId: 'family-bank',
+      missing: 'りそな銀行 Web入出金明細PLUS CSVの取込先銀行口座を選択してください。',
+      adapterId: 'resona-web-meisai-plus-v1',
+      csv: '照会口座,番号,勘定日,（起算日）,出金金額（円）,入金金額（円）,小切手区分,残高（円）,取引区分,明細区分,金融機関名,支店名,摘要,メモ\nりそな銀行 東京支店 普通 1234567,1,2026年7月2日,2026年7月1日,10000,,,140000,出金,,,,ラクテンカード,7月分',
+    },
+    {
       name: 'strict personal Japanese bank ledger',
       filename: 'personal-bank.csv',
       accountLabel: 'personal-bank.csvの取込先銀行口座',
