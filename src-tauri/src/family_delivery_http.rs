@@ -10,6 +10,7 @@ use reqwest::{
     Method, StatusCode, Url,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{collections::HashSet, io::Read, time::Duration};
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -31,6 +32,8 @@ pub enum FamilyDeliveryHttpError {
     MembershipRevoked,
     #[error("relay returned an invalid response")]
     InvalidResponse,
+    #[error("downloaded family artifact failed size or digest validation")]
+    InvalidArtifact,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +57,18 @@ pub struct HttpResponse {
 
 pub trait FamilyDeliveryTransport: Send + Sync {
     fn execute(&self, request: HttpRequest<'_>) -> Result<HttpResponse, FamilyDeliveryHttpError>;
+
+    fn download(
+        &self,
+        request: HttpRequest<'_>,
+        max_bytes: u64,
+    ) -> Result<HttpResponse, FamilyDeliveryHttpError> {
+        let response = self.execute(request)?;
+        if response.body.len() as u64 > max_bytes {
+            return Err(FamilyDeliveryHttpError::InvalidArtifact);
+        }
+        Ok(response)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +89,24 @@ impl ReqwestTransport {
 
 impl FamilyDeliveryTransport for ReqwestTransport {
     fn execute(&self, request: HttpRequest<'_>) -> Result<HttpResponse, FamilyDeliveryHttpError> {
+        self.execute_bounded(request, MAX_JSON_BYTES)
+    }
+
+    fn download(
+        &self,
+        request: HttpRequest<'_>,
+        max_bytes: u64,
+    ) -> Result<HttpResponse, FamilyDeliveryHttpError> {
+        self.execute_bounded(request, max_bytes)
+    }
+}
+
+impl ReqwestTransport {
+    fn execute_bounded(
+        &self,
+        request: HttpRequest<'_>,
+        max_bytes: u64,
+    ) -> Result<HttpResponse, FamilyDeliveryHttpError> {
         let authorization_text = Zeroizing::new(format!("Bearer {}", request.bearer_token));
         let authorization = HeaderValue::from_str(authorization_text.as_str())
             .map_err(|_| FamilyDeliveryHttpError::Authentication)?;
@@ -96,10 +129,10 @@ impl FamilyDeliveryTransport for ReqwestTransport {
         let mut body = Vec::new();
         response
             .by_ref()
-            .take(MAX_JSON_BYTES + 1)
+            .take(max_bytes + 1)
             .read_to_end(&mut body)
             .map_err(|_| FamilyDeliveryHttpError::Network)?;
-        if body.len() as u64 > MAX_JSON_BYTES {
+        if body.len() as u64 > max_bytes {
             return Err(FamilyDeliveryHttpError::InvalidResponse);
         }
         Ok(HttpResponse { status, body })
@@ -286,6 +319,51 @@ impl<T: FamilyDeliveryTransport> FamilyDeliveryHttpClient<T> {
             publications,
             next_cursor: cursor,
         })
+    }
+
+    pub fn download_publication(
+        &self,
+        household_id: &str,
+        publication_id: &str,
+        expected_size: u64,
+        expected_sha256: &str,
+    ) -> Result<Vec<u8>, FamilyDeliveryHttpError> {
+        require_id(household_id)?;
+        require_id(publication_id)?;
+        if !(1..=MAX_PUBLICATION_BYTES).contains(&expected_size) || !valid_hash(expected_sha256) {
+            return Err(FamilyDeliveryHttpError::InvalidResponse);
+        }
+        let path = format!("v2/households/{household_id}/publications/{publication_id}");
+        let url = self
+            .endpoint
+            .join(&path)
+            .map_err(|_| FamilyDeliveryHttpError::InvalidResponse)?;
+        let response = self
+            .transport
+            .download(
+                HttpRequest {
+                    method: HttpMethod::Get,
+                    url: url.into(),
+                    bearer_token: self.bearer_token.as_str(),
+                    json_body: None,
+                },
+                expected_size,
+            )
+            .map_err(|error| match error {
+                FamilyDeliveryHttpError::InvalidResponse => {
+                    FamilyDeliveryHttpError::InvalidArtifact
+                }
+                other => other,
+            })?;
+        if !(200..300).contains(&response.status) {
+            return Err(map_failure(response.status, &response.body));
+        }
+        if response.body.len() as u64 != expected_size
+            || format!("{:x}", Sha256::digest(&response.body)) != expected_sha256
+        {
+            return Err(FamilyDeliveryHttpError::InvalidArtifact);
+        }
+        Ok(response.body)
     }
 
     fn get_json<R: for<'de> Deserialize<'de>>(
@@ -775,6 +853,41 @@ mod tests {
         assert_eq!(batch.publications.len(), MAX_PUBLICATIONS_PER_POLL);
         assert_eq!(batch.next_cursor, 300);
         assert_eq!(client.transport.requests.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn publication_download_requires_exact_size_and_sha256() {
+        let bytes = b"encrypted-envelope".to_vec();
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let client = FamilyDeliveryHttpClient::new(
+            "https://relay.example",
+            "token",
+            FakeTransport::new(vec![HttpResponse {
+                status: 200,
+                body: bytes.clone(),
+            }]),
+        )
+        .unwrap();
+        assert_eq!(
+            client
+                .download_publication("family", "publication-1", bytes.len() as u64, &digest)
+                .unwrap(),
+            bytes
+        );
+
+        let client = FamilyDeliveryHttpClient::new(
+            "https://relay.example",
+            "token",
+            FakeTransport::new(vec![HttpResponse {
+                status: 200,
+                body: b"wrong".to_vec(),
+            }]),
+        )
+        .unwrap();
+        assert_eq!(
+            client.download_publication("family", "publication-1", 5, &digest),
+            Err(FamilyDeliveryHttpError::InvalidArtifact)
+        );
     }
 
     #[test]

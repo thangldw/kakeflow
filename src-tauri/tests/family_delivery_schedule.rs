@@ -4,9 +4,9 @@ mod schedule;
 
 use rusqlite::Connection;
 use schedule::{
-    assert_active_lease, claim_all_due, claim_due, claim_next_due, complete, configure, disable,
-    fail, release_claim, request_now, status, suspend_terminal, suspend_terminal_claimed,
-    FamilyDeliveryScheduleError,
+    assert_active_lease, claim_all_due, claim_due, claim_next_due, complete, configure,
+    configure_with_intake, disable, fail, record_intake_result, release_claim, request_now, status,
+    suspend_terminal, suspend_terminal_claimed, FamilyDeliveryScheduleError,
 };
 
 fn database() -> Connection {
@@ -18,6 +18,49 @@ fn database() -> Connection {
         ))
         .unwrap();
     connection
+        .execute_batch(include_str!(
+            "../migrations/0060_family_delivery_background_intake.sql"
+        ))
+        .unwrap();
+    connection
+}
+
+#[test]
+fn automatic_intake_requires_separate_opt_in_and_lease_fenced_telemetry() {
+    let connection = database();
+    let metadata_only = configure(&connection, "home", true, 30).unwrap();
+    assert!(!metadata_only.intake_enabled);
+    assert_eq!(metadata_only.last_intake_result, "DISABLED");
+
+    let enabled = configure_with_intake(&connection, "home", true, 30, true).unwrap();
+    assert!(enabled.intake_enabled);
+    assert_eq!(enabled.last_intake_result, "NEVER");
+    let lease = claim_due(&connection, "home").unwrap().unwrap();
+    record_intake_result(
+        &connection,
+        "home",
+        &lease.lease_token,
+        "STAGED_FOR_REVIEW",
+        1,
+        None,
+    )
+    .unwrap();
+    let status = status(&connection, "home").unwrap();
+    assert_eq!(status.last_intake_result, "STAGED_FOR_REVIEW");
+    assert_eq!(status.last_staged_count, 1);
+
+    disable(&connection, "home").unwrap();
+    assert!(matches!(
+        record_intake_result(
+            &connection,
+            "home",
+            &lease.lease_token,
+            "NO_AVAILABLE",
+            0,
+            None,
+        ),
+        Err(FamilyDeliveryScheduleError::StaleLease)
+    ));
 }
 
 fn make_due(connection: &Connection, household_id: &str) {
@@ -45,6 +88,8 @@ fn migration_enforces_opt_in_interval_and_lease_invariants() {
     assert!(!initial.enabled);
     assert_eq!(initial.interval_minutes, 30);
     assert_eq!(initial.last_result, "NEVER");
+    assert!(!initial.intake_enabled);
+    assert_eq!(initial.last_intake_result, "NEVER");
     assert!(initial.next_due_at.is_none());
 
     assert!(connection

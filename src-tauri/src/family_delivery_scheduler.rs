@@ -1,10 +1,9 @@
-//! Opt-in inbound family-delivery metadata discovery while KakeFlow is open.
-//!
-//! This supervisor only refreshes relay membership metadata and registers
-//! publication metadata as `AVAILABLE`. It never downloads envelope bytes,
-//! decrypts, stages, reviews, applies, or publishes an artifact.
+//! Opt-in inbound family-delivery discovery and bounded encrypted intake while
+//! KakeFlow is open. Intake has separate consent and stages at most one item
+//! for manual review; it never resolves conflicts or applies ledger changes.
 
 use crate::{
+    document_vault::DocumentVault,
     family_delivery_credentials::{FamilyDeliveryCredentialBinding, FamilyDeliveryCredentialStore},
     family_delivery_http::{
         ArtifactSchema, AudienceVisibility, EncryptionPublicIdentity, FamilyDeliveryHttpClient,
@@ -16,6 +15,7 @@ use crate::{
         self, FamilyMembershipDto, RegisterFamilyInboundInput, RegisterRemoteStateInput,
         RemoteFamilyArtifactInput,
     },
+    family_encrypted_envelope::FamilyEnvelopeMetadata,
     family_envelope_identity::FamilyEnvelopeIdentityState,
     persistence::{AppState, PersistenceError},
 };
@@ -49,6 +49,8 @@ struct FamilyDeliveryDiscoveryEvent {
     household_id: String,
     discovered_count: u64,
     result: String,
+    intake_result: String,
+    staged_count: u32,
 }
 
 #[derive(Default)]
@@ -129,6 +131,7 @@ fn run_worker(app: AppHandle, stop: Arc<StopSignal>) {
             &state,
             &app.state::<FamilyDeliveryCredentialStore>(),
             &app.state::<FamilyEnvelopeIdentityState>(),
+            &app.state::<DocumentVault>(),
             &lease.household_id,
             &lease.lease_token,
             || stop.is_stopped(),
@@ -160,6 +163,8 @@ fn finish_lease(
                 household_id: household_id.to_owned(),
                 discovered_count: status.last_discovered_count,
                 result: status.last_result,
+                intake_result: status.last_intake_result,
+                staged_count: status.last_staged_count,
             },
         );
     }
@@ -220,6 +225,7 @@ pub fn run_claimed_household(
     state: &AppState,
     credentials: &FamilyDeliveryCredentialStore,
     identity: &FamilyEnvelopeIdentityState,
+    vault: &DocumentVault,
     household_id: &str,
     lease_token: &str,
 ) -> Result<u64, DiscoveryFailure> {
@@ -227,6 +233,7 @@ pub fn run_claimed_household(
         state,
         credentials,
         identity,
+        vault,
         household_id,
         lease_token,
         || false,
@@ -237,6 +244,7 @@ fn run_claimed_household_guarded(
     state: &AppState,
     credentials: &FamilyDeliveryCredentialStore,
     identity: &FamilyEnvelopeIdentityState,
+    vault: &DocumentVault,
     household_id: &str,
     lease_token: &str,
     cancelled: impl Fn() -> bool,
@@ -251,7 +259,267 @@ fn run_claimed_household_guarded(
         .ok_or(DiscoveryFailure::Terminal("MISSING_CREDENTIAL"))?;
     let client = FamilyDeliveryHttpClient::production(&context.endpoint, credential.bearer_token())
         .map_err(map_http_error)?;
-    discover_claimed_with_client(state, identity, &context, &client, lease_token, &cancelled)
+    discover_and_intake_claimed_with_client(
+        state,
+        identity,
+        vault,
+        &context,
+        &client,
+        lease_token,
+        &cancelled,
+    )
+}
+
+fn discover_and_intake_claimed_with_client<T: FamilyDeliveryTransport>(
+    state: &AppState,
+    identity: &FamilyEnvelopeIdentityState,
+    vault: &DocumentVault,
+    context: &FamilyDeliveryConnectionContext,
+    client: &FamilyDeliveryHttpClient<T>,
+    lease_token: &str,
+    cancelled: &impl Fn() -> bool,
+) -> Result<u64, DiscoveryFailure> {
+    let local_membership_id = validate_and_refresh_claimed_with_client(
+        state,
+        identity,
+        context,
+        client,
+        lease_token,
+        cancelled,
+    )?;
+    guard_claim(state, &context.household_id, lease_token, cancelled)?;
+    let batch = client
+        .list_publications(
+            &context.household_id,
+            context.inbound_cursor,
+            &context.local_device_id,
+        )
+        .map_err(map_http_error)?;
+    guard_claim(state, &context.household_id, lease_token, cancelled)?;
+    let count =
+        register_publication_metadata_claimed(state, &context.household_id, lease_token, batch)?;
+    intake_one_claimed(
+        state,
+        identity,
+        vault,
+        context,
+        client,
+        lease_token,
+        &local_membership_id,
+        cancelled,
+    )?;
+    Ok(count)
+}
+
+// The explicit dependencies make the lease fence, identity, vault, transport,
+// and cancellation boundary visible at every call site.
+#[allow(clippy::too_many_arguments)]
+fn intake_one_claimed<T: FamilyDeliveryTransport>(
+    state: &AppState,
+    identity: &FamilyEnvelopeIdentityState,
+    vault: &DocumentVault,
+    context: &FamilyDeliveryConnectionContext,
+    client: &FamilyDeliveryHttpClient<T>,
+    lease_token: &str,
+    local_membership_id: &str,
+    cancelled: &impl Fn() -> bool,
+) -> Result<(), DiscoveryFailure> {
+    guard_claim(state, &context.household_id, lease_token, cancelled)?;
+    let candidate = state
+        .with_connection(|connection| {
+            if !family_delivery_schedule::intake_enabled(
+                connection,
+                &context.household_id,
+                lease_token,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?
+            {
+                return Ok(None);
+            }
+            if family_delivery_transport::has_active_review(connection, &context.household_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?
+            {
+                family_delivery_schedule::record_intake_result(
+                    connection,
+                    &context.household_id,
+                    lease_token,
+                    "REVIEW_PENDING",
+                    0,
+                    None,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                return Ok(None);
+            }
+            let candidate = family_delivery_transport::oldest_encrypted_available(
+                connection,
+                &context.household_id,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            if candidate.is_none() {
+                family_delivery_schedule::record_intake_result(
+                    connection,
+                    &context.household_id,
+                    lease_token,
+                    "NO_AVAILABLE",
+                    0,
+                    None,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            }
+            Ok(candidate)
+        })
+        .map_err(|_| DiscoveryFailure::Cancelled)?;
+    let Some(metadata) = candidate else {
+        return Ok(());
+    };
+
+    guard_claim(state, &context.household_id, lease_token, cancelled)?;
+    let envelope = match client.download_publication(
+        &context.household_id,
+        &metadata.artifact_id,
+        metadata.byte_size,
+        &metadata.transport_sha256,
+    ) {
+        Ok(bytes) => bytes,
+        Err(FamilyDeliveryHttpError::InvalidArtifact) => {
+            return reject_claimed(
+                state,
+                &context.household_id,
+                lease_token,
+                &metadata.artifact_id,
+                "REJECTED_INVALID",
+                "INVALID_ARTIFACT",
+            );
+        }
+        Err(error) => return Err(map_http_error(error)),
+    };
+    guard_claim(state, &context.household_id, lease_token, cancelled)?;
+    let opened = match identity.open(crate::family_envelope_identity::OpenFamilyEnvelopeInput {
+        expected_metadata: FamilyEnvelopeMetadata {
+            household_id: context.household_id.clone(),
+            publication_id: metadata.artifact_id.clone(),
+            origin_installation_id: metadata.origin_device_id.clone(),
+            artifact_schema: metadata.artifact_schema.clone(),
+            inner_sha256: metadata.inner_sha256.clone(),
+        },
+        envelope_bytes: envelope,
+        local_membership_id: local_membership_id.to_owned(),
+    }) {
+        Ok(opened) => opened,
+        Err(crate::family_envelope_identity::FamilyEnvelopeIdentityError::AudienceDenied) => {
+            return reject_claimed(
+                state,
+                &context.household_id,
+                lease_token,
+                &metadata.artifact_id,
+                "AUDIENCE_DENIED",
+                "RECIPIENT_DENIED",
+            );
+        }
+        Err(_) => {
+            return reject_claimed(
+                state,
+                &context.household_id,
+                lease_token,
+                &metadata.artifact_id,
+                "REJECTED_INVALID",
+                "INVALID_ENVELOPE",
+            );
+        }
+    };
+    guard_claim(state, &context.household_id, lease_token, cancelled)?;
+    state
+        .with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            family_delivery_schedule::assert_active_lease(
+                &transaction,
+                &context.household_id,
+                lease_token,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            let stage = family_delivery_transport::StageFamilyInboundInput {
+                household_id: context.household_id.clone(),
+                artifact_id: metadata.artifact_id.clone(),
+                package_bytes: opened.artifact_bytes,
+            };
+            let intake = match family_delivery_transport::stage_inbound_with_vault(
+                &transaction,
+                vault,
+                &stage,
+            ) {
+                Ok(_) => ("STAGED_FOR_REVIEW", 1, None),
+                Err(family_delivery_transport::FamilyDeliveryError::ReviewPending) => {
+                    ("REVIEW_PENDING", 0, None)
+                }
+                Err(family_delivery_transport::FamilyDeliveryError::AudienceDenied) => {
+                    family_delivery_transport::reject_inbound(
+                        &transaction,
+                        &context.household_id,
+                        &metadata.artifact_id,
+                        "AUDIENCE_DENIED",
+                    )
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    ("AUDIENCE_DENIED", 0, Some("AUDIENCE_DENIED"))
+                }
+                Err(_) => {
+                    family_delivery_transport::reject_inbound(
+                        &transaction,
+                        &context.household_id,
+                        &metadata.artifact_id,
+                        "REJECTED_INVALID",
+                    )
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    ("REJECTED_INVALID", 0, Some("INVALID_PACKAGE"))
+                }
+            };
+            family_delivery_schedule::record_intake_result(
+                &transaction,
+                &context.household_id,
+                lease_token,
+                intake.0,
+                intake.1,
+                intake.2,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            transaction.commit()?;
+            Ok(())
+        })
+        .map_err(|_| DiscoveryFailure::Cancelled)
+}
+
+fn reject_claimed(
+    state: &AppState,
+    household_id: &str,
+    lease_token: &str,
+    artifact_id: &str,
+    inbound_state: &str,
+    error_code: &'static str,
+) -> Result<(), DiscoveryFailure> {
+    state
+        .with_connection(|connection| {
+            let transaction = connection.unchecked_transaction()?;
+            family_delivery_schedule::assert_active_lease(&transaction, household_id, lease_token)
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            family_delivery_transport::reject_inbound(
+                &transaction,
+                household_id,
+                artifact_id,
+                inbound_state,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            family_delivery_schedule::record_intake_result(
+                &transaction,
+                household_id,
+                lease_token,
+                inbound_state,
+                0,
+                Some(error_code),
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            transaction.commit()?;
+            Ok(())
+        })
+        .map_err(|_| DiscoveryFailure::Cancelled)
 }
 
 fn guard_claim(
@@ -289,34 +557,6 @@ pub fn discover_with_client<T: FamilyDeliveryTransport>(
     register_publication_metadata(state, &context.household_id, batch)
 }
 
-fn discover_claimed_with_client<T: FamilyDeliveryTransport>(
-    state: &AppState,
-    identity: &FamilyEnvelopeIdentityState,
-    context: &FamilyDeliveryConnectionContext,
-    client: &FamilyDeliveryHttpClient<T>,
-    lease_token: &str,
-    cancelled: &impl Fn() -> bool,
-) -> Result<u64, DiscoveryFailure> {
-    validate_and_refresh_claimed_with_client(
-        state,
-        identity,
-        context,
-        client,
-        lease_token,
-        cancelled,
-    )?;
-    guard_claim(state, &context.household_id, lease_token, cancelled)?;
-    let batch = client
-        .list_publications(
-            &context.household_id,
-            context.inbound_cursor,
-            &context.local_device_id,
-        )
-        .map_err(map_http_error)?;
-    guard_claim(state, &context.household_id, lease_token, cancelled)?;
-    register_publication_metadata_claimed(state, &context.household_id, lease_token, batch)
-}
-
 fn validate_and_refresh_claimed_with_client<T: FamilyDeliveryTransport>(
     state: &AppState,
     identity: &FamilyEnvelopeIdentityState,
@@ -324,7 +564,7 @@ fn validate_and_refresh_claimed_with_client<T: FamilyDeliveryTransport>(
     client: &FamilyDeliveryHttpClient<T>,
     lease_token: &str,
     cancelled: &impl Fn() -> bool,
-) -> Result<(), DiscoveryFailure> {
+) -> Result<String, DiscoveryFailure> {
     guard_claim(state, &context.household_id, lease_token, cancelled)?;
     let remote_identity = client.whoami().map_err(map_http_error)?;
     guard_claim(state, &context.household_id, lease_token, cancelled)?;
@@ -389,7 +629,7 @@ fn validate_and_refresh_claimed_with_client<T: FamilyDeliveryTransport>(
             .map_err(|_| rusqlite::Error::InvalidQuery.into())
         })
         .map_err(|_| DiscoveryFailure::Cancelled)?;
-    Ok(())
+    Ok(local_membership.membership_id.clone())
 }
 
 /// Validates an explicit opt-in token and refreshes non-secret membership/key
@@ -643,6 +883,7 @@ fn map_http_error(error: FamilyDeliveryHttpError) -> DiscoveryFailure {
         }
         FamilyDeliveryHttpError::Network => DiscoveryFailure::Retryable("NETWORK_UNAVAILABLE"),
         FamilyDeliveryHttpError::InvalidResponse => DiscoveryFailure::Retryable("INVALID_RESPONSE"),
+        FamilyDeliveryHttpError::InvalidArtifact => DiscoveryFailure::Retryable("INVALID_ARTIFACT"),
     }
 }
 
@@ -675,10 +916,18 @@ pub fn process_claimed_now(
     state: &AppState,
     credentials: &FamilyDeliveryCredentialStore,
     identity: &FamilyEnvelopeIdentityState,
+    vault: &DocumentVault,
     household_id: &str,
     lease_token: &str,
 ) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
-    let result = run_claimed_household(state, credentials, identity, household_id, lease_token);
+    let result = run_claimed_household(
+        state,
+        credentials,
+        identity,
+        vault,
+        household_id,
+        lease_token,
+    );
     state
         .with_connection(|connection| finish_claimed(connection, household_id, lease_token, result))
         .map_err(|_| "Automatic family delivery check could not be completed".to_owned())
@@ -1001,6 +1250,80 @@ mod tests {
     }
 
     #[test]
+    fn intake_is_separate_opt_in_and_skips_legacy_plaintext_without_downloading() {
+        let (state, identity) = setup_discovery_state();
+        let context = load_connection_context(&state, "family").unwrap();
+        state
+            .with_connection(|connection| {
+                family_delivery_transport::register_inbound(
+                    connection,
+                    &RegisterFamilyInboundInput {
+                        household_id: "family".into(),
+                        artifacts: vec![RemoteFamilyArtifactInput {
+                            sequence: 1,
+                            artifact_id: "legacy-plaintext".into(),
+                            digest: "a".repeat(64),
+                            created_at: "2026-07-14T00:00:00.000Z".into(),
+                            origin_device_id: "remote-device".into(),
+                            sender_membership_id: "membership-2".into(),
+                            audience_visibility: "SHARED".into(),
+                            audience_member_id: None,
+                            byte_size: 10,
+                            artifact_schema: "FAMILY_AUDIENCE_PARTITION_V3".into(),
+                            envelope_schema: None,
+                            transport_digest: None,
+                            inner_digest: None,
+                            recipient_set_digest: None,
+                        }],
+                        next_cursor: 1,
+                    },
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                family_delivery_schedule::configure_with_intake(
+                    connection, "family", true, 15, true,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(())
+            })
+            .unwrap();
+        let lease = state
+            .with_connection(|connection| {
+                family_delivery_schedule::claim_due(connection, "family")
+                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+            })
+            .unwrap()
+            .unwrap();
+        let requested_urls = Arc::new(Mutex::new(Vec::new()));
+        let client = FamilyDeliveryHttpClient::new(
+            "https://relay.example",
+            "test-token",
+            FakeTransport::new(Vec::new(), Arc::clone(&requested_urls)),
+        )
+        .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(root.path(), &[13; 32]).unwrap();
+        intake_one_claimed(
+            &state,
+            &identity,
+            &vault,
+            &context,
+            &client,
+            &lease.lease_token,
+            "membership-1",
+            &|| false,
+        )
+        .unwrap();
+        assert!(requested_urls.lock().unwrap().is_empty());
+        let status = state
+            .with_connection(|connection| {
+                family_delivery_schedule::status(connection, "family")
+                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+            })
+            .unwrap();
+        assert_eq!(status.last_intake_result, "NO_AVAILABLE");
+    }
+
+    #[test]
     fn http_failures_have_explicit_retry_or_terminal_policy() {
         assert_eq!(
             map_http_error(FamilyDeliveryHttpError::Authentication),
@@ -1035,7 +1358,7 @@ mod tests {
             .unwrap();
         let (client, requested_urls) = client_for_page(&identity, Vec::new(), 0);
         assert_eq!(
-            discover_claimed_with_client(
+            validate_and_refresh_claimed_with_client(
                 &state,
                 &identity,
                 &context,

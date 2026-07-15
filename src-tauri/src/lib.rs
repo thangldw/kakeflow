@@ -1107,6 +1107,7 @@ struct EnableFamilyDeliveryBackgroundInput {
     household_id: String,
     token: String,
     interval_minutes: u32,
+    intake_enabled: bool,
 }
 
 fn disabled_family_delivery_schedule(
@@ -1134,6 +1135,10 @@ fn disabled_family_delivery_schedule(
                 suspended_until: None,
                 suspension_reason: None,
                 last_error_code: None,
+                intake_enabled: false,
+                last_intake_result: "DISABLED".to_owned(),
+                last_staged_count: 0,
+                last_intake_error_code: None,
                 updated_at,
             })
         })
@@ -1193,11 +1198,12 @@ fn family_delivery_background_enable(
         .store(binding.clone(), token)
         .map_err(|_| "Family relay credential could not be stored".to_owned())?;
     match family_delivery_schedule_result(&state, |connection| {
-        family_delivery_schedule::configure(
+        family_delivery_schedule::configure_with_intake(
             connection,
             &input.household_id,
             true,
             input.interval_minutes,
+            input.intake_enabled,
         )
     }) {
         Ok(status) => Ok(status),
@@ -1261,6 +1267,7 @@ fn family_delivery_background_run_now(
     state: tauri::State<'_, AppState>,
     credentials: tauri::State<'_, family_delivery_credentials::FamilyDeliveryCredentialStore>,
     identity: tauri::State<'_, family_envelope_identity::FamilyEnvelopeIdentityState>,
+    vault: tauri::State<'_, DocumentVault>,
     household_id: String,
 ) -> Result<family_delivery_schedule::FamilyDeliveryScheduleStatusDto, String> {
     family_delivery_schedule_result(&state, |connection| {
@@ -1274,6 +1281,7 @@ fn family_delivery_background_run_now(
         &state,
         &credentials,
         &identity,
+        &vault,
         &household_id,
         &lease.lease_token,
     )

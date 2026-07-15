@@ -42,6 +42,10 @@ pub struct FamilyDeliveryScheduleStatusDto {
     pub suspended_until: Option<String>,
     pub suspension_reason: Option<String>,
     pub last_error_code: Option<String>,
+    pub intake_enabled: bool,
+    pub last_intake_result: String,
+    pub last_staged_count: u32,
+    pub last_intake_error_code: Option<String>,
     pub updated_at: String,
 }
 
@@ -62,6 +66,16 @@ pub fn configure(
     enabled: bool,
     interval_minutes: u32,
 ) -> Result<FamilyDeliveryScheduleStatusDto> {
+    configure_with_intake(connection, household_id, enabled, interval_minutes, false)
+}
+
+pub fn configure_with_intake(
+    connection: &Connection,
+    household_id: &str,
+    enabled: bool,
+    interval_minutes: u32,
+    intake_enabled: bool,
+) -> Result<FamilyDeliveryScheduleStatusDto> {
     validate_household_id(household_id)?;
     validate_interval(interval_minutes)?;
     let transaction = connection.unchecked_transaction()?;
@@ -79,10 +93,12 @@ pub fn configure(
     transaction.execute(
         "INSERT INTO family_delivery_schedules(
              household_id,enabled,interval_minutes,next_due_at,last_result,
-             last_discovered_count,consecutive_failures,updated_at
+             last_discovered_count,consecutive_failures,intake_enabled,
+             last_intake_result,last_staged_count,updated_at
          ) VALUES(
              ?1,?2,?3,CASE WHEN ?2=1 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END,
              CASE WHEN ?2=1 THEN 'NEVER' ELSE 'DISABLED' END,0,0,
+             ?4,CASE WHEN ?2=1 AND ?4=1 THEN 'NEVER' ELSE 'DISABLED' END,0,
              strftime('%Y-%m-%dT%H:%M:%fZ','now')
          )
          ON CONFLICT(household_id) DO UPDATE SET
@@ -97,8 +113,11 @@ pub fn configure(
              suspended_until=NULL,
              suspension_reason=NULL,
              last_error_code=NULL,
+             intake_enabled=excluded.intake_enabled,
+             last_intake_result=excluded.last_intake_result,
+             last_staged_count=0,last_intake_error_code=NULL,
              updated_at=excluded.updated_at",
-        params![household_id, enabled, interval_minutes],
+        params![household_id, enabled, interval_minutes, intake_enabled],
     )?;
     let result = read_status(&transaction, household_id)?;
     transaction.commit()?;
@@ -115,6 +134,8 @@ pub fn disable(
              enabled=0,next_due_at=NULL,lease_token=NULL,lease_expires_at=NULL,
              last_result='DISABLED',suspended_until=NULL,last_error_code=NULL,
              suspension_reason=NULL,
+             intake_enabled=0,last_intake_result='DISABLED',last_staged_count=0,
+             last_intake_error_code=NULL,
              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE household_id=?1",
         [household_id],
@@ -395,6 +416,59 @@ pub fn complete(
     read_status(connection, household_id)
 }
 
+/// Persists bounded, redacted intake telemetry only while this lease still
+/// owns the schedule. Artifact identifiers and financial data are never stored.
+pub fn record_intake_result(
+    connection: &Connection,
+    household_id: &str,
+    lease_token: &str,
+    result: &str,
+    staged_count: u32,
+    error_code: Option<&str>,
+) -> Result<()> {
+    if !matches!(
+        result,
+        "NO_AVAILABLE"
+            | "REVIEW_PENDING"
+            | "STAGED_FOR_REVIEW"
+            | "FAILED_RETRYABLE"
+            | "REJECTED_INVALID"
+            | "AUDIENCE_DENIED"
+    ) || staged_count > 1
+        || error_code.is_some_and(|value| validate_error_code(value).is_err())
+    {
+        return Err(FamilyDeliveryScheduleError::InvalidInput);
+    }
+    let changed = connection.execute(
+        "UPDATE family_delivery_schedules SET
+             last_intake_result=?3,last_staged_count=?4,last_intake_error_code=?5,
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE household_id=?1 AND enabled=1 AND intake_enabled=1
+           AND lease_token=?2
+           AND lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+        params![household_id, lease_token, result, staged_count, error_code],
+    )?;
+    if changed == 0 {
+        return Err(FamilyDeliveryScheduleError::StaleLease);
+    }
+    Ok(())
+}
+
+pub fn intake_enabled(
+    connection: &Connection,
+    household_id: &str,
+    lease_token: &str,
+) -> Result<bool> {
+    assert_active_lease(connection, household_id, lease_token)?;
+    connection
+        .query_row(
+            "SELECT intake_enabled FROM family_delivery_schedules WHERE household_id=?1",
+            [household_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+}
+
 /// Records a retryable discovery failure. Retry delay grows exponentially from
 /// the configured interval and is capped at six hours. After five consecutive
 /// failures the status is explicitly suspended until that bounded retry time.
@@ -629,7 +703,8 @@ fn read_status(
                     lease_token IS NOT NULL,lease_expires_at,last_attempt_at,
                     last_success_at,last_result,last_discovered_count,
                     consecutive_failures,suspended_until,suspension_reason,
-                    last_error_code,updated_at
+                    last_error_code,intake_enabled,last_intake_result,last_staged_count,
+                    last_intake_error_code,updated_at
              FROM family_delivery_schedules WHERE household_id=?1",
             [household_id],
             |row| {
@@ -648,7 +723,11 @@ fn read_status(
                     suspended_until: row.get(11)?,
                     suspension_reason: row.get(12)?,
                     last_error_code: row.get(13)?,
-                    updated_at: row.get(14)?,
+                    intake_enabled: row.get(14)?,
+                    last_intake_result: row.get(15)?,
+                    last_staged_count: row.get(16)?,
+                    last_intake_error_code: row.get(17)?,
+                    updated_at: row.get(18)?,
                 })
             },
         )
