@@ -1882,6 +1882,7 @@ fn validate_start(request: &StartImport, vault_uri: &str) -> Result<()> {
         "LOCAL_FOLDER"
             | "ICLOUD_PICKER"
             | "GOOGLE_DRIVE"
+            | "GMAIL"
             | "MANUAL_UPLOAD"
             | "CAMERA_SCAN"
             | "OTHER"
@@ -2540,6 +2541,31 @@ mod tests {
         let pending = list_pending_reviews(&connection, "household").unwrap();
         assert_eq!(pending.runs.len(), 1);
         assert_eq!(pending.runs[0].source_type, "GOOGLE_DRIVE");
+    }
+
+    #[test]
+    fn gmail_source_type_is_preserved_across_persistence_views() {
+        let connection = database();
+        let mut input = request("gmail-run", "gmail-document", 'f');
+        input.source_type = "GMAIL".into();
+        input.original_filename = "gmail-message.eml".into();
+        input.media_type = "message/rfc822".into();
+
+        start_import(&connection, &input, "vault://gmail-document").unwrap();
+
+        let persisted: String = connection
+            .query_row(
+                "SELECT source_type FROM source_documents WHERE id='gmail-document'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted, "GMAIL");
+        let preview = preview_import(&connection, "gmail-run").unwrap();
+        assert_eq!(preview.source.source_type, "GMAIL");
+        let pending = list_pending_reviews(&connection, "household").unwrap();
+        assert_eq!(pending.runs.len(), 1);
+        assert_eq!(pending.runs[0].source_type, "GMAIL");
     }
 
     #[test]
