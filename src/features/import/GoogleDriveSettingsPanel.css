@@ -1,24 +1,24 @@
 .google-drive-settings { display: grid; gap: 14px; }
 .google-drive-settings .panel-head h2 { display: flex; align-items: center; gap: 7px; }
-.drive-state { align-self: start; padding: 5px 9px; border-radius: 999px; font-size: 9px; white-space: nowrap; }
+.drive-state { align-self: start; padding: 5px 9px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
 .drive-state-CONNECTED { color: #315a3d; background: #e5f1e7; }
 .drive-state-AUTH_REQUIRED { color: #8a4f32; background: #fbe8de; }
 .drive-state-AUTHORIZING,.drive-state-SELECTING_FOLDER,.drive-state-SELECTING_LABEL { color: #775d24; background: #fff0d5; }
 .drive-state-DISCONNECTED,.drive-state-UNAVAILABLE,.drive-state-LOADING { color: var(--muted); background: var(--soft); }
-.drive-review-gate,.drive-warning,.drive-notice,.drive-unavailable { margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--muted); background: var(--soft); font-size: 9px; line-height: 1.6; }
+.drive-review-gate,.drive-warning,.drive-notice,.drive-unavailable { margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--muted); background: var(--soft); font-size: 11px; line-height: 1.6; }
 .drive-review-gate strong { color: var(--ink); }
 .drive-warning { color: #805a24; background: #fff6e6; }
 .drive-connect { justify-self: start; }
 .drive-connect,.drive-folder-form button,.drive-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .drive-folder-form { display: grid; gap: 6px; }
-.drive-folder-form > label,.drive-schedule > label { color: var(--muted); font-size: 9px; font-weight: 700; }
+.drive-folder-form > label,.drive-schedule > label { color: var(--muted); font-size: 11px; font-weight: 700; }
 .drive-folder-form > div { display: grid; grid-template-columns: minmax(260px,1fr) auto; gap: 8px; }
 .drive-folder-form input { min-width: 0; }
-.drive-folder-form small { color: var(--muted); font-size: 8px; }
+.drive-folder-form small { color: var(--muted); font-size: 10px; }
 .drive-summary { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 9px; margin: 0; }
 .drive-summary div { min-width: 0; padding: 11px; border: 1px solid var(--line); border-radius: 8px; }
-.drive-summary dt { color: var(--muted); font-size: 8px; }
-.drive-summary dd { overflow: hidden; margin: 4px 0 0; font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.drive-summary dt { color: var(--muted); font-size: 10px; }
+.drive-summary dd { overflow: hidden; margin: 4px 0 0; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .drive-schedule { display: grid; grid-template-columns: minmax(150px,1fr) minmax(180px,1fr) auto; align-items: end; gap: 10px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; }
 .drive-schedule > label { display: flex; align-items: center; gap: 7px; }
 .drive-schedule > label:nth-child(2) { display: grid; gap: 5px; }

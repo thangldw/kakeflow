@@ -1,38 +1,38 @@
 .pending-import-handoff { margin-top: 15px; }
-.pending-import-handoff .panel-head > b { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 7px; color: #587754; background: #e6efe2; font-size: 8px; white-space: nowrap; }
-.pending-import-scope { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; margin: 0 0 17px; border: 1px solid #dfe6d8; border-radius: 9px; color: var(--muted); background: #f5f8f1; font-size: 9px; line-height: 1.6; }
+.pending-import-handoff .panel-head > b { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 7px; color: #587754; background: #e6efe2; font-size: 10px; white-space: nowrap; }
+.pending-import-scope { display: flex; align-items: flex-start; gap: 9px; padding: 11px 13px; margin: 0 0 17px; border: 1px solid #dfe6d8; border-radius: 9px; color: var(--muted); background: #f5f8f1; font-size: 11px; line-height: 1.6; }
 .pending-import-scope svg { flex: none; margin-top: 1px; color: #687c5d; }
 .pending-import-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 22px; }
 .pending-import-columns > section { min-width: 0; }
 .pending-import-columns > section + section { padding-left: 22px; border-left: 1px solid var(--line); }
 .pending-import-step-head { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 13px; }
-.pending-import-step-head > span,.pending-import-mapping-summary > div > span { width: 22px; height: 22px; display: grid; flex: none; place-items: center; border-radius: 50%; color: #fff; background: #6c7f61; font-size: 9px; font-weight: 700; }
+.pending-import-step-head > span,.pending-import-mapping-summary > div > span { width: 22px; height: 22px; display: grid; flex: none; place-items: center; border-radius: 50%; color: #fff; background: #6c7f61; font-size: 11px; font-weight: 700; }
 .pending-import-step-head h3,.pending-import-mapping h3 { margin: 0 0 3px; font-size: 12px; }
-.pending-import-step-head p,.pending-import-mapping p { margin: 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
+.pending-import-step-head p,.pending-import-mapping p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .pending-import-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
-.pending-import-form label,.pending-import-stage-action label { display: grid; gap: 5px; color: var(--ink); font-size: 8px; font-weight: 700; }
+.pending-import-form label,.pending-import-stage-action label { display: grid; gap: 5px; color: var(--ink); font-size: 10px; font-weight: 700; }
 .pending-import-form input,.pending-import-stage-action input,.pending-import-mapping select { width: 100%; min-width: 0; height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--paper); font: inherit; outline: none; }
 .pending-import-form input:focus,.pending-import-stage-action input:focus,.pending-import-mapping select:focus { border-color: #728166; box-shadow: 0 0 0 3px rgba(100,121,83,.15); }
 .pending-import-run-list { display: grid; gap: 7px; margin-top: 11px; }
 .pending-import-run-list article { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
 .pending-import-run-list article > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.pending-import-run-list strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.pending-import-run-list small,.pending-import-mapping small { color: var(--muted); font-size: 7px; line-height: 1.45; }
-.pending-import-run-list .secondary-btn { height: 30px; padding-inline: 9px; font-size: 8px; }
+.pending-import-run-list strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.pending-import-run-list small,.pending-import-mapping small { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.pending-import-run-list .secondary-btn { height: 30px; padding-inline: 9px; font-size: 10px; }
 .pending-import-stage-action { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 9px; }
-.pending-import-stage-action .secondary-btn { height: 36px; font-size: 9px; }
+.pending-import-stage-action .secondary-btn { height: 36px; font-size: 11px; }
 .pending-import-mapping { margin-top: 18px; padding-top: 17px; border-top: 1px solid var(--line); }
 .pending-import-mapping-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
 .pending-import-mapping-summary > div { display: flex; align-items: flex-start; gap: 9px; }
-.pending-import-mapping-summary > b { padding: 5px 7px; border-radius: 6px; color: #9a7040; background: #f6eddc; font-size: 8px; }
+.pending-import-mapping-summary > b { padding: 5px 7px; border-radius: 6px; color: #9a7040; background: #f6eddc; font-size: 10px; }
 .pending-import-mapping-note { padding: 9px 11px; margin: 11px 0 !important; border-radius: 7px; color: #716852 !important; background: #faf5e9; }
 .pending-import-mapping-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px 12px; margin-top: 12px; }
 .pending-import-mapping-grid > label { display: grid; grid-template-columns: minmax(115px,.8fr) minmax(145px,1fr); align-items: center; gap: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #fafbf9; }
 .pending-import-mapping-grid label > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.pending-import-mapping-grid strong { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.pending-import-mapping-grid strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .pending-import-mapping-grid label > small { grid-column: 1 / -1; color: #a05b48; }
 .pending-import-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 13px; }
-.pending-import-notice { padding: 10px 12px; margin: 14px 0 0; border: 1px solid #dae5d5; border-radius: 8px; color: #54654d; background: #edf3e9; font-size: 9px; }
+.pending-import-notice { padding: 10px 12px; margin: 14px 0 0; border: 1px solid #dae5d5; border-radius: 8px; color: #54654d; background: #edf3e9; font-size: 11px; }
 
 @media (max-width: 900px) {
   .pending-import-columns,.pending-import-mapping-grid { grid-template-columns: 1fr; }

@@ -9,14 +9,14 @@
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0l10 5-10 5z" fill="#8fa5c2"/></marker>
   </defs>
   <rect width="1440" height="820" rx="36" fill="url(#bg)"/>
-  <text x="72" y="76" fill="#f4f8ff" font-family="Inter,Arial,sans-serif" font-size="34" font-weight="700">Family delivery schema v2</text>
-  <text x="72" y="112" fill="#9fb0c7" font-family="Inter,Arial,sans-serif" font-size="18">Planning and configuration travel only after the complete audience graph resolves.</text>
+  <text x="72" y="76" fill="#f4f8ff" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="34" font-weight="700">Family delivery schema v2</text>
+  <text x="72" y="112" fill="#9fb0c7" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="18">Planning and configuration travel only after the complete audience graph resolves.</text>
 
   <g filter="url(#shadow)">
     <rect x="72" y="170" width="330" height="484" rx="26" fill="#111f32" stroke="#2e425d"/>
-    <text x="104" y="214" fill="#f4f8ff" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700">Local confirmed state</text>
-    <text x="104" y="249" fill="#9fb0c7" font-family="Inter,Arial,sans-serif" font-size="15">Canonical whole aggregates</text>
-    <g font-family="Inter,Arial,sans-serif" font-size="16">
+    <text x="104" y="214" fill="#f4f8ff" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="22" font-weight="700">Local confirmed state</text>
+    <text x="104" y="249" fill="#9fb0c7" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="15">Canonical whole aggregates</text>
+    <g font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="16">
       <rect x="104" y="282" width="266" height="54" rx="14" fill="#1b2c43"/><text x="126" y="316" fill="#dce8f7">Ledger graph</text>
       <rect x="104" y="350" width="266" height="54" rx="14" fill="#1b2c43"/><text x="126" y="384" fill="#dce8f7">Monthly budget · goals</text>
       <rect x="104" y="418" width="266" height="54" rx="14" fill="#1b2c43"/><text x="126" y="452" fill="#dce8f7">Rules · account groups</text>
@@ -28,41 +28,41 @@
   <path d="M416 412h112" stroke="#8fa5c2" stroke-width="4" marker-end="url(#arrow)"/>
   <g filter="url(#shadow)">
     <rect x="548" y="220" width="292" height="384" rx="26" fill="#111f32" stroke="#2e425d"/>
-    <text x="580" y="264" fill="#f4f8ff" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="700">Audience meet</text>
-    <g font-family="Inter,Arial,sans-serif" font-size="13">
+    <text x="580" y="264" fill="#f4f8ff" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="22" font-weight="700">Audience meet</text>
+    <g font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="13">
       <text x="580" y="310" fill="#b7c6d9">SHARED + SHARED</text><text x="794" y="310" fill="#61ddc4" text-anchor="end">SHARED</text>
       <text x="580" y="350" fill="#b7c6d9">SHARED + PERSONAL</text><text x="808" y="350" fill="#9aa8ff" text-anchor="end">PERSONAL A</text>
       <text x="580" y="390" fill="#b7c6d9">PERSONAL A + A</text><text x="808" y="390" fill="#9aa8ff" text-anchor="end">PERSONAL A</text>
       <text x="580" y="430" fill="#b7c6d9">PERSONAL A + B</text><text x="808" y="430" fill="#ffb36b" text-anchor="end">WITHHOLD</text>
     </g>
     <line x1="580" y1="462" x2="808" y2="462" stroke="#2e425d"/>
-    <text x="580" y="500" fill="#f4f8ff" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="600">Whole aggregate only</text>
-    <text x="580" y="530" fill="#9fb0c7" font-family="Inter,Arial,sans-serif" font-size="14">No row splitting to widen access.</text>
-    <text x="580" y="556" fill="#9fb0c7" font-family="Inter,Arial,sans-serif" font-size="14">Missing dependency → withheld.</text>
+    <text x="580" y="500" fill="#f4f8ff" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="17" font-weight="600">Whole aggregate only</text>
+    <text x="580" y="530" fill="#9fb0c7" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="14">No row splitting to widen access.</text>
+    <text x="580" y="556" fill="#9fb0c7" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="14">Missing dependency → withheld.</text>
   </g>
 
   <path d="M856 332h78" stroke="#8fa5c2" stroke-width="4" marker-end="url(#arrow)"/>
   <path d="M856 492h78" stroke="#8fa5c2" stroke-width="4" marker-end="url(#arrow)"/>
   <g filter="url(#shadow)">
     <rect x="954" y="186" width="414" height="182" rx="26" fill="url(#shared)"/>
-    <text x="986" y="230" fill="#071512" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="800">SHARED artifact</text>
-    <text x="986" y="264" fill="#0d3b34" font-family="Inter,Arial,sans-serif" font-size="15">Household graph · shared plans · shared config</text>
-    <text x="986" y="305" fill="#071512" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="700">Reason-specific coverage counts</text>
-    <text x="986" y="333" fill="#0d3b34" font-family="Inter,Arial,sans-serif" font-size="14">COMPLETE only when every withheld count is zero</text>
+    <text x="986" y="230" fill="#071512" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="22" font-weight="800">SHARED artifact</text>
+    <text x="986" y="264" fill="#0d3b34" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="15">Household graph · shared plans · shared config</text>
+    <text x="986" y="305" fill="#071512" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="16" font-weight="700">Reason-specific coverage counts</text>
+    <text x="986" y="333" fill="#0d3b34" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="14">COMPLETE only when every withheld count is zero</text>
 
     <rect x="954" y="406" width="414" height="182" rx="26" fill="url(#personal)"/>
-    <text x="986" y="450" fill="#0c1236" font-family="Inter,Arial,sans-serif" font-size="22" font-weight="800">PERSONAL(member) artifact</text>
-    <text x="986" y="484" fill="#18235c" font-family="Inter,Arial,sans-serif" font-size="15">Only the matching active membership generation</text>
-    <text x="986" y="525" fill="#0c1236" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="700">Strict account dependencies</text>
-    <text x="986" y="553" fill="#18235c" font-family="Inter,Arial,sans-serif" font-size="14">Other members never receive these bytes</text>
+    <text x="986" y="450" fill="#0c1236" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="22" font-weight="800">PERSONAL(member) artifact</text>
+    <text x="986" y="484" fill="#18235c" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="15">Only the matching active membership generation</text>
+    <text x="986" y="525" fill="#0c1236" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="16" font-weight="700">Strict account dependencies</text>
+    <text x="986" y="553" fill="#18235c" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="14">Other members never receive these bytes</text>
   </g>
 
   <path d="M1162 606v66" stroke="#8fa5c2" stroke-width="4" marker-end="url(#arrow)"/>
   <rect x="926" y="690" width="470" height="76" rx="20" fill="#1a2b41" stroke="#49617e"/>
-  <text x="1161" y="721" text-anchor="middle" fill="#f4f8ff" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">Download → review conflicts → atomic apply</text>
-  <text x="1161" y="748" text-anchor="middle" fill="#9fb0c7" font-family="Inter,Arial,sans-serif" font-size="14">No upload, download, or staging action posts automatically</text>
+  <text x="1161" y="721" text-anchor="middle" fill="#f4f8ff" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="18" font-weight="700">Download → review conflicts → atomic apply</text>
+  <text x="1161" y="748" text-anchor="middle" fill="#9fb0c7" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="14">No upload, download, or staging action posts automatically</text>
 
   <rect x="72" y="700" width="760" height="66" rx="18" fill="#2b241d" stroke="#89673b"/>
-  <text x="104" y="728" fill="#ffd99a" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="700">Evidence gate</text>
-  <text x="104" y="751" fill="#c9ad82" font-family="Inter,Arial,sans-serif" font-size="14">Card and investment facts stay withheld until source origin, bytes, raw rows, and links travel together.</text>
+  <text x="104" y="728" fill="#ffd99a" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="17" font-weight="700">Evidence gate</text>
+  <text x="104" y="751" fill="#c9ad82" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="14">Card and investment facts stay withheld until source origin, bytes, raw rows, and links travel together.</text>
 </svg>
