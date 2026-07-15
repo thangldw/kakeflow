@@ -45,7 +45,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .household-picker { width: 100%; display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 9px; padding: 10px; margin-bottom: 23px; background: #f0f2eb; border: 1px solid #e4e8df; border-radius: 12px; cursor: pointer; text-align: left; }
 .avatar, .top-avatar { display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(140deg, #81906f, #56634a); font-size: 11px; font-weight: 700; }
 .avatar { width: 34px; height: 34px; }
-.household-picker div { min-width: 0; display: flex; flex-direction: column; }
+.household-picker > div:not(.avatar) { min-width: 0; display: flex; flex-direction: column; }
+.household-picker > .avatar { display: grid; place-items: center; line-height: 1; text-align: center; }
 .household-picker strong { font-size: 13px; }
 .household-picker small { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .household-picker select { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font: 600 13px inherit; }
