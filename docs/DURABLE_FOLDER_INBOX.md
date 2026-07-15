@@ -1,6 +1,6 @@
 # Durable Folder Inbox
 
-KakeFlow 0.24 treats every registered local or cloud-synced folder as a durable source queue. Discovery is available from the whole desktop application rather than only while the Import page is mounted.
+KakeFlow treats every registered local or cloud-synced folder as a durable source queue. Discovery is available from the whole desktop application rather than only while the Import page is mounted.
 
 ## Lifecycle
 

@@ -1,6 +1,6 @@
 # Credit-card statement due dates
 
-KakeFlow 0.29 lets a household enter, correct, or clear the payment due date for an imported credit-card statement. Card CSV adapters do not guess a due date when the source file does not supply one.
+KakeFlow lets a household enter, correct, or clear the payment due date for an imported credit-card statement. Card CSV adapters do not guess a due date when the source file does not supply one.
 
 ## Workflow
 

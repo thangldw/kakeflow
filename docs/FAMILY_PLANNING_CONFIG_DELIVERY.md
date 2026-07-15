@@ -1,6 +1,6 @@
 # Audience-partitioned planning and configuration delivery
 
-KakeFlow v0.56 extends the explicit family-delivery workflow with a schema-v2
+KakeFlow extends the explicit family-delivery workflow with a schema-v2
 current-state contract for household planning and configuration. It remains a
 manual delivery and review workflow: preparing, uploading, downloading, or
 staging an artifact never changes the receiving ledger.
@@ -52,7 +52,7 @@ meet above.
 
 Each outbound partition reports ledger, planning, configuration, card, and
 investment counts together with reason-specific withheld counts. `COMPLETE` is
-valid only when every withheld count is zero. In v0.56, confirmed card and
+valid only when every withheld count is zero. In this contract, confirmed card and
 investment aggregates remain withheld as `EVIDENCE_REQUIRED`; their immutable
 source bytes and origin-scoped aliases are not silently omitted.
 
@@ -78,7 +78,7 @@ choices and one atomic apply action.
 
 ## Explicit boundary
 
-Version 0.56 does not deliver card statements, card payments, portfolio
+KakeFlow does not deliver card statements, card payments, portfolio
 snapshots, brokerage events, investment FX observations, market prices, or
 aggregate asset snapshots. Those facts require a partitioned evidence envelope
 that binds source origin, document bytes, raw rows, and entity links. They are

@@ -1,7 +1,7 @@
 # Replicable ledger capture
 
-KakeFlow 0.36 captures one canonical transaction as a complete, deterministic
-ledger aggregate. This closes the v0.35 gap where a transaction header could be
+KakeFlow captures one canonical transaction as a complete, deterministic
+ledger aggregate. This closes the gap where a transaction header could be
 recorded without the journal lines needed to reproduce balances.
 
 ```mermaid
@@ -73,11 +73,11 @@ statement-to-purchase rows, confirmed card-payment links, and receipt-candidate
 links remain in their source/reconciliation graphs and are also deferred until
 those parent aggregates have a defined dependency order.
 
-KakeFlow 0.37 separately defines deterministic local envelopes for seven
+KakeFlow separately defines deterministic local envelopes for seven
 household planning and portable configuration aggregates. See the [replicable
 planning and configuration contract](REPLICABLE_PLANNING_CONFIG_CAPTURE.md).
 That extension does not change the ledger payload or add incoming apply.
 
-KakeFlow 0.36 still has no incoming-envelope runtime, remote transport, conflict
+KakeFlow still has no incoming-envelope runtime, remote transport, conflict
 resolution, login, or cloud synchronization. The two-database replay is an
 automated contract proof, not a user-facing multi-device sync claim.

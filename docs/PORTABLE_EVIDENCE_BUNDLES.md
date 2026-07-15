@@ -1,6 +1,6 @@
 # Portable confirmed-evidence bundles
 
-KakeFlow 0.41 extends the separate, passphrase-protected capsule to immutable
+KakeFlow extends the separate, passphrase-protected capsule to immutable
 evidence behind posted household transactions, card statements, and confirmed
 investment facts. Capsule schema v2 can hydrate evidence before the matching
 schema-v3 change package, resolving the dependency cycle created by non-null
@@ -67,5 +67,5 @@ behavior. Schema-v2 capsules may hydrate their immutable source aliases first;
 the later change-package apply still requires the exact origin/document/row
 relationship before publishing investment facts.
 
-This is a user-driven local file workflow. Version 0.41 does not claim automatic
+This is a user-driven local file workflow. KakeFlow does not claim automatic
 cloud transport, background multi-device sync, or pending-import replication.

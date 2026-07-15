@@ -1,7 +1,7 @@
 # Local Family Space
 
-KakeFlow v0.11 introduced stable household members and account ownership as a
-foundation for family organization. KakeFlow v0.34 adds an explicit mapping
+KakeFlow introduced stable household members and account ownership as a
+foundation for family organization. KakeFlow adds an explicit mapping
 from a local logical principal to one of these member IDs. That mapping is
 portable sync metadata, not a login, authenticated cloud identity, or permission.
 
@@ -24,10 +24,10 @@ personal household accounts, and households with no active member.
 Family Space is local classification and organization. It is not authentication,
 authorization, or a promise that another person using the same desktop cannot
 view a personal account. Account groups also remain analytical scopes, not
-permissions. The v0.34 local principal mapping is preparation for a future
+permissions. the local principal mapping is preparation for a future
 transport and does not change this boundary.
 
-KakeFlow v0.12 adds two independent transaction dimensions:
+KakeFlow adds two independent transaction dimensions:
 
 - Attribution (`HOUSEHOLD` or one member) answers whose household activity a
   transaction represents.
@@ -38,7 +38,7 @@ changes a linked transaction, and neither tuple is inferred from account
 ownership. A transfer can touch multiple owners, while one statement can support
 transactions attributed to several members.
 
-KakeFlow v0.13 enables member analytics with one tagged attribution scope across
+KakeFlow enables member analytics with one tagged attribution scope across
 dashboard activity, ledger, calendar, reports, intelligence, forecast history,
 Action Center actuals, and transaction export. The available scopes are the
 whole household, household-common activity, or one member—including an archived
@@ -50,5 +50,5 @@ household obligations remain household-wide because they are not transaction
 attribution facts. The UI labels that boundary instead of presenting a partial
 balance as a member balance. Audience labels still do not provide access control.
 Authenticated multi-device enforcement requires a future remote-principal
-mapping, transport, and backend authorization; the v0.34 local mapping does not
+mapping, transport, and backend authorization; the local mapping does not
 satisfy those requirements.

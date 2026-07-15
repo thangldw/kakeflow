@@ -1,6 +1,6 @@
 # AEON Card finalized-statement import
 
-KakeFlow 0.63 adds a deliberately narrow adapter for an AEON Card finalized
+KakeFlow adds a deliberately narrow adapter for an AEON Card finalized
 statement CSV. AEON's official support material confirms that finalized billing
 statements can be downloaded as CSV or PDF, but it does not publish a literal
 consumer CSV byte schema. The built-in contract is therefore clearly labeled

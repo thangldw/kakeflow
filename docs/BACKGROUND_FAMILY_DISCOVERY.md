@@ -81,9 +81,9 @@ or applied.
 
 ## Compatibility and non-claims
 
-Background discovery uses the v0.54-v0.57 family artifact contracts and the
-v0.58 `KFE1` relay-blind recipient-encryption transport without changing their
-bytes. Schema v1, v2, and v3 review/apply compatibility is unchanged.
+Background discovery uses the family artifact schema-v1 through schema-v3
+contracts and the `KFE1` relay-blind recipient-encryption transport without
+changing their bytes. Review/apply compatibility is unchanged.
 
 This feature does not claim push delivery, realtime synchronization, automatic
 send, plaintext automatic intake, automatic conflict resolution, automatic
@@ -91,7 +91,7 @@ apply, remote erasure, sender signatures, a
 production-hosted relay, or a background service that runs while KakeFlow is
 closed.
 
-KakeFlow v0.60 adds recovery for an explicitly initiated send whose encrypted
+KakeFlow adds recovery for an explicitly initiated send whose encrypted
 recipient set becomes stale. That recovery remains separate from this
 inbound workflow: background discovery and preparation never retry, reset, or
 reseal an outbound delivery. See

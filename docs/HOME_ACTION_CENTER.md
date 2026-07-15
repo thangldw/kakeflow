@@ -1,6 +1,6 @@
 # Home Action Center
 
-KakeFlow 0.32 surfaces the existing forecast/action read model on Home. It does not derive a second set of warnings from dashboard cards.
+KakeFlow surfaces the existing forecast/action read model on Home. It does not derive a second set of warnings from dashboard cards.
 
 ## Ordering and visibility
 

@@ -1,6 +1,6 @@
 # Family recipient-set recovery
 
-KakeFlow v0.60 preserves two requirements that can otherwise conflict: an
+KakeFlow preserves two requirements that can otherwise conflict: an
 accepted publication must be retried with byte-identical encrypted transport,
 while an envelope rejected before storage because its recipient set is stale
 must eventually be encrypted for the current recipients.

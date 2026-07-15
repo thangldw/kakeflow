@@ -1,6 +1,6 @@
 # SMBC Card Vpass statement import
 
-KakeFlow 0.44 adds a deliberately narrow built-in adapter for a confirmed,
+KakeFlow adds a deliberately narrow built-in adapter for a confirmed,
 headerless SMBC Card Vpass CSV layout. SMBC's official guide confirms that Vpass
 can export a comma-separated statement and publishes the field order in its
 [CSV illustration](https://www.smbc-card.com/mem/oshiharai/meisai_about.jsp):

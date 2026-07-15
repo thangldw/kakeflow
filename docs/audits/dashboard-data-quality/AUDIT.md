@@ -44,7 +44,7 @@ Risks and opportunities:
 - The large card artwork receives similar visual weight to the statement controls and evidence; on information-dense screens the evidence should dominate.
 - Small secondary text and compact targets need keyboard, focus, zoom, and contrast verification in the packaged app; screenshots alone cannot establish WCAG compliance.
 
-## Highest-impact v0.30 recommendations
+## Highest-impact recommendations
 
 1. Add one source-backed dashboard data-quality summary with latest confirmed import, pending review count, failed import count, and explicit account/source coverage gaps.
 2. Make the summary drill into Import Inbox rather than adding more passive dashboard decoration.

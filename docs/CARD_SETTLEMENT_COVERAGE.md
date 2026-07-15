@@ -30,7 +30,7 @@ Coverage has a hard row budget and rejects an oversized request instead of silen
 
 An outstanding statement without a bank mapping is returned separately as an unmapped obligation. A statement without a payment due date is also returned separately and excluded from chronological projection. Both states appear in the Cards workspace and Action Center so missing data cannot look like available payment capacity.
 
-KakeFlow 0.29 lets the user resolve that exclusion by entering a due date on the statement or directly in the missing-date warning. The value must be a real ISO date on or after the statement period end. It is always labeled as user-confirmed; KakeFlow never derives it from the issuer or transaction text. Clearing the value returns the statement to the excluded missing-date group.
+KakeFlow lets the user resolve that exclusion by entering a due date on the statement or directly in the missing-date warning. The value must be a real ISO date on or after the statement period end. It is always labeled as user-confirmed; KakeFlow never derives it from the issuer or transaction text. Clearing the value returns the statement to the excluded missing-date group.
 
 ## Scope and safety boundary
 

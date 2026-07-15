@@ -1,6 +1,6 @@
 # Scanned PDF OCR
 
-KakeFlow 0.62 adds an explicit, offline OCR path for image-only and hybrid PDF
+KakeFlow adds an explicit, offline OCR path for image-only and hybrid PDF
 documents. PDF text extraction remains the first step. When one or more pages
 need OCR, Import Inbox asks the user to start local OCR; it never sends the
 document to a remote service and never posts a transaction automatically.

@@ -1,6 +1,6 @@
 # Monex U.S. stock trade-history import
 
-KakeFlow v0.61 adds a dedicated, fail-closed parser for the current Monex
+KakeFlow adds a dedicated, fail-closed parser for the current Monex
 Securities U.S.-stock **Trade History** field family. It is an investment-ledger
 import. It never creates household income or expense transactions.
 
@@ -14,7 +14,7 @@ rows as CSV and publishes the fields shown by its detail view:
 That public page does **not** publish a literal CSV header row, filename,
 encoding, delimiter, date serialization, null representation, or settlement
 sign convention. KakeFlow therefore does not identify this source from a
-filename. The v0.61 detector requires the complete normalized 16-field family
+filename. the detector requires the complete normalized 16-field family
 in the published detail-view order,
 including the independent USD and JPY execution/settlement values, tax-basis
 settlement value, USD fee, transaction currency, and FX rate. A missing or
@@ -65,7 +65,7 @@ events:
   ambiguous ticker/name;
 - trades before the current history generation.
 
-To import with v0.61, export the screen filtered to `現物` and U.S.-dollar
+To import with the current implementation, export the screen filtered to `現物` and U.S.-dollar
 settlement. Unsupported rows remain visible during preview and must not be
 silently coerced.
 

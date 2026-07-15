@@ -1,6 +1,6 @@
 # Annual Household Review XLSX
 
-KakeFlow 0.65 can save the validated Annual Household Review as a native Excel workbook. The export uses the same `YearlyFinancialReportRequest` and report DTO as the visible annual screen and CSV, so year, as-of date, saved account group, and household/member attribution scope do not drift between formats.
+KakeFlow can save the validated Annual Household Review as a native Excel workbook. The export uses the same `YearlyFinancialReportRequest` and report DTO as the visible annual screen and CSV, so year, as-of date, saved account group, and household/member attribution scope do not drift between formats.
 
 ## Workbook contents
 
@@ -17,4 +17,4 @@ The workbook is generated and written by the native desktop process. Binary work
 
 Generation is bounded to four sheets, twelve months, a fixed driver limit, bounded cell text, an 8 MiB workbook, and integers that Excel can represent exactly. Invalid or oversized reports fail instead of silently truncating or rounding values.
 
-This release exports only the Annual Household Review to XLSX. Monthly review XLSX is available from KakeFlow 0.67, annual investment performance from 0.68, and explicit portfolio snapshots from 0.69. Visually verified PDF reports with deterministic Japanese font embedding remain a separate milestone.
+This release exports only the Annual Household Review to XLSX. Monthly review XLSX is available from KakeFlow, annual investment performance in the current implementation, and explicit portfolio snapshots in the current implementation. Visually verified PDF reports with deterministic Japanese font embedding remain a separate milestone.

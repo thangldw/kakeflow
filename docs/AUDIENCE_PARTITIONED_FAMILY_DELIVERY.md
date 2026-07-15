@@ -1,15 +1,15 @@
 # Audience-partitioned family delivery
 
-KakeFlow v0.54 introduced a family-delivery protocol that is deliberately
+KakeFlow introduced a family-delivery protocol that is deliberately
 separate from the schema-v4 personal change package. Personal relay packages
 remain suitable only for devices authenticated as the same remote principal.
 They must never be filtered and sent to another household member.
 
-KakeFlow v0.56 adds schema-v2 planning/configuration aggregates without
+KakeFlow adds schema-v2 planning/configuration aggregates without
 widening that trust boundary. See the dedicated
 [planning and configuration contract](FAMILY_PLANNING_CONFIG_DELIVERY.md).
 
-KakeFlow v0.60 adds exact-byte retry and recipient-set-change recovery without
+KakeFlow adds exact-byte retry and recipient-set-change recovery without
 changing the artifact or review contracts. See the dedicated
 [recipient-set recovery contract](FAMILY_RECIPIENT_SET_RECOVERY.md).
 
@@ -45,7 +45,7 @@ Schema v1 supports the intentionally narrow core graph:
 - a transaction is deliverable only when its own audience and every journal
   account dependency resolve to one audience;
 - a dependency graph involving two different personal members is withheld;
-- source links and evidence bytes are not included in v0.54.
+- source links and evidence bytes are not included in this implementation.
 
 Schema v2 additionally carries atomic budgets, goals, rules, account groups,
 settlement mappings, dashboard layouts, and parser profiles. Account-dependent
@@ -80,7 +80,7 @@ no accepted head is never an omission-delete candidate.
 
 ## Explicit non-claims
 
-KakeFlow v0.58 adds relay-blind recipient encryption through the `KFE1`
+KakeFlow adds relay-blind recipient encryption through the `KFE1`
 transport envelope. The relay stores ciphertext and derives recipients from
 active membership, while device private keys remain native. `KFE1` does not
 add sender signatures, realtime/background synchronization, remote ledger
