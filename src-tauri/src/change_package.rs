@@ -7,7 +7,7 @@ use thiserror::Error;
 
 use crate::sync_foundation::{canonical_json, get_local_status, sha256_hex};
 
-pub const PACKAGE_SCHEMA_VERSION: u32 = 4;
+pub const PACKAGE_SCHEMA_VERSION: u32 = 5;
 pub const PACKAGE_MODE: &str = "FULL_CURRENT_STATE";
 pub const LEGACY_COVERED_KINDS: [&str; 11] = [
     "HOUSEHOLD",
@@ -57,16 +57,39 @@ pub const V3_COVERED_KINDS: [&str; 18] = [
     "DASHBOARD_PREFERENCES",
     "DELIMITED_PARSER_PROFILE",
 ];
-pub const COVERED_KINDS: [&str; 18] = V3_COVERED_KINDS;
+pub const V4_COVERED_KINDS: [&str; 18] = V3_COVERED_KINDS;
+pub const COVERED_KINDS: [&str; 19] = [
+    "HOUSEHOLD",
+    "HOUSEHOLD_MEMBER",
+    "ACCOUNT",
+    "TRANSACTION",
+    "CARD_STATEMENT",
+    "CARD_PAYMENT",
+    "PORTFOLIO_SNAPSHOT",
+    "BROKERAGE_EVENT",
+    "INVESTMENT_FX_RATE",
+    "INVESTMENT_MARKET_PRICE",
+    "AGGREGATE_ASSET_SNAPSHOT",
+    "MONTHLY_BUDGET_PLAN",
+    "SAVINGS_GOAL",
+    "CLASSIFICATION_RULE",
+    "ACCOUNT_GROUP",
+    "CARD_SETTLEMENT_MAPPING",
+    "DASHBOARD_PREFERENCES",
+    "DELIMITED_PARSER_PROFILE",
+    "RECURRING_SERIES_PREFERENCES",
+];
 
 const MAX_PACKAGE_RECORDS: usize = 100_000;
+const MAX_RECURRING_SERIES_PREFERENCES: usize = 10_000;
 
 fn covered_kinds_for(schema_version: u32) -> Option<&'static [&'static str]> {
     match schema_version {
         1 => Some(&LEGACY_COVERED_KINDS),
         2 => Some(&V2_COVERED_KINDS),
         3 => Some(&V3_COVERED_KINDS),
-        4 => Some(&COVERED_KINDS),
+        4 => Some(&V4_COVERED_KINDS),
+        5 => Some(&COVERED_KINDS),
         _ => None,
     }
 }
@@ -200,6 +223,21 @@ struct DashboardTemplateLayoutV4Payload {
     hidden_widgets: Vec<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecurringSeriesPreferencesV5Payload {
+    record_kind: String,
+    household_id: String,
+    preferences: Vec<RecurringSeriesPreferenceV5Payload>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecurringSeriesPreferenceV5Payload {
+    normalized_payee: String,
+    decision: String,
+}
+
 const DASHBOARD_TEMPLATES: [&str; 5] = [
     "FINANCIAL_OVERVIEW",
     "HOUSEHOLD_LEDGER",
@@ -255,6 +293,35 @@ fn valid_dashboard_preferences_v4(payload: &Value, household_id: &str) -> bool {
         }
     }
     true
+}
+
+fn valid_recurring_series_preferences_v5(payload: &Value, household_id: &str) -> bool {
+    let Ok(payload) =
+        serde_json::from_value::<RecurringSeriesPreferencesV5Payload>(payload.clone())
+    else {
+        return false;
+    };
+    if payload.record_kind != "RECURRING_SERIES_PREFERENCES"
+        || payload.household_id != household_id
+        || payload.preferences.len() > MAX_RECURRING_SERIES_PREFERENCES
+    {
+        return false;
+    }
+    let mut payees = BTreeSet::new();
+    let mut previous_payee: Option<&str> = None;
+    payload.preferences.iter().all(|preference| {
+        let ordered =
+            previous_payee.is_none_or(|previous| previous < preference.normalized_payee.as_str());
+        previous_payee = Some(preference.normalized_payee.as_str());
+        ordered
+            && !preference.normalized_payee.is_empty()
+            && preference.normalized_payee.len() <= 512
+            && !preference.normalized_payee.chars().any(char::is_control)
+            && crate::recurring_analytics::normalize_payee(&preference.normalized_payee)
+                == preference.normalized_payee
+            && matches!(preference.decision.as_str(), "CONFIRMED" | "IGNORED")
+            && payees.insert(preference.normalized_payee.as_str())
+    })
 }
 
 pub fn export_current_state(
@@ -322,6 +389,14 @@ fn build_current_state(
            'recordKind','HOUSEHOLD','id',id,'name',name,'baseCurrency',base_currency,
            'createdAt',created_at,'updatedAt',updated_at))
          FROM households WHERE id=?1",
+        household_id,
+    )?;
+    push_query_records(
+        &transaction,
+        &mut records,
+        "RECURRING_SERIES_PREFERENCES",
+        "SELECT household_id,payload_json FROM sync_recurring_series_preferences_payloads
+         WHERE household_id=?1",
         household_id,
     )?;
     push_query_records(
@@ -512,6 +587,7 @@ fn build_current_state(
     }
     if counts_by_kind.get("HOUSEHOLD") != Some(&1)
         || counts_by_kind.get("MONTHLY_BUDGET_PLAN") != Some(&1)
+        || (schema_version >= 5 && counts_by_kind.get("RECURRING_SERIES_PREFERENCES") != Some(&1))
     {
         return Err(ChangePackageError::Encoding);
     }
@@ -584,8 +660,10 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<LocalChangePackageDto> {
 }
 
 pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
-    if !matches!(package.schema_version, 1 | 2 | 3 | PACKAGE_SCHEMA_VERSION)
-        || package.mode != PACKAGE_MODE
+    if !matches!(
+        package.schema_version,
+        1 | 2 | 3 | 4 | PACKAGE_SCHEMA_VERSION
+    ) || package.mode != PACKAGE_MODE
         || package.source_installation_id.is_empty()
         || package.source_installation_id.len() > 128
         || package.source_principal_id.is_empty()
@@ -628,9 +706,12 @@ pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
         if canonical != record.canonical_payload_json
             || sha256_hex(canonical.as_bytes()) != record.payload_sha256
             || !payload_identity_matches(record, &payload, &package.household_id)
-            || (package.schema_version == 4
+            || (package.schema_version >= 4
                 && record.entity_kind == "DASHBOARD_PREFERENCES"
                 && !valid_dashboard_preferences_v4(&payload, &package.household_id))
+            || (package.schema_version >= 5
+                && record.entity_kind == "RECURRING_SERIES_PREFERENCES"
+                && !valid_recurring_series_preferences_v5(&payload, &package.household_id))
         {
             return Err(ChangePackageError::InvalidInput);
         }
@@ -641,6 +722,8 @@ pub fn validate_package(package: &LocalChangePackageDto) -> Result<()> {
     if actual_counts != package.counts_by_kind
         || actual_counts.get("HOUSEHOLD") != Some(&1)
         || actual_counts.get("MONTHLY_BUDGET_PLAN") != Some(&1)
+        || (package.schema_version >= 5
+            && actual_counts.get("RECURRING_SERIES_PREFERENCES") != Some(&1))
     {
         return Err(ChangePackageError::InvalidInput);
     }
@@ -1377,6 +1460,29 @@ pub(crate) fn materialize_upsert(
                     [payload],
                 )?;
             }
+        }
+        "RECURRING_SERIES_PREFERENCES" => {
+            connection.execute(
+                "DELETE FROM recurring_series_preferences
+                 WHERE household_id=json_extract(?1,'$.householdId')
+                   AND normalized_payee NOT IN (
+                     SELECT json_extract(value,'$.normalizedPayee')
+                     FROM json_each(?1,'$.preferences'))",
+                [payload],
+            )?;
+            connection.execute(
+                "INSERT INTO recurring_series_preferences(
+                   household_id,normalized_payee,decision)
+                 SELECT json_extract(?1,'$.householdId'),
+                        json_extract(value,'$.normalizedPayee'),
+                        json_extract(value,'$.decision')
+                 FROM json_each(?1,'$.preferences') WHERE 1
+                 ON CONFLICT(household_id,normalized_payee) DO UPDATE SET
+                   decision=excluded.decision,
+                   version=recurring_series_preferences.version+1,
+                   updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                [payload],
+            )?;
         }
         "DELIMITED_PARSER_PROFILE" => materialize_parser_profile(connection, payload)?,
         _ => return Err(ChangePackageError::InvalidInput),
@@ -2404,6 +2510,10 @@ pub(crate) fn load_entity_payload(
             "SELECT payload_json FROM sync_dashboard_preferences_v4_payloads
              WHERE household_id=?1 AND household_id=?2"
         }
+        "RECURRING_SERIES_PREFERENCES" => {
+            "SELECT payload_json FROM sync_recurring_series_preferences_payloads
+             WHERE household_id=?1 AND household_id=?2"
+        }
         "DASHBOARD_PREFERENCES" => {
             "SELECT json(json_object(
           'recordKind','DASHBOARD_PREFERENCES','householdId',household_id,
@@ -2610,7 +2720,10 @@ fn dependency_rank(kind: &str) -> u8 {
         | "AGGREGATE_ASSET_SNAPSHOT" => 3,
         "CARD_STATEMENT" => 4,
         "CARD_PAYMENT" => 5,
-        "SAVINGS_GOAL" | "DASHBOARD_PREFERENCES" | "DELIMITED_PARSER_PROFILE" => 6,
+        "SAVINGS_GOAL"
+        | "DASHBOARD_PREFERENCES"
+        | "DELIMITED_PARSER_PROFILE"
+        | "RECURRING_SERIES_PREFERENCES" => 6,
         "MONTHLY_BUDGET_PLAN"
         | "CLASSIFICATION_RULE"
         | "ACCOUNT_GROUP"
@@ -2637,7 +2750,7 @@ fn payload_identity_matches(
         "HOUSEHOLD" => {
             string("id") == Some(record.entity_id.as_str()) && record.entity_id == household_id
         }
-        "MONTHLY_BUDGET_PLAN" | "DASHBOARD_PREFERENCES" => {
+        "MONTHLY_BUDGET_PLAN" | "DASHBOARD_PREFERENCES" | "RECURRING_SERIES_PREFERENCES" => {
             string("householdId") == Some(household_id) && record.entity_id == household_id
         }
         "CARD_SETTLEMENT_MAPPING" => {
@@ -2874,6 +2987,14 @@ mod tests {
                    'Description','SIGNED','OUT','Amount',1,10,1);",
             )
             .unwrap();
+        connection
+            .execute(
+                "INSERT INTO recurring_series_preferences(
+                   household_id,normalized_payee,decision)
+                 VALUES('family','netflix','IGNORED')",
+                [],
+            )
+            .unwrap();
     }
 
     fn seed_investment_graph(connection: &Connection) {
@@ -3108,7 +3229,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_four_exports_five_layouts_and_rejects_malformed_layout_graphs() {
+    fn schema_five_exports_five_layouts_and_rejects_malformed_layout_graphs() {
         let state = AppState::in_memory(TEST_KEY).unwrap();
         let mut package = state
             .with_connection(|connection| {
@@ -3117,8 +3238,8 @@ mod tests {
                 Ok(export_current_state(connection, "family").unwrap())
             })
             .unwrap();
-        assert_eq!(package.schema_version, 4);
-        assert_eq!(package.covered_kinds.len(), 18);
+        assert_eq!(package.schema_version, 5);
+        assert_eq!(package.covered_kinds.len(), 19);
         let dashboard = package
             .records
             .iter()
@@ -3144,6 +3265,256 @@ mod tests {
             validate_package(&package),
             Err(ChangePackageError::InvalidInput)
         ));
+    }
+
+    #[test]
+    fn schema_five_recurring_aggregate_is_canonical_and_rejects_invalid_decisions() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        let mut package = state
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        let recurring = package
+            .records
+            .iter()
+            .find(|record| record.entity_kind == "RECURRING_SERIES_PREFERENCES")
+            .unwrap();
+        assert_eq!(recurring.entity_id, "family");
+        let payload: Value = serde_json::from_str(&recurring.canonical_payload_json).unwrap();
+        assert_eq!(payload["preferences"].as_array().unwrap().len(), 1);
+        assert_eq!(payload["preferences"][0]["normalizedPayee"], "netflix");
+        assert!(payload["preferences"][0].get("version").is_none());
+        assert!(payload["preferences"][0].get("createdAt").is_none());
+        assert!(payload["preferences"][0].get("updatedAt").is_none());
+        assert!(!valid_recurring_series_preferences_v5(
+            &json!({
+                "recordKind": "RECURRING_SERIES_PREFERENCES",
+                "householdId": "family",
+                "preferences": [
+                    { "normalizedPayee": "zeta", "decision": "CONFIRMED" },
+                    { "normalizedPayee": "alpha", "decision": "IGNORED" }
+                ]
+            }),
+            "family"
+        ));
+        assert!(!valid_recurring_series_preferences_v5(
+            &json!({
+                "recordKind": "RECURRING_SERIES_PREFERENCES",
+                "householdId": "family",
+                "preferences": [{
+                    "normalizedPayee": "netflix",
+                    "decision": "IGNORED",
+                    "version": 1
+                }]
+            }),
+            "family"
+        ));
+
+        let recurring = package
+            .records
+            .iter_mut()
+            .find(|record| record.entity_kind == "RECURRING_SERIES_PREFERENCES")
+            .unwrap();
+        let mut payload: Value = serde_json::from_str(&recurring.canonical_payload_json).unwrap();
+        payload["preferences"][0]["decision"] = Value::String("AUTO_DETECTED".into());
+        recurring.canonical_payload_json = canonical_json(&payload).unwrap();
+        recurring.payload_sha256 = sha256_hex(recurring.canonical_payload_json.as_bytes());
+        resign_package(&mut package);
+        assert!(matches!(
+            validate_package(&package),
+            Err(ChangePackageError::InvalidInput)
+        ));
+    }
+
+    #[test]
+    fn schema_five_apply_advances_local_version_without_capture_echo() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                let local = crate::recurring_analytics::upsert_recurring_series_preference(
+                    connection,
+                    &crate::recurring_analytics::UpsertRecurringSeriesPreferenceInput {
+                        household_id: "family".into(),
+                        normalized_payee: "netflix".into(),
+                        decision:
+                            crate::recurring_analytics::RecurringPreferenceDecision::Confirmed,
+                        expected_version: Some(1),
+                    },
+                )
+                .unwrap();
+                assert_eq!(local.version, 2);
+                let bytes = encode_pretty(&package).unwrap();
+                let review = stage_package(connection, "family", &bytes).unwrap();
+                let resolutions = review
+                    .records
+                    .iter()
+                    .filter(|record| record.resolution == "PENDING")
+                    .map(|record| ChangePackageResolutionInput {
+                        entity_kind: record.entity_kind.clone(),
+                        entity_id: record.entity_id.clone(),
+                        resolution: if record.entity_kind == "RECURRING_SERIES_PREFERENCES" {
+                            "APPLY_INCOMING"
+                        } else {
+                            "KEEP_LOCAL"
+                        }
+                        .into(),
+                    })
+                    .collect::<Vec<_>>();
+                let review = resolve_package(connection, &review.package_id, &resolutions).unwrap();
+                let capture_before: i64 = connection.query_row(
+                    "SELECT count(*) FROM sync_local_change_capture",
+                    [],
+                    |row| row.get(0),
+                )?;
+                apply_package(connection, &review.package_id).unwrap();
+                let applied: (String, i64) = connection.query_row(
+                    "SELECT decision,version FROM recurring_series_preferences
+                     WHERE household_id='family' AND normalized_payee='netflix'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert_eq!(applied, ("IGNORED".into(), 3));
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM sync_local_change_capture",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )?,
+                    capture_before
+                );
+                assert!(
+                    crate::recurring_analytics::upsert_recurring_series_preference(
+                        connection,
+                        &crate::recurring_analytics::UpsertRecurringSeriesPreferenceInput {
+                            household_id: "family".into(),
+                            normalized_payee: "netflix".into(),
+                            decision:
+                                crate::recurring_analytics::RecurringPreferenceDecision::Confirmed,
+                            expected_version: Some(2),
+                        },
+                    )
+                    .is_err()
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn recurring_aggregate_capture_tracks_complete_and_empty_state() {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute("DELETE FROM sync_local_change_capture", [])?;
+                connection.execute(
+                    "INSERT INTO recurring_series_preferences(
+                       household_id,normalized_payee,decision)
+                     VALUES('family','netflix','CONFIRMED')",
+                    [],
+                )?;
+                connection.execute(
+                    "UPDATE recurring_series_preferences SET decision='IGNORED',version=2
+                     WHERE household_id='family' AND normalized_payee='netflix'",
+                    [],
+                )?;
+                connection.execute(
+                    "DELETE FROM recurring_series_preferences
+                     WHERE household_id='family' AND normalized_payee='netflix'",
+                    [],
+                )?;
+                let captures: Vec<(String, String)> = {
+                    let mut statement = connection.prepare(
+                        "SELECT operation,payload_json FROM sync_local_change_capture
+                         WHERE entity_kind='RECURRING_SERIES_PREFERENCES'
+                         ORDER BY capture_sequence",
+                    )?;
+                    let captures = statement
+                        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+                        .collect::<std::result::Result<Vec<_>, _>>()?;
+                    captures
+                };
+                assert_eq!(captures.len(), 3);
+                assert!(captures.iter().all(|capture| capture.0 == "UPSERT"));
+                let first: Value = serde_json::from_str(&captures[0].1).unwrap();
+                let last: Value = serde_json::from_str(&captures[2].1).unwrap();
+                assert_eq!(first["preferences"].as_array().unwrap().len(), 1);
+                assert!(first["preferences"][0].get("version").is_none());
+                assert!(first["preferences"][0].get("createdAt").is_none());
+                assert!(first["preferences"][0].get("updatedAt").is_none());
+                assert!(last["preferences"].as_array().unwrap().is_empty());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn schema_four_package_remains_valid_and_does_not_replace_recurring_preferences() {
+        let source = AppState::in_memory(TEST_KEY).unwrap();
+        let mut package = source
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                Ok(export_current_state(connection, "family").unwrap())
+            })
+            .unwrap();
+        package.schema_version = 4;
+        package.covered_kinds = V4_COVERED_KINDS.iter().map(|kind| (*kind).into()).collect();
+        package
+            .records
+            .retain(|record| package.covered_kinds.contains(&record.entity_kind));
+        package.counts_by_kind = package
+            .covered_kinds
+            .iter()
+            .map(|kind| {
+                (
+                    kind.clone(),
+                    package
+                        .records
+                        .iter()
+                        .filter(|record| &record.entity_kind == kind)
+                        .count() as u64,
+                )
+            })
+            .collect();
+        resign_package(&mut package);
+        validate_package(&package).unwrap();
+
+        let destination = AppState::in_memory(TEST_KEY).unwrap();
+        destination
+            .with_connection(|connection| {
+                seed_complete_household(connection);
+                connection.execute(
+                    "UPDATE recurring_series_preferences
+                     SET decision='CONFIRMED',version=2 WHERE household_id='family'",
+                    [],
+                )?;
+                let review =
+                    stage_package(connection, "family", &encode_pretty(&package).unwrap()).unwrap();
+                assert!(review
+                    .records
+                    .iter()
+                    .all(|record| record.entity_kind != "RECURRING_SERIES_PREFERENCES"));
+                assert_eq!(connection.query_row(
+                    "SELECT decision FROM recurring_series_preferences WHERE household_id='family'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )?, "CONFIRMED");
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

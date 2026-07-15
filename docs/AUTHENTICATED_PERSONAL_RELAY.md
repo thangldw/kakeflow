@@ -16,8 +16,12 @@ the desktop never supplies a principal ID to an artifact request.
 1. Enter an HTTPS relay endpoint and a connection token in Settings.
 2. KakeFlow calls `GET /v1/whoami`, records the returned remote-principal ID,
    and keeps the token only in the current UI session.
-3. Choose `未送信の変更を送る`. The desktop creates one current schema-v4
-   change package and uploads its exact bytes explicitly.
+3. Choose `未送信の変更を送る`. The desktop creates one current schema-v5
+   change package and uploads its exact bytes explicitly. The whole-household
+   package includes the required recurring-series preference aggregate,
+   including an empty aggregate when no series has been explicitly confirmed
+   or ignored. Local optimistic versions and preference timestamps are not
+   transported.
 4. On another desktop connected with a token for the same remote principal,
    choose `受信を確認`.
 5. Choose `受信して確認` for one available artifact. KakeFlow downloads it,
@@ -97,11 +101,13 @@ KakeFlow 0.53 does not claim:
   local copies;
 - remote OCR, mobile capture, bank connectivity, or payment initiation.
 
-Family Space audience remains a local organization label inside schema-v4. A
-whole-household schema-v4 package may contain personal facts for more than one
-member, so it must not be used for cross-member delivery. KakeFlow v0.54 adds a
-separate family protocol whose relay derives recipients from authenticated
-membership; this does not change or widen the personal-relay contract.
+Family Space audience remains a local organization label inside the current
+schema-v5 package. A whole-household schema-v5 package, including its complete
+recurring-series preference aggregate, may contain personal facts for more
+than one member. It therefore remains a same-principal personal relay artifact
+and must not be used for cross-member delivery. KakeFlow v0.54 adds a separate
+family protocol whose relay derives recipients from authenticated membership;
+this does not change or widen the personal-relay contract.
 
 ## Sequenced roadmap
 

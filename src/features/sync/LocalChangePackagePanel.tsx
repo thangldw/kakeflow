@@ -15,6 +15,7 @@ const kindLabels: Readonly<Record<string, string>> = {
   MONTHLY_BUDGET_PLAN: '月間予算', SAVINGS_GOAL: '貯蓄目標', CLASSIFICATION_RULE: '分類ルール',
   ACCOUNT_GROUP: '口座グループ', CARD_SETTLEMENT_MAPPING: 'カード引落口座',
   DASHBOARD_PREFERENCES: 'ダッシュボード設定', DELIMITED_PARSER_PROFILE: 'CSV読込設定',
+  RECURRING_SERIES_PREFERENCES: '定期支出の確認状態',
 }
 
 export function LocalChangePackagePanel({ householdId }: Props) {
@@ -98,9 +99,10 @@ export function LocalChangePackagePanel({ householdId }: Props) {
   }
 
   return <section className="panel local-change-package" aria-busy={busy}>
-    <div className="panel-head"><div><h2 ref={heading} tabIndex={-1}>変更パッケージ</h2><p>取引・計画・カード照合・投資データを確認して、この端末へまとめて反映します。投資データを含む場合は、先に原本カプセルを読み込んでください。</p></div><span className="local-only-badge">手順 2 / 2</span></div>
+    <div className="panel-head"><div><h2 ref={heading} tabIndex={-1}>変更パッケージ</h2><p>取引・計画・設定・カード照合・投資データを確認して、この端末へまとめて反映します。投資データを含む場合は、先に原本カプセルを読み込んでください。</p></div><span className="local-only-badge">手順 2 / 2</span></div>
     <p className="evidence-bundle-scope">ネットワーク送受信は行いません。パッケージを選択しただけでは台帳を変更せず、原本との対応を確認できない投資データは反映されません。</p>
     <p className="change-package-layout-scope"><strong>ホームのレイアウト:</strong> 「財務概要」「家計簿」「資産・負債」「カード照合」「キャッシュフロー」の5テンプレート分の並びと表示設定を、このローカルファイルに含めます。</p>
+    <p className="change-package-layout-scope"><strong>定期支出の確認状態:</strong> 「確認済み」「対象外」の判断をこのローカルファイルに含めます。反映後の予測と固定費分析に影響しますが、過去の取引は変更しません。</p>
     {platformClient.runtime !== 'tauri' ? <p className="empty-state">変更パッケージはデスクトップ版で利用できます。</p> : <>
       <div className="change-package-actions">
         <button className="primary-btn" disabled={busy || !householdId || Boolean(review && review.state !== 'APPLIED')} onClick={() => void pick()}>ローカルパッケージを選択</button>

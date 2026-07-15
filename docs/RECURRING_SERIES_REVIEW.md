@@ -89,13 +89,26 @@ amount, latest amount, annualized amount, confidence, or price-change rate. Each
 is recomputed from eligible confirmed ledger observations using the existing
 bounded detector. A user can confirm, ignore, or restore the series only.
 
-## Local-only boundary
+## Portability boundary
 
-Recurring review preferences are local to the current KakeFlow installation in
-this slice. They are not included in family-delivery partitions, local change
-packages, desktop relay publications, or any automatic multi-device workflow.
-Another installation may therefore show the same normalized payee as
-`AUTO_DETECTED` until the user reviews it there.
+Schema-v5 [local change packages](LOCAL_CHANGE_PACKAGES.md) can carry the
+complete explicit preference set as one required household aggregate. The user
+must export or send, stage, review, and explicitly Apply that package; no
+preference moves merely because another installation exists. Schema-v1 through
+schema-v4 packages do not cover this aggregate and cannot clear local recurring
+decisions.
+
+Only the normalized payee and `CONFIRMED`/`IGNORED` decision are transported.
+The optimistic integer version and local timestamps are not portable facts.
+After Apply, the receiving installation owns fresh local concurrency tokens,
+while a transported empty preference list returns every local series to the
+derived `AUTO_DETECTED` state.
+
+This local-package path remains separate from audience-partitioned family
+delivery. Recurring preferences are not added to `SHARED` or
+`PERSONAL(member)` family artifacts in this slice. The optional same-principal
+desktop relay may transport a local package through its existing explicit
+review boundary, but it does not convert that package into family replication.
 
 This capability adds no server, provider call, remote identity, access-control,
 or background synchronization claim.
