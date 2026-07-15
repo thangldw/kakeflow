@@ -135,7 +135,10 @@ use read_model::{
     UpdatePostedTransactionInput, UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
 };
 use record_scope::AttributionScope;
-use recurring_analytics::{FinancialIntelligenceDto, FinancialIntelligenceRequest};
+use recurring_analytics::{
+    DeleteRecurringSeriesPreferenceInput, FinancialIntelligenceDto, FinancialIntelligenceRequest,
+    RecurringSeriesPreferenceDto, UpsertRecurringSeriesPreferenceInput,
+};
 use serde::{Deserialize, Serialize};
 use source_viewer::{
     SourceDocumentViewDto, SourceRecordPageDto, SourceRecordPageRequest, SourceRecordViewDto,
@@ -2640,6 +2643,49 @@ fn financial_intelligence_query(
 }
 
 #[tauri::command]
+fn recurring_series_preferences_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<RecurringSeriesPreferenceDto>, String> {
+    state
+        .with_connection(|connection| {
+            Ok(recurring_analytics::list_recurring_series_preferences(
+                connection,
+                &household_id,
+            ))
+        })
+        .map_err(|_| "Recurring preferences are temporarily unavailable".to_owned())?
+}
+
+#[tauri::command]
+fn recurring_series_preference_upsert(
+    state: tauri::State<'_, AppState>,
+    input: UpsertRecurringSeriesPreferenceInput,
+) -> Result<RecurringSeriesPreferenceDto, String> {
+    state
+        .with_connection(|connection| {
+            Ok(recurring_analytics::upsert_recurring_series_preference(
+                connection, &input,
+            ))
+        })
+        .map_err(|_| "Recurring preferences are temporarily unavailable".to_owned())?
+}
+
+#[tauri::command]
+fn recurring_series_preference_delete(
+    state: tauri::State<'_, AppState>,
+    input: DeleteRecurringSeriesPreferenceInput,
+) -> Result<(), String> {
+    state
+        .with_connection(|connection| {
+            Ok(recurring_analytics::delete_recurring_series_preference(
+                connection, &input,
+            ))
+        })
+        .map_err(|_| "Recurring preferences are temporarily unavailable".to_owned())?
+}
+
+#[tauri::command]
 fn budgets_query(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -4428,6 +4474,9 @@ pub fn run() {
             dashboard_preferences_get,
             dashboard_preferences_upsert,
             financial_intelligence_query,
+            recurring_series_preferences_list,
+            recurring_series_preference_upsert,
+            recurring_series_preference_delete,
             budgets_query,
             budget_upsert,
             savings_goals_list,

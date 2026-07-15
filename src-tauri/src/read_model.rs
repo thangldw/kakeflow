@@ -4276,6 +4276,11 @@ mod tests {
             ))
             .expect("classification application audit schema");
         connection
+            .execute_batch(include_str!(
+                "../migrations/0062_recurring_series_preferences.sql"
+            ))
+            .expect("recurring series preference schema");
+        connection
     }
 
     #[test]

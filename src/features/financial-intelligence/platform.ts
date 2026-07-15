@@ -1,6 +1,8 @@
 import type { AttributionScopeDto } from '../../platform/types'
 
 export type RecurringCadence = 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'QUARTERLY' | 'ANNUAL'
+export type RecurringDecision = 'CONFIRMED' | 'IGNORED'
+export type RecurringDecisionStatus = 'AUTO_DETECTED' | RecurringDecision
 
 export interface FinancialIntelligenceRequestDto {
   readonly householdId: string
@@ -22,6 +24,29 @@ export interface RecurringItemDto {
   readonly confidenceBps: number
   readonly priceChangeBps: number | null
   readonly reasons: readonly string[]
+  readonly decisionStatus: RecurringDecisionStatus
+}
+
+export interface RecurringSeriesPreferenceDto {
+  readonly householdId: string
+  readonly normalizedPayee: string
+  readonly decision: RecurringDecision
+  readonly version: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface UpsertRecurringSeriesPreferenceDto {
+  readonly householdId: string
+  readonly normalizedPayee: string
+  readonly decision: RecurringDecision
+  readonly expectedVersion?: number | null
+}
+
+export interface DeleteRecurringSeriesPreferenceDto {
+  readonly householdId: string
+  readonly normalizedPayee: string
+  readonly expectedVersion: number
 }
 
 export interface SpendingAnomalyDto {
@@ -40,6 +65,7 @@ export interface FinancialIntelligenceDto {
   readonly asOf: string
   readonly historyFrom: string
   readonly recurringItems: readonly RecurringItemDto[]
+  readonly ignoredRecurringItems: readonly RecurringItemDto[]
   readonly anomalies: readonly SpendingAnomalyDto[]
 }
 
@@ -53,12 +79,25 @@ export async function queryFinancialIntelligence(
   return parseFinancialIntelligence(response)
 }
 
+export async function listRecurringSeriesPreferences(invoke: FeatureInvoke, householdId: string): Promise<readonly RecurringSeriesPreferenceDto[]> {
+  return array(await invoke<unknown>('recurring_series_preferences_list', { householdId }), 'recurring series preferences').map(parseRecurringSeriesPreference)
+}
+
+export async function upsertRecurringSeriesPreference(invoke: FeatureInvoke, input: UpsertRecurringSeriesPreferenceDto): Promise<RecurringSeriesPreferenceDto> {
+  return parseRecurringSeriesPreference(await invoke<unknown>('recurring_series_preference_upsert', { input }))
+}
+
+export async function deleteRecurringSeriesPreference(invoke: FeatureInvoke, input: DeleteRecurringSeriesPreferenceDto): Promise<void> {
+  await invoke<unknown>('recurring_series_preference_delete', { input })
+}
+
 export function parseFinancialIntelligence(value: unknown): FinancialIntelligenceDto {
   const record = asRecord(value)
   return {
     asOf: isoDate(record.asOf, 'asOf'),
     historyFrom: isoDate(record.historyFrom, 'historyFrom'),
     recurringItems: array(record.recurringItems, 'recurringItems').map(parseRecurringItem),
+    ignoredRecurringItems: array(record.ignoredRecurringItems, 'ignoredRecurringItems').map(parseRecurringItem),
     anomalies: array(record.anomalies, 'anomalies').map(parseAnomaly),
   }
 }
@@ -69,6 +108,8 @@ function parseRecurringItem(value: unknown): RecurringItemDto {
   if (!['WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'ANNUAL'].includes(cadence)) {
     throw new TypeError('cadence')
   }
+  const decisionStatus = string(record.decisionStatus, 'decisionStatus')
+  if (!['AUTO_DETECTED', 'CONFIRMED', 'IGNORED'].includes(decisionStatus)) throw new TypeError('decisionStatus')
   return {
     normalizedPayee: string(record.normalizedPayee, 'normalizedPayee'),
     displayPayee: string(record.displayPayee, 'displayPayee'),
@@ -82,6 +123,21 @@ function parseRecurringItem(value: unknown): RecurringItemDto {
     confidenceBps: safeInteger(record.confidenceBps, 'confidenceBps', 0, 10_000),
     priceChangeBps: nullableInteger(record.priceChangeBps, 'priceChangeBps'),
     reasons: array(record.reasons, 'reasons').map((reason) => string(reason, 'reason')),
+    decisionStatus: decisionStatus as RecurringDecisionStatus,
+  }
+}
+
+function parseRecurringSeriesPreference(value: unknown): RecurringSeriesPreferenceDto {
+  const record = asRecord(value)
+  const decision = string(record.decision, 'decision')
+  if (!['CONFIRMED', 'IGNORED'].includes(decision)) throw new TypeError('decision')
+  return {
+    householdId: string(record.householdId, 'householdId'),
+    normalizedPayee: string(record.normalizedPayee, 'normalizedPayee'),
+    decision: decision as RecurringDecision,
+    version: safeInteger(record.version, 'version', 1),
+    createdAt: string(record.createdAt, 'createdAt'),
+    updatedAt: string(record.updatedAt, 'updatedAt'),
   }
 }
 

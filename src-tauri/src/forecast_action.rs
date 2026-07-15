@@ -972,6 +972,11 @@ mod tests {
              CREATE TABLE account_groups(id TEXT PRIMARY KEY, household_id TEXT);
              CREATE TABLE account_group_members(household_id TEXT, account_group_id TEXT, account_id TEXT);
              CREATE TABLE household_members(id TEXT PRIMARY KEY, household_id TEXT, status TEXT);
+             CREATE TABLE recurring_series_preferences(
+               household_id TEXT NOT NULL, normalized_payee TEXT NOT NULL,
+               decision TEXT NOT NULL, version INTEGER NOT NULL,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+               PRIMARY KEY(household_id,normalized_payee));
              CREATE TABLE card_statement_transactions(statement_id TEXT, transaction_id TEXT, billed_amount_jpy INTEGER);
              INSERT INTO households VALUES ('family'), ('other');
              INSERT INTO accounts VALUES ('bank','family','Bank','ASSET','BANK',0),('income','family','Salary','INCOME','OTHER',0),('expense','family','Food','EXPENSE','OTHER',0),('card','family','Card','LIABILITY','CREDIT_CARD',0),('excluded-bank','family','Other Bank','ASSET','BANK',0),('excluded-income','family','Other Income','INCOME','OTHER',0),('excluded-expense','family','Other Expense','EXPENSE','OTHER',0),('excluded-card','family','Other Card','LIABILITY','CREDIT_CARD',0),('other-expense','other','Other','EXPENSE','OTHER',0);
@@ -1028,6 +1033,48 @@ mod tests {
             result.months[1].opening_cash_jpy,
             result.months[0].closing_cash_jpy
         );
+    }
+
+    #[test]
+    fn ignored_recurring_series_is_excluded_from_forecast_and_price_actions() {
+        let connection = connection();
+        for month in 3..=6 {
+            add_month(&connection, month, 300_000, 100_000);
+        }
+        connection
+            .execute_batch(
+                "UPDATE journal_entries SET amount_jpy=110000
+                 WHERE transaction_id='expense-6';",
+            )
+            .unwrap();
+        let request = ForecastActionRequest {
+            household_id: "family".into(),
+            as_of: "2026-07-13".into(),
+            account_group_id: None,
+            attribution_scope: AttributionScope::All,
+        };
+        let detected = query_forecast_action(&connection, &request).unwrap();
+        assert_eq!(detected.assumptions.recurring_item_count, 1);
+        assert!(detected.assumptions.recurring_monthly_expense_jpy > 0);
+        assert!(detected
+            .actions
+            .iter()
+            .any(|item| item.kind == ActionKind::RecurringPriceChange));
+        connection
+            .execute(
+                "INSERT INTO recurring_series_preferences
+             VALUES('family','grocer','IGNORED',1,'2026-07-13T00:00:00Z','2026-07-13T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+
+        let ignored = query_forecast_action(&connection, &request).unwrap();
+        assert_eq!(ignored.assumptions.recurring_item_count, 0);
+        assert_eq!(ignored.assumptions.recurring_monthly_expense_jpy, 0);
+        assert!(!ignored
+            .actions
+            .iter()
+            .any(|item| item.kind == ActionKind::RecurringPriceChange));
     }
 
     #[test]
