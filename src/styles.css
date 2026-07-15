@@ -1163,6 +1163,49 @@ html[data-theme='dark'] .bar-grid i { background: #292d34; }
 html[data-theme='dark'] .category-bars button > i,html[data-theme='dark'] .progress { background: #2b2f36; }
 html[data-theme='dark'] .card-detail dl > div,html[data-theme='dark'] .source-record-viewer pre,html[data-theme='dark'] .document-evidence-viewer pre { background: #191c20; }
 
+/* Investment history date range */
+.aggregate-asset-range {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(160px,190px)) auto;
+  align-items: end;
+  justify-content: start;
+  gap: 10px;
+  margin: 14px 0 16px;
+  padding: 12px 14px;
+  background: #f7f8fa;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.aggregate-asset-range label { display: grid; gap: 6px; min-width: 0; color: var(--ink); font-size: 10px; font-weight: 600; }
+.aggregate-asset-range label > span { line-height: 1; }
+.aggregate-asset-range input[type='date'] {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 9px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: none;
+  font: 500 11px/1 var(--font-ui);
+}
+.aggregate-asset-range input[type='date']:hover { border-color: #aeb8ca; }
+.aggregate-asset-range input[type='date']:focus-visible { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(70,95,150,.12); outline: 0; }
+.aggregate-asset-range input[type='date']::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .58; }
+.aggregate-asset-range-submit { min-height: 38px; margin: 0 0 0 2px; white-space: nowrap; }
+html[data-theme='dark'] .aggregate-asset-range { background: var(--surface-muted); border-color: var(--line); }
+html[data-theme='dark'] .aggregate-asset-range input[type='date'] { color-scheme: dark; background: var(--paper); border-color: #3a404a; }
+
+@media (max-width: 720px) {
+  .aggregate-asset-range { grid-template-columns: 1fr 1fr; }
+  .aggregate-asset-range-submit { grid-column: 1 / -1; width: 100%; margin-left: 0; }
+}
+@media (max-width: 480px) {
+  .aggregate-asset-range { grid-template-columns: 1fr; }
+  .aggregate-asset-range-submit { grid-column: auto; }
+}
+
 @media (max-width: 1180px) {
   .topbar-context { min-width: 150px; }
   .attribution-picker { display: none; }
