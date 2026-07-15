@@ -28,6 +28,7 @@ function run(label, command, args, cwd = root) {
 }
 
 run('Check application version consistency', npm, ['run', 'check:versions'])
+run('Check fail-closed update channel', npm, ['run', 'check:update-channel'])
 run('Run frontend tests', npm, ['test'])
 run('Lint frontend', npm, ['run', 'lint'])
 run('Build frontend', npm, ['run', 'build'])

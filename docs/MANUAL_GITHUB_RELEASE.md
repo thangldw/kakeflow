@@ -19,6 +19,7 @@ The requirement classification and platform evidence boundary are maintained in
 ## Required local gates
 
 ```bash
+npm run check:update-channel
 npm run ocr:stage:mac
 npm run ocr:verify
 npm run desktop:smoke
@@ -33,6 +34,11 @@ shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_VERSION_aarch64.dmg
 The generated OCR runtime is intentionally not stored in Git. A clean release
 checkout must stage it first; both macOS bundle commands fail before packaging
 when the pinned manifest, binary, models, or TSV configuration are absent.
+
+The update-channel check must report `DISABLED_UNCONFIGURED` unless the complete
+signed updater track has separately passed the activation and platform gates in
+[UPDATE_CHANNEL.md](UPDATE_CHANNEL.md). A normal GitHub Release and source
+archives are not updater evidence.
 
 For a Windows x64 release candidate, run these additional gates on native
 Windows rather than on the macOS release host:
