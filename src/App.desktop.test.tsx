@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const desktop = vi.hoisted(() => ({
@@ -399,6 +399,38 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(await screen.findByRole('button', { name: '4件すべて見る' }))
     expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: '予測・アクション' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('implements the report selector as a keyboard-operable ARIA tab set', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    await screen.findByText('Financial Calendar')
+
+    const calendar = screen.getByRole('tab', { name: 'カレンダー' })
+    const monthly = screen.getByRole('tab', { name: '月次レポート' })
+    const exportTab = screen.getByRole('tab', { name: 'グループ・出力' })
+    const panel = screen.getByRole('tabpanel')
+    expect(calendar).toHaveAttribute('id', 'report-tab-calendar')
+    expect(calendar).toHaveAttribute('aria-controls', 'report-tabpanel')
+    expect(calendar).toHaveAttribute('tabindex', '0')
+    expect(monthly).toHaveAttribute('tabindex', '-1')
+    expect(panel).toHaveAttribute('aria-labelledby', 'report-tab-calendar')
+
+    calendar.focus()
+    fireEvent.keyDown(calendar, { key: 'ArrowRight' })
+    expect(monthly).toHaveFocus()
+    expect(monthly).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'report-tab-monthly')
+
+    fireEvent.keyDown(monthly, { key: 'End' })
+    expect(exportTab).toHaveFocus()
+    expect(exportTab).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(exportTab, { key: 'Home' })
+    expect(calendar).toHaveFocus()
+    fireEvent.keyDown(calendar, { key: 'ArrowLeft' })
+    expect(exportTab).toHaveFocus()
+    expect(exportTab).toHaveAttribute('aria-selected', 'true')
   })
 
   it('loads and persists household dashboard appearance and focus presets', async () => {
@@ -909,6 +941,53 @@ describe('KakeFlow desktop read models', () => {
 
     const row = (await screen.findByText('除外店舗')).closest('button')!
     expect(within(row).getByText('集計対象外')).toBeInTheDocument()
+  })
+
+  it('traps transaction-detail focus, closes with Escape, and restores the originating row', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    const trigger = (await screen.findByText('生協')).closest('button')!
+    trigger.focus()
+    fireEvent.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', { name: '生協' })
+    const heading = within(dialog).getByRole('heading', { name: '生協' })
+    const close = within(dialog).getByRole('button', { name: '取引詳細を閉じる' })
+    const save = within(dialog).getByRole('button', { name: '変更を保存' })
+    expect(heading).toHaveFocus()
+
+    fireEvent.keyDown(heading, { key: 'Tab' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    expect(save).toHaveFocus()
+    fireEvent.keyDown(save, { key: 'Tab' })
+    expect(close).toHaveFocus()
+
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '生協' })).not.toBeInTheDocument())
+    expect(trigger).toHaveFocus()
+  })
+
+  it('keeps the transaction-detail modal open while a save is pending', async () => {
+    let finishSave!: () => void
+    desktop.updateTransaction.mockReturnValue(new Promise((resolve) => { finishSave = () => resolve(undefined) }))
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    const trigger = (await screen.findByText('生協')).closest('button')!
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog', { name: '生協' })
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '変更を保存' }))
+    await waitFor(() => expect(desktop.updateTransaction).toHaveBeenCalled())
+    expect(within(dialog).getByRole('button', { name: '保存中…' })).toBeDisabled()
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: '生協' })).toBeInTheDocument()
+
+    await act(async () => finishSave())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '生協' })).not.toBeInTheDocument())
+    expect(trigger).toHaveFocus()
   })
 
   it('drills into source evidence and saves balanced transaction corrections', async () => {
