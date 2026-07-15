@@ -14,11 +14,11 @@ use crate::{
     google_drive_oauth_runtime::{
         BoundLoopbackSession, BrowserOpenError, BrowserOpener, DEFAULT_SESSION_TIMEOUT,
     },
-    google_drive_store::{GoogleDriveInboxItemDto, SyncScheduleDto},
+    google_drive_store::{GoogleDriveInboxItemDto, InboxLeaseDto, SyncScheduleDto},
     google_drive_sync_adapter::{GoogleDriveInitialApi, GoogleDriveInitialStore},
     persistence::AppState,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -377,6 +377,155 @@ pub fn google_drive_inbox_list(
         .map_err(|_| "Google Drive Inbox is unavailable".to_owned())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GoogleDriveInboxFileDto {
+    pub item: GoogleDriveInboxItemDto,
+    pub file_bytes: Vec<u8>,
+}
+
+#[tauri::command]
+pub async fn google_drive_inbox_file_read(
+    app: AppHandle,
+    household_id: String,
+    item_id: String,
+) -> Result<GoogleDriveInboxFileDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        google_drive_inbox_file_read_blocking(&app, household_id, item_id)
+    })
+    .await
+    .map_err(|_| "Google Drive Inbox file worker stopped".to_owned())?
+}
+
+fn google_drive_inbox_file_read_blocking(
+    app: &AppHandle,
+    household_id: String,
+    item_id: String,
+) -> Result<GoogleDriveInboxFileDto, String> {
+    let state = app.state::<AppState>();
+    let vault = app.state::<DocumentVault>();
+    read_hydrated_inbox_file(&state, &vault, &household_id, &item_id)
+}
+
+fn read_hydrated_inbox_file(
+    state: &AppState,
+    vault: &DocumentVault,
+    household_id: &str,
+    item_id: &str,
+) -> Result<GoogleDriveInboxFileDto, String> {
+    // The database guard is released when this call returns. Vault I/O and
+    // decryption below therefore never hold the SQLite application mutex.
+    let item = state
+        .with_connection(|connection| {
+            crate::google_drive_store::load_household_inbox_item(connection, household_id, item_id)
+                .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Google Drive Inbox file is unavailable".to_owned())?;
+    if !matches!(item.state.as_str(), "READY" | "NEEDS_MAPPING") {
+        return Err("Google Drive Inbox file is unavailable".to_owned());
+    }
+    let content_sha256 = item
+        .content_sha256
+        .as_deref()
+        .ok_or_else(|| "Google Drive Inbox file is unavailable".to_owned())?;
+    let retrieved = vault
+        .read(content_sha256)
+        .map_err(|_| "Google Drive Inbox file is unavailable".to_owned())?;
+    let byte_size = u64::try_from(retrieved.bytes.len())
+        .map_err(|_| "Google Drive Inbox file is too large".to_owned())?;
+    if byte_size > crate::google_drive_api::MAX_DOWNLOAD_BYTES
+        || item
+            .remote_byte_size
+            .is_some_and(|expected| expected != byte_size)
+        || retrieved.sha256 != content_sha256
+        || retrieved.mime_type != item.media_type
+    {
+        return Err("Google Drive Inbox file does not match its metadata".to_owned());
+    }
+    Ok(GoogleDriveInboxFileDto {
+        item,
+        file_bytes: retrieved.bytes,
+    })
+}
+
+#[tauri::command]
+pub fn google_drive_inbox_claim(
+    state: State<'_, AppState>,
+    household_id: String,
+    item_ids: Vec<String>,
+) -> Result<InboxLeaseDto, String> {
+    state
+        .with_connection(|connection| {
+            google_drive_command_service::claim_inbox(connection, &household_id, &item_ids)
+                .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Google Drive Inbox items could not be claimed".to_owned())
+}
+
+#[tauri::command]
+pub fn google_drive_inbox_mark_staged(
+    state: State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    lease_token: String,
+    import_run_id: String,
+) -> Result<GoogleDriveInboxItemDto, String> {
+    state
+        .with_connection(|connection| {
+            google_drive_command_service::mark_inbox_staged(
+                connection,
+                &household_id,
+                &item_id,
+                &lease_token,
+                &import_run_id,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Google Drive Inbox item could not be staged".to_owned())
+}
+
+#[tauri::command]
+pub fn google_drive_inbox_mark_failed(
+    state: State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    lease_token: String,
+    error_code: String,
+) -> Result<GoogleDriveInboxItemDto, String> {
+    state
+        .with_connection(|connection| {
+            google_drive_command_service::mark_inbox_failed(
+                connection,
+                &household_id,
+                &item_id,
+                &lease_token,
+                &error_code,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Google Drive Inbox item could not be marked failed".to_owned())
+}
+
+#[tauri::command]
+pub fn google_drive_inbox_reopen(
+    state: State<'_, AppState>,
+    household_id: String,
+    item_id: String,
+    import_run_id: String,
+) -> Result<GoogleDriveInboxItemDto, String> {
+    state
+        .with_connection(|connection| {
+            google_drive_command_service::reopen_inbox(
+                connection,
+                &household_id,
+                &item_id,
+                &import_run_id,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery.into())
+        })
+        .map_err(|_| "Google Drive Inbox item could not be reopened".to_owned())
+}
+
 #[tauri::command]
 pub fn google_drive_inbox_ignore(
     state: State<'_, AppState>,
@@ -682,7 +831,10 @@ fn persist_authorized_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::AppState;
+    use crate::{
+        google_drive_store::{DiscoveryDisposition, RemoteNode},
+        persistence::AppState,
+    };
 
     const FINGERPRINT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -701,6 +853,105 @@ mod tests {
 
     fn binding() -> GoogleDriveCredentialBinding {
         GoogleDriveCredentialBinding::new("drive", "home", FINGERPRINT).unwrap()
+    }
+
+    fn seed_inbox_item(
+        state: &AppState,
+        vault: &DocumentVault,
+        bytes: &[u8],
+        hydrated_state: Option<bool>,
+        vault_media_type: &str,
+    ) -> String {
+        state
+            .with_connection(|connection| {
+                google_drive_command_service::begin_connection(
+                    connection,
+                    "home",
+                    "drive",
+                    FINGERPRINT,
+                )
+                .unwrap();
+                google_drive_command_service::mark_authorized(
+                    connection,
+                    "home",
+                    "drive",
+                    "permission-id",
+                    "home@example.com",
+                )
+                .unwrap();
+                crate::google_drive_store::select_root_with_baseline(
+                    connection,
+                    "home",
+                    "drive",
+                    None,
+                    "rootFolder123",
+                    "Inbox",
+                    None,
+                    "baseline",
+                )
+                .unwrap();
+                crate::google_drive_store::configure_schedule(
+                    connection, "home", "drive", true, 30,
+                )
+                .unwrap();
+                let sync = crate::google_drive_store::claim_due_sync(connection, "home", "drive")
+                    .unwrap()
+                    .unwrap();
+                let item = crate::google_drive_store::discover_nodes_claimed(
+                    connection,
+                    "home",
+                    "drive",
+                    &sync.lease_token,
+                    &[RemoteNode {
+                        file_id: "remoteFile123".to_owned(),
+                        parent_file_id: Some("rootFolder123".to_owned()),
+                        name: "bank.csv".to_owned(),
+                        mime_type: "text/csv".to_owned(),
+                        modified_time: Some("2026-07-15T00:00:00Z".to_owned()),
+                        byte_size: Some(bytes.len() as u64),
+                        md5_checksum: Some("11111111111111111111111111111111".to_owned()),
+                        drive_version: Some("7".to_owned()),
+                        is_folder: false,
+                        can_download: true,
+                        is_in_selected_tree: true,
+                        is_trashed: false,
+                        disposition: DiscoveryDisposition::Reviewable,
+                    }],
+                )
+                .unwrap()
+                .remove(0);
+                crate::google_drive_store::complete_sync(
+                    connection,
+                    "home",
+                    "drive",
+                    &sync.lease_token,
+                    "terminal",
+                    1,
+                    true,
+                )
+                .unwrap();
+                if let Some(needs_mapping) = hydrated_state {
+                    let stored = vault.put(bytes, vault_media_type).unwrap();
+                    let lease = crate::google_drive_store::claim_inbox(
+                        connection,
+                        "home",
+                        "drive",
+                        std::slice::from_ref(&item.id),
+                    )
+                    .unwrap();
+                    crate::google_drive_store::mark_inbox_ready(
+                        connection,
+                        "home",
+                        &item.id,
+                        &lease.lease_token,
+                        &stored.sha256,
+                        needs_mapping,
+                    )
+                    .unwrap();
+                }
+                Ok(item.id)
+            })
+            .unwrap()
     }
 
     #[test]
@@ -778,5 +1029,80 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn hydrated_ready_and_mapping_items_return_authenticated_exact_bytes() {
+        for needs_mapping in [false, true] {
+            let state = setup();
+            let temp = tempfile::tempdir().unwrap();
+            let vault = DocumentVault::new(temp.path(), &[31_u8; 32]).unwrap();
+            let bytes = b"date,amount\n2026-07-15,1200\n";
+            let item_id = seed_inbox_item(&state, &vault, bytes, Some(needs_mapping), "text/csv");
+            let dto = read_hydrated_inbox_file(&state, &vault, "home", &item_id).unwrap();
+            assert_eq!(dto.file_bytes, bytes);
+            assert_eq!(dto.item.remote_byte_size, Some(bytes.len() as u64));
+            assert_eq!(dto.item.media_type, "text/csv");
+            assert_eq!(
+                dto.item.state,
+                if needs_mapping {
+                    "NEEDS_MAPPING"
+                } else {
+                    "READY"
+                }
+            );
+            assert_eq!(dto.item.id, item_id);
+            assert_eq!(dto.item.connection_id, "drive");
+        }
+    }
+
+    #[test]
+    fn unhydrated_or_cross_household_items_cannot_read_vault_content() {
+        let state = setup();
+        let temp = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(temp.path(), &[33_u8; 32]).unwrap();
+        let item_id = seed_inbox_item(&state, &vault, b"pending", None, "text/csv");
+        assert!(read_hydrated_inbox_file(&state, &vault, "home", &item_id).is_err());
+
+        let state = setup();
+        let temp = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(temp.path(), &[35_u8; 32]).unwrap();
+        let item_id = seed_inbox_item(&state, &vault, b"ready", Some(false), "text/csv");
+        assert!(read_hydrated_inbox_file(&state, &vault, "other", &item_id).is_err());
+    }
+
+    #[test]
+    fn metadata_mismatch_and_oversized_remote_claim_are_rejected() {
+        let state = setup();
+        let temp = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(temp.path(), &[37_u8; 32]).unwrap();
+        let item_id = seed_inbox_item(
+            &state,
+            &vault,
+            b"same bytes",
+            Some(false),
+            "application/pdf",
+        );
+        assert!(read_hydrated_inbox_file(&state, &vault, "home", &item_id).is_err());
+
+        let state = setup();
+        let temp = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(temp.path(), &[39_u8; 32]).unwrap();
+        let item_id = seed_inbox_item(&state, &vault, b"small", Some(false), "text/csv");
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "UPDATE google_drive_inbox SET remote_byte_size=?2 WHERE id=?1",
+                        rusqlite::params![
+                            item_id,
+                            crate::google_drive_api::MAX_DOWNLOAD_BYTES as i64 + 1
+                        ],
+                    )
+                    .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        assert!(read_hydrated_inbox_file(&state, &vault, "home", &item_id).is_err());
     }
 }

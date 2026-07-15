@@ -21,6 +21,7 @@ export interface ImportPreview {
   sourceModifiedAt?: string
   sourceType?: ImportSourceType
   folderInboxItemId?: string
+  driveInboxItemId?: string
   watchedFolderId?: string
   relativePath?: string
   archiveFilename?: string

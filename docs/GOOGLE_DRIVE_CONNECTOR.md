@@ -4,34 +4,45 @@ KakeFlow's Google Drive connector is designed as a direct, read-only desktop
 integration. It is not a wrapper around a locally synchronized Google Drive
 folder, and it does not scrape the Drive web application.
 
-This document defines the approved product and platform contract. It also
-separates the contract currently represented in the repository from the native
-connector work that still has to be implemented and externally configured.
-Nothing in this document is a claim that a live production Google Drive
-connection is currently available.
+This document defines the approved product and platform contract and records
+which parts of that contract are implemented in the repository. The native
+desktop connector is implemented and locally tested through its durable remote
+inbox, immutable hydration, and canonical Import Inbox review boundary.
+Live production availability still depends on external Google configuration
+and qualification. Nothing in this document is a claim
+that a live production Google Drive connection is currently available.
 
 ## Current implementation status
 
-The current codebase recognizes `GOOGLE_DRIVE` as a domain source type. It now
-includes the native OAuth protocol primitives, OS credential-store contract,
-connection lifecycle schema, durable remote-inbox schema, and restore
-invariants. The system-browser command, Drive API client, remote folder
-browser, change-feed worker, immutable download cache, and end-to-end desktop
-UI described below are not yet a live production connector.
+Starting with commit `425f89b` and the subsequent canonical-Inbox milestone,
+the codebase recognizes `GOOGLE_DRIVE` as a domain source type and implements
+stages 1–4 of the direct desktop connector. The
+native core includes system-browser loopback/PKCE authorization, OS credential
+storage, bounded Drive API access, folder URL/ID binding, race-free recursive
+discovery, incremental change polling, durable sync schedule/lease state,
+manual sync, bounded hydration into immutable local objects, restart-safe
+durable state, and redacted Tauri command boundaries. The desktop Settings
+panel exposes connection, folder-binding, scheduling, and manual-sync controls.
+These paths are covered by local deterministic tests; they are not evidence
+that a production Google OAuth configuration or provider verification is
+available.
 
 Implementation is staged as follows:
 
 | Stage | Status | Scope |
 | --- | --- | --- |
 | 0. Contract and lineage identity | Implemented | Direct-connector boundary, source type, lifecycle, and provenance requirements |
-| 1. OAuth and durable foundation | Foundation implemented and mock-tested | Loopback/PKCE protocol, token exchange contracts, OS credential storage, connection lifecycle, remote inbox, and restore invariants; system-browser command and live provider wiring remain |
-| 2. Folder binding and initial discovery | Planned | Folder URL/ID validation, native folder browser, recursive crawl, and race-free catch-up |
-| 3. Durable remote inbox | Planned | Change feed, bounded hydration, immutable snapshots, retries, restart recovery, and Import Inbox UI |
-| 4. Canonical import integration | Planned | Existing parser preview, mapping, reconciliation, provenance display, and explicit review/commit gate |
+| 1. OAuth and durable foundation | Implemented locally and tested | System-browser loopback/PKCE flow, token exchange/refresh/revoke, OS credential storage, redacted commands, connection lifecycle, schema, and restore invariants |
+| 2. Folder binding and initial discovery | Implemented locally and tested | Folder URL/bare-ID validation, My Drive/shared-drive metadata, recursive crawl, and race-free change-feed catch-up |
+| 3. Durable remote inbox | Implemented locally and tested | Incremental changes, schedule/lease coordination, manual sync, bounded hydration, immutable local objects, retry/suspension handling, restart recovery, and Settings controls |
+| 4. Import Inbox and canonical integration | Implemented locally and tested | Hydrated generations surface in Import Inbox and use the existing parser preview, mapping, reconciliation, provenance, restart recovery, rollback, and explicit review/commit gate |
 | 5. Production qualification | External and planned | Google verification, packaged-app testing with real accounts, release configuration, and operational validation |
 
-Until stages 1 through 5 are complete, UI and release notes must not describe
-the connector as connected, production-ready, or generally available.
+The Settings UI reports the actual local connection and sync state. Discovered
+files do not reach the ledger merely by synchronizing: the canonical Import
+Inbox still requires explicit review and approval. Until stage 5 is complete,
+release notes must not describe the connector as production-ready or generally
+available.
 
 ## Authorization boundary
 
@@ -121,10 +132,10 @@ explicitly designed web OAuth architecture is introduced later.
 
 ## Folder selection and binding
 
-After authorization, the user binds one Drive folder by either:
-
-- pasting a full Google Drive folder URL or a bare folder ID; or
-- using KakeFlow's native, paginated Drive folder browser.
+After authorization, the current Settings panel binds one Drive folder by
+pasting a full Google Drive folder URL or a bare folder ID. A native paginated
+folder browser may be added later, but is not required by the implemented
+binding path.
 
 The native core parses and validates the input, confirms that the resource is a
 readable Drive folder, and returns a canonical binding. Folder names are not
@@ -221,7 +232,7 @@ The lifecycle is:
 
 ```text
 DISCOVERED
-  -> HYDRATING
+  -> PROCESSING
   -> READY | FAILED
   -> NEEDS_MAPPING | STAGED
 
@@ -229,8 +240,11 @@ DISCOVERED | READY | NEEDS_MAPPING | FAILED -> IGNORED
 remote item leaves selected tree             -> REMOVED
 ```
 
-`STAGED` means that a canonical import run is linked to the immutable remote
-snapshot. It does not mean that any transaction has been approved or posted.
+`STAGED` means a canonical import run is linked to the immutable remote
+snapshot after household, source type, and content SHA-256 have been verified.
+It does not mean that any transaction has been approved or posted. Rolling
+back that exact run reopens the same Inbox generation without replacing its
+immutable bytes.
 
 Inbox records retain household, connection, folder binding, Drive/file IDs,
 remote generation, relative display path, original and exported MIME types,
@@ -264,8 +278,11 @@ original binary file.
 
 ## Import and review gate
 
-The frontend may read a bounded cached snapshot to run existing adapter
-detection and preview logic, but the native snapshot remains authoritative.
+The implemented stage-4 handoff exposes hydrated generations in the canonical
+Import Inbox and passes a selected snapshot to the existing adapter detection,
+preview, mapping, and reconciliation workflow. The native snapshot remains
+authoritative.
+
 Starting an import uses the inbox item identity; the native core verifies the
 cached generation, digest, filename, size, and MIME metadata and supplies those
 bytes to the canonical import boundary.
@@ -314,7 +331,9 @@ Renaming or moving a remote file later does not mutate historical provenance.
 
 ## User-visible connection states
 
-Settings and Import Inbox must distinguish at least:
+Settings and Import Inbox together distinguish build availability, connection,
+folder-binding, schedule, sync, hydration, parser, mapping, and review outcomes,
+including at least:
 
 - connector unavailable in this build;
 - disconnected;
@@ -333,8 +352,10 @@ resolve and read that same folder.
 
 ## External production blockers
 
-Code completion alone does not make this connector production-ready. A release
-claim requires all of the following:
+Local implementation and tests through stage 3 do not make this connector
+production-ready. A live release requires a desktop build compiled with a
+Google OAuth client ID, provider verification where required, and all of the
+following:
 
 - a Google Cloud project with the Drive API enabled;
 - a Desktop OAuth client configured for supported packaged builds;

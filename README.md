@@ -266,7 +266,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Monthly/yearly reports with MoM/YoY comparisons, budget/goal progress, spending drivers, reconciliation, and data-quality status.
 - Explainable recurring/subscription and unusual-spending detection derived locally from confirmed ledger history.
 - Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export.
-- Automatic discovery with review-gated ingestion from registered local, iCloud Drive, Google Drive, OneDrive, or NAS folders across the desktop app, including restart-safe queue state and an app-wide actionable badge.
+- Automatic discovery with review-gated ingestion from registered local, iCloud Drive, OneDrive, or NAS folders, plus direct read-only Google Drive OAuth folder sync into the same canonical review workflow. Both paths retain restart-safe queue state and never auto-post ledger transactions.
 - Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
@@ -277,7 +277,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Add direct data connectors: Google Drive OAuth folder sync, direct mailbox API ingestion beyond the local `.eml` path, and a contracted read-only Japanese bank/card aggregation provider. Native iCloud folder selection is available through the durable local inbox.
+2. Add the remaining direct data connectors: mailbox API ingestion beyond the local `.eml` path and a contracted read-only Japanese bank/card aggregation provider. Direct Google Drive OAuth folder sync is implemented locally; general availability still requires Google provider qualification and packaged real-account validation. Native iCloud folder selection remains available through the durable local inbox.
 3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
 4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
 5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.

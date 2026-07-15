@@ -24,6 +24,11 @@ fn database() -> Connection {
         ))
         .unwrap();
     connection
+        .execute_batch(include_str!(
+            "../migrations/0056_source_document_cloud_sources.sql"
+        ))
+        .unwrap();
+    connection
         .execute("INSERT INTO households(id,name) VALUES('home','Home')", [])
         .unwrap();
     connection
@@ -248,6 +253,107 @@ fn inbox_download_is_review_gated_and_stale_leases_fail() {
         ),
         Err(GoogleDriveStoreError::StaleLease)
     ));
+}
+
+#[test]
+fn hydrated_inbox_stages_and_reopens_only_for_its_exact_rolled_back_run() {
+    let connection = database();
+    connected(&connection);
+    let sync = sync_lease(&connection);
+    let item = discover_nodes_claimed(
+        &connection,
+        "home",
+        "drive",
+        &sync.lease_token,
+        &[file("01")],
+    )
+    .unwrap()
+    .remove(0);
+    let download =
+        claim_inbox(&connection, "home", "drive", std::slice::from_ref(&item.id)).unwrap();
+    mark_inbox_ready(
+        &connection,
+        "home",
+        &item.id,
+        &download.lease_token,
+        &"c".repeat(64),
+        false,
+    )
+    .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO import_runs(id,household_id,status) VALUES
+             ('run-home','home','REVIEW_REQUIRED'),
+             ('run-other-home','home','ROLLED_BACK'),
+             ('run-other-household','other','REVIEW_REQUIRED');
+             INSERT INTO source_documents
+               (id,household_id,import_run_id,source_type,original_filename,
+                media_type,byte_size,sha256,storage_path)
+             VALUES('drive-document','home','run-home','GOOGLE_DRIVE','statement.csv',
+                'text/csv',123,
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                'vault://drive-document');",
+        )
+        .unwrap();
+
+    let staging =
+        claim_household_inbox(&connection, "home", std::slice::from_ref(&item.id)).unwrap();
+    assert!(matches!(
+        mark_inbox_staged(
+            &connection,
+            "home",
+            &item.id,
+            &staging.lease_token,
+            "run-other-household"
+        ),
+        Err(GoogleDriveStoreError::Conflict)
+    ));
+    let staged = mark_inbox_staged(
+        &connection,
+        "home",
+        &item.id,
+        &staging.lease_token,
+        "run-home",
+    )
+    .unwrap();
+    assert_eq!(staged.state, "STAGED");
+    assert_eq!(staged.import_run_id.as_deref(), Some("run-home"));
+    assert!(matches!(
+        reopen_staged_inbox(&connection, "home", &item.id, "run-other-home"),
+        Err(GoogleDriveStoreError::Conflict)
+    ));
+    assert!(matches!(
+        reopen_staged_inbox(&connection, "home", &item.id, "run-home"),
+        Err(GoogleDriveStoreError::Conflict)
+    ));
+
+    connection
+        .execute(
+            "UPDATE import_runs SET status='ROLLED_BACK',
+             completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id='run-home'",
+            [],
+        )
+        .unwrap();
+    let reopened = reopen_staged_inbox(&connection, "home", &item.id, "run-home").unwrap();
+    assert_eq!(reopened.state, "READY");
+    assert_eq!(reopened.content_sha256.as_deref(), Some(&*"c".repeat(64)));
+    assert_eq!(reopened.import_run_id, None);
+
+    let retry_claim =
+        claim_household_inbox(&connection, "home", std::slice::from_ref(&item.id)).unwrap();
+    let failed = fail_inbox(
+        &connection,
+        "home",
+        &item.id,
+        &retry_claim.lease_token,
+        "IMPORT_START_FAILED",
+    )
+    .unwrap();
+    assert_eq!(failed.state, "FAILED");
+    assert!(failed.content_sha256.is_some());
+    let retried = retry_inbox(&connection, "home", &item.id).unwrap();
+    assert_eq!(retried.state, "READY");
+    assert_eq!(retried.content_sha256, failed.content_sha256);
 }
 
 #[test]

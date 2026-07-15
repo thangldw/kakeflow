@@ -34,6 +34,8 @@ describe('Google Drive platform client contract', () => {
     await expect(client.connectGoogleDrive('family')).rejects.toMatchObject({ command: 'google_drive_connect' })
     await expect(client.bindGoogleDriveFolder({ householdId: 'family', connectionId: 'drive-1', folderReference: 'folder-1' })).rejects.toMatchObject({ command: 'google_drive_folder_bind' })
     await expect(client.updateGoogleDriveSchedule({ householdId: 'family', connectionId: 'drive-1', enabled: true, intervalMinutes: 30 })).rejects.toMatchObject({ command: 'google_drive_schedule_update' })
+    await expect(client.readGoogleDriveInboxFile('family', inbox.id)).rejects.toMatchObject({ command: 'google_drive_inbox_file_read' })
+    await expect(client.claimGoogleDriveInboxItems('family', [inbox.id])).rejects.toMatchObject({ command: 'google_drive_inbox_claim' })
     expect(invoke).not.toHaveBeenCalled()
   })
 
@@ -44,6 +46,11 @@ describe('Google Drive platform client contract', () => {
       google_drive_disconnect: { ...connection, status: 'DISCONNECTED' }, google_drive_schedule_get: schedule,
       google_drive_schedule_update: schedule, google_drive_sync_now: schedule, google_drive_inbox_list: [inbox],
       google_drive_inbox_ignore: { ...inbox, state: 'IGNORED' }, google_drive_inbox_retry: { ...inbox, state: 'DISCOVERED', contentSha256: null },
+      google_drive_inbox_file_read: { item: inbox, fileBytes: Array.from({ length: 42 }, (_, index) => index) },
+      google_drive_inbox_claim: { leaseToken: 'f'.repeat(64), leaseExpiresAt: timestamp, items: [{ ...inbox, state: 'PROCESSING' }] },
+      google_drive_inbox_mark_staged: { ...inbox, state: 'STAGED', importRunId: 'run-1' },
+      google_drive_inbox_mark_failed: { ...inbox, state: 'FAILED', lastErrorCode: 'IMPORT_START_FAILED' },
+      google_drive_inbox_reopen: inbox,
     }
     const invokeSpy = vi.fn()
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -63,9 +70,15 @@ describe('Google Drive platform client contract', () => {
     await expect(client.listGoogleDriveInbox('family', 'drive-1', 'READY', 20)).resolves.toEqual([inbox])
     await expect(client.ignoreGoogleDriveInboxItem('family', inbox.id)).resolves.toMatchObject({ state: 'IGNORED' })
     await expect(client.retryGoogleDriveInboxItem('family', inbox.id)).resolves.toMatchObject({ state: 'DISCOVERED' })
+    await expect(client.readGoogleDriveInboxFile('family', inbox.id)).resolves.toMatchObject({ item: inbox, fileBytes: expect.any(Array) })
+    await expect(client.claimGoogleDriveInboxItems('family', [inbox.id])).resolves.toMatchObject({ items: [expect.objectContaining({ state: 'PROCESSING' })] })
+    await expect(client.markGoogleDriveInboxStaged('family', inbox.id, 'f'.repeat(64), 'run-1')).resolves.toMatchObject({ state: 'STAGED' })
+    await expect(client.markGoogleDriveInboxFailed('family', inbox.id, 'f'.repeat(64), 'IMPORT_START_FAILED')).resolves.toMatchObject({ state: 'FAILED' })
+    await expect(client.reopenGoogleDriveInboxItem('family', inbox.id, 'run-1')).resolves.toMatchObject({ state: 'READY' })
 
     expect(invokeSpy).toHaveBeenCalledWith('google_drive_inbox_list', { householdId: 'family', connectionId: 'drive-1', state: 'READY', limit: 20 })
     expect(invokeSpy).toHaveBeenCalledWith('google_drive_folder_bind', { input: { householdId: 'family', connectionId: 'drive-1', folderReference: 'https://drive.google.com/drive/folders/folder-1' } })
+    expect(invokeSpy).toHaveBeenCalledWith('google_drive_inbox_reopen', { householdId: 'family', itemId: inbox.id, importRunId: 'run-1' })
   })
 
   it.each([
@@ -73,6 +86,8 @@ describe('Google Drive platform client contract', () => {
     ['google_drive_connections_list', [{ ...connection, folderName: null }], (client: ReturnType<typeof createPlatformClient>) => client.listGoogleDriveConnections('family')],
     ['google_drive_schedule_get', { ...schedule, intervalMinutes: 10 }, (client: ReturnType<typeof createPlatformClient>) => client.getGoogleDriveSchedule('family', 'drive-1')],
     ['google_drive_inbox_list', [{ ...inbox, state: 'STAGED', importRunId: null }], (client: ReturnType<typeof createPlatformClient>) => client.listGoogleDriveInbox('family')],
+    ['google_drive_inbox_file_read', { item: inbox, fileBytes: [256] }, (client: ReturnType<typeof createPlatformClient>) => client.readGoogleDriveInboxFile('family', inbox.id)],
+    ['google_drive_inbox_claim', { leaseToken: 'f'.repeat(64), leaseExpiresAt: timestamp, items: [inbox] }, (client: ReturnType<typeof createPlatformClient>) => client.claimGoogleDriveInboxItems('family', [inbox.id])],
   ] as const)('rejects malformed %s DTOs at the IPC boundary', async (command, response, call) => {
     const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
     await expect(call(client)).rejects.toEqual(new PlatformIpcError('INVALID_RESPONSE', command))

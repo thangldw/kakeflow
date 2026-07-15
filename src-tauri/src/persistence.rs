@@ -136,6 +136,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0055_google_drive_root_resource_key.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0056_source_document_cloud_sources.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1866,6 +1869,88 @@ mod tests {
             )
             .is_err());
         assert!(validate_restored_semantics(&connection, 55).is_ok());
+    }
+
+    #[test]
+    fn migration_56_preserves_sources_and_adds_icloud_and_google_drive_types() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        Migrations::new(MIGRATIONS[..55].to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO import_runs(id,household_id,status) VALUES
+                   ('existing-run','family','REVIEW_REQUIRED'),
+                   ('icloud-run','family','REVIEW_REQUIRED'),
+                   ('drive-run','family','REVIEW_REQUIRED'),
+                   ('invalid-run','family','REVIEW_REQUIRED');
+                 INSERT INTO source_documents
+                   (id,household_id,import_run_id,source_type,original_filename,
+                    media_type,byte_size,sha256,storage_path)
+                 VALUES('existing','family','existing-run','MANUAL_UPLOAD','old.csv',
+                    'text/csv',1,
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'vault://old');",
+            )
+            .unwrap();
+
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .unwrap();
+
+        for (id, run, source_type, hash) in [
+            (
+                "icloud",
+                "icloud-run",
+                "ICLOUD_PICKER",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            (
+                "drive",
+                "drive-run",
+                "GOOGLE_DRIVE",
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            ),
+        ] {
+            connection
+                .execute(
+                    "INSERT INTO source_documents
+                       (id,household_id,import_run_id,source_type,original_filename,
+                        media_type,byte_size,sha256,storage_path)
+                     VALUES(?1,'family',?2,?3,'source.csv','text/csv',1,?4,'vault://source')",
+                    rusqlite::params![id, run, source_type, hash],
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT source_type FROM source_documents WHERE id='existing'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "MANUAL_UPLOAD"
+        );
+        assert!(connection
+            .execute(
+                "INSERT INTO source_documents
+                   (id,household_id,import_run_id,source_type,original_filename,
+                    media_type,byte_size,sha256,storage_path)
+                 VALUES('invalid','family','invalid-run','REMOTE_UNKNOWN','bad.csv','text/csv',1,
+                    'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                    'vault://bad')",
+                [],
+            )
+            .is_err());
+        let foreign_key_issues: i64 = connection
+            .query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(foreign_key_issues, 0);
     }
 
     #[test]

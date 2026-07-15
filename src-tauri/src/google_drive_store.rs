@@ -555,7 +555,9 @@ pub fn retry_inbox(
     validate_id(household_id, 128)?;
     validate_hash(item_id)?;
     let changed = connection.execute(
-        "UPDATE google_drive_inbox SET state='DISCOVERED',last_error_code=NULL,
+        "UPDATE google_drive_inbox SET
+             state=CASE WHEN content_sha256 IS NULL THEN 'DISCOVERED' ELSE 'READY' END,
+             last_error_code=NULL,
              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id=?2 AND household_id=?1 AND state='FAILED' AND attempt_count<?3",
         params![household_id, item_id, MAX_INBOX_ATTEMPTS],
@@ -627,6 +629,59 @@ pub fn claim_inbox(
     })
 }
 
+pub fn claim_household_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_ids: &[String],
+) -> Result<InboxLeaseDto> {
+    validate_id(household_id, 128)?;
+    if item_ids.is_empty() || item_ids.len() > 25 {
+        return Err(GoogleDriveStoreError::InvalidInput);
+    }
+    let mut unique = BTreeSet::new();
+    for id in item_ids {
+        validate_hash(id)?;
+        if !unique.insert(id) {
+            return Err(GoogleDriveStoreError::InvalidInput);
+        }
+    }
+    let mut statement = connection.prepare(
+        "SELECT DISTINCT connection_id FROM google_drive_inbox
+         WHERE household_id=?1 AND id IN (SELECT value FROM json_each(?2))",
+    )?;
+    let ids_json =
+        serde_json::to_string(item_ids).map_err(|_| GoogleDriveStoreError::InvalidInput)?;
+    let connection_ids = statement
+        .query_map(params![household_id, ids_json], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if connection_ids.len() != 1 {
+        return Err(GoogleDriveStoreError::Conflict);
+    }
+    let matched: i64 = connection.query_row(
+        "SELECT count(*) FROM google_drive_inbox
+         WHERE household_id=?1 AND connection_id=?2
+           AND id IN (SELECT value FROM json_each(?3))",
+        params![household_id, &connection_ids[0], ids_json],
+        |row| row.get(0),
+    )?;
+    if usize::try_from(matched).ok() != Some(item_ids.len()) {
+        return Err(GoogleDriveStoreError::Conflict);
+    }
+    claim_inbox(connection, household_id, &connection_ids[0], item_ids)
+}
+
+pub fn load_household_inbox_item(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+) -> Result<GoogleDriveInboxItemDto> {
+    validate_id(household_id, 128)?;
+    validate_hash(item_id)?;
+    load_inbox_item(connection, household_id, item_id)
+}
+
 pub fn mark_inbox_ready(
     connection: &Connection,
     household_id: &str,
@@ -641,13 +696,16 @@ pub fn mark_inbox_ready(
         household_id,
         item_id,
         lease_token,
-        if needs_mapping {
-            "NEEDS_MAPPING"
-        } else {
-            "READY"
+        InboxLeaseCompletion {
+            next_state: if needs_mapping {
+                "NEEDS_MAPPING"
+            } else {
+                "READY"
+            },
+            content_sha256: Some(content_sha256),
+            error_code: None,
+            import_run_id: None,
         },
-        Some(content_sha256),
-        None,
     )
 }
 
@@ -664,10 +722,87 @@ pub fn fail_inbox(
         household_id,
         item_id,
         lease_token,
-        "FAILED",
-        None,
-        Some(error_code),
+        InboxLeaseCompletion {
+            next_state: "FAILED",
+            content_sha256: None,
+            error_code: Some(error_code),
+            import_run_id: None,
+        },
     )
+}
+
+pub fn mark_inbox_staged(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+    lease_token: &str,
+    import_run_id: &str,
+) -> Result<GoogleDriveInboxItemDto> {
+    validate_id(import_run_id, 128)?;
+    let transaction = connection.unchecked_transaction()?;
+    let valid_run: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM import_runs r
+             JOIN source_documents d ON d.import_run_id=r.id
+             JOIN google_drive_inbox i
+               ON i.id=?3 AND i.household_id=r.household_id
+              AND i.content_sha256=d.sha256
+             WHERE r.id=?1 AND r.household_id=?2
+               AND r.status IN ('DISCOVERED','EXTRACTING','REVIEW_REQUIRED')
+               AND d.source_type='GOOGLE_DRIVE'
+         )",
+        params![import_run_id, household_id, item_id],
+        |row| row.get(0),
+    )?;
+    if !valid_run {
+        return Err(GoogleDriveStoreError::Conflict);
+    }
+    let item = complete_inbox_lease(
+        &transaction,
+        household_id,
+        item_id,
+        lease_token,
+        InboxLeaseCompletion {
+            next_state: "STAGED",
+            content_sha256: None,
+            error_code: None,
+            import_run_id: Some(import_run_id),
+        },
+    )?;
+    transaction.commit()?;
+    Ok(item)
+}
+
+pub fn reopen_staged_inbox(
+    connection: &Connection,
+    household_id: &str,
+    item_id: &str,
+    import_run_id: &str,
+) -> Result<GoogleDriveInboxItemDto> {
+    validate_id(household_id, 128)?;
+    validate_hash(item_id)?;
+    validate_id(import_run_id, 128)?;
+    let transaction = connection.unchecked_transaction()?;
+    let changed = transaction.execute(
+        "UPDATE google_drive_inbox SET state='READY',import_run_id=NULL,
+             last_error_code=NULL,
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id=?2 AND household_id=?1 AND state='STAGED' AND import_run_id=?3
+           AND content_sha256 IS NOT NULL
+           AND EXISTS(SELECT 1 FROM import_runs r
+                      WHERE r.id=?3 AND r.household_id=?1 AND r.status='ROLLED_BACK')",
+        params![household_id, item_id, import_run_id],
+    )?;
+    if changed != 1 {
+        return Err(if inbox_exists(&transaction, household_id, item_id)? {
+            GoogleDriveStoreError::Conflict
+        } else {
+            GoogleDriveStoreError::NotFound
+        });
+    }
+    let item = load_inbox_item(&transaction, household_id, item_id)?;
+    transaction.commit()?;
+    Ok(item)
 }
 
 pub fn configure_schedule(
@@ -959,21 +1094,26 @@ pub fn load_schedule(
         .ok_or(GoogleDriveStoreError::NotFound)
 }
 
+struct InboxLeaseCompletion<'a> {
+    next_state: &'a str,
+    content_sha256: Option<&'a str>,
+    error_code: Option<&'a str>,
+    import_run_id: Option<&'a str>,
+}
+
 fn complete_inbox_lease(
     connection: &Connection,
     household_id: &str,
     item_id: &str,
     lease_token: &str,
-    next_state: &str,
-    content_sha256: Option<&str>,
-    error_code: Option<&str>,
+    completion: InboxLeaseCompletion<'_>,
 ) -> Result<GoogleDriveInboxItemDto> {
     validate_id(household_id, 128)?;
     validate_hash(item_id)?;
     validate_hash(lease_token)?;
     let changed = connection.execute(
-        "UPDATE google_drive_inbox SET state=?4,content_sha256=?5,
-             last_error_code=?6,lease_token=NULL,lease_expires_at=NULL,
+        "UPDATE google_drive_inbox SET state=?4,content_sha256=COALESCE(?5,content_sha256),
+             last_error_code=?6,import_run_id=?7,lease_token=NULL,lease_expires_at=NULL,
              processing_origin_state=NULL,
              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id=?2 AND household_id=?1 AND state='PROCESSING'
@@ -983,9 +1123,10 @@ fn complete_inbox_lease(
             household_id,
             item_id,
             lease_token,
-            next_state,
-            content_sha256,
-            error_code
+            completion.next_state,
+            completion.content_sha256,
+            completion.error_code,
+            completion.import_run_id
         ],
     )?;
     if changed != 1 {
