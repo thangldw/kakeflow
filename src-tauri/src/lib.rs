@@ -26,9 +26,12 @@ mod folder_discovery;
 pub mod forecast_action;
 pub mod gmail_api;
 pub mod gmail_command_service;
+pub mod gmail_commands;
 pub mod gmail_credentials;
 pub mod gmail_hydration;
 pub mod gmail_oauth;
+pub mod gmail_oauth_runtime;
+mod gmail_scheduler;
 pub mod gmail_store;
 pub mod gmail_sync;
 pub mod gmail_sync_adapter;
@@ -4171,6 +4174,11 @@ pub fn run() {
             } else {
                 google_drive_credentials::GoogleDriveCredentialStore::new_os()?
             };
+            let gmail_credentials = if setup_smoke_config.is_some() {
+                gmail_credentials::GmailCredentialStore::new_ephemeral()
+            } else {
+                gmail_credentials::GmailCredentialStore::new_os()?
+            };
             if master_key.len() != 32 {
                 return Err(std::io::Error::other("database key has invalid length").into());
             }
@@ -4193,6 +4201,7 @@ pub fn run() {
             app.manage(family_envelope_identity);
             app.manage(family_delivery_credentials);
             app.manage(google_drive_credentials);
+            app.manage(gmail_credentials);
             app.manage(BackupMasterKey(portable_backup_key));
             app.manage(restore_credentials);
             app.manage(RestoreCommandAuthorization::default());
@@ -4217,6 +4226,9 @@ pub fn run() {
                     ),
                 );
                 app.manage(google_drive_scheduler::BackgroundGoogleDriveSync::start(
+                    app.handle().clone(),
+                ));
+                app.manage(gmail_scheduler::BackgroundGmailSync::start(
                     app.handle().clone(),
                 ));
                 app.manage(
@@ -4410,6 +4422,23 @@ pub fn run() {
             google_drive_commands::google_drive_inbox_reopen,
             google_drive_commands::google_drive_inbox_ignore,
             google_drive_commands::google_drive_inbox_retry,
+            gmail_commands::gmail_availability,
+            gmail_commands::gmail_connections_list,
+            gmail_commands::gmail_connect,
+            gmail_commands::gmail_labels_list,
+            gmail_commands::gmail_label_bind,
+            gmail_commands::gmail_disconnect,
+            gmail_commands::gmail_schedule_get,
+            gmail_commands::gmail_schedule_update,
+            gmail_commands::gmail_sync_now,
+            gmail_commands::gmail_inbox_list,
+            gmail_commands::gmail_inbox_file_read,
+            gmail_commands::gmail_inbox_claim,
+            gmail_commands::gmail_inbox_mark_staged,
+            gmail_commands::gmail_inbox_mark_failed,
+            gmail_commands::gmail_inbox_reopen,
+            gmail_commands::gmail_inbox_ignore,
+            gmail_commands::gmail_inbox_retry,
             import_summary,
             cards_list,
             card_match_confirm,

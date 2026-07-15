@@ -185,12 +185,12 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   durable Folder Inbox can discover locally saved `.eml` files from a selected
   mail-drop folder, but this is not mailbox OAuth, mailbox API access, or remote
   background email polling.
-- Tested [Gmail connector foundation](docs/GMAIL_CONNECTOR.md) with dedicated
-  read-only OAuth, credential binding, bounded raw-message/history APIs, and a
-  durable label-scoped Inbox model. Initial/history synchronization and exact
-  raw-EML vault hydration are implemented; desktop commands, scheduling, and UI
-  remain in progress, so the stable release does not yet claim a live Gmail
-  connection.
+- Tested [Gmail connector](docs/GMAIL_CONNECTOR.md) with dedicated read-only
+  OAuth, label/query binding, bounded raw-message/history APIs, exact raw-EML
+  vault hydration, durable Inbox review/rollback, manual synchronization, and
+  opt-in incremental polling while KakeFlow is open. Settings and Import Inbox
+  integration are implemented on `main` for the next major release; `v0.90.0`
+  remains the current stable release and does not claim live Gmail access.
 - Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
   for the official Shift_JIS business-account record family, with exact
   header/detail/footer/final validation, totals and running-balance
@@ -283,7 +283,11 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 ## Remaining product milestones
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Add the remaining direct data connectors: mailbox API ingestion beyond the local `.eml` path and a contracted read-only Japanese bank/card aggregation provider. Direct Google Drive OAuth folder sync is implemented locally; general availability still requires Google provider qualification and packaged real-account validation. Native iCloud folder selection remains available through the durable local inbox.
+2. Qualify the implemented Gmail and Google Drive connectors with packaged
+   real-account validation and the required Google provider review, then add a
+   contracted read-only Japanese bank/card aggregation provider. Other mailbox
+   providers remain separate connector work. Native iCloud folder selection
+   remains available through the durable local inbox.
 3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
 4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
 5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.

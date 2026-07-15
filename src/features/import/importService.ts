@@ -22,6 +22,7 @@ export interface ImportPreview {
   sourceType?: ImportSourceType
   folderInboxItemId?: string
   driveInboxItemId?: string
+  gmailInboxItemId?: string
   watchedFolderId?: string
   relativePath?: string
   archiveFilename?: string

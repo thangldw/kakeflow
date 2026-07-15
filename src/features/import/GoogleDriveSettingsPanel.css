@@ -3,7 +3,7 @@
 .drive-state { align-self: start; padding: 5px 9px; border-radius: 999px; font-size: 9px; white-space: nowrap; }
 .drive-state-CONNECTED { color: #315a3d; background: #e5f1e7; }
 .drive-state-AUTH_REQUIRED { color: #8a4f32; background: #fbe8de; }
-.drive-state-AUTHORIZING,.drive-state-SELECTING_FOLDER { color: #775d24; background: #fff0d5; }
+.drive-state-AUTHORIZING,.drive-state-SELECTING_FOLDER,.drive-state-SELECTING_LABEL { color: #775d24; background: #fff0d5; }
 .drive-state-DISCONNECTED,.drive-state-UNAVAILABLE,.drive-state-LOADING { color: var(--muted); background: var(--soft); }
 .drive-review-gate,.drive-warning,.drive-notice,.drive-unavailable { margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--muted); background: var(--soft); font-size: 9px; line-height: 1.6; }
 .drive-review-gate strong { color: var(--ink); }

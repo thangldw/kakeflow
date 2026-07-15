@@ -2,6 +2,18 @@
 
 KakeFlow can publish a locally verified release without a GitHub-hosted Actions runner. This path is used while the repository's monthly Actions quota cannot allocate a runner.
 
+## Release cadence
+
+Capability increments are tested, committed, and pushed to `main` as they are
+completed, but they do not automatically create a public version. Full audit,
+packaging, artifact validation, tagging, and GitHub Release publication are
+reserved for major product milestones. The current stable line is `v0.90.0`;
+the next planned public milestone is `v1.0.0`.
+
+Do not change the application version, create intermediate tags, or publish
+partial installers between those milestones. Focused tests still run with each
+capability increment; the complete gate below runs only for a release candidate.
+
 ## Required local gates
 
 ```bash

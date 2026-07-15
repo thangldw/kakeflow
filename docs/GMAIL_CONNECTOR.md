@@ -6,7 +6,7 @@ canonical Import Inbox; receiving a message never posts a ledger transaction.
 
 ## Current implementation status
 
-The native foundation is implemented and locally tested:
+The desktop connector is implemented and locally tested:
 
 - installed-app loopback OAuth with PKCE and the fixed
   `https://www.googleapis.com/auth/gmail.readonly` scope;
@@ -19,12 +19,17 @@ The native foundation is implemented and locally tested:
   canonical source-link persistence; and
 - bounded initial/history synchronization, exact raw-message hydration into the
   document vault, idempotent message identity, omission reconciliation, review
-  staging, retry, ignore, and exact rollback state.
+  staging, retry, ignore, and exact rollback state;
+- desktop commands for connection, label binding, manual synchronization,
+  schedule control, Inbox lifecycle, and disconnect;
+- opt-in 15/30/60-minute incremental polling while KakeFlow is open; and
+- Settings and Import Inbox presentation that reuse the existing `.eml`
+  preview and explicit review workflow.
 
-Desktop commands, background execution, Settings, and Import Inbox presentation
-remain the next implementation milestone. Therefore
-the current stable release must not claim that a live Gmail connection is
-available.
+These capabilities are present on `main` after `v0.90.0` and are planned for
+the next major release. The public stable release must not claim live Gmail
+availability until the `v1.0.0` release gates and external provider
+qualification described below are complete.
 
 ## Connector boundary
 
@@ -72,7 +77,10 @@ message evidence.
 - An expired Gmail history cursor atomically marks the connection for a fresh
   bounded full reconciliation under a new lease.
 - Message discovery and hydration use separate leases.
-- Raw bytes and refresh credentials never cross the WebView IPC boundary.
+- Refresh credentials and provider message identifiers never cross the WebView
+  IPC boundary. Exact EML bytes can cross only through an explicit,
+  household-scoped local Inbox read so the existing local parser can generate
+  a review preview; the native side authenticates the vault object first.
 - Automatic polling is opt-in and runs only while KakeFlow is open.
 - No Gmail API operation sends, labels, archives, deletes, or otherwise mutates
   mail.
