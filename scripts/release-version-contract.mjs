@@ -16,13 +16,13 @@ export function assertReleaseVersion(version) {
 
 export function macDmgArtifactName(version, architecture) {
   assertReleaseVersion(version)
-  assert(['aarch64', 'x64'].includes(architecture), `Unsupported macOS DMG architecture: ${architecture}`)
+  assert(architecture === 'aarch64', `Unsupported macOS DMG architecture: ${architecture}`)
   return `KakeFlow_${version}_${architecture}.dmg`
 }
 
 export function windowsInstallerArtifactName(version, architecture) {
   assertReleaseVersion(version)
-  assert(['x64', 'arm64'].includes(architecture), `Unsupported Windows installer architecture: ${architecture}`)
+  assert(architecture === 'x64', `Unsupported Windows installer architecture: ${architecture}`)
   return `KakeFlow_${version}_${architecture}-setup.exe`
 }
 
@@ -61,8 +61,9 @@ export function validateProductionReleaseLinks(html, version) {
   const links = [...html.matchAll(ANCHOR)]
     .map((match) => ({ href: HREF.exec(match[1])?.[2], text: visibleText(match[2]) }))
     .filter(({ href }) => href?.startsWith(RELEASE_PREFIX))
-  const tags = links.filter(({ href }) => href.includes('/releases/tag/'))
-  const downloads = links.filter(({ href }) => href.includes('/releases/download/'))
+  const tags = links.filter(({ href }) => href.startsWith(`${RELEASE_PREFIX}tag/`))
+  const downloads = links.filter(({ href }) => href.startsWith(`${RELEASE_PREFIX}download/`))
+  assert(tags.length + downloads.length === links.length, 'Project page contains an unclassified production release CTA')
   assert(tags.length > 0, 'Project page has no production release-note CTA')
   assert(downloads.length > 0, 'Project page has no production artifact CTA')
 
@@ -74,9 +75,7 @@ export function validateProductionReleaseLinks(html, version) {
 
   const allowedArtifacts = new Set([
     macDmgArtifactName(version, 'aarch64'),
-    macDmgArtifactName(version, 'x64'),
     windowsInstallerArtifactName(version, 'x64'),
-    windowsInstallerArtifactName(version, 'arm64'),
   ])
   for (const link of downloads) {
     const match = /\/releases\/download\/v([^/]+)\/([^/]+)$/u.exec(link.href)

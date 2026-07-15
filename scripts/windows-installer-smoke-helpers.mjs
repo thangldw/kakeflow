@@ -3,8 +3,8 @@ import { assertReleaseVersion, windowsInstallerArtifactName } from './release-ve
 
 export function installerForVersion(version, architecture = 'x64', repositoryRoot = process.cwd()) {
   assertReleaseVersion(version)
-  if (!['x64', 'arm64'].includes(architecture)) throw new Error(`Unsupported Windows installer architecture: ${architecture}`)
-  const tauriArchitecture = architecture === 'arm64' ? 'arm64' : 'x64'
+  if (architecture !== 'x64') throw new Error(`Unsupported Windows installer architecture: ${architecture}`)
+  const tauriArchitecture = 'x64'
   return path.join(
     repositoryRoot,
     'src-tauri',

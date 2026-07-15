@@ -10,7 +10,7 @@ const execFile = promisify(execFileCallback)
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 
 export function dmgForVersion(version, architecture = process.arch, repositoryRoot = root) {
-  const tauriArchitecture = architecture === 'arm64' ? 'aarch64' : architecture === 'x64' ? 'x64' : null
+  const tauriArchitecture = architecture === 'arm64' ? 'aarch64' : null
   if (!tauriArchitecture) throw new Error(`Unsupported macOS DMG architecture: ${architecture}`)
   return path.join(repositoryRoot, 'src-tauri', 'target', 'release', 'bundle', 'dmg', macDmgArtifactName(version, tauriArchitecture))
 }

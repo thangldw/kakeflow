@@ -77,16 +77,18 @@ describe('packaged OCR resource contract', () => {
     })
   })
 
-  it('accepts schema-v1 only for legacy macOS diagnostics', () => {
+  it('rejects schema-v1 by default and accepts it only for explicit legacy macOS diagnostics', () => {
     const legacyMac = manifestFor('macos-arm64')
     legacyMac.schemaVersion = 1
     delete legacyMac.linkage
-    expect(assertOcrManifestContract(legacyMac, 'macos-arm64')).toMatchObject({ target: 'macos-arm64' })
+    expect(() => assertOcrManifestContract(legacyMac, 'macos-arm64')).toThrow('Unsupported OCR resource manifest')
+    expect(assertOcrManifestContract(legacyMac, 'macos-arm64', { allowLegacyMacDiagnostic: true })).toMatchObject({ target: 'macos-arm64' })
 
     const legacyWindows = manifestFor('windows-x64')
     legacyWindows.schemaVersion = 1
     delete legacyWindows.linkage
     expect(() => assertOcrManifestContract(legacyWindows, 'windows-x64')).toThrow('Unsupported OCR resource manifest')
+    expect(() => assertOcrManifestContract(legacyWindows, 'windows-x64', { allowLegacyMacDiagnostic: true })).toThrow('Unsupported OCR resource manifest')
   })
 
   it('rejects a target mismatch and a modified pinned model', () => {
