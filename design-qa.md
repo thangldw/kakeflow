@@ -224,3 +224,25 @@ icon container, a 24 px leaf icon, a 22 px wordmark, 12 px spacing, and a shared
 - Result: passed.
 
 final result: passed
+
+---
+
+# Investment history date range — 2026-07-16
+
+- Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-6710644d-bcf1-43f2-8b5c-8c2dc6cb4e55.png`
+- Implementation screenshot: `/Users/thang/Documents/kakeflow/docs/audits/date-range-control-2026-07-16/01-after.png`
+- Focused comparison: `/Users/thang/Documents/kakeflow/docs/audits/date-range-control-2026-07-16/comparison.png`
+- Viewport: `1440 × 900`
+- State: light theme, Japanese locale, Assets & investments, empty aggregate-history data.
+
+## Comparison history
+
+- Iteration 1 finding: P2 — the native date fields were narrow, asymmetrically bordered and visually disconnected from the Apply action.
+- Fix: introduced a compact filter-bar surface, 38 px aligned controls, complete borders, responsive grid behavior and a navy primary action.
+- Post-fix evidence: `01-after.png` and the focused side-by-side `comparison.png`.
+- Interaction evidence: both dates accepted valid values, Apply ran successfully, and the browser console remained clean.
+- Engineering evidence: ESLint, production build and focused component tests passed.
+
+No actionable P0, P1 or P2 issue remains.
+
+final result: passed
