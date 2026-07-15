@@ -156,6 +156,8 @@ export interface PostingDecisionDto {
   readonly attributionKind: AttributionKindDto; readonly attributedMemberId: string | null
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly calculationTarget: boolean
+  readonly classificationRuleId?: string
+  readonly expectedClassificationRuleUpdatedAt?: string
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
 export interface ReceiptMatchSuggestionDto {

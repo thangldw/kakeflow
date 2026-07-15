@@ -635,6 +635,10 @@ pub struct PostingDecision {
     pub audience_visibility: AudienceVisibility,
     #[serde(default)]
     pub audience_member_id: Option<String>,
+    #[serde(default)]
+    pub classification_rule_id: Option<String>,
+    #[serde(default)]
+    pub expected_classification_rule_updated_at: Option<String>,
     pub entries: Vec<JournalEntryDecision>,
 }
 
@@ -677,6 +681,15 @@ type CandidatePostingRow = (
     Option<String>,
     Option<String>,
 );
+
+#[derive(Debug)]
+struct ImportReviewClassificationRule {
+    id: String,
+    updated_at: String,
+    category_account_id: String,
+    labels: Vec<String>,
+    tags: Vec<String>,
+}
 
 const fn default_true() -> bool {
     true
@@ -1415,10 +1428,13 @@ pub fn commit_import(
             ],
         )?;
 
+        let classification_rule = import_review_classification_rule(&tx, &household_id, decision)?;
+
         let mut debit = 0_i64;
         let mut credit = 0_i64;
         let mut card_payment_account = None;
         let mut has_income_or_expense_leg = false;
+        let mut expense_entries = Vec::new();
         for entry in &decision.entries {
             let (account_kind, account_subtype): (String, String) = tx
                 .query_row(
@@ -1434,6 +1450,9 @@ pub fn commit_import(
                     ))
                 })?;
             has_income_or_expense_leg |= matches!(account_kind.as_str(), "INCOME" | "EXPENSE");
+            if account_kind == "EXPENSE" {
+                expense_entries.push((entry.account_id.as_str(), entry.side.as_str()));
+            }
             if decision.transaction_type == "CARD_PAYMENT" && account_kind == "EXPENSE" {
                 return Err(ImportWorkflowError::Validation(
                     "CARD_PAYMENT cannot post to an expense account".into(),
@@ -1469,6 +1488,22 @@ pub fn commit_import(
             return Err(ImportWorkflowError::Validation(
                 "Money Forward transfer cannot post to income or expense accounts".into(),
             ));
+        }
+        if let Some(rule) = classification_rule.as_ref() {
+            let expected_side = match decision.transaction_type.as_str() {
+                "EXPENSE" | "CARD_PURCHASE" => "DEBIT",
+                "REFUND" => "CREDIT",
+                _ => {
+                    return Err(ImportWorkflowError::Validation(
+                        "classification rules can only be applied to expenses, card purchases, or refunds during import review".into(),
+                    ));
+                }
+            };
+            if expense_entries.as_slice() != [(rule.category_account_id.as_str(), expected_side)] {
+                return Err(ImportWorkflowError::Validation(
+                    "classification rule requires exactly one correctly-sided expense entry using its category".into(),
+                ));
+            }
         }
         if debit != credit || debit != candidate_amount {
             return Err(ImportWorkflowError::UnbalancedJournal(
@@ -1543,6 +1578,33 @@ pub fn commit_import(
                 ],
             )?;
         }
+        if let Some(rule) = classification_rule {
+            for label in &rule.labels {
+                tx.execute(
+                    "INSERT INTO transaction_labels (transaction_id, label) VALUES (?1, ?2)",
+                    params![decision.transaction_id, label],
+                )?;
+            }
+            for tag in &rule.tags {
+                tx.execute(
+                    "INSERT INTO transaction_tags (transaction_id, tag) VALUES (?1, ?2)",
+                    params![decision.transaction_id, tag],
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO classification_rule_applications
+                 (household_id, transaction_id, rule_id, previous_category_account_id,
+                  applied_category_account_id, rule_updated_at, application_source)
+                 VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'IMPORT_REVIEW')",
+                params![
+                    household_id,
+                    decision.transaction_id,
+                    rule.id,
+                    rule.category_account_id,
+                    rule.updated_at
+                ],
+            )?;
+        }
         tx.execute(
             "INSERT INTO transaction_sources (transaction_id, source_record_id, candidate_id) \
              SELECT ?1, cs.source_record_id, ?2 FROM candidate_sources cs \
@@ -1566,6 +1628,93 @@ pub fn commit_import(
         run_id: run_id.into(),
         posted_count,
     })
+}
+
+fn import_review_classification_rule(
+    tx: &Transaction<'_>,
+    household_id: &str,
+    decision: &PostingDecision,
+) -> Result<Option<ImportReviewClassificationRule>> {
+    let (Some(rule_id), Some(expected_updated_at)) = (
+        decision.classification_rule_id.as_deref(),
+        decision.expected_classification_rule_updated_at.as_deref(),
+    ) else {
+        return Ok(None);
+    };
+    let rule = tx
+        .query_row(
+            "SELECT r.id, r.updated_at, r.is_enabled, r.merchant_contains,
+                    r.description_contains, r.category_account_id
+             FROM classification_rules r
+             JOIN accounts a ON a.id = r.category_account_id
+                            AND a.household_id = r.household_id
+                            AND a.account_kind = 'EXPENSE'
+             WHERE r.id = ?1 AND r.household_id = ?2",
+            params![rule_id, household_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        id,
+        updated_at,
+        enabled,
+        merchant_contains,
+        description_contains,
+        category_account_id,
+    )) = rule
+    else {
+        return Err(ImportWorkflowError::Validation(
+            "classification rule is unavailable for this household".into(),
+        ));
+    };
+    if !enabled || updated_at != expected_updated_at {
+        return Err(ImportWorkflowError::Validation(
+            "classification rule changed after import review".into(),
+        ));
+    }
+    let contains = |value: Option<&str>, needle: Option<&str>| match needle {
+        None => true,
+        Some(needle) => value
+            .map(|value| value.to_lowercase().contains(&needle.to_lowercase()))
+            .unwrap_or(false),
+    };
+    if !contains(decision.payee.as_deref(), merchant_contains.as_deref())
+        || !contains(
+            decision.description.as_deref(),
+            description_contains.as_deref(),
+        )
+    {
+        return Err(ImportWorkflowError::Validation(
+            "classification rule no longer matches the reviewed transaction".into(),
+        ));
+    }
+    let mut labels = tx.prepare(
+        "SELECT label FROM classification_rule_labels WHERE rule_id = ?1 ORDER BY label",
+    )?;
+    let labels = labels
+        .query_map([&id], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<String>, _>>()?;
+    let mut tags =
+        tx.prepare("SELECT tag FROM classification_rule_tags WHERE rule_id = ?1 ORDER BY tag")?;
+    let tags = tags
+        .query_map([&id], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<String>, _>>()?;
+    Ok(Some(ImportReviewClassificationRule {
+        id,
+        updated_at,
+        category_account_id,
+        labels,
+        tags,
+    }))
 }
 
 fn finalize_card_statements(tx: &Transaction<'_>, run_id: &str, household_id: &str) -> Result<()> {
@@ -2118,6 +2267,21 @@ fn validate_posting_decision(decision: &PostingDecision) -> Result<()> {
         decision.audience_visibility,
         decision.audience_member_id.as_deref(),
     )?;
+    match (
+        decision.classification_rule_id.as_deref(),
+        decision.expected_classification_rule_updated_at.as_deref(),
+    ) {
+        (Some(rule_id), Some(expected_updated_at)) => {
+            validate_id("classification rule id", rule_id)?;
+            validate_id("classification rule version", expected_updated_at)?;
+        }
+        (None, None) => {}
+        _ => {
+            return Err(ImportWorkflowError::Validation(
+                "classification rule id and version must be reviewed together".into(),
+            ));
+        }
+    }
     if !matches!(
         decision.transaction_type.as_str(),
         "EXPENSE"
@@ -2343,6 +2507,32 @@ mod tests {
                    amount_jpy INTEGER NOT NULL, line_number INTEGER NOT NULL,
                    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
                    UNIQUE(transaction_id,line_number));
+                 CREATE TABLE classification_rules (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   name TEXT NOT NULL, priority INTEGER NOT NULL, is_enabled INTEGER NOT NULL,
+                   merchant_contains TEXT, description_contains TEXT,
+                   category_account_id TEXT NOT NULL REFERENCES accounts(id),
+                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                 CREATE TABLE classification_rule_labels (
+                   rule_id TEXT NOT NULL REFERENCES classification_rules(id) ON DELETE CASCADE,
+                   label TEXT NOT NULL, PRIMARY KEY(rule_id,label));
+                 CREATE TABLE classification_rule_tags (
+                   rule_id TEXT NOT NULL REFERENCES classification_rules(id) ON DELETE CASCADE,
+                   tag TEXT NOT NULL, PRIMARY KEY(rule_id,tag));
+                 CREATE TABLE transaction_labels (
+                   transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                   label TEXT NOT NULL, PRIMARY KEY(transaction_id,label));
+                 CREATE TABLE transaction_tags (
+                   transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                   tag TEXT NOT NULL, PRIMARY KEY(transaction_id,tag));
+                 CREATE TABLE classification_rule_applications (
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   household_id TEXT NOT NULL REFERENCES households(id),
+                   transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                   rule_id TEXT REFERENCES classification_rules(id) ON DELETE SET NULL,
+                   previous_category_account_id TEXT REFERENCES accounts(id),
+                   applied_category_account_id TEXT NOT NULL REFERENCES accounts(id),
+                   rule_updated_at TEXT, application_source TEXT NOT NULL);
                  CREATE TABLE card_statements (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    card_account_id TEXT NOT NULL REFERENCES accounts(id), period_start TEXT NOT NULL,
@@ -2382,6 +2572,7 @@ mod tests {
                  INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
                    VALUES('bank','household','Bank','ASSET','BANK'),
                          ('expense','household','Food','EXPENSE','OTHER'),
+                         ('rule-expense','household','Subscriptions','EXPENSE','OTHER'),
                          ('card','household','Card','LIABILITY','CREDIT_CARD');",
             )
             .expect("create compatible schema");
@@ -2469,6 +2660,8 @@ mod tests {
             attributed_member_id: None,
             audience_visibility: AudienceVisibility::Shared,
             audience_member_id: None,
+            classification_rule_id: None,
+            expected_classification_rule_updated_at: None,
             entries: vec![
                 JournalEntryDecision {
                     id: format!("{run}-debit"),
@@ -2484,6 +2677,339 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn install_classification_rule(connection: &Connection) {
+        connection
+            .execute_batch(
+                "INSERT INTO classification_rules
+             (id,household_id,name,priority,is_enabled,merchant_contains,description_contains,
+              category_account_id,created_at,updated_at)
+             VALUES('rule','household','Store rule',1,1,'store',NULL,'rule-expense',
+                    '2026-07-12T00:00:00Z','2026-07-12T00:00:00Z');
+             INSERT INTO classification_rule_labels(rule_id,label) VALUES('rule','subscription');
+             INSERT INTO classification_rule_tags(rule_id,tag) VALUES('rule','household');",
+            )
+            .unwrap();
+    }
+
+    fn classified_decision(run: &str) -> PostingDecision {
+        let mut posting = decision(run, 1_000);
+        posting.entries[0].account_id = "rule-expense".into();
+        posting.classification_rule_id = Some("rule".into());
+        posting.expected_classification_rule_updated_at = Some("2026-07-12T00:00:00Z".into());
+        posting
+    }
+
+    #[test]
+    fn import_review_rule_is_revalidated_and_audited_with_metadata() {
+        let connection = database();
+        install_classification_rule(&connection);
+        let serialized = serde_json::to_value(classified_decision("wire")).unwrap();
+        assert_eq!(
+            serialized["expectedClassificationRuleUpdatedAt"],
+            "2026-07-12T00:00:00Z"
+        );
+        assert!(serialized
+            .get("classificationRuleExpectedUpdatedAt")
+            .is_none());
+        start_import(
+            &connection,
+            &request("classified", "classified-doc", 'd'),
+            "vault://classified",
+        )
+        .unwrap();
+
+        let result = commit_import(
+            &connection,
+            "classified",
+            &[classified_decision("classified")],
+        )
+        .unwrap();
+
+        assert_eq!(result.posted_count, 1);
+        let application: (String, String, String, String) = connection
+            .query_row(
+                "SELECT rule_id,applied_category_account_id,rule_updated_at,application_source
+             FROM classification_rule_applications",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            application,
+            (
+                "rule".into(),
+                "rule-expense".into(),
+                "2026-07-12T00:00:00Z".into(),
+                "IMPORT_REVIEW".into(),
+            )
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT label FROM transaction_labels", [], |row| row
+                    .get::<_, String>(0),)
+                .unwrap(),
+            "subscription"
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT tag FROM transaction_tags", [], |row| row
+                    .get::<_, String>(0),)
+                .unwrap(),
+            "household"
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_stale_rule_revision_atomically() {
+        let connection = database();
+        install_classification_rule(&connection);
+        connection
+            .execute(
+                "UPDATE classification_rules SET updated_at='2026-07-13T00:00:00Z' WHERE id='rule'",
+                [],
+            )
+            .unwrap();
+        start_import(
+            &connection,
+            &request("stale", "stale-doc", 'e'),
+            "vault://stale",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            commit_import(&connection, "stale", &[classified_decision("stale")]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("changed")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_deleted_rule() {
+        let connection = database();
+        install_classification_rule(&connection);
+        connection
+            .execute("DELETE FROM classification_rules WHERE id='rule'", [])
+            .unwrap();
+        start_import(
+            &connection,
+            &request("deleted", "deleted-doc", 'f'),
+            "vault://deleted",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            commit_import(&connection, "deleted", &[classified_decision("deleted")]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("unavailable")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_cross_household_rule() {
+        let connection = database();
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('other','Other');
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                   VALUES('other-expense','other','Other expense','EXPENSE','OTHER');
+                 INSERT INTO classification_rules
+                   (id,household_id,name,priority,is_enabled,merchant_contains,
+                    description_contains,category_account_id,created_at,updated_at)
+                   VALUES('other-rule','other','Other rule',1,1,'store',NULL,
+                          'other-expense','2026-07-12T00:00:00Z','2026-07-12T00:00:00Z');",
+            )
+            .unwrap();
+        start_import(
+            &connection,
+            &request("cross-household", "cross-household-doc", '0'),
+            "vault://cross-household",
+        )
+        .unwrap();
+        let mut posting = decision("cross-household", 1_000);
+        posting.classification_rule_id = Some("other-rule".into());
+        posting.expected_classification_rule_updated_at = Some("2026-07-12T00:00:00Z".into());
+
+        assert!(matches!(
+            commit_import(&connection, "cross-household", &[posting]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("unavailable")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_disabled_rule() {
+        let connection = database();
+        install_classification_rule(&connection);
+        connection
+            .execute(
+                "UPDATE classification_rules SET is_enabled=0 WHERE id='rule'",
+                [],
+            )
+            .unwrap();
+        start_import(
+            &connection,
+            &request("disabled", "disabled-doc", '1'),
+            "vault://disabled",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            commit_import(&connection, "disabled", &[classified_decision("disabled")]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("changed")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_rule_that_no_longer_matches_reviewed_text() {
+        let connection = database();
+        install_classification_rule(&connection);
+        start_import(
+            &connection,
+            &request("mismatch", "mismatch-doc", '2'),
+            "vault://mismatch",
+        )
+        .unwrap();
+        let mut posting = classified_decision("mismatch");
+        posting.payee = Some("Different merchant".into());
+
+        assert!(matches!(
+            commit_import(&connection, "mismatch", &[posting]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("no longer matches")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_wrong_rule_category_entry() {
+        let connection = database();
+        install_classification_rule(&connection);
+        start_import(
+            &connection,
+            &request("category", "category-doc", '3'),
+            "vault://category",
+        )
+        .unwrap();
+        let mut posting = classified_decision("category");
+        posting.entries[0].account_id = "expense".into();
+
+        assert!(matches!(
+            commit_import(&connection, "category", &[posting]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("correctly-sided")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rejects_rule_on_transfer_shape() {
+        let connection = database();
+        install_classification_rule(&connection);
+        start_import(
+            &connection,
+            &request("transfer", "transfer-doc", '4'),
+            "vault://transfer",
+        )
+        .unwrap();
+        let mut posting = classified_decision("transfer");
+        posting.transaction_type = "TRANSFER".into();
+
+        assert!(matches!(
+            commit_import(&connection, "transfer", &[posting]),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("only be applied")
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn import_review_rule_failure_rolls_back_earlier_decisions_in_same_run() {
+        let connection = database();
+        install_classification_rule(&connection);
+        let mut input = request("atomic", "atomic-doc", '5');
+        let mut second_candidate = input.candidates[0].clone();
+        second_candidate.id = "atomic-candidate-2".into();
+        second_candidate.evidence[0].role = "PRIMARY".into();
+        input.candidates.push(second_candidate);
+        start_import(&connection, &input, "vault://atomic").unwrap();
+        let first = classified_decision("atomic");
+        let mut second = classified_decision("atomic");
+        second.candidate_id = "atomic-candidate-2".into();
+        second.transaction_id = "atomic-transaction-2".into();
+        second.entries[0].id = "atomic-debit-2".into();
+        second.entries[1].id = "atomic-credit-2".into();
+        second.payee = Some("Does not match".into());
+
+        assert!(commit_import(&connection, "atomic", &[first, second]).is_err());
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM transaction_candidates WHERE review_status='READY'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT status FROM import_runs WHERE id='atomic'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "REVIEW_REQUIRED"
+        );
     }
 
     #[test]
@@ -3562,6 +4088,8 @@ mod tests {
             attributed_member_id: None,
             audience_visibility: AudienceVisibility::Shared,
             audience_member_id: None,
+            classification_rule_id: None,
+            expected_classification_rule_updated_at: None,
             entries: vec![
                 JournalEntryDecision {
                     id: "purchase-debit".into(),
@@ -3593,6 +4121,8 @@ mod tests {
             attributed_member_id: None,
             audience_visibility: AudienceVisibility::Shared,
             audience_member_id: None,
+            classification_rule_id: None,
+            expected_classification_rule_updated_at: None,
             entries: vec![
                 JournalEntryDecision {
                     id: "payment-debit".into(),

@@ -942,14 +942,48 @@ interface PostingDraft {
   readonly approved: boolean
   readonly decision: PostingDecisionDto
   readonly error: string | null
+  readonly touched: boolean
+}
+
+function matchingClassificationRule(rules: readonly ClassificationRuleDto[], merchant: string | null, description: string | null): ClassificationRuleDto | null {
+  const contains = (value: string | null, needle: string | null) => needle === null || Boolean(value?.toLocaleLowerCase().includes(needle.toLocaleLowerCase()))
+  return [...rules]
+    .filter((rule) => rule.isEnabled && contains(merchant, rule.merchantContains) && contains(description, rule.descriptionContains))
+    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))[0] ?? null
+}
+
+function eligibleClassificationDecision(decision: PostingDecisionDto, accounts: readonly AccountDto[]): boolean {
+  if (!['EXPENSE', 'CARD_PURCHASE', 'REFUND'].includes(decision.transactionType)) return false
+  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
+  const expectedSide = decision.transactionType === 'REFUND' ? 'CREDIT' : 'DEBIT'
+  return expenseEntries.length === 1 && expenseEntries[0].side === expectedSide
+}
+
+function applyClassificationRuleToDecision(decision: PostingDecisionDto, rule: ClassificationRuleDto, accounts: readonly AccountDto[]): PostingDecisionDto | null {
+  if (!eligibleClassificationDecision(decision, accounts) || !accounts.some((account) => account.id === rule.categoryAccountId && account.accountKind === 'EXPENSE')) return null
+  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
+  if (expenseEntries.length !== 1) return null
+  return {
+    ...decision,
+    entries: decision.entries.map((entry) => entry.id === expenseEntries[0].id ? { ...entry, accountId: rule.categoryAccountId } : entry),
+    classificationRuleId: rule.id,
+    expectedClassificationRuleUpdatedAt: rule.updatedAt,
+  }
+}
+
+function clearClassificationProvenance(decision: PostingDecisionDto): PostingDecisionDto {
+  const { classificationRuleId: _ruleId, expectedClassificationRuleUpdatedAt: _updatedAt, ...manualDecision } = decision
+  void _ruleId; void _updatedAt
+  return manualDecision
 }
 
 function initialPostingDraft(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDraft {
   try {
-    return { approved: false, decision: suggestedPosting(candidate, accounts, householdId), error: null }
+    return { approved: false, decision: suggestedPosting(candidate, accounts, householdId), error: null, touched: false }
   } catch {
     return {
       approved: false,
+      touched: false,
       error: '取込先または相手勘定が見つかりません。口座設定を確認するか、このインポートを取り消してください。',
       decision: {
         candidateId: candidate.id,
@@ -976,6 +1010,23 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   const [receiptMatches, setReceiptMatches] = useState<Record<string, readonly ReceiptMatchSuggestionDto[]>>({})
   const [receiptSelections, setReceiptSelections] = useState<Record<string, string>>({})
   const [matchingCandidate, setMatchingCandidate] = useState<string | null>(null)
+  const [classificationRules, setClassificationRules] = useState<readonly ClassificationRuleDto[]>([])
+  const [classificationLoadFailed, setClassificationLoadFailed] = useState(false)
+  const [classificationNotices, setClassificationNotices] = useState<Record<string, string>>({})
+  const [applyingClassification, setApplyingClassification] = useState<string | null>(null)
+  const classificationLoadStarted = useRef(false)
+  const draftsRef = useRef(drafts)
+  draftsRef.current = drafts
+  const hasEligibleClassificationCandidates = Object.values(drafts).some((draft) => eligibleClassificationDecision(draft.decision, accounts))
+  useEffect(() => {
+    if (!hasEligibleClassificationCandidates || classificationLoadStarted.current) return
+    classificationLoadStarted.current = true
+    let active = true
+    void platformClient.listClassificationRules(householdId)
+      .then((rules) => { if (active) { setClassificationRules(rules); setClassificationLoadFailed(false) } })
+      .catch(() => { if (active) { setClassificationRules([]); setClassificationLoadFailed(true) } })
+    return () => { active = false }
+  }, [hasEligibleClassificationCandidates, householdId])
   useEffect(() => {
     let active = true
     if (!isReceipt) return
@@ -995,8 +1046,49 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   }
   const updateDecision = (candidateId: string, change: (decision: PostingDecisionDto) => PostingDecisionDto) => setDrafts((current) => {
     const draft = current[candidateId]
-    return !draft ? current : { ...current, [candidateId]: { ...draft, approved: false, decision: change(draft.decision) } }
+    return !draft ? current : { ...current, [candidateId]: { ...draft, approved: false, touched: true, decision: clearClassificationProvenance(change(draft.decision)) } }
   })
+  const applyRuleSuggestion = async (candidateId: string) => {
+    const draft = drafts[candidateId]
+    if (!draft || !eligibleClassificationDecision(draft.decision, accounts)) return
+    const expectedPayee = draft.decision.payee
+    const expectedDescription = draft.decision.description
+    setApplyingClassification(candidateId)
+    setClassificationNotices((current) => ({ ...current, [candidateId]: '' }))
+    try {
+      const preview = await platformClient.previewClassificationRules({ householdId, merchant: expectedPayee, description: expectedDescription })
+      const rule = preview.matches.find((candidate) => candidate.id === preview.winningRuleId)
+      if (!rule) throw new Error('NO_CURRENT_RULE')
+      const latest = draftsRef.current[candidateId]
+      if (!latest || latest.decision.payee !== expectedPayee || latest.decision.description !== expectedDescription) throw new Error('DRAFT_CHANGED')
+      const decision = applyClassificationRuleToDecision(latest.decision, rule, accounts)
+      if (!decision) throw new Error('INELIGIBLE_DRAFT')
+      setDrafts((current) => {
+        if (current[candidateId] !== latest) return current
+        return { ...current, [candidateId]: { ...latest, approved: false, touched: true, decision } }
+      })
+      setClassificationRules((current) => [...current.filter((candidate) => candidate.id !== rule.id), rule])
+      setClassificationNotices((current) => ({ ...current, [candidateId]: `${rule.name} を適用しました。承認はまだ行われていません。` }))
+    } catch {
+      setClassificationNotices((current) => ({ ...current, [candidateId]: 'ルールを再確認できませんでした。候補は変更せず、手動で確認できます。' }))
+    } finally { setApplyingClassification(null) }
+  }
+  const applyAllRuleSuggestions = () => {
+    let appliedCount = 0
+    const nextDrafts = Object.fromEntries(Object.entries(draftsRef.current).map(([candidateId, draft]) => {
+      if (draft.touched || !eligibleClassificationDecision(draft.decision, accounts)) return [candidateId, draft]
+      const rule = matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description)
+      if (!rule) return [candidateId, draft]
+      const decision = applyClassificationRuleToDecision(draft.decision, rule, accounts)
+      if (!decision) return [candidateId, draft]
+      appliedCount += 1
+      return [candidateId, { ...draft, approved: false, touched: true, decision }]
+    }))
+    if (appliedCount > 0) {
+      setDrafts(nextDrafts)
+      setClassificationNotices((current) => ({ ...current, all: `${appliedCount}件にルール候補を適用しました。承認はまだ行われていません。` }))
+    }
+  }
   const accountIds = new Set(accounts.map((account) => account.id))
   const approved = stagedImport.candidates.every((candidate) => {
     const draft = drafts[candidate.id]
@@ -1005,11 +1097,12 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   const decisions = stagedImport.candidates.map((candidate) => drafts[candidate.id]?.decision).filter((decision): decision is PostingDecisionDto => Boolean(decision))
   const sourceOnly = stagedImport.candidates.length === 0
   const postingError = Object.values(drafts).find((draft) => draft.error)?.error
+  const untouchedSuggestionCount = Object.values(drafts).filter((draft) => !draft.touched && eligibleClassificationDecision(draft.decision, accounts) && matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description)).length
 
   if (postingError) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div><p className="empty-state" role="alert">{postingError}</p><div className="review-actions"><span>口座設定の修正後に再度開くか、取り消してください。</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? '処理中…' : '取り消す'}</button></div></section>
   if (sourceOnly && sourceCompletionBlocked) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>投資・資産データ{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div><p className="empty-state" role="alert">専用データの保存が完了する前に中断されました。この取込を取り消し、原本ファイルを再度取り込んでください。</p><div className="review-actions"><span>未保存の投資データを完了済みとして扱いません。</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? '処理中…' : '取り消して再取込'}</button></div></section>
 
-  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div><div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const draftValid = validatePostingDecision(draft.decision, { candidateAmountJpy: candidate.amountJpy, accountIds, expectedCandidateId: candidate.id }).valid; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><ReceiptReviewPanel candidate={candidate} decision={draft.decision} accounts={accounts} onDecisionChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} disabled={!draftValid} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><PostingEntryEditor candidateId={candidate.id} candidateAmountJpy={candidate.amountJpy} decision={draft.decision} accounts={accounts} onChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>既存取引の候補</strong><select aria-label={`${candidate.id}のレシート紐付け候補`} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? '紐付け中…' : '新規支出を作らず証憑として紐付け'}</button><small>金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}{sourceOnly && <p className="empty-state">台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。</p>}</div><div className="review-actions"><span>{sourceOnly ? '台帳へ取引は追加されません' : approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : sourceOnly ? '原本処理を完了' : '承認済みを台帳へ反映'}</button></div></section>
+  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}件の候補・原本は暗号化済み{recovered ? '・再起動後に復元' : ''}</p></div><b>{recovered ? 'RECOVERED' : 'REVIEW'}</b></div>{hasEligibleClassificationCandidates && <div className="classification-review-toolbar"><span><strong>分類ルール候補</strong><small>ルールは候補だけを変更し、承認や台帳反映は行いません。</small></span><button type="button" className="secondary-btn" disabled={untouchedSuggestionCount === 0} onClick={applyAllRuleSuggestions}>未編集の候補に一括適用（{untouchedSuggestionCount}件）</button>{classificationLoadFailed && <small role="status">分類ルールを読み込めませんでした。候補は通常どおり手動で確認できます。</small>}{classificationNotices.all && <small role="status">{classificationNotices.all}</small>}</div>}<div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const draftValid = validatePostingDecision(draft.decision, { candidateAmountJpy: candidate.amountJpy, accountIds, expectedCandidateId: candidate.id }).valid; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><ReceiptReviewPanel candidate={candidate} decision={draft.decision} accounts={accounts} onDecisionChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`} type="checkbox" checked={draft.approved} disabled={!draftValid} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>承認</span></label><div><input aria-label={`${candidate.id}の支払先`} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {candidate.direction} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={`${candidate.id}の取引種別`} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'TRANSFER'].map((type) => <option key={type}>{type}</option>)}</select><PostingEntryEditor candidateId={candidate.id} candidateAmountJpy={candidate.amountJpy} decision={draft.decision} accounts={accounts} onChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>家計集計に含める</span></label>{eligibleClassificationDecision(draft.decision, accounts) && (() => { const rule = matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description); const ruleNotice = classificationNotices[candidate.id]; return rule ? <div className="classification-rule-suggestion"><span><strong>{rule.name}</strong><small>{rule.categoryName}{rule.labels.length > 0 ? ` ・ ${rule.labels.join(' / ')}` : ''}{rule.tags.length > 0 ? ` ・ #${rule.tags.join(' #')}` : ''}</small></span><button type="button" className="mini-btn" aria-label={`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}の分類ルール候補を適用`} disabled={applyingClassification === candidate.id} onClick={() => void applyRuleSuggestion(candidate.id)}>{applyingClassification === candidate.id ? '再確認中…' : draft.decision.classificationRuleId === rule.id ? '適用済み・再確認' : '提案を適用'}</button>{ruleNotice && <small role="status">{ruleNotice}</small>}</div> : ruleNotice ? <small className="classification-rule-notice" role="status">{ruleNotice}</small> : null })()}{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>既存取引の候補</strong><select aria-label={`${candidate.id}のレシート紐付け候補`} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? '紐付け中…' : '新規支出を作らず証憑として紐付け'}</button><small>金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}{sourceOnly && <p className="empty-state">台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。</p>}</div><div className="review-actions"><span>{sourceOnly ? '台帳へ取引は追加されません' : approved ? '全候補を承認済み' : '各候補の口座と種別を確認して承認してください'}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>取り消す</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? '処理中…' : sourceOnly ? '原本処理を完了' : '承認済みを台帳へ反映'}</button></div></section>
 }
 
 interface DurableFolderInboxView {

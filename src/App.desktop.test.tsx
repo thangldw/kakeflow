@@ -199,6 +199,26 @@ const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly stri
   ...overrides,
 })
 
+const classificationAccounts = [
+  { id: 'family-bank', name: '銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'MEMBER', ownerMemberId: 'taro', ownerMemberName: '太郎', visibility: 'PERSONAL' },
+  { id: 'family-wallet', name: 'PayPay', accountKind: 'ASSET', accountSubtype: 'WALLET', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+  { id: 'family-other-expense', name: 'その他', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+  { id: 'family-food-expense', name: '食費', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+  { id: 'family-income', name: '収入', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+  { id: 'family-card', name: 'カード', accountKind: 'LIABILITY', accountSubtype: 'CREDIT_CARD', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+]
+
+const storeClassificationRule = {
+  id: 'rule-store-food', householdId: 'family', name: 'STOREを食費へ', priority: 10, isEnabled: true,
+  merchantContains: 'store', descriptionContains: null, categoryAccountId: 'family-food-expense', categoryName: '食費',
+  labels: ['RECURRING'], tags: ['groceries'], createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-15T01:02:03Z',
+}
+
+const pendingBankReview = {
+  householdId: 'family',
+  runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }],
+}
+
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     vi.stubGlobal('confirm', vi.fn(() => true))
@@ -1706,6 +1726,143 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(commit)
 
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
+  })
+
+  it('revalidates and applies an import classification suggestion without approving it, then commits its provenance', async () => {
+    desktop.listAccounts.mockResolvedValue(classificationAccounts)
+    desktop.listClassificationRules.mockResolvedValue([storeClassificationRule])
+    desktop.previewClassificationRules.mockResolvedValue({ winningRuleId: storeClassificationRule.id, matches: [storeClassificationRule] })
+    desktop.listPendingReviews.mockResolvedValueOnce(pendingBankReview).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByText('STOREを食費へ')).toBeInTheDocument()
+    expect(desktop.listClassificationRules).toHaveBeenCalledTimes(1)
+    expect(desktop.previewClassificationRules).not.toHaveBeenCalled()
+    const approval = screen.getByRole('checkbox', { name: 'STOREを承認' })
+    const commit = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(approval).not.toBeChecked()
+    expect(commit).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'STOREの分類ルール候補を適用' }))
+    await waitFor(() => expect(desktop.previewClassificationRules).toHaveBeenCalledWith({ householdId: 'family', merchant: 'STORE', description: 'STORE' }))
+    expect(await screen.findByText(/承認はまだ行われていません/)).toBeInTheDocument()
+    expect(approval).not.toBeChecked()
+    expect(commit).toBeDisabled()
+
+    fireEvent.click(approval)
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledTimes(1))
+    const decision = desktop.commitImport.mock.calls[0][1][0]
+    expect(decision).toMatchObject({
+      candidateId: 'candidate-1',
+      classificationRuleId: storeClassificationRule.id,
+      expectedClassificationRuleUpdatedAt: storeClassificationRule.updatedAt,
+    })
+    expect(decision.entries.filter((entry: { accountId: string }) => entry.accountId === 'family-food-expense')).toHaveLength(1)
+    expect(decision.entries.filter((entry: { accountId: string }) => entry.accountId === 'family-other-expense')).toHaveLength(0)
+  })
+
+  it('clears applied classification provenance and approval after a manual decision edit', async () => {
+    desktop.listAccounts.mockResolvedValue(classificationAccounts)
+    desktop.listClassificationRules.mockResolvedValue([storeClassificationRule])
+    desktop.previewClassificationRules.mockResolvedValue({ winningRuleId: storeClassificationRule.id, matches: [storeClassificationRule] })
+    desktop.listPendingReviews.mockResolvedValueOnce(pendingBankReview).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'STOREの分類ルール候補を適用' }))
+    await screen.findByText(/承認はまだ行われていません/)
+    const approval = screen.getByRole('checkbox', { name: 'STOREを承認' })
+    const commit = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    fireEvent.click(approval)
+    expect(commit).toBeEnabled()
+    fireEvent.change(screen.getByLabelText('candidate-1の支払先'), { target: { value: 'STORE MANUAL' } })
+    expect(approval).not.toBeChecked()
+    expect(commit).toBeDisabled()
+    expect(screen.getByRole('button', { name: '未編集の候補に一括適用（0件）' })).toBeDisabled()
+
+    fireEvent.click(approval)
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledTimes(1))
+    const decision = desktop.commitImport.mock.calls[0][1][0]
+    expect(decision.payee).toBe('STORE MANUAL')
+    expect(decision).not.toHaveProperty('classificationRuleId')
+    expect(decision).not.toHaveProperty('expectedClassificationRuleUpdatedAt')
+  })
+
+  it('applies loaded rule snapshots in bulk only after the explicit review action', async () => {
+    desktop.listAccounts.mockResolvedValue(classificationAccounts)
+    desktop.listClassificationRules.mockResolvedValue([storeClassificationRule])
+    desktop.listPendingReviews.mockResolvedValueOnce(pendingBankReview).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    const applyAll = await screen.findByRole('button', { name: '未編集の候補に一括適用（1件）' })
+    const approval = screen.getByRole('checkbox', { name: 'STOREを承認' })
+    expect(approval).not.toBeChecked()
+    expect(desktop.previewClassificationRules).not.toHaveBeenCalled()
+    fireEvent.click(applyAll)
+    expect(await screen.findByText(/1件にルール候補を適用しました/)).toBeInTheDocument()
+    expect(approval).not.toBeChecked()
+
+    fireEvent.click(approval)
+    fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledTimes(1))
+    expect(desktop.commitImport.mock.calls[0][1][0]).toMatchObject({
+      classificationRuleId: storeClassificationRule.id,
+      expectedClassificationRuleUpdatedAt: storeClassificationRule.updatedAt,
+    })
+  })
+
+  it('does not offer classification rules for transfers or card payments', async () => {
+    desktop.listAccounts.mockResolvedValue(classificationAccounts)
+    desktop.previewImport.mockResolvedValue({
+      summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 2, candidateCount: 2, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [
+        { id: 'transfer-candidate', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 5000, direction: 'OUT', descriptionRaw: '口座振替', merchantRaw: '口座振替', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, suggestedTransactionType: 'TRANSFER', calculationTarget: false, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] },
+        { id: 'card-payment-candidate', accountId: 'family-bank', occurredOn: '2026-07-13', postedOn: null, amountJpy: 12000, direction: 'OUT', descriptionRaw: 'JCBカード', merchantRaw: 'JCBカード', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, calculationTarget: false, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] },
+      ],
+    })
+    desktop.listPendingReviews.mockResolvedValueOnce({ ...pendingBankReview, runs: [{ ...pendingBankReview.runs[0], recordCount: 2, candidateCount: 2 }] }).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    expect(await screen.findByLabelText('transfer-candidateの取引種別')).toHaveValue('TRANSFER')
+    expect(screen.getByLabelText('card-payment-candidateの取引種別')).toHaveValue('CARD_PAYMENT')
+    expect(screen.queryByRole('button', { name: /分類ルール候補を適用/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('分類ルール候補')).not.toBeInTheDocument()
+    expect(desktop.listClassificationRules).not.toHaveBeenCalled()
+  })
+
+  it('keeps an import candidate reviewable when explicit classification revalidation fails', async () => {
+    desktop.listAccounts.mockResolvedValue(classificationAccounts)
+    desktop.listClassificationRules.mockResolvedValue([storeClassificationRule])
+    desktop.previewClassificationRules.mockRejectedValue(new Error('stale rule snapshot'))
+    desktop.listPendingReviews.mockResolvedValueOnce(pendingBankReview).mockResolvedValue({ householdId: 'family', runs: [] })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'STOREの分類ルール候補を適用' }))
+    expect(await screen.findByText(/ルールを再確認できませんでした/)).toBeInTheDocument()
+    const approval = screen.getByRole('checkbox', { name: 'STOREを承認' })
+    expect(approval).toBeEnabled()
+    expect(approval).not.toBeChecked()
+    fireEvent.click(approval)
+    const commit = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledTimes(1))
+    const decision = desktop.commitImport.mock.calls[0][1][0]
+    expect(decision).not.toHaveProperty('classificationRuleId')
+    expect(decision.entries.some((entry: { accountId: string }) => entry.accountId === 'family-other-expense')).toBe(true)
   })
 
   it.each([
