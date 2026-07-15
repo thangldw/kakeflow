@@ -161,6 +161,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0064_family_recurring_preferences.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0065_card_payment_link_corrections.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -3408,6 +3411,48 @@ mod tests {
             0
         );
         assert!(integrity_check(&connection).unwrap());
+    }
+
+    #[test]
+    fn migration_65_installs_immutable_card_payment_correction_audit() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let objects: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_master
+                     WHERE (type='table' AND name='card_payment_link_corrections')
+                        OR (type='trigger' AND name IN (
+                          'card_payment_link_corrections_immutable_update',
+                          'card_payment_link_corrections_immutable_delete',
+                          'card_payments_confirmed_link_immutable'))",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(objects, 4);
+                connection.execute(
+                    "INSERT INTO card_payment_link_corrections(
+                       id,household_id,statement_id,payment_id,bank_transaction_id,
+                       previous_confirmed_at,correction_kind)
+                     VALUES('0123456789abcdef0123456789abcdef','family','statement','payment',
+                       'bank-transaction','2026-07-15T00:00:00.000Z','UNLINK')",
+                    [],
+                )?;
+                assert!(connection
+                    .execute(
+                        "UPDATE card_payment_link_corrections
+                         SET statement_id='other' WHERE payment_id='payment'",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute(
+                        "DELETE FROM card_payment_link_corrections WHERE payment_id='payment'",
+                        [],
+                    )
+                    .is_err());
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

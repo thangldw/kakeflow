@@ -5,6 +5,11 @@ bank debit. Reconciliation is a relationship between already-posted ledger
 transactions and a statement; it never initiates a payment or rewrites a
 journal entry.
 
+Mistaken confirmed links can be corrected through the two-step desktop action
+described in [CARD_PAYMENT_LINK_CORRECTIONS.md](CARD_PAYMENT_LINK_CORRECTIONS.md).
+The correction preserves the bank transaction and journal while recomputing
+the statement from the remaining confirmed payments.
+
 ## Derived statement status
 
 The statement amount is compared with the sum of explicitly confirmed payment

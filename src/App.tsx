@@ -1873,6 +1873,7 @@ function CardsPage({ cards, householdId, accounts, revision, onChanged, month }:
   const [coverage, setCoverage] = useState<CardSettlementBalanceCoverageDto | null>(null)
   const [mappingDrafts, setMappingDrafts] = useState<Record<string, string>>({})
   const [dueDateDrafts, setDueDateDrafts] = useState<Record<string, string>>({})
+  const [unlinkConfirmId, setUnlinkConfirmId] = useState<string | null>(null)
   const cardAccounts = accounts.filter((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
   const bankAccounts = accounts.filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK')
   useEffect(() => { setDueDateDrafts(Object.fromEntries(cards.map((card) => [card.id, card.paymentDueOn ?? '']))) }, [cards])
@@ -1914,6 +1915,17 @@ function CardsPage({ cards, householdId, accounts, revision, onChanged, month }:
     setBusyId(paymentId); setNotice('')
     try { await platformClient.confirmCardPaymentLink(householdId, card.id, paymentId); await reloadSettlementPlan(); onChanged(); setNotice('選択した口座引落を請求に紐付けました。仕訳や支払いは変更していません。') }
     catch { setNotice('照合を確定できませんでした。金額とカード口座を確認してください。') }
+    finally { setBusyId(null) }
+  }
+  const unlink = async (card: CardSettlementDto, paymentId: string) => {
+    if (!householdId) return
+    if (unlinkConfirmId !== paymentId) { setUnlinkConfirmId(paymentId); setNotice('解除すると請求の照合合計を再計算します。もう一度押して確定してください。'); return }
+    setBusyId(paymentId); setNotice('')
+    try {
+      await platformClient.unlinkCardPaymentLink(householdId, card.id, paymentId)
+      setUnlinkConfirmId(null); await reloadSettlementPlan(); onChanged()
+      setNotice('誤って紐付けた口座引落を解除しました。銀行取引と仕訳は変更していません。')
+    } catch { setNotice('紐付けを解除できませんでした。最新の照合状態を確認してください。') }
     finally { setBusyId(null) }
   }
   const saveMapping = async (cardAccountId: string) => {
@@ -1958,7 +1970,7 @@ function CardsPage({ cards, householdId, accounts, revision, onChanged, month }:
       <div className="card-visual" style={{ background: card.cardName.includes('Rakuten') ? '#b15b68' : '#394b5a' }}><span>KAKEFLOW CARD</span><strong>{card.cardName}</strong><small>{card.maskedIdentifier ?? '番号未設定'}</small></div>
       <div className="card-detail-head"><div><span>請求額</span><strong>{yen(card.statementAmountJpy)}</strong></div><b className={card.reconciliationStatus === 'FULLY_RECONCILED' ? 'reconciled' : card.reconciliationStatus === 'PARTIALLY_RECONCILED' ? 'possible' : card.reconciliationStatus === 'OVERPAID' ? 'overpaid' : 'pending'}>{card.reconciliationStatus === 'FULLY_RECONCILED' ? '✓ 全額照合' : card.reconciliationStatus === 'PARTIALLY_RECONCILED' ? '一部支払済み' : card.reconciliationStatus === 'OVERPAID' ? '過払い' : '未照合'}</b></div>
       <dl className="card-settlement-totals"><div><dt>支払済み</dt><dd>{yen(card.paidAmountJpy)}</dd></div><div><dt>未払い</dt><dd>{yen(card.outstandingAmountJpy)}</dd></div><div><dt>過払い</dt><dd>{yen(card.overpaidAmountJpy)}</dd></div></dl>
-      <div className="card-payment-history"><h3>紐付け済みの口座引落</h3>{card.payments.map((payment) => <div className="card-payment-row confirmed" key={payment.paymentId}><span><strong>{payment.paymentOn}</strong><small>銀行取引 {payment.bankTransactionId}</small></span><b>{yen(payment.paymentAmountJpy)}</b><em>確認済み</em></div>)}{card.payments.length === 0 && <p className="empty-state">紐付け済みの口座引落はありません。</p>}</div>
+      <div className="card-payment-history"><h3>紐付け済みの口座引落</h3>{card.payments.map((payment) => <div className="card-payment-row confirmed" key={payment.paymentId}><span><strong>{payment.paymentOn}</strong><small>銀行取引 {payment.bankTransactionId}</small></span><b>{yen(payment.paymentAmountJpy)}</b><em>確認済み</em><button className={unlinkConfirmId === payment.paymentId ? 'secondary-btn card-unlink-confirm' : 'text-btn'} disabled={busyId === payment.paymentId} onClick={() => void unlink(card, payment.paymentId)}>{busyId === payment.paymentId ? '解除中…' : unlinkConfirmId === payment.paymentId ? '解除を確定' : '紐付けを解除'}</button></div>)}{card.payments.length === 0 && <p className="empty-state">紐付け済みの口座引落はありません。</p>}</div>
       {card.eligiblePayments.length > 0 && <div className="card-payment-candidates"><h3>照合候補</h3><p>候補ごとに金額と日付を確認してください。自動確定や支払い処理は行いません。</p>{card.eligiblePayments.map((payment) => <div className="card-payment-row" key={payment.paymentId}><span><strong>{payment.paymentOn}</strong><small>{payment.matchScoreBps == null ? '一致度未算出' : `一致度 ${Math.round(payment.matchScoreBps / 100)}%`} ・ 銀行取引 {payment.bankTransactionId}</small></span><b>{yen(payment.paymentAmountJpy)}</b><button className="secondary-btn" disabled={busyId === payment.paymentId} onClick={() => void confirm(card, payment.paymentId)}>{busyId === payment.paymentId ? '確定中…' : 'この引落を確認して紐付け'}</button></div>)}</div>}
       <dl className="card-statement-meta"><div><dt>期間</dt><dd>{card.periodStart} – {card.periodEnd}</dd></div><div><dt>利用明細</dt><dd>{card.lineCount}件</dd></div><div><dt>支払期日</dt><dd>{card.paymentDueOn ?? '未登録'} <small>ユーザー確認値</small></dd></div></dl>
       {desktop && <div className="due-date-editor"><label><span>支払期日を登録・訂正</span><input aria-label={`${card.cardName}の支払期日`} type="date" min={card.periodEnd} value={dueDateDrafts[card.id] ?? ''} onChange={(event) => setDueDateDrafts((current) => ({ ...current, [card.id]: event.target.value }))} /></label><button className="secondary-btn" disabled={!dueDateDrafts[card.id] || busyId === `due:${card.id}`} onClick={() => void saveDueDate(card.id, dueDateDrafts[card.id])}>{busyId === `due:${card.id}` ? '保存中…' : '保存'}</button>{card.paymentDueOn && <button className="text-btn" disabled={busyId === `due:${card.id}`} onClick={() => void saveDueDate(card.id, null)}>解除</button>}<small>発行会社から自動推測せず、確認した日付だけを使用します。</small></div>}

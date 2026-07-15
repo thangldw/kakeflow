@@ -3763,6 +3763,18 @@ fn card_payment_link_confirm(
 }
 
 #[tauri::command]
+fn card_payment_link_unlink(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    statement_id: String,
+    payment_id: String,
+) -> Result<CardSettlementDto, String> {
+    repository_result(&state, |connection| {
+        read_model::unlink_card_payment_link(connection, &household_id, &statement_id, &payment_id)
+    })
+}
+
+#[tauri::command]
 fn card_statement_due_date_update(
     state: tauri::State<'_, AppState>,
     input: UpdateCardStatementDueDateInput,
@@ -4609,6 +4621,7 @@ pub fn run() {
             cards_list,
             card_match_confirm,
             card_payment_link_confirm,
+            card_payment_link_unlink,
             card_statement_due_date_update,
             import_start,
             import_preview,
