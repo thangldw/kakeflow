@@ -2,6 +2,7 @@ export * from './types'
 export * from './csv'
 export * from './normalize'
 export { japaneseBankAdapter } from './adapters/japaneseBank'
+export { mizuhoBusinessWebAdapter } from './adapters/mizuhoBusinessWeb'
 export { resonaWebMeisaiPlusAdapter } from './adapters/resonaWebMeisaiPlus'
 export { personalJapaneseBankAdapter } from './adapters/personalJapaneseBank'
 export { mufgBizstationAllDetailsAdapter } from './adapters/mufgBizstationAllDetails'
@@ -26,6 +27,7 @@ export * from './adapters/customDelimited'
 
 import { amazonMastercardAdapter } from './adapters/amazonMastercard'
 import { japaneseBankAdapter } from './adapters/japaneseBank'
+import { mizuhoBusinessWebAdapter } from './adapters/mizuhoBusinessWeb'
 import { resonaWebMeisaiPlusAdapter } from './adapters/resonaWebMeisaiPlus'
 import { personalJapaneseBankAdapter } from './adapters/personalJapaneseBank'
 import { mufgBizstationAllDetailsAdapter } from './adapters/mufgBizstationAllDetails'
@@ -48,6 +50,7 @@ import { moneyForwardHouseholdLedgerAdapter } from './adapters/moneyForwardHouse
 import type { ImportAdapter, ImportInput } from './types'
 
 export const importAdapters = [
+  mizuhoBusinessWebAdapter,
   resonaWebMeisaiPlusAdapter,
   mufgBizstationDepositWithdrawalAdapter,
   mufgBizstationAllDetailsAdapter,

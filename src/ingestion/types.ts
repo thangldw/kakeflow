@@ -1,4 +1,5 @@
 export type AdapterId =
+  | 'mizuho-business-web-statement-v1'
   | 'resona-web-meisai-plus-v1'
   | 'personal-japanese-bank-ledger-v2'
   | 'japanese-bank-ledger-v1'

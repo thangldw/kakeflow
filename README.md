@@ -21,7 +21,9 @@ exact selected snapshot and a native-currency
 [Investment Performance CSV](docs/INVESTMENT_PERFORMANCE_CSV.md) for the exact
 selected annual FIFO report, plus a strict
 [Resona Web入出金明細PLUS CSV adapter](docs/RESONA_WEB_MEISAI_PLUS_IMPORT.md)
-based on the bank's published fourteen-column record format.
+based on the bank's published fourteen-column record format, and a strict
+[Mizuho Business Web CSV adapter](docs/MIZUHO_BUSINESS_WEB_IMPORT.md) based on
+its official thirteen-field Shift_JIS specification.
 Family schema v4 carries the complete explicit `CONFIRMED`/`IGNORED` household
 preference set as one `SHARED` aggregate inside `KFF4`; it never transports
 detected cadence, predicted amounts, local optimistic versions, or timestamps.
@@ -44,6 +46,10 @@ debit/credit direction, running-balance continuity, published blank fields,
 and physical-row provenance. Cancellation rows remain blocking because the
 public record format does not establish enough reversal linkage to post them
 safely.
+The Mizuho adapter accepts auditable positive normal entries, official
+transaction/check values, signed balances, date-scoped source numbers, and
+physical-row lineage. Negative corrections, `取消`, `欠番`, unknown values, and
+mixed-account sources remain blocking rather than being repaired implicitly.
 
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 
