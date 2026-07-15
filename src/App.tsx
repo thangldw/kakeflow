@@ -320,7 +320,7 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
       {open && <button className="sidebar-backdrop" aria-label={text('メニューを閉じる')} onClick={close} />}
       <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-label={text('メインナビゲーション')}>
         <div className="brand">
-          <div className="brand-mark"><Leaf size={21} strokeWidth={2.4} /></div>
+          <div className="brand-mark"><Leaf size={24} strokeWidth={2.2} /></div>
           <span>kake<span>flow</span></span>
           <button className="icon-btn mobile-close" aria-label={text('メニューを閉じる')} onClick={close}><X size={19} /></button>
         </div>
