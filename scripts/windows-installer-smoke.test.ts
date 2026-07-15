@@ -27,6 +27,13 @@ describe('Windows installer acceptance helpers', () => {
     expect(layout.resources.map((item) => item.replaceAll('\\', '/'))).toEqual([
       expect.stringMatching(/fonts\/OFL\.txt$/u),
       expect.stringMatching(/fonts\/SOURCE\.md$/u),
+      expect.stringMatching(/ocr\/manifest\.json$/u),
+      expect.stringMatching(/ocr\/tesseract\.exe$/u),
+      expect.stringMatching(/ocr\/tessdata\/eng\.traineddata$/u),
+      expect.stringMatching(/ocr\/tessdata\/jpn\.traineddata$/u),
+      expect.stringMatching(/ocr\/tessdata\/configs\/tsv$/u),
+      expect.stringMatching(/ocr\/notices\/tesseract-Apache-2\.0\.txt$/u),
+      expect.stringMatching(/ocr\/notices\/THIRD_PARTY_NOTICES\.txt$/u),
     ])
     expect(silentInstallArguments(layout.root)).toEqual(['/S', `/D=${layout.root}`])
     expect(silentUninstallArguments()).toEqual(['/S'])
@@ -42,7 +49,13 @@ describe('Windows installer acceptance helpers', () => {
     const evidence = {
       status: 'ok', platform: 'win32', version: '0.90.0', installScope: 'isolated-current-user',
       installerBytes: 100, executableBytes: 200, uninstallerPresent: true,
-      resources: ['fonts/OFL.txt', 'fonts/SOURCE.md'],
+      resources: [
+        'fonts/OFL.txt', 'fonts/SOURCE.md', 'ocr/manifest.json', 'ocr/tesseract.exe',
+        'ocr/tessdata/eng.traineddata', 'ocr/tessdata/jpn.traineddata',
+        'ocr/tessdata/configs/tsv', 'ocr/notices/tesseract-Apache-2.0.txt',
+        'ocr/notices/THIRD_PARTY_NOTICES.txt',
+      ],
+      ocr: { status: 'ok', target: 'windows-x64', manifestSchemaVersion: 2, tsvSmoke: true },
       packagedSmoke: { status: 'ok', schemaVersion: 51, databaseHealthy: true },
       uninstallCompleted: true, installDirectoryRemoved: true,
     }

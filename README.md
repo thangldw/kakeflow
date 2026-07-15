@@ -202,6 +202,17 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   padded amount, single-source-account, and bounded Japanese-calendar
   validation. The source has no balance or durable transaction ID, and
   era-ambiguous archival dates fail closed instead of being guessed.
+- Strict provider-neutral [personal Japanese bank ledger v2 import](docs/PERSONAL_JAPANESE_BANK_IMPORT.md)
+  for the exact nine-column account-history contract, with a bounded preamble,
+  positive safe-integer one-sided amounts, signed balances, complete physical
+  row provenance, duplicate/summary rejection, and chronology plus running-
+  balance proof in either source order. It is ranked ahead of generic v1 while
+  leaving v1 intact and cannot collide with BizSTATION or Yucho Direct.
+- Reproducible [Windows x64 offline OCR packaging foundation](docs/PACKAGED_APP_TESTING.md)
+  with a pinned static vcpkg triplet, file-level manifest, PE dependency checks,
+  `eng`/`jpn` model loading, TSV execution, and installed-NSIS resource
+  verification. Native Windows staging and installer evidence remain mandatory
+  before a Windows artifact can be advertised or released.
 - Opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md) at a persisted 15, 30, or 60 minute interval while the desktop process is open. The native worker refreshes the authenticated household/membership and local public-key registration, records only inbound publication metadata as `AVAILABLE`, uses bounded leases and retry backoff, and suspends for explicit reauthorization after terminal credential or membership failures. Sending, artifact download, `KFE1` decryption, review, and atomic Apply remain manual.
 - Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
 - [Audience-partitioned family schema v3](docs/FAMILY_EVIDENCE_DELIVERY.md) for the core graph, complete planning/configuration aggregates, and seven evidence-backed card/investment aggregates. The binary KFF3 envelope carries origin-qualified immutable documents and raw rows in the same least-widening audience partition, discloses exact included/withheld coverage, preserves V1/V2 compatibility, and materializes evidence only inside one explicit atomic apply.
@@ -211,7 +222,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, evidence-first investment dependencies, idempotent content reuse, atomic database publication, and source-viewer hydration without change-package hash drift. Schema-v1 capsules remain compatible; pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
 - [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v4 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 18-kind household snapshot spanning ledger, card reconciliation, confirmed investment facts, and all five dashboard layouts, validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 11-kind, schema-v2 13-kind, and schema-v3 18-kind packages remain compatible. There is no server, login, automatic delivery, remote sync, or access-control claim.
 - [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
-- [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for generic Japanese bank, PayPay, Rakuten Card, Amazon Mastercard, JCB MyJCB, SMBC Vpass, the strict [AEON finalized-statement contract](docs/AEON_CARD_IMPORT.md), and the strict [PayPay Card community-derived finalized-statement contract](docs/PAYPAY_CARD_IMPORT.md), with adapter-compatible account filtering, per-preview selection, and no default or name-based inference. The AEON and PayPay Card fixtures are synthetic because official materials confirm the relevant export capability but do not publish the literal consumer schemas.
+- [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for strict personal Japanese bank v2, legacy generic Japanese bank v1, PayPay, Rakuten Card, Amazon Mastercard, JCB MyJCB, SMBC Vpass, the strict [AEON finalized-statement contract](docs/AEON_CARD_IMPORT.md), and the strict [PayPay Card community-derived finalized-statement contract](docs/PAYPAY_CARD_IMPORT.md), with adapter-compatible account filtering, per-preview selection, and no default or name-based inference. The AEON and PayPay Card fixtures are synthetic because official materials confirm the relevant export capability but do not publish the literal consumer schemas.
 - Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [v0.30 UX audit](docs/audits/v030-dashboard/AUDIT.md).
 - User-confirmed [credit-card statement due dates](docs/CARD_DUE_DATES.md) with set/correct/clear controls, household-scoped validation, explicit no-inference labeling, and immediate coverage/forecast refresh without ledger mutation.
 - Bounded [Yucho bulk ZIP import](docs/YUCHO_BULK_ZIP_IMPORT.md) for manual upload and drop, with deterministic per-CSV previews, archive-entry provenance, atomic archive rejection, CRC verification, explicit review, and no automatic ledger posting.
@@ -281,6 +292,9 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
+
+The evidence required to promote these tracks into an advertised v1 capability
+is tracked in [KakeFlow v1 release readiness](docs/V1_RELEASE_READINESS.md).
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 2. Qualify the implemented Gmail and Google Drive connectors with packaged

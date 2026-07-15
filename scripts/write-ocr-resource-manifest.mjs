@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto'
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { ocrTargetContract } from './ocr-resource-contract.mjs'
 
-const [stageRoot, vcpkgCommit, tesseractVersion, tessdataVersion, triplet] = process.argv.slice(2)
-if (!stageRoot || !vcpkgCommit || !tesseractVersion || !tessdataVersion || !triplet) {
-  throw new Error('Usage: write-ocr-resource-manifest.mjs STAGE VCPKG_COMMIT TESSERACT_VERSION TESSDATA_VERSION TRIPLET')
+const [stageRoot, target] = process.argv.slice(2)
+if (!stageRoot || !target) {
+  throw new Error('Usage: write-ocr-resource-manifest.mjs STAGE TARGET')
 }
+const contract = ocrTargetContract(target)
 
 async function filesBelow(directory, prefix = '') {
   const result = []
@@ -29,13 +31,14 @@ for (const relative of (await filesBelow(stageRoot)).sort()) {
 }
 
 const manifest = {
-  schemaVersion: 1,
-  target: 'macos-arm64',
-  minimumSystemVersion: '12.0',
-  triplet,
-  vcpkgCommit,
-  tesseractVersion,
-  tessdata: { repository: 'tessdata_fast', version: tessdataVersion, languages: ['eng', 'jpn'] },
+  schemaVersion: 2,
+  target: contract.target,
+  minimumSystemVersion: contract.minimumSystemVersion,
+  triplet: contract.triplet,
+  vcpkgCommit: contract.vcpkgCommit,
+  tesseractVersion: contract.tesseractVersion,
+  linkage: { libraries: contract.libraryLinkage, crt: contract.crtLinkage },
+  tessdata: { repository: 'tessdata_fast', version: contract.tessdataVersion, languages: ['eng', 'jpn'] },
   files,
 }
 await writeFile(path.join(stageRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')

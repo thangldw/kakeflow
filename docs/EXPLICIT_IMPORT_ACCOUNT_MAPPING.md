@@ -1,6 +1,6 @@
 # Explicit import account mapping
 
-KakeFlow requires the user to select the canonical destination account for each transactional source file before staging it for review. This applies to the built-in generic Japanese bank, PayPay history, Rakuten e-NAVI, Amazon Mastercard, JCB MyJCB, SMBC Vpass, AEON finalized-statement, and [PayPay Card finalized-statement](PAYPAY_CARD_IMPORT.md) adapters.
+KakeFlow requires the user to select the canonical destination account for each transactional source file before staging it for review. This applies to the strict [provider-neutral personal Japanese bank ledger](PERSONAL_JAPANESE_BANK_IMPORT.md), legacy generic Japanese bank, PayPay history, Rakuten e-NAVI, Amazon Mastercard, JCB MyJCB, SMBC Vpass, AEON finalized-statement, and [PayPay Card finalized-statement](PAYPAY_CARD_IMPORT.md) adapters.
 
 ## Why selection is explicit
 
@@ -17,7 +17,8 @@ KakeFlow therefore does not use:
 
 | Source adapter | Selectable canonical account |
 | --- | --- |
-| Generic Japanese bank ledger | `ASSET / BANK` |
+| Strict personal Japanese bank ledger v2 | `ASSET / BANK` |
+| Legacy generic Japanese bank ledger v1 | `ASSET / BANK` |
 | PayPay transaction history | `ASSET / WALLET` |
 | Rakuten e-NAVI statement | `LIABILITY / CREDIT_CARD` |
 | Amazon Mastercard statement | `LIABILITY / CREDIT_CARD` |

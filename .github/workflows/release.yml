@@ -58,6 +58,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Stage pinned Windows OCR resources
+        shell: pwsh
+        run: npm run ocr:stage:windows
+
       - name: Build unsigned Windows NSIS acceptance candidate
         run: npm run desktop:build:windows
 
@@ -131,6 +135,19 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Stage and verify pinned macOS OCR resources
+        if: runner.os == 'macOS'
+        run: |
+          npm run ocr:stage:mac
+          npm run ocr:verify
+
+      - name: Stage and verify pinned Windows OCR resources
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm run ocr:stage:windows
+          npm run ocr:verify
 
       - name: Test release candidate
         run: npm run desktop:smoke
