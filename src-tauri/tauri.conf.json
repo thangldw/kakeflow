@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": false,
     "resources": {
       "generated-resources/ocr/": "ocr/",
       "generated-resources/fonts/OFL.txt": "fonts/OFL.txt",

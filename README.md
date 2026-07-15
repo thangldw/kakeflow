@@ -39,7 +39,7 @@ Version 0.61 adds a dedicated [Monex U.S.-stock Trade History import](docs/MONEX
 
 Version 0.60 makes encrypted family delivery recover correctly when relay membership keys change. KakeFlow first replays the exact persisted `KFE1` bytes, resets an envelope only after the relay returns the exact pre-storage `RECIPIENT_SET_CHANGED` rejection, and then reseals on the next explicit Send. Ambiguous failures retain their immutable retry bytes, mixed upload outcomes are reconciled independently, and interrupted sends recover after restart without automatic delivery or Apply. See [recipient-set recovery](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
 
-Version 0.59 adds opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md). While KakeFlow is open, the native desktop process can periodically authenticate the saved relay connection, refresh membership/public-key state, and register new publication metadata as `AVAILABLE`. It never sends, downloads, decrypts, stages, reviews, or applies an artifact automatically; those actions remain explicit. The relay token is stored in the operating-system credential store only after opt-in and is removed when automatic checks are disabled or the connection is disconnected.
+The opt-in [background family-delivery workflow](docs/BACKGROUND_FAMILY_DISCOVERY.md) keeps metadata-only discovery as its default. A separate switch can prepare at most one oldest encrypted `KFE1` publication for review per run, with exact size/SHA validation and the current member's OS-backed encryption identity. Plaintext artifacts, conflict decisions, and Apply remain manual.
 
 Version 0.58 wraps unchanged family artifacts in the recipient-encrypted `KFE1` transport envelope. Each active destination membership receives its own X25519-wrapped payload key, the relay stores opaque XChaCha20-Poly1305 ciphertext, and exact encrypted bytes are retained for idempotent retry. Device private keys remain in native OS credential storage; inbound artifacts are decrypted natively and still require explicit review and Apply. This is relay-blind recipient encryption, not a sender-signature or automatic-sync claim.
 
@@ -116,7 +116,8 @@ Build an unsigned local macOS/Windows artifact:
 npm run desktop:build
 ```
 
-Run the same non-destructive release-readiness smoke sequence as CI (version check,
+Run the same non-destructive release-readiness smoke sequence as CI (version and
+fail-closed [update-channel](docs/UPDATE_CHANNEL.md) checks,
 frontend tests/lint/build, Rust format/Clippy/tests, and an unsigned
 `tauri build --no-bundle`):
 
@@ -220,7 +221,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   `eng`/`jpn` model loading, TSV execution, and installed-NSIS resource
   verification. Native Windows staging and installer evidence remain mandatory
   before a Windows artifact can be advertised or released.
-- Opt-in [background family-delivery discovery](docs/BACKGROUND_FAMILY_DISCOVERY.md) at a persisted 15, 30, or 60 minute interval while the desktop process is open. The native worker refreshes the authenticated household/membership and local public-key registration, records only inbound publication metadata as `AVAILABLE`, uses bounded leases and retry backoff, and suspends for explicit reauthorization after terminal credential or membership failures. Sending, artifact download, `KFE1` decryption, review, and atomic Apply remain manual.
+- Opt-in [background family-delivery discovery and preparation](docs/BACKGROUND_FAMILY_DISCOVERY.md) at a persisted 15, 30, or 60 minute interval while the desktop process is open. Metadata-only remains the default; a separate consent can download, verify, decrypt, and stage one encrypted item for manual review. Active review blocks further intake, plaintext stays manual, and conflict resolution/Apply are never automatic.
 - Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
 - [Audience-partitioned family schema v3](docs/FAMILY_EVIDENCE_DELIVERY.md) for the core graph, complete planning/configuration aggregates, and seven evidence-backed card/investment aggregates. The binary KFF3 envelope carries origin-qualified immutable documents and raw rows in the same least-widening audience partition, discloses exact included/withheld coverage, preserves V1/V2 compatibility, and materializes evidence only inside one explicit atomic apply.
 - Optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) with server-derived Bearer-token principals, manual send/check/stage controls, immutable 64 MiB digest-verified artifacts, retry-safe outbox acknowledgement, and reuse of the existing schema-v4 conflict-review/atomic-apply boundary. This same-principal channel is separate from recipient-encrypted family delivery: it has no cross-member, recipient-encryption, auto-sync, auto-apply, source-evidence transport, or backup claim. The checked-in Node reference relay has an explicit WebView CORS allowlist, must run behind a TLS reverse proxy, and stores package bytes as received.
@@ -312,7 +313,11 @@ is tracked in [KakeFlow v1 release readiness](docs/V1_RELEASE_READINESS.md).
    remains available through the durable local inbox.
 3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
 4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
-5. Add production signing/notarization, update keys, Windows installer-level tests, and a signed release channel. The codebase targets macOS and Windows; current public installer releases are macOS Apple Silicon only.
+5. Add production signing/notarization and activate the currently
+   [disabled update channel](docs/UPDATE_CHANNEL.md) only after signing keys,
+   hosted endpoint, signed artifacts, and platform upgrade evidence exist. The
+   codebase targets macOS and Windows; current public installer releases are
+   macOS Apple Silicon only.
 
 ## Family delivery boundary
 

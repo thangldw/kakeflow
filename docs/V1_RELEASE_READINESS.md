@@ -19,6 +19,9 @@ The following must be complete on the v1 release commit:
   file hashes used by their corresponding packages;
 - the release version matches in `package.json`, Cargo, Tauri, release notes,
   website links, and artifact names; and
+- the [update channel contract](UPDATE_CHANNEL.md) remains explicitly disabled
+  unless its signing, endpoint, configuration, and platform evidence gates are
+  all satisfied atomically; and
 - the manual release gates in [MANUAL_GITHUB_RELEASE.md](MANUAL_GITHUB_RELEASE.md)
   pass without relying on a GitHub-hosted runner.
 
@@ -28,6 +31,9 @@ bump, tag, and public release run only once for the v1 release candidate.
 files, the first changelog entry, README stable marker, project-page production
 CTAs, and the exact DMG/NSIS artifact naming rules; roadmap and historical prose
 are not interpreted as current-release metadata.
+`npm run check:update-channel` proves that the current disabled build does not
+generate updater artifacts, configure the plugin, install its dependencies, or
+grant updater permissions. It does not prove a production updater.
 
 ## Platform evidence gates
 

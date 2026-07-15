@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "channel": "stable",
+  "status": "DISABLED_UNCONFIGURED",
+  "reason": "PRODUCTION_SIGNING_KEY_AND_ENDPOINT_NOT_CONFIGURED",
+  "endpoint": null,
+  "publicKey": null
+}
