@@ -534,7 +534,7 @@ pub enum ExportAccountingBasis {
 }
 
 impl ExportAccountingBasis {
-    fn as_sql(self) -> &'static str {
+    pub(crate) fn as_sql(self) -> &'static str {
         match self {
             Self::Accrual => "ACCRUAL",
             Self::Cash => "CASH",
@@ -573,15 +573,55 @@ pub struct ExportSavedDto {
     pub byte_size: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExportTable {
+    pub file_stem: &'static str,
+    pub header: Vec<&'static str>,
+    pub rows: Vec<Vec<String>>,
+}
+
 pub fn generate_csv(
     connection: &Connection,
     request: &ExportCsvRequest,
 ) -> Result<ExportCsvDto, AccountGroupExportError> {
+    let table = canonical_export_table(connection, request)?;
+    let mut output = String::from('\u{feff}');
+    append_csv_row(&mut output, &table.header)?;
+    for row in &table.rows {
+        append_csv_row(&mut output, row)?;
+    }
+    if output.len() > MAX_EXPORT_BYTES {
+        return Err(AccountGroupExportError::TooLarge);
+    }
+    let group_suffix = request
+        .group_id
+        .as_deref()
+        .map(|id| format!("-{id}"))
+        .unwrap_or_default();
+    let file_name = format!(
+        "kakeflow-{file_stem}-{from}-{to}{group_suffix}.csv",
+        file_stem = table.file_stem,
+        from = request.from_date,
+        to = request.to_date
+    );
+    Ok(ExportCsvDto {
+        file_name,
+        media_type: "text/csv;charset=utf-8",
+        row_count: table.rows.len() as u32,
+        byte_size: output.len() as u32,
+        utf8_bom_csv: output,
+    })
+}
+
+pub(crate) fn canonical_export_table(
+    connection: &Connection,
+    request: &ExportCsvRequest,
+) -> Result<ExportTable, AccountGroupExportError> {
     validate_export_request(connection, request)?;
-    let (file_stem, header, rows) = match request.export_kind {
-        ExportKind::Transactions => (
-            "transactions",
-            vec![
+    let table = match request.export_kind {
+        ExportKind::Transactions => ExportTable {
+            file_stem: "transactions",
+            header: vec![
                 "transaction_id",
                 "occurred_on",
                 "posted_on",
@@ -602,11 +642,11 @@ pub fn generate_csv(
                 "attribution_scope",
                 "attribution_member_id",
             ],
-            export_transaction_rows(connection, request)?,
-        ),
-        ExportKind::PortfolioSnapshots => (
-            "portfolio-snapshots",
-            vec![
+            rows: export_transaction_rows(connection, request)?,
+        },
+        ExportKind::PortfolioSnapshots => ExportTable {
+            file_stem: "portfolio-snapshots",
+            header: vec![
                 "snapshot_id",
                 "as_of",
                 "account_id",
@@ -620,37 +660,13 @@ pub fn generate_csv(
                 "accounting_basis",
                 "account_group_id",
             ],
-            export_portfolio_rows(connection, request)?,
-        ),
+            rows: export_portfolio_rows(connection, request)?,
+        },
     };
-    if rows.len() > MAX_EXPORT_ROWS {
+    if table.rows.len() > MAX_EXPORT_ROWS {
         return Err(AccountGroupExportError::TooLarge);
     }
-    let mut output = String::from('\u{feff}');
-    append_csv_row(&mut output, &header)?;
-    for row in &rows {
-        append_csv_row(&mut output, row)?;
-    }
-    if output.len() > MAX_EXPORT_BYTES {
-        return Err(AccountGroupExportError::TooLarge);
-    }
-    let group_suffix = request
-        .group_id
-        .as_deref()
-        .map(|id| format!("-{id}"))
-        .unwrap_or_default();
-    let file_name = format!(
-        "kakeflow-{file_stem}-{from}-{to}{group_suffix}.csv",
-        from = request.from_date,
-        to = request.to_date
-    );
-    Ok(ExportCsvDto {
-        file_name,
-        media_type: "text/csv;charset=utf-8",
-        row_count: rows.len() as u32,
-        byte_size: output.len() as u32,
-        utf8_bom_csv: output,
-    })
+    Ok(table)
 }
 
 fn validate_export_request(

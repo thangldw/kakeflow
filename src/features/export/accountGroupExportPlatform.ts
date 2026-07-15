@@ -64,6 +64,13 @@ export interface ExportSavedDto {
   readonly byteSize: number
 }
 
+export interface TransactionLedgerXlsxSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+  readonly sheetCount: 2
+}
+
 export type AccountGroupExportInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvoke = tauriInvoke) {
@@ -91,6 +98,10 @@ export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvok
     saveCsv: async (request: ExportCsvRequestDto): Promise<ExportSavedDto | null> => {
       const value = await invoke('export_csv_save', { request })
       return value === null ? null : parseExportSaved(value)
+    },
+    saveTransactionLedgerXlsx: async (request: ExportCsvRequestDto): Promise<TransactionLedgerXlsxSavedDto | null> => {
+      const value = await invoke('transaction_ledger_xlsx_save', { request })
+      return value === null ? null : parseTransactionLedgerXlsxSaved(value)
     },
   }
 }
@@ -133,6 +144,15 @@ function parseExportSaved(value: unknown): ExportSavedDto {
     rowCount: nonNegativeInteger(item.rowCount, 'saved export'),
     byteSize: nonNegativeInteger(item.byteSize, 'saved export'),
   }
+}
+
+function parseTransactionLedgerXlsxSaved(value: unknown): TransactionLedgerXlsxSavedDto {
+  const item = record(value, 'saved transaction ledger XLSX')
+  const fileName = string(item.fileName, 'saved transaction ledger XLSX')
+  const rowCount = nonNegativeInteger(item.rowCount, 'saved transaction ledger XLSX')
+  const byteSize = nonNegativeInteger(item.byteSize, 'saved transaction ledger XLSX')
+  if (!/\.xlsx$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255 || byteSize === 0 || item.sheetCount !== 2) throw new TypeError('saved transaction ledger XLSX')
+  return { fileName, rowCount, byteSize, sheetCount: 2 }
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

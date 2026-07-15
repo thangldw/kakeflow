@@ -77,6 +77,7 @@ pub mod source_pdf_preview;
 pub mod source_preview;
 mod source_viewer;
 pub mod sync_foundation;
+pub mod transaction_ledger_xlsx;
 pub mod watched_file_inbox;
 pub mod watched_folders;
 
@@ -2953,6 +2954,38 @@ async fn export_csv_save(
 }
 
 #[tauri::command]
+async fn transaction_ledger_xlsx_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: ExportCsvRequest,
+) -> Result<Option<transaction_ledger_xlsx::TransactionLedgerXlsxSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(transaction_ledger_xlsx::generate_transaction_ledger_xlsx(
+            connection, &request,
+        ))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("Transaction ledger workbook is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("Excel workbook", &["xlsx"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected transaction ledger destination is unavailable".to_owned())?;
+    transaction_ledger_xlsx::save_transaction_ledger_xlsx_document(&document, Some(&destination))
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn annual_household_review_csv_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4424,6 +4457,7 @@ pub fn run() {
             account_groups_reorder,
             export_csv_generate,
             export_csv_save,
+            transaction_ledger_xlsx_save,
             annual_household_review_csv_save,
             monthly_household_review_csv_save,
             annual_household_review_xlsx_save,
