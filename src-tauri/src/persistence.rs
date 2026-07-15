@@ -155,6 +155,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0062_recurring_series_preferences.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0063_replicable_recurring_preferences.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -3131,6 +3134,117 @@ mod tests {
                 [],
             )
             .expect("schema four accepted");
+    }
+
+    #[test]
+    fn migration_63_preserves_schema_four_lineage_and_gates_recurring_aggregates() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        let migrations = Migrations::new(MIGRATIONS.to_vec());
+        migrations
+            .to_version(&mut connection, 62)
+            .expect("schema sixty two");
+        connection
+            .execute_batch(
+                "INSERT INTO households(id,name) VALUES('f1','One'),('f2','Two'),('f3','Three');
+                 INSERT INTO change_packages(
+                   package_id,schema_version,target_household_id,source_installation_id,
+                   source_principal_id,source_revision,snapshot_sha256,manifest_json,
+                   package_sha256,state,record_count,unchanged_count,source_created_at,
+                   staged_at,reviewed_at,applied_at,updated_at)
+                 VALUES('legacy-v4',4,'f1','device','principal',1,
+                   '0000000000000000000000000000000000000000000000000000000000000000','{}',
+                   '1111111111111111111111111111111111111111111111111111111111111111',
+                   'APPLIED',1,1,'2026-07-01T00:00:00.000Z','2026-07-01T00:00:00.000Z',
+                   '2026-07-01T00:00:00.000Z','2026-07-01T00:00:00.000Z','2026-07-01T00:00:00.000Z');
+                 INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution,
+                   current_payload_sha256)
+                 VALUES('legacy-v4',0,'HOUSEHOLD','f1','UPSERT',
+                   '{\"id\":\"f1\",\"recordKind\":\"HOUSEHOLD\"}',
+                   '2222222222222222222222222222222222222222222222222222222222222222',
+                   'UNCHANGED','SKIP',
+                   '2222222222222222222222222222222222222222222222222222222222222222');
+                 INSERT INTO applied_change_packages(
+                   package_id,source_installation_id,household_id,source_revision,
+                   snapshot_sha256,applied_at)
+                 VALUES('legacy-v4','device','f1',1,
+                   '0000000000000000000000000000000000000000000000000000000000000000',
+                   '2026-07-01T00:00:00.000Z');
+                 INSERT INTO sync_replica_entity_heads(
+                   household_id,entity_kind,entity_id,source_installation_id,package_id,
+                   source_revision,operation,payload_sha256)
+                 VALUES('f1','HOUSEHOLD','f1','device','legacy-v4',1,'UPSERT',
+                   '2222222222222222222222222222222222222222222222222222222222222222');",
+            )
+            .expect("legacy schema-four lineage");
+
+        migrations
+            .to_version(&mut connection, 63)
+            .expect("schema sixty three");
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT
+                       (SELECT count(*) FROM change_packages WHERE package_id='legacy-v4'),
+                       (SELECT count(*) FROM change_package_records WHERE package_id='legacy-v4'),
+                       (SELECT count(*) FROM applied_change_packages WHERE package_id='legacy-v4'),
+                       (SELECT count(*) FROM sync_replica_entity_heads WHERE package_id='legacy-v4')",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?,
+                              row.get::<_, i64>(2)?, row.get::<_, i64>(3)?)),
+                )
+                .unwrap(),
+            (1, 1, 1, 1)
+        );
+
+        let insert_package = |connection: &Connection, id: &str, household: &str, schema: i64| {
+            connection.execute(
+                "INSERT INTO change_packages(
+                   package_id,schema_version,target_household_id,source_installation_id,
+                   source_principal_id,source_revision,snapshot_sha256,manifest_json,
+                   package_sha256,state,record_count,unchanged_count,source_created_at,
+                   staged_at,reviewed_at,updated_at)
+                 VALUES(?1,?2,?3,'other','principal',?2,
+                   '3333333333333333333333333333333333333333333333333333333333333333','{}',
+                   '4444444444444444444444444444444444444444444444444444444444444444',
+                   'REJECTED',1,1,'2026-07-02T00:00:00.000Z','2026-07-02T00:00:00.000Z',
+                   '2026-07-02T00:00:00.000Z','2026-07-02T00:00:00.000Z')",
+                rusqlite::params![id, schema, household],
+            )
+        };
+        insert_package(&connection, "new-v5", "f2", 5).expect("schema five package");
+        insert_package(&connection, "old-v4", "f3", 4).expect("schema four package");
+        let payload = "{\"recordKind\":\"RECURRING_SERIES_PREFERENCES\",\"householdId\":\"f2\",\"preferences\":[]}";
+        connection
+            .execute(
+                "INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution,
+                   current_payload_sha256)
+                 VALUES('new-v5',0,'RECURRING_SERIES_PREFERENCES','f2','UPSERT',?1,
+                   '5555555555555555555555555555555555555555555555555555555555555555',
+                   'UNCHANGED','SKIP',
+                   '5555555555555555555555555555555555555555555555555555555555555555')",
+                [payload],
+            )
+            .expect("schema five recurring aggregate");
+        assert!(connection
+            .execute(
+                "INSERT INTO change_package_records(
+                   package_id,record_order,entity_kind,entity_id,operation,
+                   canonical_payload_json,payload_sha256,review_state,resolution,
+                   current_payload_sha256)
+                 VALUES('old-v4',0,'RECURRING_SERIES_PREFERENCES','f3','UPSERT',
+                   '{\"recordKind\":\"RECURRING_SERIES_PREFERENCES\",\"householdId\":\"f3\",\"preferences\":[]}',
+                   '6666666666666666666666666666666666666666666666666666666666666666',
+                   'UNCHANGED','SKIP',
+                   '6666666666666666666666666666666666666666666666666666666666666666')",
+                [],
+            )
+            .is_err());
     }
 
     #[test]

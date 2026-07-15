@@ -104,6 +104,26 @@ describe('LocalChangePackagePanel', () => {
     }
   })
 
+  it('labels and forwards the household recurring-series preference aggregate', async () => {
+    const recurringReview = {
+      ...review,
+      recordCount: 1, createCount: 0, updateCount: 1, unchangedCount: 0, deleteCount: 0, conflictCount: 1,
+      records: [{ ...review.records[0], entityKind: 'RECURRING_SERIES_PREFERENCES', entityId: 'family' }],
+    } as const
+    activeReview.mockResolvedValue(recurringReview)
+    resolvePackage.mockResolvedValue({ ...recurringReview, state: 'READY', records: recurringReview.records.map((item) => ({ ...item, resolution: 'APPLY_INCOMING' })) })
+    render(<LocalChangePackagePanel householdId="family" />)
+
+    expect(await screen.findByText('定期支出の確認状態・family')).toBeInTheDocument()
+    expect(screen.getByText(/「確認済み」「対象外」の判断/)).toHaveTextContent('反映後の予測と固定費分析に影響しますが、過去の取引は変更しません')
+    fireEvent.click(screen.getByRole('radio', { name: 'パッケージの内容を使う' }))
+    fireEvent.click(screen.getByRole('button', { name: '選択内容を確定' }))
+
+    await waitFor(() => expect(resolvePackage).toHaveBeenCalledWith('package-1', [
+      { entityKind: 'RECURRING_SERIES_PREFERENCES', entityId: 'family', resolution: 'APPLY_INCOMING' },
+    ]))
+  })
+
   it('ignores a file-picker result after the household changes', async () => {
     activeReview.mockResolvedValue(null)
     let finishPick: (value: typeof review) => void = () => undefined
