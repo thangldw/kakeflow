@@ -295,7 +295,7 @@ fn valid_dashboard_preferences_v4(payload: &Value, household_id: &str) -> bool {
     true
 }
 
-fn valid_recurring_series_preferences_v5(payload: &Value, household_id: &str) -> bool {
+pub(crate) fn valid_recurring_series_preferences_v5(payload: &Value, household_id: &str) -> bool {
     let Ok(payload) =
         serde_json::from_value::<RecurringSeriesPreferencesV5Payload>(payload.clone())
     else {
@@ -2792,7 +2792,7 @@ fn push_query_records(
     Ok(())
 }
 
-/// Load the seven user-authored planning/configuration aggregates using the
+/// Load the eight user-authored planning/configuration aggregates using the
 /// exact canonical payload contracts used by local change packages. Family
 /// delivery deliberately calls this instead of maintaining a second payload
 /// representation.
@@ -2852,6 +2852,14 @@ pub(crate) fn load_planning_configuration_records(
         &mut records,
         "DASHBOARD_PREFERENCES",
         "SELECT household_id,payload_json FROM sync_dashboard_preferences_v4_payloads
+         WHERE household_id=?1",
+        household_id,
+    )?;
+    push_query_records(
+        connection,
+        &mut records,
+        "RECURRING_SERIES_PREFERENCES",
+        "SELECT household_id,payload_json FROM sync_recurring_series_preferences_payloads
          WHERE household_id=?1",
         household_id,
     )?;

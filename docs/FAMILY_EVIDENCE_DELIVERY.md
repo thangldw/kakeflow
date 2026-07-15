@@ -89,6 +89,10 @@ same immutable publication identity and recipient rules used by V1/V2.
 - V1 and V2 artifacts remain readable and apply through their existing JSON
   path.
 - V3 uses the binary `FAMILY_AUDIENCE_PARTITION_V3` path.
+- Current schema v4 preserves this exact evidence model in a distinct `KFF4` /
+  `FAMILY_AUDIENCE_PARTITION_V4` artifact and adds the household recurring-
+  preference aggregate. Historical KFF3/V3 artifacts remain decoded as the
+  exact 18-kind contract documented above; they are never reinterpreted as V4.
 - KakeFlow v0.58 wraps V1/V2/V3 artifacts in the recipient-encrypted `KFE1`
   transport while retaining the exact inner artifact and review contract.
 - Delivery remains manual in v0.58: there is no background scheduling or

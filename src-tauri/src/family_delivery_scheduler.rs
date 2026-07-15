@@ -863,6 +863,7 @@ fn convert_publication(publication: RemotePublication) -> RemoteFamilyArtifactIn
             ArtifactSchema::FamilyAudiencePartitionV1 => "FAMILY_AUDIENCE_PARTITION_V1",
             ArtifactSchema::FamilyAudiencePartitionV2 => "FAMILY_AUDIENCE_PARTITION_V2",
             ArtifactSchema::FamilyAudiencePartitionV3 => "FAMILY_AUDIENCE_PARTITION_V3",
+            ArtifactSchema::FamilyAudiencePartitionV4 => "FAMILY_AUDIENCE_PARTITION_V4",
         }
         .to_owned(),
         envelope_schema: publication.envelope_schema,

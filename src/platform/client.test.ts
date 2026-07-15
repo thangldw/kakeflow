@@ -476,6 +476,11 @@ describe('platform client', () => {
     await expect(client.getActiveFamilySnapshotReview('family')).resolves.toMatchObject({ evidenceFileCount: 2, evidenceRecordCount: 3, records: [expect.objectContaining({ domain: 'CARD', entitySummary: '楽天カード · 2026年7月 · ¥204,987' })] })
     await expect(client.prepareFamilyDelivery({ householdId: 'family', audienceKeys: ['SHARED'] })).resolves.toMatchObject([{ artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V3' }])
 
+    const v4Client = createPlatformClient({ tauri: true, invoke: async <T>() => [{ ...prepared[0], artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V4' }] as T })
+    await expect(v4Client.prepareFamilyDelivery({ householdId: 'family', audienceKeys: ['SHARED'] })).resolves.toMatchObject([{ artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V4' }])
+    const v5Client = createPlatformClient({ tauri: true, invoke: async <T>() => [{ ...prepared[0], artifactSchema: 'FAMILY_AUDIENCE_PARTITION_V5' }] as T })
+    await expect(v5Client.prepareFamilyDelivery({ householdId: 'family', audienceKeys: ['SHARED'] })).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'family_delivery_send_prepare' })
+
     for (const invalidPartition of [
       { ...partition, domainCounts: { LEDGER: 1, PLANNING: 0, CONFIG: 0, CARD: 1 } },
       { ...partition, withheldDomainCounts: { LEDGER: 0, PLANNING: 0, CONFIG: 0, CARD: 0 } },

@@ -74,8 +74,12 @@ X-KakeFlow-Digest: <sha256 of exact bytes>
 X-KakeFlow-Origin-Device-Id: <local device id>
 X-KakeFlow-Audience-Visibility: SHARED | PERSONAL
 X-KakeFlow-Audience-Member-Id: <required only for PERSONAL>
-X-KakeFlow-Artifact-Schema: FAMILY_AUDIENCE_PARTITION_V1
+X-KakeFlow-Artifact-Schema: FAMILY_AUDIENCE_PARTITION_V1 | FAMILY_AUDIENCE_PARTITION_V2 | FAMILY_AUDIENCE_PARTITION_V3 | FAMILY_AUDIENCE_PARTITION_V4
 ```
+
+The reference relay accepts exactly the four released family artifact schemas.
+It stores V4 `KFF4` bytes opaquely just like earlier artifacts and rejects an
+unrecognized V5 declaration instead of guessing compatibility.
 
 For `SHARED`, the relay snapshots every other active household membership as a
 recipient. For `PERSONAL`, the member header must equal the authenticated

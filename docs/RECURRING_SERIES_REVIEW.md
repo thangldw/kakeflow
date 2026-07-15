@@ -104,11 +104,13 @@ After Apply, the receiving installation owns fresh local concurrency tokens,
 while a transported empty preference list returns every local series to the
 derived `AUTO_DETECTED` state.
 
-This local-package path remains separate from audience-partitioned family
-delivery. Recurring preferences are not added to `SHARED` or
-`PERSONAL(member)` family artifacts in this slice. The optional same-principal
-desktop relay may transport a local package through its existing explicit
-review boundary, but it does not convert that package into family replication.
+The optional same-principal desktop relay may transport that local package
+through its existing explicit review boundary. Independently, family snapshot
+schema v4 carries the same complete preference set only in the `SHARED`
+partition inside a [KFF4 artifact](FAMILY_RECURRING_PREFERENCES_DELIVERY.md).
+That family path discloses normalized payees to the household recipients,
+requires one whole-aggregate review decision, and never copies the aggregate
+into `PERSONAL(member)`.
 
-This capability adds no server, provider call, remote identity, access-control,
-or background synchronization claim.
+Neither path adds a provider call, remote posting, automatic Apply, or
+background synchronization claim.

@@ -1,4 +1,4 @@
-//! Audience-partitioned immutable evidence carried by family schema v3.
+//! Audience-partitioned immutable evidence carried by family schemas v3 and v4.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -14,7 +14,10 @@ use crate::{
     sync_foundation::{canonical_json, sha256_hex},
 };
 
-const MAGIC: &[u8; 4] = b"KFF3";
+const KFF3_MAGIC: &[u8; 4] = b"KFF3";
+const KFF4_MAGIC: &[u8; 4] = b"KFF4";
+const CURRENT_FORMAT: &str = "KFF4";
+const CURRENT_SCHEMA_VERSION: u32 = 4;
 const PREFIX_LEN: usize = 12;
 pub(crate) const MAX_ARTIFACT_BYTES: usize = 64 * 1024 * 1024;
 
@@ -52,7 +55,7 @@ pub(crate) struct DecodedFamilyEvidence {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Kff3Header {
+struct FamilyEvidenceHeader {
     format: String,
     snapshot_set: FamilySnapshotSetDto,
     evidence_documents: Vec<ManifestDocument>,
@@ -306,7 +309,7 @@ pub(crate) fn prepare(
     vault: &DocumentVault,
     mut set: FamilySnapshotSetDto,
 ) -> Result<PreparedFamilyEvidence> {
-    if set.schema_version != family_snapshot::FAMILY_SCHEMA_VERSION {
+    if set.schema_version != CURRENT_SCHEMA_VERSION {
         return Err(FamilyEvidenceError::Invalid);
     }
     let mut withheld_counts_by_audience = set
@@ -610,8 +613,8 @@ pub(crate) fn prepare(
         .iter()
         .filter_map(|partition| {
             let docs = by_audience.get(&audience_key(&partition.audience))?;
-            let header = Kff3Header {
-                format: "KFF3".to_owned(),
+            let header = FamilyEvidenceHeader {
+                format: CURRENT_FORMAT.to_owned(),
                 snapshot_set: one_partition(&set, &partition.audience).ok()?,
                 evidence_documents: docs.clone(),
             };
@@ -676,8 +679,8 @@ pub(crate) fn prepare(
         let docs = by_audience
             .get(&audience_key(&partition.audience))
             .ok_or(FamilyEvidenceError::Invalid)?;
-        let header = Kff3Header {
-            format: "KFF3".to_owned(),
+        let header = FamilyEvidenceHeader {
+            format: CURRENT_FORMAT.to_owned(),
             snapshot_set: one_partition(&set, &partition.audience)?,
             evidence_documents: docs.clone(),
         };
@@ -711,7 +714,7 @@ fn one_partition(
     family_snapshot::decode_and_validate(&bytes).map_err(|_| FamilyEvidenceError::Snapshot)
 }
 
-fn canonical_header(header: &Kff3Header) -> Result<Vec<u8>> {
+fn canonical_header(header: &FamilyEvidenceHeader) -> Result<Vec<u8>> {
     let value = serde_json::to_value(header).map_err(|_| FamilyEvidenceError::Invalid)?;
     Ok(canonical_json(&value)
         .map_err(|_| FamilyEvidenceError::Invalid)?
@@ -726,15 +729,18 @@ pub(crate) fn encode(
         .documents
         .get(&audience_key(audience))
         .ok_or(FamilyEvidenceError::Invalid)?;
-    let header = Kff3Header {
-        format: "KFF3".to_owned(),
+    if prepared.set.schema_version != CURRENT_SCHEMA_VERSION {
+        return Err(FamilyEvidenceError::Invalid);
+    }
+    let header = FamilyEvidenceHeader {
+        format: CURRENT_FORMAT.to_owned(),
         snapshot_set: one_partition(&prepared.set, audience)?,
         evidence_documents: documents.clone(),
     };
     let header = canonical_header(&header)?;
     let header_len = u64::try_from(header.len()).map_err(|_| FamilyEvidenceError::Limit)?;
     let mut bytes = Vec::with_capacity(PREFIX_LEN + header.len());
-    bytes.extend_from_slice(MAGIC);
+    bytes.extend_from_slice(KFF4_MAGIC);
     bytes.extend_from_slice(&header_len.to_be_bytes());
     bytes.extend_from_slice(&header);
     for document in documents {
@@ -751,7 +757,11 @@ pub(crate) fn encode(
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedFamilyEvidence> {
-    if bytes.len() < PREFIX_LEN || bytes.len() > MAX_ARTIFACT_BYTES || &bytes[..4] != MAGIC {
+    if bytes.len() < PREFIX_LEN || bytes.len() > MAX_ARTIFACT_BYTES {
+        return Err(FamilyEvidenceError::Invalid);
+    }
+    let magic = &bytes[..4];
+    if magic != KFF3_MAGIC && magic != KFF4_MAGIC {
         return Err(FamilyEvidenceError::Invalid);
     }
     let header_len = usize::try_from(u64::from_be_bytes(
@@ -764,11 +774,10 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedFamilyEvidence> {
         .checked_add(header_len)
         .filter(|end| *end <= bytes.len())
         .ok_or(FamilyEvidenceError::Invalid)?;
-    let header: Kff3Header = serde_json::from_slice(&bytes[PREFIX_LEN..header_end])
+    let header: FamilyEvidenceHeader = serde_json::from_slice(&bytes[PREFIX_LEN..header_end])
         .map_err(|_| FamilyEvidenceError::Invalid)?;
-    if header.format != "KFF3"
+    if !valid_container_tuple(magic, &header.format, header.snapshot_set.schema_version)
         || canonical_header(&header)? != bytes[PREFIX_LEN..header_end]
-        || header.snapshot_set.schema_version != family_snapshot::FAMILY_SCHEMA_VERSION
         || header.snapshot_set.partitions.len() != 1
     {
         return Err(FamilyEvidenceError::Invalid);
@@ -813,6 +822,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<DecodedFamilyEvidence> {
         documents: header.evidence_documents,
         blobs,
     })
+}
+
+fn valid_container_tuple(magic: &[u8], format: &str, schema_version: u32) -> bool {
+    matches!(
+        (magic, format, schema_version),
+        (b"KFF3", "KFF3", 3) | (b"KFF4", "KFF4", 4)
+    )
 }
 
 pub(crate) fn put_blobs(
@@ -863,12 +879,183 @@ pub(crate) fn cleanup(vault: &DocumentVault, hashes: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{persistence::AppState, sync_foundation::get_local_status};
+    use serde_json::json;
+
+    const TEST_KEY: &[u8] = b"family-evidence-container-test-key";
+
+    fn current_prepared() -> PreparedFamilyEvidence {
+        let state = AppState::in_memory(TEST_KEY).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let vault = DocumentVault::new(root.path(), &[73_u8; 32]).unwrap();
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name,base_currency)
+                     VALUES('family','Family','JPY')",
+                    [],
+                )?;
+                get_local_status(connection, "family").unwrap();
+                let set = family_snapshot::export_snapshot_set(connection, "family").unwrap();
+                Ok(prepare(connection, &vault, set).unwrap())
+            })
+            .unwrap()
+    }
+
+    fn digest(value: &Value) -> String {
+        sha256_hex(canonical_json(value).unwrap().as_bytes())
+    }
+
+    fn downgrade_kff4_to_schema_three(bytes: &[u8]) -> Vec<u8> {
+        let header_len =
+            usize::try_from(u64::from_be_bytes(bytes[4..12].try_into().unwrap())).unwrap();
+        let mut header: Value =
+            serde_json::from_slice(&bytes[PREFIX_LEN..PREFIX_LEN + header_len]).unwrap();
+        header["format"] = Value::String("KFF3".into());
+        let set = header["snapshotSet"].as_object_mut().unwrap();
+        set.insert("schemaVersion".into(), Value::from(3));
+        let partition_values = {
+            let partition = set["partitions"].as_array_mut().unwrap()[0]
+                .as_object_mut()
+                .unwrap();
+            partition["records"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|record| record["entityKind"] != "RECURRING_SERIES_PREFERENCES");
+            partition["authoritativeKinds"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|kind| kind != "RECURRING_SERIES_PREFERENCES");
+            partition["countsByKind"]
+                .as_object_mut()
+                .unwrap()
+                .remove("RECURRING_SERIES_PREFERENCES");
+            partition.clone()
+        };
+
+        let partition_identity = json!({
+            "format": set["format"],
+            "schemaVersion": set["schemaVersion"],
+            "mode": set["mode"],
+            "sourceInstallationId": set["sourceInstallationId"],
+            "sourcePrincipalId": set["sourcePrincipalId"],
+            "publisherMemberId": set["publisherMemberId"],
+            "sourceRevision": set["sourceRevision"],
+            "householdId": set["householdId"],
+            "createdAt": set["createdAt"],
+            "audience": partition_values["audience"],
+            "dependencyAudiences": partition_values["dependencyAudiences"],
+            "authoritativeKinds": partition_values["authoritativeKinds"],
+            "countsByKind": partition_values["countsByKind"],
+            "records": partition_values["records"],
+            "evidenceManifestSha256": partition_values["evidenceManifestSha256"],
+            "evidenceFileCount": partition_values.get("evidenceFileCount").cloned().unwrap_or(Value::from(0)),
+            "evidenceRecordCount": partition_values.get("evidenceRecordCount").cloned().unwrap_or(Value::from(0)),
+        });
+        let snapshot_sha256 = digest(&partition_identity);
+        let partition = set["partitions"].as_array_mut().unwrap()[0]
+            .as_object_mut()
+            .unwrap();
+        partition.insert(
+            "snapshotSha256".into(),
+            Value::String(snapshot_sha256.clone()),
+        );
+        let package_id = format!("family-partition-{snapshot_sha256}");
+        partition.insert("packageId".into(), Value::String(package_id.clone()));
+        partition.insert(
+            "packageSha256".into(),
+            Value::String(digest(&json!({
+                "packageId": package_id,
+                "snapshotSha256": snapshot_sha256,
+                "identity": partition_identity,
+            }))),
+        );
+
+        let mut set_identity = Value::Object(set.clone());
+        let identity = set_identity.as_object_mut().unwrap();
+        identity.remove("snapshotSetId");
+        identity.remove("setSha256");
+        let set_sha256 = digest(&set_identity);
+        set.insert("setSha256".into(), Value::String(set_sha256.clone()));
+        set.insert(
+            "snapshotSetId".into(),
+            Value::String(format!("family-set-{set_sha256}")),
+        );
+
+        let canonical = canonical_json(&header).unwrap().into_bytes();
+        let mut downgraded = Vec::with_capacity(PREFIX_LEN + canonical.len());
+        downgraded.extend_from_slice(KFF3_MAGIC);
+        downgraded.extend_from_slice(&(canonical.len() as u64).to_be_bytes());
+        downgraded.extend_from_slice(&canonical);
+        downgraded
+    }
 
     #[test]
-    fn rejects_truncated_or_tampered_kff3_headers() {
-        assert!(matches!(decode(b"KFF3"), Err(FamilyEvidenceError::Invalid)));
+    fn accepts_only_exact_evidence_container_and_snapshot_schema_tuples() {
+        assert!(valid_container_tuple(KFF3_MAGIC, "KFF3", 3));
+        assert!(valid_container_tuple(KFF4_MAGIC, "KFF4", 4));
+        for (magic, format, schema_version) in [
+            (KFF3_MAGIC.as_slice(), "KFF3", 4),
+            (KFF3_MAGIC.as_slice(), "KFF4", 3),
+            (KFF4_MAGIC.as_slice(), "KFF4", 3),
+            (KFF4_MAGIC.as_slice(), "KFF3", 4),
+        ] {
+            assert!(!valid_container_tuple(magic, format, schema_version));
+        }
+    }
 
-        let mut non_canonical = Vec::from(MAGIC.as_slice());
+    #[test]
+    fn current_encode_emits_kff4_and_schema_four_round_trips() {
+        let prepared = current_prepared();
+        let audience = prepared.set.partitions[0].audience.clone();
+        let bytes = encode(&prepared, &audience).unwrap();
+        assert_eq!(&bytes[..4], KFF4_MAGIC);
+        let decoded = decode(&bytes).unwrap();
+        assert_eq!(decoded.set.schema_version, 4);
+        assert_eq!(decoded.documents.len(), decoded.blobs.len());
+    }
+
+    #[test]
+    fn historical_kff3_schema_three_still_round_trips() {
+        let prepared = current_prepared();
+        let audience = prepared.set.partitions[0].audience.clone();
+        let current = encode(&prepared, &audience).unwrap();
+        let historical = downgrade_kff4_to_schema_three(&current);
+        assert_eq!(&historical[..4], KFF3_MAGIC);
+        let decoded = decode(&historical).unwrap();
+        assert_eq!(decoded.set.schema_version, 3);
+        assert!(decoded.set.partitions[0]
+            .records
+            .iter()
+            .all(|record| record.entity_kind != "RECURRING_SERIES_PREFERENCES"));
+    }
+
+    #[test]
+    fn decode_rejects_magic_format_and_snapshot_schema_mismatches() {
+        let prepared = current_prepared();
+        let audience = prepared.set.partitions[0].audience.clone();
+        let current = encode(&prepared, &audience).unwrap();
+        let historical = downgrade_kff4_to_schema_three(&current);
+
+        for mut mismatched in [current, historical] {
+            if &mismatched[..4] == KFF4_MAGIC {
+                mismatched[..4].copy_from_slice(KFF3_MAGIC);
+            } else {
+                mismatched[..4].copy_from_slice(KFF4_MAGIC);
+            }
+            assert!(matches!(
+                decode(&mismatched),
+                Err(FamilyEvidenceError::Invalid)
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_truncated_or_tampered_family_evidence_headers() {
+        assert!(matches!(decode(b"KFF3"), Err(FamilyEvidenceError::Invalid)));
+        assert!(matches!(decode(b"KFF4"), Err(FamilyEvidenceError::Invalid)));
+
+        let mut non_canonical = Vec::from(KFF4_MAGIC.as_slice());
         non_canonical.extend_from_slice(&(2_u64).to_be_bytes());
         non_canonical.extend_from_slice(b"{}");
         assert!(matches!(
@@ -876,7 +1063,7 @@ mod tests {
             Err(FamilyEvidenceError::Invalid)
         ));
 
-        let mut impossible_length = Vec::from(MAGIC.as_slice());
+        let mut impossible_length = Vec::from(KFF3_MAGIC.as_slice());
         impossible_length.extend_from_slice(&u64::MAX.to_be_bytes());
         assert!(matches!(
             decode(&impossible_length),

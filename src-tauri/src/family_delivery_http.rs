@@ -470,6 +470,7 @@ pub enum ArtifactSchema {
     FamilyAudiencePartitionV1,
     FamilyAudiencePartitionV2,
     FamilyAudiencePartitionV3,
+    FamilyAudiencePartitionV4,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -741,7 +742,7 @@ mod tests {
             "householdId": "family",
             "originDeviceId": "device-other",
             "audience": { "visibility": "SHARED", "memberId": null },
-            "artifactSchema": "FAMILY_AUDIENCE_PARTITION_V3",
+            "artifactSchema": "FAMILY_AUDIENCE_PARTITION_V4",
             "envelopeSchema": "FAMILY_ENCRYPTED_ENVELOPE_V1",
             "recipientSetDigest": "c".repeat(64),
             "innerDigest": "d".repeat(64),

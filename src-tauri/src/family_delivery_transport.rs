@@ -12,7 +12,8 @@ const MAX_ARTIFACTS: usize = 1_000;
 const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
 const ARTIFACT_SCHEMA_V1: &str = "FAMILY_AUDIENCE_PARTITION_V1";
 const ARTIFACT_SCHEMA_V2: &str = "FAMILY_AUDIENCE_PARTITION_V2";
-const ARTIFACT_SCHEMA: &str = "FAMILY_AUDIENCE_PARTITION_V3";
+const ARTIFACT_SCHEMA_V3: &str = "FAMILY_AUDIENCE_PARTITION_V3";
+const ARTIFACT_SCHEMA: &str = "FAMILY_AUDIENCE_PARTITION_V4";
 
 #[derive(Debug, Error)]
 pub enum FamilyDeliveryError {
@@ -956,7 +957,7 @@ fn load_delivery(
     if digest(&delivery.package_bytes) != delivery.digest {
         return Err(FamilyDeliveryError::Conflict);
     }
-    let set = if delivery.artifact_schema == ARTIFACT_SCHEMA {
+    let set = if is_evidence_schema(&delivery.artifact_schema) {
         family_evidence::decode(&delivery.package_bytes)
             .map_err(|_| FamilyDeliveryError::Conflict)?
             .set
@@ -1421,7 +1422,7 @@ pub fn mark_accepted(
         }
         if existing.1 != "RELAY_ACCEPTED" {
             let bytes = existing.4.as_deref().ok_or(FamilyDeliveryError::Conflict)?;
-            let set = if bytes.starts_with(b"KFF3") {
+            let set = if is_evidence_bytes(bytes) {
                 family_evidence::decode(bytes)
                     .map_err(|_| FamilyDeliveryError::Conflict)?
                     .set
@@ -1600,7 +1601,7 @@ pub fn register_inbound(
             || artifact.byte_size as usize > MAX_PACKAGE_BYTES
             || !matches!(
                 artifact.artifact_schema.as_str(),
-                ARTIFACT_SCHEMA_V1 | ARTIFACT_SCHEMA_V2 | ARTIFACT_SCHEMA
+                ARTIFACT_SCHEMA_V1 | ARTIFACT_SCHEMA_V2 | ARTIFACT_SCHEMA_V3 | ARTIFACT_SCHEMA
             )
             || artifact.origin_device_id == local_device
             || !matches!(artifact.audience_visibility.as_str(), "SHARED" | "PERSONAL")
@@ -1707,7 +1708,7 @@ pub fn stage_inbound_with_vault(
     if digest(&input.package_bytes) != metadata.0 {
         return Err(FamilyDeliveryError::Conflict);
     }
-    let decoded = if metadata.5 == ARTIFACT_SCHEMA {
+    let decoded = if is_evidence_schema(&metadata.5) {
         Some(
             family_evidence::decode(&input.package_bytes)
                 .map_err(|_| FamilyDeliveryError::Snapshot)?,
@@ -1757,12 +1758,13 @@ pub fn stage_inbound_with_vault(
     };
     connection.execute(
         "UPDATE family_delivery_inbound SET state=?1,staged_snapshot_set_id=?2,
-       pending_package_bytes=CASE WHEN artifact_schema=?4 THEN ?5 ELSE NULL END
+       pending_package_bytes=CASE WHEN artifact_schema IN (?4,?5) THEN ?6 ELSE NULL END
        WHERE artifact_id=?3",
         params![
             inbound_state,
             review.snapshot_set_id,
             input.artifact_id,
+            ARTIFACT_SCHEMA_V3,
             ARTIFACT_SCHEMA,
             input.package_bytes
         ],
@@ -1785,8 +1787,18 @@ fn artifact_schema(schema_version: u32) -> &'static str {
     match schema_version {
         1 => ARTIFACT_SCHEMA_V1,
         2 => ARTIFACT_SCHEMA_V2,
-        _ => ARTIFACT_SCHEMA,
+        3 => ARTIFACT_SCHEMA_V3,
+        4 => ARTIFACT_SCHEMA,
+        _ => "",
     }
+}
+
+fn is_evidence_schema(schema: &str) -> bool {
+    matches!(schema, ARTIFACT_SCHEMA_V3 | ARTIFACT_SCHEMA)
+}
+
+fn is_evidence_bytes(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"KFF3") || bytes.starts_with(b"KFF4")
 }
 
 pub fn update_review_state(
@@ -2077,6 +2089,7 @@ fn entity_kind_label(kind: &str) -> &'static str {
         "CARD_SETTLEMENT_MAPPING" => "カード引落口座",
         "DASHBOARD_PREFERENCES" => "ダッシュボード設定",
         "DELIMITED_PARSER_PROFILE" => "CSV解析設定",
+        "RECURRING_SERIES_PREFERENCES" => "定期支出の確認状態",
         _ => "データ",
     }
 }
@@ -2094,7 +2107,8 @@ fn entity_domain(kind: &str) -> &'static str {
         | "ACCOUNT_GROUP"
         | "CARD_SETTLEMENT_MAPPING"
         | "DASHBOARD_PREFERENCES"
-        | "DELIMITED_PARSER_PROFILE" => "CONFIG",
+        | "DELIMITED_PARSER_PROFILE"
+        | "RECURRING_SERIES_PREFERENCES" => "CONFIG",
         _ => "LEDGER",
     }
 }
@@ -2190,6 +2204,19 @@ fn review_entity_summary(
                 .unwrap_or(entity_id),
             value.get("version").and_then(|v| v.as_i64()).unwrap_or(0)
         ),
+        "RECURRING_SERIES_PREFERENCES" => {
+            let preferences = value
+                .get("preferences")
+                .and_then(|v| v.as_array())
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let confirmed = preferences
+                .iter()
+                .filter(|entry| entry.get("decision").and_then(|v| v.as_str()) == Some("CONFIRMED"))
+                .count();
+            let ignored = preferences.len().saturating_sub(confirmed);
+            format!("確認済み {confirmed}件・対象外 {ignored}件")
+        }
         _ => format!("{}・{}", entity_kind_label(kind), entity_id),
     };
     Ok(text.chars().take(240).collect())
@@ -3101,7 +3128,7 @@ mod tests {
     }
 
     #[test]
-    fn personal_journal_dependency_never_leaks_card_evidence_into_shared_kff3() {
+    fn personal_journal_dependency_never_leaks_card_evidence_into_shared_kff4() {
         let state = setup(16);
         let root = tempfile::tempdir().unwrap();
         let vault = DocumentVault::new(root.path(), &[96_u8; 32]).unwrap();
@@ -3329,7 +3356,7 @@ mod tests {
                 )?;
                 assert!(
                     staged.0,
-                    "KFF3 bytes must survive staging until explicit apply"
+                    "evidence-container bytes must survive staging until explicit apply"
                 );
                 assert_eq!(staged.1, 0, "staging must not materialize evidence");
                 let ui = active_ui_review(connection, "family").unwrap().unwrap();
@@ -3369,7 +3396,10 @@ mod tests {
                     [&review.snapshot_set_id],
                     |row| row.get(0),
                 )?;
-                assert!(!retained, "applied KFF3 bytes must be released");
+                assert!(
+                    !retained,
+                    "applied evidence-container bytes must be released"
+                );
                 Ok(())
             })
             .unwrap();
@@ -3425,7 +3455,7 @@ mod tests {
     }
 
     #[test]
-    fn register_preserves_v1_v2_v3_schema_and_stage_routes_each_decoder() {
+    fn register_preserves_v1_through_v4_schema_and_stage_routes_each_decoder() {
         let state = setup(16);
         state
             .with_connection(|connection| {
@@ -3433,7 +3463,8 @@ mod tests {
                 let samples = [
                     (ARTIFACT_SCHEMA_V1, b"v1".to_vec()),
                     (ARTIFACT_SCHEMA_V2, b"v2".to_vec()),
-                    (ARTIFACT_SCHEMA, b"KFF3-invalid".to_vec()),
+                    (ARTIFACT_SCHEMA_V3, b"KFF3-invalid".to_vec()),
+                    (ARTIFACT_SCHEMA, b"KFF4-invalid".to_vec()),
                 ];
                 let artifacts = samples
                     .iter()
@@ -3460,7 +3491,7 @@ mod tests {
                     &RegisterFamilyInboundInput {
                         household_id: "family".into(),
                         artifacts,
-                        next_cursor: 3,
+                        next_cursor: 4,
                     },
                 )
                 .unwrap();

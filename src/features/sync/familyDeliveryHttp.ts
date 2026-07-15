@@ -1,7 +1,7 @@
 import type { FamilyDeliveryPreparedArtifactDto, FamilyDeliveryRemoteArtifactDto } from '../../platform'
 
 const MAX_PACKAGE_BYTES = 64 * 1024 * 1024
-const ARTIFACT_SCHEMAS = new Set<FamilyDeliveryPreparedArtifactDto['artifactSchema']>(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2', 'FAMILY_AUDIENCE_PARTITION_V3'])
+const ARTIFACT_SCHEMAS = new Set<FamilyDeliveryPreparedArtifactDto['artifactSchema']>(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2', 'FAMILY_AUDIENCE_PARTITION_V3', 'FAMILY_AUDIENCE_PARTITION_V4'])
 const ENVELOPE_SCHEMA = 'FAMILY_ENCRYPTED_ENVELOPE_V1' as const
 const HASH = /^[0-9a-f]{64}$/
 const ENCRYPTION_PUBLIC_KEY = /^[A-Za-z0-9_-]{43}$/

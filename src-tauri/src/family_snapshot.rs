@@ -1,9 +1,8 @@
 //! Audience-partitioned family current-state snapshots.
 //!
-//! This format is intentionally independent from `change_package` schema v1-v4.
-//! It currently carries only the household/member/account/transaction graph and
-//! fails closed when a transaction depends on PERSONAL accounts belonging to
-//! more than one member.
+//! This format is intentionally independent from local change-package versions.
+//! It carries a complete current-state graph split into SHARED and publisher-
+//! owned PERSONAL partitions, and fails closed when dependencies cross members.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,7 +17,7 @@ use crate::{
 };
 
 pub const FAMILY_FORMAT: &str = "KAKEFLOW_FAMILY_SNAPSHOT_SET";
-pub const FAMILY_SCHEMA_VERSION: u32 = 3;
+pub const FAMILY_SCHEMA_VERSION: u32 = 4;
 pub const FAMILY_MODE: &str = "AUDIENCE_PARTITION_CURRENT_STATE";
 pub const FAMILY_V1_SUPPORTED_KINDS: [&str; 4] =
     ["HOUSEHOLD", "HOUSEHOLD_MEMBER", "ACCOUNT", "TRANSACTION"];
@@ -35,7 +34,7 @@ pub const FAMILY_V2_SUPPORTED_KINDS: [&str; 11] = [
     "DASHBOARD_PREFERENCES",
     "DELIMITED_PARSER_PROFILE",
 ];
-pub const FAMILY_SUPPORTED_KINDS: [&str; 18] = [
+pub const FAMILY_V3_SUPPORTED_KINDS: [&str; 18] = [
     "HOUSEHOLD",
     "HOUSEHOLD_MEMBER",
     "ACCOUNT",
@@ -54,6 +53,27 @@ pub const FAMILY_SUPPORTED_KINDS: [&str; 18] = [
     "INVESTMENT_FX_RATE",
     "INVESTMENT_MARKET_PRICE",
     "AGGREGATE_ASSET_SNAPSHOT",
+];
+pub const FAMILY_SUPPORTED_KINDS: [&str; 19] = [
+    "HOUSEHOLD",
+    "HOUSEHOLD_MEMBER",
+    "ACCOUNT",
+    "TRANSACTION",
+    "MONTHLY_BUDGET_PLAN",
+    "SAVINGS_GOAL",
+    "CLASSIFICATION_RULE",
+    "ACCOUNT_GROUP",
+    "CARD_SETTLEMENT_MAPPING",
+    "DASHBOARD_PREFERENCES",
+    "DELIMITED_PARSER_PROFILE",
+    "CARD_STATEMENT",
+    "CARD_PAYMENT",
+    "PORTFOLIO_SNAPSHOT",
+    "BROKERAGE_EVENT",
+    "INVESTMENT_FX_RATE",
+    "INVESTMENT_MARKET_PRICE",
+    "AGGREGATE_ASSET_SNAPSHOT",
+    "RECURRING_SERIES_PREFERENCES",
 ];
 const MAX_RECORDS: usize = 100_000;
 
@@ -683,7 +703,7 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<FamilySnapshotSetDto> {
 
 pub fn validate_snapshot_set(set: &FamilySnapshotSetDto) -> Result<()> {
     if set.format != FAMILY_FORMAT
-        || !matches!(set.schema_version, 1 | 2 | FAMILY_SCHEMA_VERSION)
+        || !matches!(set.schema_version, 1 | 2 | 3 | FAMILY_SCHEMA_VERSION)
         || set.mode != FAMILY_MODE
         || !valid_id(&set.source_installation_id)
         || !valid_id(&set.source_principal_id)
@@ -1456,6 +1476,20 @@ fn validate_partition(
             .iter()
             .any(|kind| !supported_kinds(set.schema_version).contains(&kind.as_str()))
         || (set.schema_version == 1 && !partition.relocations.is_empty())
+        || (set.schema_version >= 4
+            && partition.audience.visibility == "SHARED"
+            && (!partition
+                .authoritative_kinds
+                .iter()
+                .any(|kind| kind == "RECURRING_SERIES_PREFERENCES")
+                || partition.counts_by_kind.get("RECURRING_SERIES_PREFERENCES") != Some(&1)))
+        || (set.schema_version >= 4
+            && partition.audience.visibility == "PERSONAL"
+            && (partition
+                .authoritative_kinds
+                .iter()
+                .any(|kind| kind == "RECURRING_SERIES_PREFERENCES")
+                || partition.counts_by_kind.get("RECURRING_SERIES_PREFERENCES") != Some(&0)))
     {
         return Err(FamilySnapshotError::InvalidInput);
     }
@@ -1505,6 +1539,12 @@ fn validate_partition(
         if canonical != record.canonical_payload_json
             || sha256_hex(canonical.as_bytes()) != record.payload_sha256
             || !payload_identity_matches(record, &value, &set.household_id)
+            || (set.schema_version >= 4
+                && record.entity_kind == "RECURRING_SERIES_PREFERENCES"
+                && !change_package::valid_recurring_series_preferences_v5(
+                    &value,
+                    &set.household_id,
+                ))
         {
             return Err(FamilySnapshotError::InvalidInput);
         }
@@ -2063,7 +2103,7 @@ fn payload_identity_matches(
         "HOUSEHOLD" => {
             string("id") == Some(record.entity_id.as_str()) && record.entity_id == household_id
         }
-        "MONTHLY_BUDGET_PLAN" | "DASHBOARD_PREFERENCES" => {
+        "MONTHLY_BUDGET_PLAN" | "DASHBOARD_PREFERENCES" | "RECURRING_SERIES_PREFERENCES" => {
             string("householdId") == Some(household_id) && record.entity_id == household_id
         }
         "CARD_SETTLEMENT_MAPPING" => {
@@ -2170,7 +2210,7 @@ fn load_entity_payload(
     entity_id: &str,
 ) -> Result<Option<String>> {
     if !FAMILY_V1_SUPPORTED_KINDS.contains(&kind) {
-        return change_package::load_entity_payload(connection, household_id, kind, entity_id, 4)
+        return change_package::load_entity_payload(connection, household_id, kind, entity_id, 5)
             .map_err(|_| FamilySnapshotError::Encoding);
     }
     let sql = match kind {
@@ -2320,7 +2360,7 @@ fn load_stored_records(
 
 fn materialize_upsert(connection: &Connection, kind: &str, payload: &str) -> Result<()> {
     if !FAMILY_V1_SUPPORTED_KINDS.contains(&kind) {
-        return change_package::materialize_upsert(connection, kind, payload, 4)
+        return change_package::materialize_upsert(connection, kind, payload, 5)
             .map_err(|_| FamilySnapshotError::Conflict);
     }
     match kind {
@@ -2450,7 +2490,7 @@ fn materialize_delete(
     entity_id: &str,
 ) -> Result<()> {
     if !FAMILY_V1_SUPPORTED_KINDS.contains(&kind) {
-        return change_package::materialize_delete(connection, household_id, kind, entity_id, 4)
+        return change_package::materialize_delete(connection, household_id, kind, entity_id, 5)
             .map_err(|_| FamilySnapshotError::Conflict);
     }
     let table = match kind {
@@ -2481,7 +2521,10 @@ fn dependency_rank(kind: &str) -> u8 {
         | "AGGREGATE_ASSET_SNAPSHOT" => 3,
         "CARD_STATEMENT" => 4,
         "CARD_PAYMENT" => 5,
-        "SAVINGS_GOAL" | "DASHBOARD_PREFERENCES" | "DELIMITED_PARSER_PROFILE" => 6,
+        "SAVINGS_GOAL"
+        | "DASHBOARD_PREFERENCES"
+        | "DELIMITED_PARSER_PROFILE"
+        | "RECURRING_SERIES_PREFERENCES" => 6,
         "MONTHLY_BUDGET_PLAN"
         | "CLASSIFICATION_RULE"
         | "ACCOUNT_GROUP"
@@ -2508,7 +2551,9 @@ fn supported_kinds(schema_version: u32) -> &'static [&'static str] {
     match schema_version {
         1 => &FAMILY_V1_SUPPORTED_KINDS,
         2 => &FAMILY_V2_SUPPORTED_KINDS,
-        _ => &FAMILY_SUPPORTED_KINDS,
+        3 => &FAMILY_V3_SUPPORTED_KINDS,
+        4 => &FAMILY_SUPPORTED_KINDS,
+        _ => &[],
     }
 }
 
@@ -2551,6 +2596,56 @@ mod tests {
         state
             .with_connection(|connection| Ok(export_snapshot_set(connection, "family").unwrap()))
             .unwrap()
+    }
+
+    fn resign_set(set: &mut FamilySnapshotSetDto) {
+        for partition in &mut set.partitions {
+            let identity = PartitionIdentity {
+                format: FAMILY_FORMAT,
+                schema_version: set.schema_version,
+                mode: FAMILY_MODE,
+                source_installation_id: &set.source_installation_id,
+                source_principal_id: &set.source_principal_id,
+                publisher_member_id: &set.publisher_member_id,
+                source_revision: set.source_revision,
+                household_id: &set.household_id,
+                created_at: &set.created_at,
+                audience: &partition.audience,
+                dependency_audiences: &partition.dependency_audiences,
+                authoritative_kinds: &partition.authoritative_kinds,
+                counts_by_kind: &partition.counts_by_kind,
+                records: &partition.records,
+                evidence_manifest_sha256: &partition.evidence_manifest_sha256,
+                evidence_file_count: (set.schema_version >= 3)
+                    .then_some(partition.evidence_file_count),
+                evidence_record_count: (set.schema_version >= 3)
+                    .then_some(partition.evidence_record_count),
+                relocations: &partition.relocations,
+            };
+            partition.snapshot_sha256 = hash_serializable(&identity).unwrap();
+            partition.package_id = format!("family-partition-{}", partition.snapshot_sha256);
+            partition.package_sha256 = hash_serializable(&json!({
+                "packageId": partition.package_id,
+                "snapshotSha256": partition.snapshot_sha256,
+                "identity": identity,
+            }))
+            .unwrap();
+        }
+        let identity = SetIdentity {
+            format: &set.format,
+            schema_version: set.schema_version,
+            mode: &set.mode,
+            source_installation_id: &set.source_installation_id,
+            source_principal_id: &set.source_principal_id,
+            publisher_member_id: &set.publisher_member_id,
+            source_revision: set.source_revision,
+            household_id: &set.household_id,
+            created_at: &set.created_at,
+            excluded_counts_by_reason: &set.excluded_counts_by_reason,
+            partitions: &set.partitions,
+        };
+        set.set_sha256 = hash_serializable(&identity).unwrap();
+        set.snapshot_set_id = format!("family-set-{}", set.set_sha256);
     }
 
     fn reidentify_destination(state: &AppState) {
@@ -2661,6 +2756,226 @@ mod tests {
         assert!(!shared_text.contains("private-group"));
         assert!(!shared_text.contains("private-category"));
         decode_and_validate(&encode_pretty(&set).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn schema_four_exports_one_shared_canonical_recurring_preference_aggregate() {
+        let source = state();
+        setup(&source, "Source");
+        source
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO recurring_series_preferences(
+                       household_id,normalized_payee,decision,version,created_at,updated_at)
+                     VALUES('family','netflix','IGNORED',7,'2025-01-01','2026-07-15'),
+                           ('family','amazon','CONFIRMED',9,'2025-02-01','2026-07-14')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let set = export_from(&source);
+        assert_eq!(FAMILY_SUPPORTED_KINDS.len(), 19);
+        assert_eq!(FAMILY_V3_SUPPORTED_KINDS.len(), 18);
+        let shared = set
+            .partitions
+            .iter()
+            .find(|partition| partition.audience == FamilyAudienceDto::shared())
+            .unwrap();
+        let recurring = shared
+            .records
+            .iter()
+            .filter(|record| record.entity_kind == "RECURRING_SERIES_PREFERENCES")
+            .collect::<Vec<_>>();
+        assert_eq!(recurring.len(), 1);
+        assert_eq!(recurring[0].entity_id, "family");
+        assert_eq!(
+            serde_json::from_str::<Value>(&recurring[0].canonical_payload_json).unwrap(),
+            json!({
+                "recordKind": "RECURRING_SERIES_PREFERENCES",
+                "householdId": "family",
+                "preferences": [
+                    {"normalizedPayee": "amazon", "decision": "CONFIRMED"},
+                    {"normalizedPayee": "netflix", "decision": "IGNORED"}
+                ]
+            })
+        );
+        assert!(shared
+            .authoritative_kinds
+            .iter()
+            .any(|kind| kind == "RECURRING_SERIES_PREFERENCES"));
+        assert!(set.partitions.iter().all(|partition| {
+            partition.audience.visibility != "PERSONAL"
+                || (!partition
+                    .authoritative_kinds
+                    .iter()
+                    .any(|kind| kind == "RECURRING_SERIES_PREFERENCES")
+                    && !partition
+                        .records
+                        .iter()
+                        .any(|record| record.entity_kind == "RECURRING_SERIES_PREFERENCES"))
+        }));
+        validate_snapshot_set(&set).unwrap();
+    }
+
+    #[test]
+    fn schema_four_rejects_malformed_or_missing_shared_recurring_preferences() {
+        let source = state();
+        setup(&source, "Source");
+        let set = export_from(&source);
+
+        let mut malformed = set.clone();
+        let record = malformed
+            .partitions
+            .iter_mut()
+            .flat_map(|partition| partition.records.iter_mut())
+            .find(|record| record.entity_kind == "RECURRING_SERIES_PREFERENCES")
+            .unwrap();
+        record.canonical_payload_json = canonical_json(&json!({
+            "recordKind": "RECURRING_SERIES_PREFERENCES",
+            "householdId": "family",
+            "preferences": [{"normalizedPayee": "amazon", "decision": "AUTO_DETECTED"}]
+        }))
+        .unwrap();
+        record.payload_sha256 = sha256_hex(record.canonical_payload_json.as_bytes());
+        resign_set(&mut malformed);
+        assert!(matches!(
+            validate_snapshot_set(&malformed),
+            Err(FamilySnapshotError::InvalidInput)
+        ));
+
+        let mut missing = set;
+        let shared = missing
+            .partitions
+            .iter_mut()
+            .find(|partition| partition.audience == FamilyAudienceDto::shared())
+            .unwrap();
+        shared
+            .records
+            .retain(|record| record.entity_kind != "RECURRING_SERIES_PREFERENCES");
+        shared
+            .authoritative_kinds
+            .retain(|kind| kind != "RECURRING_SERIES_PREFERENCES");
+        shared
+            .counts_by_kind
+            .insert("RECURRING_SERIES_PREFERENCES".to_owned(), 0);
+        resign_set(&mut missing);
+        assert!(matches!(
+            validate_snapshot_set(&missing),
+            Err(FamilySnapshotError::InvalidInput)
+        ));
+    }
+
+    #[test]
+    fn genuine_schema_three_identity_remains_compatible() {
+        let source = state();
+        setup(&source, "Source");
+        let mut legacy = export_from(&source);
+        legacy.schema_version = 3;
+        for partition in &mut legacy.partitions {
+            partition
+                .records
+                .retain(|record| FAMILY_V3_SUPPORTED_KINDS.contains(&record.entity_kind.as_str()));
+            partition
+                .authoritative_kinds
+                .retain(|kind| FAMILY_V3_SUPPORTED_KINDS.contains(&kind.as_str()));
+            partition.counts_by_kind = FAMILY_V3_SUPPORTED_KINDS
+                .iter()
+                .map(|kind| {
+                    (
+                        (*kind).to_owned(),
+                        partition
+                            .records
+                            .iter()
+                            .filter(|record| record.entity_kind == *kind)
+                            .count() as u64,
+                    )
+                })
+                .collect();
+        }
+        resign_set(&mut legacy);
+        let decoded = decode_and_validate(&encode_pretty(&legacy).unwrap()).unwrap();
+        assert_eq!(decoded.schema_version, 3);
+        assert!(decoded.partitions.iter().all(|partition| partition
+            .records
+            .iter()
+            .all(|record| record.entity_kind != "RECURRING_SERIES_PREFERENCES")));
+    }
+
+    #[test]
+    fn schema_four_apply_replaces_preferences_with_local_version_fencing_and_no_capture_echo() {
+        let source = state();
+        setup(&source, "Source");
+        source
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO recurring_series_preferences(
+                       household_id,normalized_payee,decision)
+                     VALUES('family','amazon','CONFIRMED'),
+                           ('family','netflix','IGNORED')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let bytes = encode_pretty(&export_from(&source)).unwrap();
+
+        let destination = state();
+        setup(&destination, "Destination");
+        reidentify_destination(&destination);
+        destination
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO recurring_series_preferences(
+                       household_id,normalized_payee,decision,version)
+                     VALUES('family','amazon','IGNORED',4),
+                           ('family','spotify','CONFIRMED',2)",
+                    [],
+                )?;
+                let captures_before: i64 = connection.query_row(
+                    "SELECT count(*) FROM sync_local_change_capture
+                     WHERE household_id='family'
+                       AND entity_kind='RECURRING_SERIES_PREFERENCES'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let review = stage_snapshot_set(connection, "family", &bytes).unwrap();
+                resolve_pending(connection, &review);
+                apply_snapshot_set(connection, &review.snapshot_set_id).unwrap();
+
+                let preferences = connection
+                    .prepare(
+                        "SELECT normalized_payee,decision,version
+                         FROM recurring_series_preferences
+                         WHERE household_id='family' ORDER BY normalized_payee",
+                    )?
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    })?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                assert_eq!(
+                    preferences,
+                    vec![
+                        ("amazon".to_owned(), "CONFIRMED".to_owned(), 5),
+                        ("netflix".to_owned(), "IGNORED".to_owned(), 1),
+                    ]
+                );
+                let captures_after: i64 = connection.query_row(
+                    "SELECT count(*) FROM sync_local_change_capture
+                     WHERE household_id='family'
+                       AND entity_kind='RECURRING_SERIES_PREFERENCES'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(captures_after, captures_before);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
