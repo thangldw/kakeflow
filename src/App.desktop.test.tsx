@@ -310,9 +310,9 @@ describe('KakeFlow desktop read models', () => {
       const budget = { budgetJpy: 150000, actualJpy: 120000, remainingJpy: 30000, utilizationBps: 8000, categoryCount: 4, overBudgetCount: 0 }
       const goals = { activeCount: 1, targetJpy: 1000000, savedJpy: 400000, remainingJpy: 600000, dueWithinPeriodCount: 0 }
       const metrics = { incomeJpy: 500000, expenseJpy: 120000, savingsJpy: 380000, savingsRateBps: 7600, postedTransactionCount: 1 }
-      const deltas = { income: { amountJpy: 10000, rateBps: 204 }, expense: { amountJpy: -5000, rateBps: -400 }, savings: { amountJpy: 15000, rateBps: 411 } }
+      const deltas = { income: { amountJpy: 10000, rateBps: 204 }, expense: { amountJpy: -5000, rateBps: -400 }, savings: { amountJpy: 15000, rateBps: 410 } }
       if (command === 'financial_calendar_query') return { month: '2026-07', asOf: '2026-07-31', days: [{ date: '2026-07-10', accrualIncomeJpy: 0, accrualExpenseJpy: 120000, cashInflowJpy: 0, cashOutflowJpy: 0, postedTransactionCount: 1, noSpendDay: false, events: [] }], budget, goals, dataQuality: quality }
-      if (command === 'financial_report_monthly_query') return { period: '2026-07', current: metrics, priorMonth: { ...metrics, expenseJpy: 125000 }, priorYear: { ...metrics, incomeJpy: 490000 }, vsPriorMonth: deltas, vsPriorYear: deltas, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 70000, previousJpy: 60000, deltaJpy: 10000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 50000, previousJpy: 40000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 1, fullyReconciled: 1, possibleMatches: 0, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
+      if (command === 'financial_report_monthly_query') return { period: '2026-07', asOf: '2026-07-31', current: metrics, priorMonth: { incomeJpy: 490000, expenseJpy: 125000, savingsJpy: 365000, savingsRateBps: 7448, postedTransactionCount: 1 }, priorYear: { incomeJpy: 490000, expenseJpy: 125000, savingsJpy: 365000, savingsRateBps: 7448, postedTransactionCount: 1 }, vsPriorMonth: deltas, vsPriorYear: deltas, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 70000, previousJpy: 60000, deltaJpy: 10000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 50000, previousJpy: 40000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 1, fullyReconciled: 1, possibleMatches: 0, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
       if (command === 'financial_report_yearly_query') {
         const current = { incomeJpy: 600000, expenseJpy: 300000, savingsJpy: 300000, savingsRateBps: 5000, postedTransactionCount: 12 }
         const prior = { incomeJpy: 540000, expenseJpy: 300000, savingsJpy: 240000, savingsRateBps: 4444, postedTransactionCount: 12 }
@@ -330,6 +330,7 @@ describe('KakeFlow desktop read models', () => {
       if (command === 'annual_household_review_csv_save') return { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
       if (command === 'annual_household_review_xlsx_save') return { fileName: 'kakeflow-annual-review-2026.xlsx', rowCount: 48, byteSize: 8_000 }
       if (command === 'annual_household_review_pdf_save') return { fileName: 'kakeflow-annual-review-2026.pdf', pageCount: 8, byteSize: 24_000, rendererVersion: 1 }
+      if (command === 'monthly_household_review_csv_save') return { fileName: 'kakeflow-monthly-household-review-2026-07-as-of-2026-07-31.csv', rowCount: 42, byteSize: 4_000 }
       if (command === 'monthly_household_review_xlsx_save') return { fileName: 'kakeflow-monthly-review-2026-07.xlsx', rowCount: 32, byteSize: 7_000, sheetCount: 4 }
       if (command === 'monthly_household_review_pdf_save') return { fileName: 'kakeflow-monthly-review-2026-07.pdf', pageCount: 4, byteSize: 12_000, rendererVersion: 1 }
       if (command === 'aggregate_asset_history_list') return [{ id: 'aggregate-jul', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 3, asOf: '2026-07-31', totalAssetsJpy: 8700000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2100000 }, { assetClass: 'LISTED_STOCKS', officialHeader: '株式(現物)(円)', valueJpy: 3100000 }] }, { id: 'aggregate-jun', householdId: 'family', sourceDocumentId: 'mf-doc', sourceRow: 2, asOf: '2026-06-30', totalAssetsJpy: 8500000, components: [{ assetClass: 'DEPOSITS_CASH_CRYPTO', officialHeader: '預金・現金・暗号資産(円)', valueJpy: 2000000 }] }]
@@ -595,11 +596,19 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
     await screen.findByText('Monthly Review')
     fireEvent.click(screen.getByRole('button', { name: '前年同月比' }))
+    fireEvent.click(screen.getByRole('button', { name: '月次CSVを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('monthly_household_review_csv_save', { request: {
+      householdId: 'family', accountGroupId: null, attributionScope: memberScope, month: '2026-07', asOf: '2026-07-31',
+    } }))
+    const monthlyCsvRequest = nativeInvoke.mock.calls.find(([command]) => command === 'monthly_household_review_csv_save')?.[1]?.request
+    expect(monthlyCsvRequest).not.toHaveProperty('comparison')
+    expect(await screen.findByText(/kakeflow-monthly-household-review-2026-07-as-of-2026-07-31\.csv（42行）を保存しました/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '月次Excelを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('monthly_household_review_xlsx_save', { request: {
       householdId: 'family', accountGroupId: null, attributionScope: memberScope, month: '2026-07', asOf: '2026-07-31',
     } }))
     const monthlyExportRequest = nativeInvoke.mock.calls.find(([command]) => command === 'monthly_household_review_xlsx_save')?.[1]?.request
+    expect(monthlyExportRequest).toEqual(monthlyCsvRequest)
     expect(monthlyExportRequest).not.toHaveProperty('comparison')
     expect(await screen.findByText(/kakeflow-monthly-review-2026-07\.xlsx（32行）を保存しました/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '月次PDFを保存' }))
@@ -705,13 +714,25 @@ describe('KakeFlow desktop read models', () => {
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', expect.any(Object))
   })
 
-  it('reports canceled and failed monthly Excel saves without changing the review', async () => {
+  it('reports canceled and failed monthly CSV, Excel, and PDF saves without changing the review', async () => {
     const fallback = nativeInvoke.getMockImplementation()!
-    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'monthly_household_review_xlsx_save' ? null : fallback(command, args))
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'monthly_household_review_csv_save' ? null : fallback(command, args))
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
     fireEvent.click(await screen.findByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '月次CSVを保存' }))
+    expect(await screen.findByText('月次CSVエクスポートをキャンセルしました。')).toBeInTheDocument()
+
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'monthly_household_review_csv_save') throw new Error('save failed')
+      return fallback(command, args)
+    })
+    fireEvent.click(screen.getByRole('button', { name: '月次CSVを保存' }))
+    expect(await screen.findByText('月次CSVを書き出せませんでした。対象月とスコープを確認してください。')).toBeInTheDocument()
+    expect(screen.getByText('Monthly Review')).toBeInTheDocument()
+
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'monthly_household_review_xlsx_save' ? null : fallback(command, args))
     fireEvent.click(await screen.findByRole('button', { name: '月次Excelを保存' }))
     expect(await screen.findByText('月次Excelエクスポートをキャンセルしました。')).toBeInTheDocument()
 

@@ -46,13 +46,37 @@ describe('financial calendar platform boundary', () => {
   })
 
   it('invokes and parses monthly and yearly financial reports', async () => {
-    const monthly = { period: '2026-07', ...sharedReport, priorMonth: { ...metrics, expenseJpy: 40_000 }, vsPriorMonth: deltas }
+    const priorMonth = { incomeJpy: 250_000, expenseJpy: 40_000, savingsJpy: 210_000, savingsRateBps: 8_400, postedTransactionCount: 2 }
+    const priorYear = { incomeJpy: 280_000, expenseJpy: 70_000, savingsJpy: 210_000, savingsRateBps: 7_500, postedTransactionCount: 3 }
+    const monthly = { period: '2026-07', asOf: '2026-07-31', ...sharedReport, priorMonth, priorYear, vsPriorMonth: deltas, vsPriorYear: { income: { amountJpy: 20_000, rateBps: 714 }, expense: { amountJpy: 0, rateBps: 0 }, savings: { amountJpy: 20_000, rateBps: 952 } } }
     const invoke = vi.fn(async (command: string) => command === 'financial_report_monthly_query' ? monthly : annual) as unknown as FinancialCalendarInvoke
     const platform = createFinancialCalendarPlatform(invoke)
     await expect(platform.getMonthlyReport({ householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' })).resolves.toEqual(monthly)
     await expect(platform.getYearlyReport({ householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026', asOf: '2026-07-31' })).resolves.toEqual(annual)
     expect(invoke).toHaveBeenNthCalledWith(1, 'financial_report_monthly_query', { request: { householdId: 'family', attributionScope: { kind: 'ALL' }, month: '2026-07' } })
     expect(invoke).toHaveBeenNthCalledWith(2, 'financial_report_yearly_query', { request: { householdId: 'family', attributionScope: { kind: 'HOUSEHOLD_COMMON' }, year: '2026', asOf: '2026-07-31' } })
+  })
+
+  it('generates and saves the exact monthly CSV scope and validates native summaries', async () => {
+    const request = { householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER' as const, memberId: 'taro' }, month: '2026-07', asOf: '2026-07-31' }
+    const csv = '\uFEFFsection,period\r\nSUMMARY,2026-07\r\n'
+    const generated = { fileName: 'kakeflow-monthly-household-review-2026-07-as-of-2026-07-31.csv', mediaType: 'text/csv;charset=utf-8', rowCount: 1, byteSize: new TextEncoder().encode(csv).byteLength, utf8BomCsv: csv }
+    const saved = { fileName: generated.fileName, rowCount: 42, byteSize: 2_000 }
+    const invoke = vi.fn(async (command: string) => command === 'monthly_household_review_csv_generate' ? generated : saved) as unknown as FinancialCalendarInvoke
+    const platform = createFinancialCalendarPlatform(invoke)
+    await expect(platform.generateMonthlyReviewCsv(request)).resolves.toEqual(generated)
+    expect(invoke).toHaveBeenCalledWith('monthly_household_review_csv_generate', { request })
+    await expect(platform.saveMonthlyReviewCsv(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('monthly_household_review_csv_save', { request })
+    await expect(createFinancialCalendarPlatform(async () => null).saveMonthlyReviewCsv(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: '../monthly.csv', rowCount: 42, byteSize: 2_000 },
+      { fileName: 'monthly.xlsx', rowCount: 42, byteSize: 2_000 },
+      { fileName: 'monthly.csv', rowCount: 0, byteSize: 2_000 },
+      { fileName: 'monthly.csv', rowCount: 42, byteSize: 0 },
+    ]) {
+      await expect(createFinancialCalendarPlatform(async () => response).saveMonthlyReviewCsv(request)).rejects.toThrow(TypeError)
+    }
   })
 
   it('saves the exact annual scope and rejects inconsistent annual windows', async () => {

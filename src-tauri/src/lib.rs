@@ -2984,6 +2984,45 @@ async fn annual_household_review_csv_save(
 }
 
 #[tauri::command]
+async fn monthly_household_review_csv_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: financial_calendar::MonthlyFinancialReportRequest,
+) -> Result<Option<financial_calendar::MonthlyReviewCsvSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(financial_calendar::monthly_household_review_csv(
+            connection, &request,
+        ))
+    });
+    let export = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => {
+            return Err("Monthly household review export is temporarily unavailable".to_owned())
+        }
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("CSV", &["csv"])
+        .set_file_name(&export.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected monthly review destination is unavailable".to_owned())?;
+    std::fs::write(destination, export.utf8_bom_csv.as_bytes())
+        .map_err(|_| "Monthly household review CSV could not be saved".to_owned())?;
+    Ok(Some(financial_calendar::MonthlyReviewCsvSavedDto {
+        file_name: export.file_name,
+        row_count: export.row_count,
+        byte_size: export.byte_size,
+    }))
+}
+
+#[tauri::command]
 async fn annual_household_review_xlsx_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4335,6 +4374,7 @@ pub fn run() {
             financial_calendar::financial_report_monthly_query,
             financial_calendar::financial_report_yearly_query,
             financial_calendar::annual_household_review_csv_generate,
+            financial_calendar::monthly_household_review_csv_generate,
             card_settlement_mapping::card_settlement_bank_mappings_list,
             card_settlement_mapping::card_settlement_bank_mapping_upsert,
             card_settlement_mapping::card_settlement_bank_mapping_delete,
@@ -4377,6 +4417,7 @@ pub fn run() {
             export_csv_generate,
             export_csv_save,
             annual_household_review_csv_save,
+            monthly_household_review_csv_save,
             annual_household_review_xlsx_save,
             annual_household_review_pdf_save,
             monthly_household_review_xlsx_save,

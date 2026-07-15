@@ -129,6 +129,7 @@ export interface ReconciliationSummaryDto {
 
 export interface MonthlyFinancialReportDto {
   readonly period: string
+  readonly asOf: string
   readonly current: PeriodMetricsDto
   readonly priorMonth: PeriodMetricsDto
   readonly priorYear: PeriodMetricsDto
@@ -184,6 +185,20 @@ export interface AnnualReviewCsvSavedDto {
   readonly byteSize: number
 }
 
+export interface MonthlyReviewCsvDto {
+  readonly fileName: string
+  readonly mediaType: 'text/csv;charset=utf-8'
+  readonly rowCount: number
+  readonly byteSize: number
+  readonly utf8BomCsv: string
+}
+
+export interface MonthlyReviewCsvSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+}
+
 export interface AnnualReviewXlsxSavedDto {
   readonly fileName: string
   readonly rowCount: number
@@ -216,6 +231,12 @@ export function createFinancialCalendarPlatform(invoke: FinancialCalendarInvoke 
       parseCalendar(await invoke('financial_calendar_query', { request })),
     getMonthlyReport: async (request: MonthlyFinancialReportRequest): Promise<MonthlyFinancialReportDto> =>
       parseMonthlyReport(await invoke('financial_report_monthly_query', { request })),
+    generateMonthlyReviewCsv: async (request: MonthlyFinancialReportRequest): Promise<MonthlyReviewCsvDto> =>
+      parseMonthlyReviewCsv(await invoke('monthly_household_review_csv_generate', { request })),
+    saveMonthlyReviewCsv: async (request: MonthlyFinancialReportRequest): Promise<MonthlyReviewCsvSavedDto | null> => {
+      const value = await invoke('monthly_household_review_csv_save', { request })
+      return value === null ? null : parseMonthlyReviewCsvSaved(value)
+    },
     saveMonthlyReviewXlsx: async (request: MonthlyFinancialReportRequest): Promise<MonthlyReviewXlsxSavedDto | null> => {
       const value = await invoke('monthly_household_review_xlsx_save', { request })
       return value === null ? null : parseMonthlyReviewXlsxSaved(value)
@@ -277,12 +298,14 @@ function parseEvent(value: unknown): FinancialCalendarEventDto {
 
 function parseMonthlyReport(value: unknown): MonthlyFinancialReportDto {
   const item = record(value, 'monthly financial report')
-  stringValue(item.period, 'monthly financial report period')
-  return {
+  monthValue(item.period, 'monthly financial report period')
+  dateValue(item.asOf, 'monthly financial report as-of date')
+  const report = {
     period: item.period as string,
-    current: parseMetrics(item.current),
-    priorMonth: parseMetrics(item.priorMonth),
-    priorYear: parseMetrics(item.priorYear),
+    asOf: item.asOf as string,
+    current: parseAnnualMetrics(item.current),
+    priorMonth: parseAnnualMetrics(item.priorMonth),
+    priorYear: parseAnnualMetrics(item.priorYear),
     vsPriorMonth: parseDeltaSet(item.vsPriorMonth),
     vsPriorYear: parseDeltaSet(item.vsPriorYear),
     topCategoryDrivers: arrayValue(item.topCategoryDrivers, 'category drivers').map(parseCategoryDriver),
@@ -292,6 +315,12 @@ function parseMonthlyReport(value: unknown): MonthlyFinancialReportDto {
     dataQuality: parseDataQuality(item.dataQuality),
     reconciliation: parseReconciliation(item.reconciliation),
   }
+  validateDeltaSet(report.current, report.priorMonth, report.vsPriorMonth)
+  validateDeltaSet(report.current, report.priorYear, report.vsPriorYear)
+  for (const driver of [...report.topCategoryDrivers, ...report.topMerchantDrivers]) {
+    if (driver.deltaJpy !== driver.currentJpy - driver.previousJpy) throw new TypeError('monthly financial report driver delta')
+  }
+  return report
 }
 
 function parseYearlyReport(value: unknown): YearlyFinancialReportDto {
@@ -482,7 +511,7 @@ function validateDeltaSet(current: PeriodMetricsDto, previous: PeriodMetricsDto,
   for (const [key, field] of [['income', 'incomeJpy'], ['expense', 'expenseJpy'], ['savings', 'savingsJpy']] as const) {
     const amount = current[field] - previous[field]
     const expectedRate = previous[field] === 0 ? null : Math.trunc(amount * 10_000 / Math.abs(previous[field]))
-    if (deltas[key].amountJpy !== amount || deltas[key].rateBps !== expectedRate) throw new TypeError('yearly financial report deltas')
+    if (deltas[key].amountJpy !== amount || deltas[key].rateBps !== expectedRate) throw new TypeError('financial report deltas')
   }
 }
 
@@ -500,6 +529,23 @@ function parseAnnualReviewCsv(value: unknown): AnnualReviewCsvDto {
   stringValue(item.fileName, 'annual review CSV filename'); nonNegativeInteger(item.rowCount, 'annual review CSV rows'); nonNegativeInteger(item.byteSize, 'annual review CSV bytes'); stringValue(item.utf8BomCsv, 'annual review CSV data')
   if (!(item.utf8BomCsv as string).startsWith('\uFEFF') || new TextEncoder().encode(item.utf8BomCsv as string).byteLength !== item.byteSize) throw new TypeError('annual review CSV')
   return item as unknown as AnnualReviewCsvDto
+}
+
+function parseMonthlyReviewCsv(value: unknown): MonthlyReviewCsvDto {
+  const item = record(value, 'monthly review CSV')
+  if (item.mediaType !== 'text/csv;charset=utf-8') throw new TypeError('monthly review CSV')
+  stringValue(item.fileName, 'monthly review CSV filename'); nonNegativeInteger(item.rowCount, 'monthly review CSV rows'); nonNegativeInteger(item.byteSize, 'monthly review CSV bytes'); stringValue(item.utf8BomCsv, 'monthly review CSV data')
+  if (!(item.utf8BomCsv as string).startsWith('\uFEFF') || new TextEncoder().encode(item.utf8BomCsv as string).byteLength !== item.byteSize) throw new TypeError('monthly review CSV')
+  return item as unknown as MonthlyReviewCsvDto
+}
+
+function parseMonthlyReviewCsvSaved(value: unknown): MonthlyReviewCsvSavedDto {
+  const item = record(value, 'saved monthly review CSV')
+  stringValue(item.fileName, 'saved monthly review CSV filename'); nonNegativeInteger(item.rowCount, 'saved monthly review CSV rows'); nonNegativeInteger(item.byteSize, 'saved monthly review CSV bytes')
+  const fileName = item.fileName as string
+  if (fileName.length === 0 || fileName.length > 255 || !/\.csv$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('saved monthly review CSV filename')
+  if ((item.rowCount as number) === 0 || (item.byteSize as number) === 0) throw new TypeError('saved monthly review CSV')
+  return item as unknown as MonthlyReviewCsvSavedDto
 }
 
 function parseAnnualReviewCsvSaved(value: unknown): AnnualReviewCsvSavedDto {
