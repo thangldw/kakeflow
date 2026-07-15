@@ -219,6 +219,23 @@ const pendingBankReview = {
   runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }],
 }
 
+const recurringIntelligenceResponse = {
+  asOf: '2026-07-31', historyFrom: '2025-07-31',
+  recurringItems: [
+    { normalizedPayee: 'netflix', displayPayee: 'Netflix', occurrenceCount: 6, cadence: 'MONTHLY', medianIntervalDays: 30, typicalAmountJpy: 1490, latestAmountJpy: 1490, lastSeenOn: '2026-07-20', nextExpectedOn: '2026-08-20', confidenceBps: 9500, priceChangeBps: null, reasons: ['monthly'], decisionStatus: 'AUTO_DETECTED' },
+    { normalizedPayee: 'power', displayPayee: '電気料金', occurrenceCount: 8, cadence: 'MONTHLY', medianIntervalDays: 30, typicalAmountJpy: 8000, latestAmountJpy: 8200, lastSeenOn: '2026-07-10', nextExpectedOn: '2026-08-10', confidenceBps: 9200, priceChangeBps: 250, reasons: ['monthly'], decisionStatus: 'CONFIRMED' },
+  ],
+  ignoredRecurringItems: [
+    { normalizedPayee: 'gym', displayPayee: '休会中ジム', occurrenceCount: 6, cadence: 'MONTHLY', medianIntervalDays: 30, typicalAmountJpy: 6000, latestAmountJpy: 6000, lastSeenOn: '2026-07-05', nextExpectedOn: '2026-08-05', confidenceBps: 9000, priceChangeBps: null, reasons: ['monthly'], decisionStatus: 'IGNORED' },
+  ],
+  anomalies: [],
+}
+
+const recurringPreferences = [
+  { householdId: 'family', normalizedPayee: 'power', decision: 'CONFIRMED', version: 4, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z' },
+  { householdId: 'family', normalizedPayee: 'gym', decision: 'IGNORED', version: 5, createdAt: '2026-07-14T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z' },
+]
+
 describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     vi.stubGlobal('confirm', vi.fn(() => true))
@@ -341,7 +358,10 @@ describe('KakeFlow desktop read models', () => {
         return { period: '2026', asOf: '2026-07-13', throughMonth: '2026-06', completedMonthCount: 6, isCompleteYear: false, currentComparable: current, priorYearComparable: prior, vsPriorYearComparable: delta, current, priorYear: prior, vsPriorYear: delta, months, topCategoryDrivers: [{ id: 'food', name: '食費', currentJpy: 90000, previousJpy: 70000, deltaJpy: 20000 }], topMerchantDrivers: [{ merchant: '生協', currentJpy: 60000, previousJpy: 50000, deltaJpy: 10000 }], budget, goals, dataQuality: quality, reconciliation: { totalStatements: 6, fullyReconciled: 5, possibleMatches: 1, partiallyReconciled: 0, unmatched: 0, mismatchCount: 0, paymentTotalJpy: 204987 } }
       }
       if (command === 'forecast_action_query') return { asOf: '2026-07-31', forecastFrom: '2026-08', forecastThrough: '2026-10', openingCashJpy: 620000, assumptions: { historyFrom: '2026-04', historyThrough: '2026-06', historyMonths: 3, averageMonthlyIncomeJpy: 500000, averageMonthlyExpenseJpy: 120000, averageMonthlyNonRecurringExpenseJpy: 100000, averageMonthlyCashChangeBeforeCardPaymentsJpy: 300000, recurringMonthlyExpenseJpy: 20000, recurringItemCount: 2, reasons: ['確定台帳の直近3か月平均'] }, months: ['2026-08', '2026-09', '2026-10'].map((month, index) => ({ month, openingCashJpy: 620000 + index * 250000, projectedIncomeJpy: 500000, projectedNonRecurringExpenseJpy: 100000, projectedRecurringExpenseJpy: 20000, projectedSavingsJpy: 380000, projectedCashChangeBeforeCardPaymentsJpy: 300000, knownCardPaymentsJpy: 50000, projectedCashChangeJpy: 250000, closingCashJpy: 870000 + index * 250000 })), actions: [{ id: 'budget-food', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '食費予算を超過', detail: '予算を確認してください', dueOn: null, amountJpy: 12000, entityId: 'food', reasons: ['確定支出が予算を超えました'] }, { id: 'import-review', kind: 'IMPORT_REVIEW', priority: 'MEDIUM', title: '取込を確認', detail: '候補を確認してください', dueOn: null, amountJpy: null, entityId: null, reasons: ['未確定'] }, { id: 'card-due', kind: 'CARD_PAYMENT_DUE', priority: 'MEDIUM', title: 'カード引落を確認', detail: '引落予定があります', dueOn: '2026-07-27', amountJpy: 20000, entityId: 'card', reasons: ['支払期日'] }, { id: 'anomaly', kind: 'SPENDING_ANOMALY', priority: 'LOW', title: '支出を確認', detail: '通常より高額です', dueOn: null, amountJpy: 9000, entityId: 'purchase', reasons: ['履歴比較'] }] }
-      if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], anomalies: [] }
+      if (command === 'financial_intelligence_query') return { asOf: '2026-07-31', historyFrom: '2025-07-31', recurringItems: [], ignoredRecurringItems: [], anomalies: [] }
+      if (command === 'recurring_series_preferences_list') return []
+      if (command === 'recurring_series_preference_upsert') return { ...(args?.input as object), version: 1, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z' }
+      if (command === 'recurring_series_preference_delete') return null
       if (command === 'fixed_cost_review_query') {
         const monthlyPoints = [9000, 10000, 11000, 12000, 13000, 14000].map((totalJpy, index) => ({ month: `2026-${String(index + 1).padStart(2, '0')}`, totalJpy, recurringPayeeCount: 1, transactionCount: 1 }))
         return { asOf: '2026-07-31', historyFrom: '2026-01-01', historyThrough: '2026-06-30', monthlyPoints, segments: [{ segment: 'MOBILE', monthlyPoints, recentThreeAverageJpy: 13000, previousThreeAverageJpy: 10000, changeJpy: 3000, changeRateBps: 3000, annualizedJpy: 156000, recurringPayeeCount: 1, transactionCount: 6, latestPaymentOn: '2026-06-20', topPayees: [{ normalizedPayee: 'mobile', displayPayee: 'Mobile Co', expenseCategoryNames: ['通信費'], cadence: 'MONTHLY', typicalAmountJpy: 13000, latestAmountJpy: 14000, latestPaymentOn: '2026-06-20', occurrenceCount: 6, confidenceBps: 9600, reasons: ['毎月の支払い'] }], reasons: ['直近3か月平均が増加'] }], totals: { recentThreeAverageJpy: 13000, previousThreeAverageJpy: 10000, changeJpy: 3000, changeRateBps: 3000, annualizedJpy: 156000, recurringPayeeCount: 1, transactionCount: 6 }, coverage: { completeMonthCount: 6, observedMonthCount: 12, confirmedTransactionCount: 100, recurringTransactionCount: 6, unclassifiedRecurringPayeeCount: 0 }, limitations: ['確定済み取引のみ'] }
@@ -769,6 +789,68 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
     expect(screen.getByText('食費予算を超過')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', expect.any(Object))
+  })
+
+  it('shows active and ignored recurring series and sends versioned review decisions', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'financial_intelligence_query') return recurringIntelligenceResponse
+      if (command === 'recurring_series_preferences_list') return recurringPreferences
+      if (command === 'recurring_series_preference_upsert') return { ...(args?.input as object), version: 1, createdAt: '2026-07-15T00:00:00Z', updatedAt: '2026-07-15T00:00:00Z' }
+      if (command === 'recurring_series_preference_delete') return null
+      return fallback(command, args)
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /定期・異常/ }))
+
+    expect(await screen.findByText('Netflix')).toBeInTheDocument()
+    expect(screen.getByText('電気料金')).toBeInTheDocument()
+    expect(screen.getByText('休会中ジム')).toBeInTheDocument()
+    expect(screen.getByText('自動検出')).toBeInTheDocument()
+    expect(screen.getByText('確認済み')).toBeInTheDocument()
+    expect(screen.getByText('対象外')).toBeInTheDocument()
+
+    const confirmedRow = screen.getByText('電気料金').closest<HTMLElement>('.recurring-row')!
+    fireEvent.click(within(confirmedRow).getByRole('button', { name: '対象外にする' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('recurring_series_preference_upsert', { input: { householdId: 'family', normalizedPayee: 'power', decision: 'IGNORED', expectedVersion: 4 } }))
+
+    const forecastCallsBefore = nativeInvoke.mock.calls.filter(([command]) => command === 'forecast_action_query').length
+    const intelligenceCallsBefore = nativeInvoke.mock.calls.filter(([command]) => command === 'financial_intelligence_query').length
+    const confirmButton = screen.getByRole('button', { name: '定期支出として確認' })
+    await waitFor(() => expect(confirmButton).toBeEnabled())
+    fireEvent.click(confirmButton)
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('recurring_series_preference_upsert', { input: { householdId: 'family', normalizedPayee: 'netflix', decision: 'CONFIRMED', expectedVersion: null } }))
+    expect(await screen.findByText(/定期支出として確認しました/)).toBeInTheDocument()
+    await waitFor(() => expect(nativeInvoke.mock.calls.filter(([command]) => command === 'financial_intelligence_query').length).toBeGreaterThan(intelligenceCallsBefore))
+    await waitFor(() => expect(nativeInvoke.mock.calls.filter(([command]) => command === 'forecast_action_query').length).toBeGreaterThan(forecastCallsBefore))
+
+    fireEvent.click(screen.getByRole('button', { name: '自動検出へ戻す' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('recurring_series_preference_delete', { input: { householdId: 'family', normalizedPayee: 'gym', expectedVersion: 5 } }))
+  })
+
+  it('keeps the previous recurring-series UI state when a decision command fails', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'financial_intelligence_query') return recurringIntelligenceResponse
+      if (command === 'recurring_series_preferences_list') return recurringPreferences
+      if (command === 'recurring_series_preference_upsert') throw new Error('stale preference version')
+      return fallback(command, args)
+    })
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /定期・異常/ }))
+
+    expect(await screen.findByText('Netflix')).toBeInTheDocument()
+    const intelligenceCallsBefore = nativeInvoke.mock.calls.filter(([command]) => command === 'financial_intelligence_query').length
+    fireEvent.click(screen.getByRole('button', { name: '定期支出として確認' }))
+    expect(await screen.findByText(/表示中の状態は変更していません/)).toBeInTheDocument()
+    expect(screen.getByText('Netflix')).toBeInTheDocument()
+    expect(screen.getByText('自動検出')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '定期支出として確認' })).toBeEnabled()
+    expect(nativeInvoke.mock.calls.filter(([command]) => command === 'financial_intelligence_query')).toHaveLength(intelligenceCallsBefore)
   })
 
   it('reports canceled and failed transaction ledger Excel saves', async () => {

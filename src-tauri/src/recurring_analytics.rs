@@ -1,7 +1,7 @@
 use crate::record_scope::{validate_attribution_scope, AttributionScope};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 const HISTORY_DAYS: i64 = 366;
 const RECENT_ANOMALY_DAYS: i64 = 31;
@@ -23,7 +23,16 @@ pub struct FinancialIntelligenceDto {
     pub as_of: String,
     pub history_from: String,
     pub recurring_items: Vec<RecurringItemDto>,
+    pub ignored_recurring_items: Vec<RecurringItemDto>,
     pub anomalies: Vec<SpendingAnomalyDto>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RecurringDecisionStatus {
+    AutoDetected,
+    Confirmed,
+    Ignored,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -40,7 +49,44 @@ pub struct RecurringItemDto {
     pub next_expected_on: String,
     pub confidence_bps: u16,
     pub price_change_bps: Option<i32>,
+    pub decision_status: RecurringDecisionStatus,
     pub reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RecurringPreferenceDecision {
+    Confirmed,
+    Ignored,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecurringSeriesPreferenceDto {
+    pub household_id: String,
+    pub normalized_payee: String,
+    pub decision: RecurringPreferenceDecision,
+    pub version: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpsertRecurringSeriesPreferenceInput {
+    pub household_id: String,
+    pub normalized_payee: String,
+    pub decision: RecurringPreferenceDecision,
+    #[serde(default)]
+    pub expected_version: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeleteRecurringSeriesPreferenceInput {
+    pub household_id: String,
+    pub normalized_payee: String,
+    pub expected_version: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -167,7 +213,9 @@ pub fn query_financial_intelligence(
         });
     }
 
-    Ok(analyze(&request.as_of, as_of_day, observations))
+    let mut result = analyze(&request.as_of, as_of_day, observations);
+    apply_recurring_preferences(connection, &request.household_id, &mut result)?;
+    Ok(result)
 }
 
 fn analyze(
@@ -279,6 +327,7 @@ fn analyze(
         as_of: as_of.to_owned(),
         history_from: format_iso_day(as_of_day - HISTORY_DAYS),
         recurring_items,
+        ignored_recurring_items: Vec::new(),
         anomalies,
     }
 }
@@ -326,8 +375,236 @@ fn detect_recurring(
         next_expected_on,
         confidence_bps: pattern.confidence_bps,
         price_change_bps,
+        decision_status: RecurringDecisionStatus::AutoDetected,
         reasons,
     })
+}
+
+pub fn list_recurring_series_preferences(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Vec<RecurringSeriesPreferenceDto>, String> {
+    validate_household_id(household_id)?;
+    ensure_household(connection, household_id)?;
+    let mut statement = connection
+        .prepare(
+            "SELECT household_id,normalized_payee,decision,version,created_at,updated_at
+             FROM recurring_series_preferences WHERE household_id=?1
+             ORDER BY normalized_payee",
+        )
+        .map_err(unavailable)?;
+    let preferences = statement
+        .query_map([household_id], preference_from_row)
+        .map_err(unavailable)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(unavailable)?;
+    Ok(preferences)
+}
+
+pub fn upsert_recurring_series_preference(
+    connection: &Connection,
+    input: &UpsertRecurringSeriesPreferenceInput,
+) -> Result<RecurringSeriesPreferenceDto, String> {
+    validate_household_id(&input.household_id)?;
+    validate_normalized_payee(&input.normalized_payee)?;
+    if input.expected_version.is_some_and(|version| version < 1) {
+        return Err("Invalid recurring preference version".to_owned());
+    }
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+        .map_err(unavailable)?;
+    ensure_household(&tx, &input.household_id)?;
+    let current_version = tx
+        .query_row(
+            "SELECT version FROM recurring_series_preferences
+             WHERE household_id=?1 AND normalized_payee=?2",
+            params![input.household_id, input.normalized_payee],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(unavailable)?;
+    match (current_version, input.expected_version) {
+        (None, None) => {
+            tx.execute(
+                "INSERT INTO recurring_series_preferences
+                 (household_id,normalized_payee,decision)
+                 VALUES(?1,?2,?3)",
+                params![
+                    input.household_id,
+                    input.normalized_payee,
+                    input.decision.as_sql()
+                ],
+            )
+            .map_err(unavailable)?;
+        }
+        (Some(current), Some(expected)) if current == expected => {
+            let changed = tx
+                .execute(
+                    "UPDATE recurring_series_preferences
+                     SET decision=?3,version=version+1,
+                         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                     WHERE household_id=?1 AND normalized_payee=?2 AND version=?4",
+                    params![
+                        input.household_id,
+                        input.normalized_payee,
+                        input.decision.as_sql(),
+                        expected
+                    ],
+                )
+                .map_err(unavailable)?;
+            if changed != 1 {
+                return Err("Recurring preference changed after review".to_owned());
+            }
+        }
+        _ => return Err("Recurring preference changed after review".to_owned()),
+    }
+    let result = get_preference(&tx, &input.household_id, &input.normalized_payee)?;
+    tx.commit().map_err(unavailable)?;
+    Ok(result)
+}
+
+pub fn delete_recurring_series_preference(
+    connection: &Connection,
+    input: &DeleteRecurringSeriesPreferenceInput,
+) -> Result<(), String> {
+    validate_household_id(&input.household_id)?;
+    validate_normalized_payee(&input.normalized_payee)?;
+    if input.expected_version < 1 {
+        return Err("Invalid recurring preference version".to_owned());
+    }
+    let changed = connection
+        .execute(
+            "DELETE FROM recurring_series_preferences
+             WHERE household_id=?1 AND normalized_payee=?2 AND version=?3",
+            params![
+                input.household_id,
+                input.normalized_payee,
+                input.expected_version
+            ],
+        )
+        .map_err(unavailable)?;
+    if changed != 1 {
+        return Err("Recurring preference changed after review".to_owned());
+    }
+    Ok(())
+}
+
+pub(crate) fn ignored_normalized_payees(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<HashSet<String>, String> {
+    Ok(list_recurring_series_preferences(connection, household_id)?
+        .into_iter()
+        .filter(|item| item.decision == RecurringPreferenceDecision::Ignored)
+        .map(|item| item.normalized_payee)
+        .collect())
+}
+
+fn apply_recurring_preferences(
+    connection: &Connection,
+    household_id: &str,
+    result: &mut FinancialIntelligenceDto,
+) -> Result<(), String> {
+    let preferences = list_recurring_series_preferences(connection, household_id)?
+        .into_iter()
+        .map(|item| (item.normalized_payee, item.decision))
+        .collect::<BTreeMap<_, _>>();
+    let mut active = Vec::new();
+    let mut ignored = Vec::new();
+    for mut item in result.recurring_items.drain(..) {
+        match preferences.get(&item.normalized_payee) {
+            Some(RecurringPreferenceDecision::Confirmed) => {
+                item.decision_status = RecurringDecisionStatus::Confirmed;
+                active.push(item);
+            }
+            Some(RecurringPreferenceDecision::Ignored) => {
+                item.decision_status = RecurringDecisionStatus::Ignored;
+                ignored.push(item);
+            }
+            None => active.push(item),
+        }
+    }
+    result.recurring_items = active;
+    result.ignored_recurring_items = ignored;
+    Ok(())
+}
+
+impl RecurringPreferenceDecision {
+    fn as_sql(self) -> &'static str {
+        match self {
+            Self::Confirmed => "CONFIRMED",
+            Self::Ignored => "IGNORED",
+        }
+    }
+}
+
+fn preference_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecurringSeriesPreferenceDto> {
+    let decision = match row.get::<_, String>(2)?.as_str() {
+        "CONFIRMED" => RecurringPreferenceDecision::Confirmed,
+        "IGNORED" => RecurringPreferenceDecision::Ignored,
+        _ => return Err(rusqlite::Error::InvalidQuery),
+    };
+    Ok(RecurringSeriesPreferenceDto {
+        household_id: row.get(0)?,
+        normalized_payee: row.get(1)?,
+        decision,
+        version: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+fn get_preference(
+    connection: &Connection,
+    household_id: &str,
+    normalized_payee: &str,
+) -> Result<RecurringSeriesPreferenceDto, String> {
+    connection
+        .query_row(
+            "SELECT household_id,normalized_payee,decision,version,created_at,updated_at
+             FROM recurring_series_preferences WHERE household_id=?1 AND normalized_payee=?2",
+            params![household_id, normalized_payee],
+            preference_from_row,
+        )
+        .map_err(unavailable)
+}
+
+fn validate_household_id(household_id: &str) -> Result<(), String> {
+    if household_id.trim().is_empty() || household_id.len() > 64 {
+        Err("Household is required".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_household(connection: &Connection, household_id: &str) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT 1 FROM households WHERE id=?1",
+            [household_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(unavailable)?
+        .is_some();
+    exists
+        .then_some(())
+        .ok_or_else(|| "Household was not found".to_owned())
+}
+
+fn validate_normalized_payee(value: &str) -> Result<(), String> {
+    if value.trim().is_empty()
+        || value.len() > 512
+        || value.chars().any(char::is_control)
+        || normalize_payee(value) != value
+    {
+        Err("Invalid normalized payee".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn unavailable(_: rusqlite::Error) -> String {
+    "Recurring preferences are temporarily unavailable".to_owned()
 }
 
 pub(crate) fn detect_stable_recurring_pattern(
@@ -635,7 +912,13 @@ mod tests {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
-                "CREATE TABLE transactions (id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, \
+                "CREATE TABLE households (id TEXT PRIMARY KEY); \
+                 CREATE TABLE recurring_series_preferences (household_id TEXT NOT NULL, normalized_payee TEXT NOT NULL, \
+                    decision TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, \
+                    created_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z', \
+                    updated_at TEXT NOT NULL DEFAULT '2026-07-13T00:00:00Z', \
+                    PRIMARY KEY(household_id,normalized_payee)); \
+                 CREATE TABLE transactions (id TEXT PRIMARY KEY, household_id TEXT, occurred_on TEXT, \
                     transaction_type TEXT, payee TEXT, description TEXT, status TEXT, \
                     attribution_kind TEXT NOT NULL DEFAULT 'HOUSEHOLD', attributed_member_id TEXT, \
                     calculation_target INTEGER NOT NULL DEFAULT 1 CHECK(calculation_target IN (0,1))); \
@@ -644,6 +927,7 @@ mod tests {
                  CREATE TABLE account_groups (id TEXT PRIMARY KEY, household_id TEXT); \
                  CREATE TABLE account_group_members (household_id TEXT, account_group_id TEXT, account_id TEXT); \
                  CREATE TABLE household_members (id TEXT PRIMARY KEY, household_id TEXT, status TEXT); \
+                 INSERT INTO households VALUES ('family'),('other'); \
                  INSERT INTO accounts VALUES ('expense', 'family', 'EXPENSE'), ('bank', 'family', 'ASSET'), \
                     ('excluded-expense', 'family', 'EXPENSE'), ('excluded-bank', 'family', 'ASSET'); \
                  INSERT INTO account_groups VALUES ('daily', 'family'), ('foreign', 'other'); \
@@ -653,6 +937,178 @@ mod tests {
             )
             .unwrap();
         connection
+    }
+
+    fn preference_input(
+        decision: RecurringPreferenceDecision,
+        expected_version: Option<i64>,
+    ) -> UpsertRecurringSeriesPreferenceInput {
+        UpsertRecurringSeriesPreferenceInput {
+            household_id: "family".into(),
+            normalized_payee: "rent".into(),
+            decision,
+            expected_version,
+        }
+    }
+
+    fn add_monthly_rent(connection: &Connection) {
+        connection
+            .execute_batch(
+                "INSERT INTO transactions
+                 (id,household_id,occurred_on,transaction_type,payee,description,status)
+                 VALUES ('r1','family','2026-05-01','EXPENSE','Rent',NULL,'POSTED'),
+                        ('r2','family','2026-06-01','EXPENSE','Rent',NULL,'POSTED'),
+                        ('r3','family','2026-07-01','EXPENSE','Rent',NULL,'POSTED');
+                 INSERT INTO journal_entries VALUES
+                    ('r1','expense','DEBIT',1000),('r2','expense','DEBIT',1000),
+                    ('r3','expense','DEBIT',1000);",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn recurring_preference_lifecycle_is_versioned_and_household_scoped() {
+        let connection = test_connection();
+        let created = upsert_recurring_series_preference(
+            &connection,
+            &preference_input(RecurringPreferenceDecision::Confirmed, None),
+        )
+        .unwrap();
+        assert_eq!(created.version, 1);
+        assert_eq!(created.decision, RecurringPreferenceDecision::Confirmed);
+        assert!(upsert_recurring_series_preference(
+            &connection,
+            &preference_input(RecurringPreferenceDecision::Ignored, None),
+        )
+        .is_err());
+        let updated = upsert_recurring_series_preference(
+            &connection,
+            &preference_input(RecurringPreferenceDecision::Ignored, Some(1)),
+        )
+        .unwrap();
+        assert_eq!(updated.version, 2);
+        assert_eq!(updated.decision, RecurringPreferenceDecision::Ignored);
+        let other = upsert_recurring_series_preference(
+            &connection,
+            &UpsertRecurringSeriesPreferenceInput {
+                household_id: "other".into(),
+                normalized_payee: "rent".into(),
+                decision: RecurringPreferenceDecision::Confirmed,
+                expected_version: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(other.version, 1);
+        assert!(delete_recurring_series_preference(
+            &connection,
+            &DeleteRecurringSeriesPreferenceInput {
+                household_id: "family".into(),
+                normalized_payee: "rent".into(),
+                expected_version: 1,
+            },
+        )
+        .is_err());
+        delete_recurring_series_preference(
+            &connection,
+            &DeleteRecurringSeriesPreferenceInput {
+                household_id: "family".into(),
+                normalized_payee: "rent".into(),
+                expected_version: 2,
+            },
+        )
+        .unwrap();
+        assert!(list_recurring_series_preferences(&connection, "family")
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            list_recurring_series_preferences(&connection, "other")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(list_recurring_series_preferences(&connection, "missing").is_err());
+    }
+
+    #[test]
+    fn recurring_preference_migration_enforces_decision_version_and_payee_constraints() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "PRAGMA foreign_keys=ON;
+                 CREATE TABLE households(id TEXT PRIMARY KEY);
+                 INSERT INTO households VALUES('family');",
+            )
+            .unwrap();
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0062_recurring_series_preferences.sql"
+            ))
+            .unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO recurring_series_preferences
+                 (household_id,normalized_payee,decision) VALUES('family','rent','CONFIRMED')",
+                [],
+            )
+            .is_ok());
+        assert!(connection
+            .execute(
+                "INSERT INTO recurring_series_preferences
+                 (household_id,normalized_payee,decision) VALUES('family','bad','AUTO_DETECTED')",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "UPDATE recurring_series_preferences SET version=0 WHERE household_id='family'",
+                [],
+            )
+            .is_err());
+        assert!(connection
+            .execute(
+                "INSERT INTO recurring_series_preferences
+                 (household_id,normalized_payee,decision) VALUES('family',' ','IGNORED')",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn ignored_series_is_returned_for_management_but_removed_from_active_scope() {
+        let connection = test_connection();
+        add_monthly_rent(&connection);
+        upsert_recurring_series_preference(
+            &connection,
+            &preference_input(RecurringPreferenceDecision::Ignored, None),
+        )
+        .unwrap();
+        let request = FinancialIntelligenceRequest {
+            household_id: "family".into(),
+            as_of: "2026-07-31".into(),
+            account_group_id: Some("daily".into()),
+            attribution_scope: AttributionScope::HouseholdCommon,
+        };
+        let ignored = query_financial_intelligence(&connection, &request).unwrap();
+        assert!(ignored.recurring_items.is_empty());
+        assert_eq!(ignored.ignored_recurring_items.len(), 1);
+        assert_eq!(
+            ignored.ignored_recurring_items[0].decision_status,
+            RecurringDecisionStatus::Ignored
+        );
+        let confirmed = upsert_recurring_series_preference(
+            &connection,
+            &preference_input(RecurringPreferenceDecision::Confirmed, Some(1)),
+        )
+        .unwrap();
+        assert_eq!(confirmed.version, 2);
+        let active = query_financial_intelligence(&connection, &request).unwrap();
+        assert_eq!(active.recurring_items.len(), 1);
+        assert!(active.ignored_recurring_items.is_empty());
+        assert_eq!(
+            active.recurring_items[0].decision_status,
+            RecurringDecisionStatus::Confirmed
+        );
+        assert_eq!(active.recurring_items[0].typical_amount_jpy, 1_000);
     }
 
     #[test]

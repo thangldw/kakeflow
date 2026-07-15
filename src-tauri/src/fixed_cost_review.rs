@@ -159,8 +159,11 @@ pub fn query_fixed_cost_review(
         .collect::<BTreeSet<_>>()
         .len() as u8;
     let confirmed_transaction_count = observations.len() as u32;
-    let recurring =
+    let mut recurring =
         detect_recurring_payees(&detection_observations, &history_from, &history_through);
+    let ignored =
+        crate::recurring_analytics::ignored_normalized_payees(connection, &request.household_id)?;
+    recurring.retain(|item| !ignored.contains(&item.dto.normalized_payee));
     let recurring_transaction_count = recurring
         .iter()
         .map(|item| item.observations.len() as u32)
@@ -696,6 +699,11 @@ mod tests {
              CREATE TABLE journal_entries(transaction_id TEXT, account_id TEXT, entry_side TEXT, amount_jpy INTEGER);
              CREATE TABLE account_groups(id TEXT PRIMARY KEY, household_id TEXT);
              CREATE TABLE account_group_members(household_id TEXT, account_group_id TEXT, account_id TEXT);
+             CREATE TABLE recurring_series_preferences(
+               household_id TEXT NOT NULL, normalized_payee TEXT NOT NULL,
+               decision TEXT NOT NULL, version INTEGER NOT NULL,
+               created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+               PRIMARY KEY(household_id,normalized_payee));
              INSERT INTO households VALUES('family'),('other');
              INSERT INTO household_members VALUES('alice','family','ARCHIVED'),('bob','family','ACTIVE'),('foreign','other','ACTIVE');
              INSERT INTO accounts VALUES
@@ -835,6 +843,43 @@ mod tests {
             .limitations
             .iter()
             .any(|item| item.contains("does not estimate")));
+    }
+
+    #[test]
+    fn ignored_recurring_series_is_excluded_from_fixed_cost_metrics_and_coverage() {
+        let connection = connection();
+        for month in 1..=6 {
+            add_expense(
+                &connection,
+                &format!("subscription-{month}"),
+                &format!("2026-{month:02}-10"),
+                Some("Netflix"),
+                "POSTED",
+                "HOUSEHOLD",
+                None,
+                &[("subscriptions", 1_500)],
+            );
+        }
+        let detected = query_fixed_cost_review(&connection, &request()).unwrap();
+        assert_eq!(detected.totals.recurring_payee_count, 1);
+        assert!(detected.totals.annualized_jpy > 0);
+        connection
+            .execute(
+                "INSERT INTO recurring_series_preferences
+             VALUES('family','netflix','IGNORED',1,'2026-07-13T00:00:00Z','2026-07-13T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+
+        let ignored = query_fixed_cost_review(&connection, &request()).unwrap();
+        assert_eq!(ignored.totals.recurring_payee_count, 0);
+        assert_eq!(ignored.totals.annualized_jpy, 0);
+        assert_eq!(ignored.coverage.recurring_transaction_count, 0);
+        assert!(ignored.segments.is_empty());
+        assert!(ignored
+            .monthly_points
+            .iter()
+            .all(|point| point.total_jpy == 0));
     }
 
     #[test]

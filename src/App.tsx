@@ -57,8 +57,8 @@ import type { AggregateAssetSnapshotDto } from './features/investments/aggregate
 import { createInvestmentMarketPlatform } from './features/investments/investmentMarketPlatform'
 import type { InvestmentValuationDto } from './features/investments/investmentMarketPlatform'
 import { createWatchedFolderDiscoveryPlatform } from './features/import/watchedFolderDiscoveryPlatform'
-import { queryFinancialIntelligence } from './features/financial-intelligence/platform'
-import type { FinancialIntelligenceDto } from './features/financial-intelligence/platform'
+import { deleteRecurringSeriesPreference, listRecurringSeriesPreferences, queryFinancialIntelligence, upsertRecurringSeriesPreference } from './features/financial-intelligence/platform'
+import type { FinancialIntelligenceDto, RecurringDecision, RecurringSeriesPreferenceDto } from './features/financial-intelligence/platform'
 import { queryFixedCostReview } from './features/fixed-costs/platform'
 import type { FixedCostReviewDto } from './features/fixed-costs/platform'
 import { FixedCostReviewView } from './features/fixed-costs/FixedCostReviewView'
@@ -2038,23 +2038,56 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
   </>
 }
 
-function FinancialIntelligencePanel({ householdId, accountGroupId, attributionScope, month, revision, openTransactions }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; month: string; revision: number; openTransactions: () => void }) {
+function FinancialIntelligencePanel({ householdId, accountGroupId, attributionScope, month, revision, preferenceRevision, openTransactions, onDecisionChanged }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; month: string; revision: number; preferenceRevision: number; openTransactions: () => void; onDecisionChanged: () => void }) {
   const [intelligence, setIntelligence] = useState<FinancialIntelligenceDto | null>(null)
+  const [preferences, setPreferences] = useState<readonly RecurringSeriesPreferenceDto[] | null>(null)
   const [notice, setNotice] = useState('')
+  const [decisionNotice, setDecisionNotice] = useState('')
+  const [busyPayee, setBusyPayee] = useState<string | null>(null)
   useEffect(() => {
     if (!householdId || platformClient.runtime !== 'tauri') return
     let active = true
     const asOf = periodFromMonth(month).toDate
-    void queryFinancialIntelligence(tauriInvoke, { householdId, accountGroupId, attributionScope, asOf }).then((result) => { if (active) { setIntelligence(result); setNotice('') } }).catch(() => { if (active) { setIntelligence(null); setNotice('定期支出と異常支出を分析できませんでした。') } })
+    setIntelligence(null)
+    setPreferences(null)
+    setNotice('')
+    void Promise.allSettled([
+      queryFinancialIntelligence(tauriInvoke, { householdId, accountGroupId, attributionScope, asOf }),
+      listRecurringSeriesPreferences(tauriInvoke, householdId),
+    ]).then(([intelligenceResult, preferenceResult]) => {
+      if (!active) return
+      if (intelligenceResult.status === 'fulfilled') setIntelligence(intelligenceResult.value)
+      if (preferenceResult.status === 'fulfilled') setPreferences(preferenceResult.value)
+      const messages: string[] = []
+      if (intelligenceResult.status === 'rejected') messages.push('定期支出と異常支出を分析できませんでした。')
+      if (preferenceResult.status === 'rejected') messages.push('確認状態を読み込めないため、変更操作は一時停止しています。')
+      setNotice(messages.join(' '))
+    })
     return () => { active = false }
-  }, [accountGroupId, attributionScope, householdId, month, revision])
-  if (notice) return <section className="panel"><p className="empty-state">{notice}</p></section>
+  }, [accountGroupId, attributionScope, householdId, month, preferenceRevision, revision])
+  const changeDecision = async (normalizedPayee: string, decision: RecurringDecision | 'RESTORE') => {
+    if (!householdId || preferences === null) return
+    const preference = preferences.find((item) => item.normalizedPayee === normalizedPayee)
+    if (decision === 'RESTORE' && !preference) return
+    setBusyPayee(normalizedPayee); setDecisionNotice('')
+    try {
+      if (decision === 'RESTORE') await deleteRecurringSeriesPreference(tauriInvoke, { householdId, normalizedPayee, expectedVersion: preference!.version })
+      else await upsertRecurringSeriesPreference(tauriInvoke, { householdId, normalizedPayee, decision, expectedVersion: preference?.version ?? null })
+      setDecisionNotice(decision === 'CONFIRMED' ? '定期支出として確認しました。関連する分析を更新しています。' : decision === 'IGNORED' ? '対象外にしました。関連する分析を更新しています。' : '自動検出へ戻しました。関連する分析を更新しています。')
+      onDecisionChanged()
+    } catch {
+      setDecisionNotice('確認状態を更新できませんでした。表示中の状態は変更していません。再読み込み後にもう一度お試しください。')
+    } finally { setBusyPayee(null) }
+  }
+  if (notice && !intelligence) return <section className="panel"><p className="empty-state">{notice}</p></section>
   if (!intelligence) return <section className="panel"><p className="empty-state">家計履歴を分析しています…</p></section>
   const cadenceLabel = { WEEKLY: '毎週', BIWEEKLY: '隔週', MONTHLY: '毎月', QUARTERLY: '四半期', ANNUAL: '毎年' } as const
-  return <section className="intelligence-grid"><article className="panel recurring-panel"><div className="panel-head"><div><h2>定期支出・サブスクリプション</h2><p>{intelligence.historyFrom} 以降の計算対象の確定取引から推定（集計対象外を除く）</p></div><Repeat2 size={19} /></div>{intelligence.recurringItems.length === 0 ? <p className="empty-state">十分な反復履歴はまだありません。</p> : intelligence.recurringItems.map((item) => <div className="recurring-row" key={item.normalizedPayee}><div><strong>{item.displayPayee}</strong><span>{cadenceLabel[item.cadence]} ・ {item.occurrenceCount}回 ・ 信頼度 {Math.round(item.confidenceBps / 100)}%</span></div><div><small>次回見込み</small><strong>{item.nextExpectedOn}</strong></div><div><small>標準金額</small><strong>{yen(item.typicalAmountJpy)}</strong>{item.priceChangeBps != null && item.priceChangeBps !== 0 && <em>{item.priceChangeBps > 0 ? '+' : ''}{(item.priceChangeBps / 100).toFixed(1)}%</em>}</div></div>)}</article><article className="panel anomaly-panel"><div className="panel-head"><div><h2>異常支出</h2><p>同じ支払先の計算対象の過去実績と比較</p></div><Bell size={19} /></div>{intelligence.anomalies.length === 0 ? <p className="empty-state">確認が必要な異常支出はありません。</p> : intelligence.anomalies.map((item) => <button key={item.transactionId} onClick={openTransactions}><span><strong>{item.displayPayee}</strong><small>{item.occurredOn} ・ 基準 {yen(item.baselineAmountJpy)} ({item.baselineSampleCount}件)</small></span><strong>{yen(item.amountJpy)}</strong><em>スコア {Math.round(item.scoreBps / 100)}</em></button>)}</article></section>
+  const allRecurringItems = [...intelligence.recurringItems, ...intelligence.ignoredRecurringItems]
+  const statusLabel = { AUTO_DETECTED: '自動検出', CONFIRMED: '確認済み', IGNORED: '対象外' } as const
+  return <><section className="intelligence-grid"><article className="panel recurring-panel"><div className="panel-head"><div><h2>定期支出・サブスクリプション</h2><p>{intelligence.historyFrom} 以降の計算対象の確定取引から推定（集計対象外を除く）</p></div><Repeat2 size={19} /></div>{notice && <p className="recurring-decision-notice" role="status">{notice}</p>}{decisionNotice && <p className="recurring-decision-notice" role="status">{decisionNotice}</p>}{allRecurringItems.length === 0 ? <p className="empty-state">十分な反復履歴はまだありません。</p> : allRecurringItems.map((item) => { const preference = preferences?.find((candidate) => candidate.normalizedPayee === item.normalizedPayee); const requiresPreference = item.decisionStatus !== 'AUTO_DETECTED'; const disabled = busyPayee !== null || preferences === null || (requiresPreference && !preference); return <div className={`recurring-row recurring-${item.decisionStatus.toLowerCase()}`} key={item.normalizedPayee}><div><span className={`recurring-status recurring-status-${item.decisionStatus.toLowerCase()}`}>{statusLabel[item.decisionStatus]}</span><strong>{item.displayPayee}</strong><span>{cadenceLabel[item.cadence]} ・ {item.occurrenceCount}回 ・ 信頼度 {Math.round(item.confidenceBps / 100)}%</span></div><div><small>次回見込み</small><strong>{item.nextExpectedOn}</strong></div><div><small>標準金額</small><strong>{yen(item.typicalAmountJpy)}</strong>{item.priceChangeBps != null && item.priceChangeBps !== 0 && <em>{item.priceChangeBps > 0 ? '+' : ''}{(item.priceChangeBps / 100).toFixed(1)}%</em>}</div><div className="recurring-decision-actions">{item.decisionStatus === 'AUTO_DETECTED' && <button className="mini-btn" disabled={disabled} onClick={() => void changeDecision(item.normalizedPayee, 'CONFIRMED')}>定期支出として確認</button>}{item.decisionStatus !== 'IGNORED' && <button className="text-btn" disabled={disabled} onClick={() => void changeDecision(item.normalizedPayee, 'IGNORED')}>対象外にする</button>}{item.decisionStatus === 'IGNORED' && <button className="secondary-btn" disabled={disabled} onClick={() => void changeDecision(item.normalizedPayee, 'RESTORE')}>自動検出へ戻す</button>}{busyPayee === item.normalizedPayee && <small>更新中…</small>}</div></div> })}</article><article className="panel anomaly-panel"><div className="panel-head"><div><h2>異常支出</h2><p>同じ支払先の計算対象の過去実績と比較</p></div><Bell size={19} /></div>{intelligence.anomalies.length === 0 ? <p className="empty-state">確認が必要な異常支出はありません。</p> : intelligence.anomalies.map((item) => <button key={item.transactionId} onClick={openTransactions}><span><strong>{item.displayPayee}</strong><small>{item.occurredOn} ・ 基準 {yen(item.baselineAmountJpy)} ({item.baselineSampleCount}件)</small></span><strong>{yen(item.amountJpy)}</strong><em>スコア {Math.round(item.scoreBps / 100)}</em></button>)}</article></section></>
 }
 
-function FixedCostReviewPanel({ householdId, accountGroupId, attributionScope, month, revision, openTransactions }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; month: string; revision: number; openTransactions: () => void }) {
+function FixedCostReviewPanel({ householdId, accountGroupId, attributionScope, month, revision, preferenceRevision, openTransactions }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; month: string; revision: number; preferenceRevision: number; openTransactions: () => void }) {
   const [review, setReview] = useState<FixedCostReviewDto | null>(null)
   const [notice, setNotice] = useState('')
   useEffect(() => {
@@ -2065,7 +2098,7 @@ function FixedCostReviewPanel({ householdId, accountGroupId, attributionScope, m
       .then((result) => { if (active) setReview(result) })
       .catch(() => { if (active) setNotice('固定費レビューを読み込めませんでした。6か月分の確定取引を確認してください。') })
     return () => { active = false }
-  }, [accountGroupId, attributionScope, householdId, month, revision])
+  }, [accountGroupId, attributionScope, householdId, month, preferenceRevision, revision])
   if (notice) return <section className="panel"><p className="empty-state">{notice}</p></section>
   if (!review) return <section className="panel report-loading"><Repeat2 size={28} /><p>完了済み6か月の固定費を比較しています…</p></section>
   return <FixedCostReviewView data={review} onOpenTransactions={openTransactions} />
@@ -2153,6 +2186,7 @@ function ReportTabs({ view, onChange }: { view: ReportView; onChange: (view: Rep
 
 function ReportsPage({ householdId, accountGroupId, attributionScope, accountGroups, onGroupsChanged, accounts, month, revision, initialView, openPage }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; accountGroups: readonly AccountGroupDto[]; onGroupsChanged: (groups: readonly AccountGroupDto[]) => void; accounts: readonly AccountDto[]; month: string; revision: number; initialView: ReportView; openPage: (page: PageId) => void }) {
   const [view, setView] = useState<ReportView>(initialView)
+  const [recurringPreferenceRevision, setRecurringPreferenceRevision] = useState(0)
   const [calendar, setCalendar] = useState<FinancialCalendarDto | null>(null)
   const [monthlyReport, setMonthlyReport] = useState<MonthlyFinancialReportDto | null>(null)
   const [monthlyCsvSaving, setMonthlyCsvSaving] = useState(false)
@@ -2176,7 +2210,7 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
       .then(([nextCalendar, nextReport, nextForecast]) => { if (active) { setCalendar(nextCalendar); setMonthlyReport(nextReport); setForecast(nextForecast); setNotice(''); setMonthlyExportNotice('') } })
       .catch(() => { if (active) { setCalendar(null); setMonthlyReport(null); setForecast(null); setNotice('家計レビューを読み込めませんでした。') } })
     return () => { active = false }
-  }, [accountGroupId, attributionScope, householdId, month, revision])
+  }, [accountGroupId, attributionScope, householdId, month, recurringPreferenceRevision, revision])
   const saveMonthlyCsv = async () => {
     if (!householdId) return
     setMonthlyCsvSaving(true); setMonthlyExportNotice('')
@@ -2247,8 +2281,8 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
       ? monthlyReport ? <><MonthlyReportView data={monthlyReport} comparison={comparison} savingCsv={monthlyCsvSaving} savingXlsx={monthlyXlsxSaving} savingPdf={monthlyPdfSaving} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveMonthlyCsv()} onSaveXlsx={() => void saveMonthlyXlsx()} onSavePdf={() => void saveMonthlyPdf()} />{monthlyExportNotice && <p role="status">{monthlyExportNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{notice || '月次比較レポートを読み込んでいます…'}</p></section>
       : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} savingCsv={annualCsvSaving} savingXlsx={annualXlsxSaving} savingPdf={annualPdfSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} onSaveXlsx={() => void saveAnnualXlsx()} onSavePdf={() => void saveAnnualPdf()} />{annualNotice && <p role="status">{annualNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || '前年同期間と年次推移を比較しています…'}</p></section>
       : view === 'FORECAST' ? forecast ? <ForecastActionViews data={forecast} onAction={(action: ActionItemDto) => openPage(pageForAction(action))} /> : <section className="panel report-loading"><TrendingUp size={28} /><p>{notice || '予測とアクションを読み込んでいます…'}</p></section>
-        : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
-          : view === 'FIXED_COST' ? <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} openTransactions={() => openPage('transactions')} />
+        : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} preferenceRevision={recurringPreferenceRevision} openTransactions={() => openPage('transactions')} onDecisionChanged={() => setRecurringPreferenceRevision((value) => value + 1)} />
+          : view === 'FIXED_COST' ? <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} preferenceRevision={recurringPreferenceRevision} openTransactions={() => openPage('transactions')} />
             : <AccountGroupsExportPanel householdId={householdId} accounts={accounts} month={month} groups={accountGroups} selectedAccountGroupId={accountGroupId} attributionScope={attributionScope} onGroupsChanged={onGroupsChanged} />
   const reportBody = <section id="report-tabpanel" role="tabpanel" aria-labelledby={`report-tab-${view.toLowerCase()}`} tabIndex={0}>{reportBodyContent}</section>
   return <><PageHeader eyebrow="家計レビュー" title="カレンダー・レポート" description="計算対象の確定台帳（集計対象外を除く）を日次、月次、年次、予測、定期支出・異常支出の視点で確認します。"><ReportTabs view={view} onChange={setView} /></PageHeader>{reportBody}</>
