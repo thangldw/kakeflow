@@ -44,6 +44,7 @@ export type SourceType =
   | 'MANUAL_UPLOAD'
   | 'WATCHED_FOLDER'
   | 'GOOGLE_DRIVE'
+  | 'GMAIL'
   | 'ICLOUD_PICKER'
   | 'CAMERA_SCAN'
   | 'EMAIL_ATTACHMENT'

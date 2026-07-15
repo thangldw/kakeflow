@@ -95,7 +95,7 @@ export interface NormalizedCandidateDto {
 }
 export interface StartImportDto {
   readonly runId: string; readonly documentId: string; readonly householdId: string
-  readonly sourceType: 'LOCAL_FOLDER' | 'ICLOUD_PICKER' | 'GOOGLE_DRIVE' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
+  readonly sourceType: 'LOCAL_FOLDER' | 'ICLOUD_PICKER' | 'GOOGLE_DRIVE' | 'GMAIL' | 'MANUAL_UPLOAD' | 'CAMERA_SCAN' | 'OTHER'
   readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly sourceModifiedAt: string | null; readonly adapterId: string | null; readonly adapterVersion: string | null

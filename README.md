@@ -185,6 +185,11 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   durable Folder Inbox can discover locally saved `.eml` files from a selected
   mail-drop folder, but this is not mailbox OAuth, mailbox API access, or remote
   background email polling.
+- Tested [Gmail connector foundation](docs/GMAIL_CONNECTOR.md) with dedicated
+  read-only OAuth, credential binding, bounded raw-message/history APIs, and a
+  durable label-scoped Inbox model. Runtime commands, hydration, scheduling,
+  and UI remain in progress, so the stable release does not yet claim a live
+  Gmail connection.
 - Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
   for the official Shift_JIS business-account record family, with exact
   header/detail/footer/final validation, totals and running-balance

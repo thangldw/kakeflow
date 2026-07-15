@@ -139,6 +139,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0056_source_document_cloud_sources.sql"
     )),
+    M::up(include_str!("../migrations/0057_gmail_connector.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -377,6 +378,9 @@ pub fn clear_restored_device_local_state(
         }
         if version >= 53 {
             transaction.execute("DELETE FROM google_drive_connections", [])?;
+        }
+        if version >= 57 {
+            transaction.execute("DELETE FROM gmail_connections", [])?;
         }
         transaction.commit()?;
         connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
@@ -1629,6 +1633,49 @@ fn validate_restored_semantics(
              ) LIMIT 1",
         )?;
     }
+    if schema_version >= 57 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM gmail_connections c
+             LEFT JOIN households h ON h.id=c.household_id
+             WHERE h.id IS NULL
+                OR c.oauth_scope!='https://www.googleapis.com/auth/gmail.readonly'
+                OR ((c.label_id IS NULL)!=(c.label_name IS NULL))
+                OR (c.history_id IS NOT NULL AND c.start_history_id IS NULL)
+                OR (c.status='CONNECTED' AND (c.google_account_id IS NULL
+                    OR c.label_id IS NULL OR c.history_id IS NULL))
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM gmail_sync_schedules s
+             LEFT JOIN gmail_connections c ON c.id=s.connection_id
+             WHERE c.id IS NULL
+                OR ((s.last_result='RUNNING')!=(s.lease_token IS NOT NULL))
+                OR ((s.lease_token IS NULL)!=(s.lease_expires_at IS NULL))
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM gmail_inbox i
+             LEFT JOIN gmail_connections c ON c.id=i.connection_id
+             LEFT JOIN import_runs r ON r.id=i.import_run_id
+             WHERE c.id IS NULL OR c.household_id!=i.household_id
+                OR (i.import_run_id IS NOT NULL AND r.household_id!=i.household_id)
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM gmail_source_links l
+             LEFT JOIN gmail_inbox i ON i.id=l.inbox_id
+             LEFT JOIN source_documents d ON d.id=l.source_document_id
+             WHERE i.id IS NULL OR d.id IS NULL OR i.household_id!=d.household_id
+                OR d.source_type!='GMAIL' OR i.state!='STAGED'
+                OR i.import_run_id!=d.import_run_id
+                OR i.content_sha256 IS NULL OR i.content_sha256!=d.sha256
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -2002,6 +2049,33 @@ mod tests {
             assert!(validate_restored_semantics(connection, 54).is_err());
             Ok(())
         }).expect("restore semantic audit should execute");
+    }
+
+    #[test]
+    fn restored_semantics_reject_gmail_cross_household_inbox_scope() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                connection.execute_batch(&format!(
+                    "INSERT INTO households(id,name) VALUES('family','Family'),('other','Other');
+                 INSERT INTO gmail_connections
+                   (id,household_id,google_account_id,account_email,client_id_fingerprint,
+                    label_id,label_name,status,start_history_id,history_id)
+                 VALUES('gmail','family','user','user@example.com','{hash}',
+                    'Label_1','KakeFlow','CONNECTED','100','100');
+                 INSERT INTO gmail_inbox
+                   (id,household_id,connection_id,provider_message_id,generation_fingerprint,
+                    message_history_id,internal_date_ms,file_name,state)
+                 VALUES('{hash}','family','gmail','message-1','{hash}',
+                    '101',1784064000000,'message.eml','DISCOVERED');
+                 DROP TRIGGER trg_gmail_inbox_identity_immutable;
+                 UPDATE gmail_inbox SET household_id='other' WHERE id='{hash}';"
+                ))?;
+                assert!(validate_restored_semantics(connection, 57).is_err());
+                Ok(())
+            })
+            .expect("restore semantic audit should execute");
     }
 
     #[test]
@@ -4338,7 +4412,7 @@ mod tests {
     }
 
     #[test]
-    fn portable_restore_clears_device_local_folder_and_google_drive_grants() {
+    fn portable_restore_clears_device_local_folder_google_drive_and_gmail_grants() {
         let test_directory = std::env::temp_dir().join(format!(
             "kakeflow-device-state-test-{}-{}",
             std::process::id(),
@@ -4363,6 +4437,12 @@ mod tests {
                      VALUES('drive','family',?1,'AUTHORIZING')",
                     ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
                 )?;
+                connection.execute(
+                    "INSERT INTO gmail_connections
+                       (id,household_id,client_id_fingerprint,status)
+                     VALUES('gmail','family',?1,'AUTHORIZING')",
+                    ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                )?;
                 Ok(())
             })
             .expect("seed watched folder");
@@ -4382,6 +4462,12 @@ mod tests {
             })
             .expect("count Google Drive connections");
         assert_eq!(drive_count, 0);
+        let gmail_count: i64 = connection
+            .query_row("SELECT count(*) FROM gmail_connections", [], |row| {
+                row.get(0)
+            })
+            .expect("count Gmail connections");
+        assert_eq!(gmail_count, 0);
         drop(connection);
         let _ = fs::remove_dir_all(test_directory);
     }
