@@ -3067,12 +3067,22 @@ pub fn apply_classification_rule(
             )
             .map_err(map_database_error)?;
     }
-    transaction.execute(
-        "INSERT INTO classification_rule_applications
-         (household_id, transaction_id, rule_id, previous_category_account_id, applied_category_account_id)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![input.household_id, input.transaction_id, input.rule_id, previous_category, rule.category_account_id],
-    ).map_err(map_database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO classification_rule_applications
+         (household_id, transaction_id, rule_id, previous_category_account_id,
+          applied_category_account_id, rule_updated_at, application_source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'POST_TRANSACTION')",
+            params![
+                input.household_id,
+                input.transaction_id,
+                input.rule_id,
+                previous_category,
+                rule.category_account_id,
+                rule.updated_at
+            ],
+        )
+        .map_err(map_database_error)?;
     transaction
         .execute(
             "UPDATE transactions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -4260,6 +4270,11 @@ mod tests {
         connection
             .execute_batch(include_str!("../migrations/0009_classification_rules.sql"))
             .expect("classification rule schema");
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0061_classification_application_audit.sql"
+            ))
+            .expect("classification application audit schema");
         connection
     }
 
@@ -6787,7 +6802,7 @@ mod tests {
         .unwrap();
         create_manual_transaction(&connection, &manual_expense("coffee-tx", "family", 800))
             .unwrap();
-        create_classification_rule(&connection, &grocery_rule("family")).unwrap();
+        let rule = create_classification_rule(&connection, &grocery_rule("family")).unwrap();
         let detail = get_transaction_detail(&connection, "family", "coffee-tx").unwrap();
         let applied = apply_classification_rule(
             &connection,
@@ -6810,6 +6825,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(category, "family-entertainment");
+        let audit: (String, String) = connection
+            .query_row(
+                "SELECT application_source,rule_updated_at
+                 FROM classification_rule_applications
+                 WHERE transaction_id='coffee-tx'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(audit, ("POST_TRANSACTION".into(), rule.updated_at));
         assert!(matches!(
             apply_classification_rule(
                 &connection,

@@ -298,15 +298,22 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Automatic discovery with review-gated ingestion from registered local, iCloud Drive, OneDrive, or NAS folders, plus direct read-only Google Drive OAuth folder sync into the same canonical review workflow. Drive uses bounded incremental polling while KakeFlow is open and falls back to a fresh full reconciliation when its cursor or selected tree requires it. Both paths retain restart-safe queue state and never auto-post ledger transactions.
 - Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
-- Household-scoped classification rules with priority, enable/disable, category, labels, and tags.
+- Household-scoped classification rules with priority, enable/disable,
+  category, labels, and tags. The development line after `v1.0.0` also adds
+  [review-time import suggestions](docs/IMPORT_REVIEW_CLASSIFICATION_RULES.md)
+  that require an explicit Apply, preserve field provenance, fail atomically
+  when the candidate or exact rule revision is stale, and never approve or post
+  an import automatically.
 - Securities asset snapshot ingestion and a dedicated investment dashboard.
 - Authenticated cross-principal family delivery for the confirmed household graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, recipient-encrypted `KFE1` relay transport, exact-byte retry and recipient-set-change recovery, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling. The relay sees ciphertext; sender signatures and automatic apply are intentionally outside this release.
 - Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
 
 ## Remaining product milestones
 
-The evidence required to promote these tracks into an advertised v1 capability
-is tracked in [KakeFlow v1 release readiness](docs/V1_RELEASE_READINESS.md).
+The shipped v1 boundary is recorded in
+[KakeFlow v1 release readiness](docs/V1_RELEASE_READINESS.md). The tracks below
+require their own product, provider, platform, and release evidence before a
+later release can advertise them.
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
 2. Qualify the implemented Gmail and Google Drive connectors with packaged
