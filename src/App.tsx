@@ -133,6 +133,7 @@ type StandardImportAccountRequirement = {
 }
 
 const STANDARD_IMPORT_ACCOUNT_REQUIREMENTS: Partial<Record<AdapterId, StandardImportAccountRequirement>> = {
+  'personal-japanese-bank-ledger-v2': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '銀行CSVの取込先銀行口座を選択してください。' },
   'japanese-bank-ledger-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '銀行CSVの取込先銀行口座を選択してください。' },
   'mufg-bizstation-all-details-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '三菱UFJ銀行 BizSTATION CSVの取込先銀行口座を選択してください。' },
   'mufg-bizstation-deposit-withdrawal-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '三菱UFJ銀行 BizSTATION 入出金明細CSVの取込先銀行口座を選択してください。' },
@@ -143,6 +144,10 @@ const STANDARD_IMPORT_ACCOUNT_REQUIREMENTS: Partial<Record<AdapterId, StandardIm
   'smbc-vpass-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: '三井住友カード（Vpass）明細の取込先カード口座を選択してください。' },
   'aeon-card-finalized-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: 'イオンカード確定明細の取込先カード口座を選択してください。' },
   'paypay-card-finalized-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: 'PayPayカード確定明細の取込先カード口座を選択してください。' },
+}
+
+function builtInAdapterVersion(adapterId: AdapterId): string {
+  return adapterId === 'personal-japanese-bank-ledger-v2' ? '2' : '1'
 }
 
 type DedicatedBrokerageImportConfig = {
@@ -1420,7 +1425,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
           householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename,
           mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength,
           sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null,
-          accountId: defaultAccount, adapterVersion: item.detectedAdapterId === 'custom-delimited-v1' && customParserPreviews[item.id] ? `${customParserPreviews[item.id].profileId}@${customParserPreviews[item.id].profileVersion}` : '1',
+          accountId: defaultAccount, adapterVersion: item.detectedAdapterId === 'custom-delimited-v1' && customParserPreviews[item.id] ? `${customParserPreviews[item.id].profileId}@${customParserPreviews[item.id].profileVersion}` : builtInAdapterVersion(item.detectedAdapterId),
         },
         detectedAdapterId: item.detectedAdapterId,
         parsed: item.parsed,
@@ -1534,7 +1539,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       const started = await startTrackedImport(item, {
         runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename,
         mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id,
-        sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1',
+        sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: builtInAdapterVersion(item.detectedAdapterId),
         records: [{ id: recordId, rowNumber: snapshot.lineage.sourceRow, recordHash: await sha256Text(payloadJson), payloadJson }],
         audienceVisibility: 'SHARED', audienceMemberId: null,
         candidates: [], cardStatements: [],
@@ -1563,7 +1568,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     try {
       const runId = crypto.randomUUID(); const documentId = crypto.randomUUID()
       const records = await Promise.all(events.map(async (event) => { const payloadJson = JSON.stringify(event); return { id: crypto.randomUUID(), rowNumber: event.lineage.sourceRow, recordHash: await sha256Text(payloadJson), payloadJson } }))
-      const started = await startTrackedImport(item, { runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId!, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
+      const started = await startTrackedImport(item, { runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId!, adapterVersion: builtInAdapterVersion(item.detectedAdapterId!), audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
       if (!started.reusedExisting) {
         await brokeragePlatform.importEvents(mapBrokerageEventsImport(events, { householdId, accountId: securitiesAccount.id, sourceDocumentId: started.documentId, idPrefix: runId }))
       }
@@ -1584,7 +1589,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     try {
       const runId = crypto.randomUUID(); const documentId = crypto.randomUUID()
       const records = await Promise.all(snapshots.map(async (snapshot) => { const payloadJson = JSON.stringify(snapshot); return { id: crypto.randomUUID(), rowNumber: snapshot.lineage.sourceRow, recordHash: await sha256Text(payloadJson), payloadJson } }))
-      const started = await startTrackedImport(item, { runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: '1', audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
+      const started = await startTrackedImport(item, { runId, documentId, householdId, sourceType: item.sourceType ?? 'MANUAL_UPLOAD', originalFilename: item.filename, mediaType: item.mediaType ?? 'text/csv', byteSize: item.fileBytes.byteLength, sha256: item.id, sourceModifiedAt: item.sourceModifiedAt ?? null, adapterId: item.detectedAdapterId, adapterVersion: builtInAdapterVersion(item.detectedAdapterId), audienceVisibility: 'SHARED', audienceMemberId: null, records, candidates: [], cardStatements: [] }, item.fileBytes)
       if (!started.reusedExisting) newRunId = started.runId
       const result = await aggregateAssetHistoryPlatform.importHistory({ householdId, snapshots: snapshots.map((snapshot) => mapAggregateAssetSnapshotImport(snapshot, { id: crypto.randomUUID(), householdId, sourceDocumentId: started.documentId })) })
       batchPersisted = true

@@ -1,4 +1,5 @@
 export type AdapterId =
+  | 'personal-japanese-bank-ledger-v2'
   | 'japanese-bank-ledger-v1'
   | 'mufg-bizstation-all-details-v1'
   | 'mufg-bizstation-deposit-withdrawal-v1'

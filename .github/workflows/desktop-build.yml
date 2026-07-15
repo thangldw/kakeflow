@@ -54,6 +54,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Stage and verify pinned macOS OCR resources
+        if: runner.os == 'macOS'
+        run: |
+          npm run ocr:stage:mac
+          npm run ocr:verify
+
+      - name: Stage and verify pinned Windows OCR resources
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          npm run ocr:stage:windows
+          npm run ocr:verify
+
       - name: Build unsigned Tauri bundle
         uses: tauri-apps/tauri-action@v1
         env:

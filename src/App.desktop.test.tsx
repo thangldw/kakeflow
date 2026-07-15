@@ -1585,6 +1585,16 @@ describe('KakeFlow desktop read models', () => {
 
   it.each([
     {
+      name: 'strict personal Japanese bank ledger',
+      filename: 'personal-bank.csv',
+      accountLabel: 'personal-bank.csvの取込先銀行口座',
+      accountId: 'family-bank',
+      missing: '銀行CSVの取込先銀行口座を選択してください。',
+      adapterId: 'personal-japanese-bank-ledger-v2',
+      expectedAdapterVersion: '2',
+      csv: '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n2026/07/27,ラクテンカードサービス,,204987,,100000,,,出',
+    },
+    {
       name: 'MUFG BizSTATION deposit/withdrawal',
       filename: 'mufg-transactions.csv',
       accountLabel: 'mufg-transactions.csvの取込先銀行口座',
@@ -1630,7 +1640,7 @@ describe('KakeFlow desktop read models', () => {
       name: 'PayPay Card', filename: 'paypay-card.csv', accountLabel: 'paypay-card.csvの取込先カード口座', accountId: 'family-card', missing: 'PayPayカード確定明細の取込先カード口座を選択してください。', adapterId: 'paypay-card-finalized-statement-v1', expectedDueOn: '2026-07-27',
       csv: '利用日/キャンセル日,利用店名・商品名,利用者,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日\n2026/06/12,架空ストア,本人,1回,1200,0,1200,1200,0,0,2026/07/27',
     },
-  ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv, expectedDueOn }) => {
+  ])('requires the explicit adapter-compatible account for $name', async ({ filename, accountLabel, accountId, missing, adapterId, csv, expectedDueOn, expectedAdapterVersion }) => {
     const { container } = render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
@@ -1648,6 +1658,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(start)
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
       adapterId,
+      adapterVersion: expectedAdapterVersion ?? '1',
       candidates: [expect.objectContaining({ accountId })],
       ...(accountId === 'family-card' ? { cardStatements: [expect.objectContaining({ cardAccountId: accountId, ...(expectedDueOn ? { issuer: 'PAYPAY_CARD', paymentDueOn: expectedDueOn } : {}) })] } : {}),
     }), expect.any(Uint8Array)))
@@ -1675,7 +1686,8 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledTimes(1))
     const [request, bytes] = desktop.startImport.mock.calls[0]
     expect(request).toMatchObject({
-      originalFilename: 'statement.eml', mediaType: 'message/rfc822', adapterId: 'japanese-bank-ledger-v1',
+      originalFilename: 'statement.eml', mediaType: 'message/rfc822', adapterId: 'personal-japanese-bank-ledger-v2',
+      adapterVersion: '2',
       candidates: [expect.objectContaining({ accountId: 'family-bank' })],
     })
     expect(JSON.parse(request.records[0].payloadJson)).toMatchObject({ sourcePart: 'bank.csv', sourceRow: 2 })

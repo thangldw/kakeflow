@@ -13,6 +13,8 @@ the next planned public milestone is `v1.0.0`.
 Do not change the application version, create intermediate tags, or publish
 partial installers between those milestones. Focused tests still run with each
 capability increment; the complete gate below runs only for a release candidate.
+The requirement classification and platform evidence boundary are maintained in
+[V1_RELEASE_READINESS.md](V1_RELEASE_READINESS.md).
 
 ## Required local gates
 
@@ -31,6 +33,26 @@ shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_VERSION_aarch64.dmg
 The generated OCR runtime is intentionally not stored in Git. A clean release
 checkout must stage it first; both macOS bundle commands fail before packaging
 when the pinned manifest, binary, models, or TSV configuration are absent.
+
+For a Windows x64 release candidate, run these additional gates on native
+Windows rather than on the macOS release host:
+
+```powershell
+npm run ocr:stage:windows
+npm run ocr:verify
+npm run desktop:build:windows
+npm run test:packaged
+npm run test:windows-installer
+```
+
+`desktop:build:windows` verifies an already staged runtime and never downloads
+OCR dependencies itself. Archive the generated OCR manifest, verifier output,
+packaged WebView evidence, and Windows installer acceptance JSON with the release
+evidence. Source inspection or the platform-neutral OCR contract tests on macOS
+do not substitute for these native Windows results. Until all commands above
+pass on Windows—including the installer harness's second OCR smoke against the
+installed resource tree—the release notes must continue to mark Windows
+OCR/installer evidence as incomplete.
 
 Run the packaged-app smoke a second time when the change affects persistence, migrations, import, or application startup. The DMG is ad-hoc signed and is not notarized unless external Apple credentials are configured.
 

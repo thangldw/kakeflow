@@ -99,6 +99,6 @@ download_checked \
 } > "${STAGE_ROOT}/notices/THIRD_PARTY_NOTICES.txt"
 
 node "${ROOT}/scripts/write-ocr-resource-manifest.mjs" \
-  "${STAGE_ROOT}" "${VCPKG_COMMIT}" "${TESSERACT_VERSION}" "${TESSDATA_VERSION}" "${TRIPLET}"
-node "${ROOT}/scripts/verify-ocr-resources.mjs"
+  "${STAGE_ROOT}" "macos-arm64"
+KAKEFLOW_OCR_TARGET="macos-arm64" node "${ROOT}/scripts/verify-ocr-resources.mjs"
 echo "Packaged OCR resources staged at ${STAGE_ROOT}"

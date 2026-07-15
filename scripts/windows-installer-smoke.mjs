@@ -102,6 +102,24 @@ export async function runWindowsInstallerSmoke({
       throw new Error(`Installed KakeFlow version ${installedVersion || '(empty)'} does not match ${version}`)
     }
 
+    const ocrManifest = JSON.parse(await readFile(path.join(layout.ocrRoot, 'manifest.json'), 'utf8'))
+    const ocrVerification = await execFile(
+      process.execPath,
+      [path.join(root, 'scripts', 'verify-ocr-resources.mjs')],
+      {
+        timeout: processTimeoutMs,
+        windowsHide: true,
+        env: {
+          ...process.env,
+          KAKEFLOW_OCR_RESOURCE_ROOT: layout.ocrRoot,
+          KAKEFLOW_OCR_TARGET: 'windows-x64',
+        },
+      },
+    )
+    if (!ocrVerification.stdout.includes('Packaged OCR resources verified')) {
+      throw new Error('Installed Windows OCR verifier did not produce success evidence')
+    }
+
     const packaged = await runPackagedSmoke({
       executable: layout.executable,
       artifactDirectory: evidenceDirectory,
@@ -126,6 +144,12 @@ export async function runWindowsInstallerSmoke({
       installedProductVersion: installedVersion,
       resources: installedResources,
       uninstallerPresent: true,
+      ocr: {
+        status: 'ok',
+        target: ocrManifest.target,
+        manifestSchemaVersion: ocrManifest.schemaVersion,
+        tsvSmoke: true,
+      },
       packagedSmoke: {
         status: packaged.status,
         schemaVersion: packaged.schemaVersion,
