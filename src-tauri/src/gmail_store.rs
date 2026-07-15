@@ -15,6 +15,7 @@ const SYNC_LEASE_MINUTES: u32 = 2;
 const INBOX_LEASE_MINUTES: u32 = 5;
 const MAX_BATCH: usize = 100;
 const MAX_INBOX_ATTEMPTS: i64 = 5;
+const MAX_FULL_RECONCILIATION_MESSAGES: usize = 250_000;
 
 #[derive(Debug, Error)]
 pub enum GmailStoreError {
@@ -141,7 +142,7 @@ pub fn begin_connection(
     c.execute(
         "INSERT INTO gmail_connections(id,household_id,client_id_fingerprint) VALUES(?1,?2,?3)
          ON CONFLICT(id) DO UPDATE SET client_id_fingerprint=excluded.client_id_fingerprint,
-           google_account_id=NULL,account_email=NULL,label_id=NULL,label_name=NULL,status='AUTHORIZING',start_history_id=NULL,
+           google_account_id=NULL,account_email=NULL,gmail_query='has:attachment',label_id=NULL,label_name=NULL,status='AUTHORIZING',start_history_id=NULL,
            history_id=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE gmail_connections.household_id=excluded.household_id
            AND gmail_connections.status IN ('AUTH_REQUIRED','DISCONNECTED')",
@@ -150,16 +151,12 @@ pub fn begin_connection(
     load_connection(c, household, id)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn mark_authorized(
     c: &Connection,
     household: &str,
     id: &str,
     account_id: &str,
     email: &str,
-    query: &str,
-    label_id: &str,
-    label_name: &str,
     history_id: &str,
 ) -> Result<GmailConnectionDto> {
     scoped(household, id)?;
@@ -168,16 +165,38 @@ pub fn mark_authorized(
         return Err(GmailStoreError::InvalidInput);
     }
     text(email, 320)?;
+    history(history_id)?;
+    let changed = c.execute(
+        "UPDATE gmail_connections SET google_account_id=?3,account_email=?4,
+           label_id=NULL,label_name=NULL,start_history_id=?5,history_id=?5,status='SELECTING_LABEL',
+           updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE household_id=?1 AND id=?2 AND status='AUTHORIZING'",
+        params![household, id, account_id, email, history_id],
+    )?;
+    require_changed(c, household, id, changed)?;
+    load_connection(c, household, id)
+}
+
+pub fn bind_label(
+    c: &Connection,
+    household: &str,
+    id: &str,
+    query: &str,
+    label_id: &str,
+    label_name: &str,
+    fresh_history_id: &str,
+) -> Result<GmailConnectionDto> {
+    scoped(household, id)?;
     text(query, 1024)?;
     text(label_id, 256)?;
     text(label_name, 255)?;
-    history(history_id)?;
+    history(fresh_history_id)?;
     let changed = c.execute(
-        "UPDATE gmail_connections SET google_account_id=?3,account_email=?4,gmail_query=?5,
-           label_id=?6,label_name=?7,start_history_id=?8,history_id=?8,status='CONNECTED',
-           updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-         WHERE household_id=?1 AND id=?2 AND status='AUTHORIZING'",
-        params![household, id, account_id, email, query, label_id, label_name, history_id],
+        "UPDATE gmail_connections SET gmail_query=?3,label_id=?4,label_name=?5,
+         start_history_id=?6,history_id=?6,status='CONNECTED',
+         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE household_id=?1 AND id=?2 AND status='SELECTING_LABEL'",
+        params![household, id, query, label_id, label_name, fresh_history_id],
     )?;
     require_changed(c, household, id, changed)?;
     load_connection(c, household, id)
@@ -309,7 +328,10 @@ pub fn discover_messages_claimed(
         tx.execute("INSERT INTO gmail_inbox(id,household_id,connection_id,provider_message_id,generation_fingerprint,thread_id,message_history_id,internal_date_ms,estimated_byte_size,rfc822_message_id,file_name,state)
           VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
           ON CONFLICT(connection_id,provider_message_id,generation_fingerprint) DO UPDATE SET
-            state=CASE WHEN gmail_inbox.state='REMOVED' THEN excluded.state ELSE gmail_inbox.state END,
+            state=CASE WHEN gmail_inbox.state='REMOVED' AND gmail_inbox.content_sha256 IS NOT NULL
+                       THEN 'READY'
+                       WHEN gmail_inbox.state='REMOVED' THEN excluded.state
+                       ELSE gmail_inbox.state END,
             updated_at=CASE WHEN gmail_inbox.state='REMOVED' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE gmail_inbox.updated_at END",
           params![inbox_id,lease.household_id,lease.connection_id,m.provider_message_id,fp,m.thread_id,m.history_id,date,size,m.rfc822_message_id,m.file_name,state])?;
         out.push(load_inbox_item(&tx, &lease.household_id, &inbox_id)?);
@@ -361,11 +383,106 @@ pub fn complete_sync(
     Ok(dto)
 }
 
+/// Completes a full label/query reconciliation atomically. Pending evidence
+/// absent from the final membership set is removed before the History cursor
+/// is published; staged evidence and its lineage remain untouched.
+pub fn complete_full_reconciliation(
+    c: &Connection,
+    lease: &SyncLeaseDto,
+    next_history_id: &str,
+    discovered_count: u64,
+    present_message_ids: &[String],
+) -> Result<SyncScheduleDto> {
+    history(next_history_id)?;
+    if present_message_ids.len() > MAX_FULL_RECONCILIATION_MESSAGES {
+        return Err(GmailStoreError::InvalidInput);
+    }
+    let mut unique = BTreeSet::new();
+    for id in present_message_ids {
+        text(id, 256)?;
+        if !unique.insert(id.as_str()) {
+            return Err(GmailStoreError::InvalidInput);
+        }
+    }
+    let count = i64::try_from(discovered_count).map_err(|_| GmailStoreError::InvalidInput)?;
+    let tx = c.unchecked_transaction()?;
+    assert_sync(&tx, lease)?;
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS gmail_full_scan_present(
+           provider_message_id TEXT PRIMARY KEY NOT NULL
+             CHECK(length(trim(provider_message_id)) BETWEEN 1 AND 256)
+         ) STRICT, WITHOUT ROWID;
+         DELETE FROM gmail_full_scan_present;",
+    )?;
+    {
+        let mut insert =
+            tx.prepare("INSERT INTO gmail_full_scan_present(provider_message_id) VALUES(?1)")?;
+        for id in present_message_ids {
+            insert.execute([id])?;
+        }
+    }
+    tx.execute(
+        "UPDATE gmail_inbox SET state='REMOVED',lease_token=NULL,lease_expires_at=NULL,
+         processing_origin_state=NULL,last_error_code=NULL,
+         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE household_id=?1 AND connection_id=?2
+         AND state IN ('DISCOVERED','PROCESSING','READY','NEEDS_MAPPING','FAILED','TOO_LARGE','UNSUPPORTED')
+         AND NOT EXISTS(SELECT 1 FROM gmail_full_scan_present p
+                        WHERE p.provider_message_id=gmail_inbox.provider_message_id)",
+        params![lease.household_id, lease.connection_id],
+    )?;
+    let changed = tx.execute(
+        "UPDATE gmail_connections SET history_id=?4,
+         last_change_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         last_full_scan_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE household_id=?1 AND id=?2 AND history_id=?3",
+        params![
+            lease.household_id,
+            lease.connection_id,
+            lease.history_id,
+            next_history_id
+        ],
+    )?;
+    if changed != 1 {
+        return Err(GmailStoreError::StaleLease);
+    }
+    let released = tx.execute(
+        "UPDATE gmail_sync_schedules SET lease_token=NULL,lease_expires_at=NULL,
+         last_success_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         last_result=CASE WHEN ?3=0 THEN 'NO_CHANGES' ELSE 'DISCOVERED' END,
+         last_discovered_count=?3,consecutive_failures=0,suspended_until=NULL,
+         suspension_reason=NULL,last_error_code=NULL,
+         next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||interval_minutes||' minutes'),
+         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE connection_id=?1 AND lease_token=?2",
+        params![lease.connection_id, lease.lease_token, count],
+    )?;
+    if released != 1 {
+        return Err(GmailStoreError::StaleLease);
+    }
+    let dto = load_schedule(&tx, &lease.household_id, &lease.connection_id)?;
+    tx.commit()?;
+    Ok(dto)
+}
+
 pub fn fail_sync(c: &Connection, lease: &SyncLeaseDto, error: &str) -> Result<SyncScheduleDto> {
     error_code(error)?;
     let tx = c.unchecked_transaction()?;
     assert_sync(&tx, lease)?;
-    tx.execute("UPDATE gmail_sync_schedules SET lease_token=NULL,lease_expires_at=NULL,last_result='FAILED_RETRYABLE',consecutive_failures=min(consecutive_failures+1,10),suspension_reason='RETRY_BACKOFF',suspended_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||min(360,15*(1 << min(consecutive_failures,4)))||' minutes'),next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||min(360,15*(1 << min(consecutive_failures,4)))||' minutes'),last_error_code=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE connection_id=?1 AND lease_token=?3",params![lease.connection_id,error,lease.lease_token])?;
+    tx.execute(
+        "UPDATE gmail_sync_schedules SET lease_token=NULL,lease_expires_at=NULL,
+         last_result='FAILED_RETRYABLE',
+         consecutive_failures=min(consecutive_failures+1,10),
+         suspension_reason='RETRY_BACKOFF',
+         suspended_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||
+           min(360,interval_minutes*(1 << min(consecutive_failures,4)))||' minutes'),
+         next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||
+           min(360,interval_minutes*(1 << min(consecutive_failures,4)))||' minutes'),
+         last_error_code=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE connection_id=?1 AND lease_token=?3",
+        params![lease.connection_id, error, lease.lease_token],
+    )?;
     let dto = load_schedule(&tx, &lease.household_id, &lease.connection_id)?;
     tx.commit()?;
     Ok(dto)

@@ -121,6 +121,22 @@ pub struct GmailProfile {
     pub history_id: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GmailLabelType {
+    System,
+    User,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GmailLabel {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub label_type: GmailLabelType,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GmailMessageRef {
@@ -221,6 +237,17 @@ impl<T: GmailTransport> GmailApiClient<T> {
             return Err(GmailApiError::InvalidResponse);
         }
         Ok(profile)
+    }
+
+    pub fn list_labels(&self) -> Result<Vec<GmailLabel>, GmailApiError> {
+        let mut url = api_url("labels")?;
+        url.query_pairs_mut()
+            .append_pair("fields", "labels(id,name,type)");
+        let wire: LabelListWire = self.get_json(url, MAX_JSON_BYTES, false)?;
+        if wire.labels.len() > 10_000 || wire.labels.iter().any(|label| !valid_label(label)) {
+            return Err(GmailApiError::InvalidResponse);
+        }
+        Ok(wire.labels)
     }
 
     pub fn list_messages_page(
@@ -455,6 +482,12 @@ struct MessageListWire {
 }
 
 #[derive(Deserialize)]
+struct LabelListWire {
+    #[serde(default)]
+    labels: Vec<GmailLabel>,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawMessageWire {
     id: String,
@@ -512,6 +545,13 @@ fn validate_id(value: &str) -> Result<(), GmailApiError> {
 
 fn valid_message_ref(message: &GmailMessageRef) -> bool {
     validate_id(&message.id).is_ok() && validate_id(&message.thread_id).is_ok()
+}
+
+fn valid_label(label: &GmailLabel) -> bool {
+    validate_label_id(&label.id).is_ok()
+        && !label.name.trim().is_empty()
+        && label.name.len() <= 255
+        && !label.name.chars().any(char::is_control)
 }
 
 fn validate_label_id(value: &str) -> Result<(), GmailApiError> {
@@ -657,6 +697,36 @@ mod tests {
         assert!(requests[1].0.contains("pageToken=page_1"));
         assert!(requests[1].0.contains("labelIds=Label_123"));
         assert!(requests[1].0.contains("maxResults=25"));
+    }
+
+    #[test]
+    fn labels_list_returns_validated_system_and_user_labels() {
+        let fake = Fake::new(vec![json(serde_json::json!({
+            "labels":[
+                {"id":"INBOX","name":"INBOX","type":"system"},
+                {"id":"Label_123","name":"KakeFlow/Statements","type":"user"}
+            ]
+        }))]);
+        let labels = GmailApiClient::new("access", &fake)
+            .unwrap()
+            .list_labels()
+            .unwrap();
+        assert_eq!(labels.len(), 2);
+        assert_eq!(labels[1].label_type, GmailLabelType::User);
+        assert_eq!(labels[1].name, "KakeFlow/Statements");
+        assert!(fake.requests.lock().unwrap()[0]
+            .0
+            .contains("fields=labels%28id%2Cname%2Ctype%29"));
+
+        let malformed = Fake::new(vec![json(serde_json::json!({
+            "labels":[{"id":"Label_123","name":"bad\nname","type":"user"}]
+        }))]);
+        assert_eq!(
+            GmailApiClient::new("access", &malformed)
+                .unwrap()
+                .list_labels(),
+            Err(GmailApiError::InvalidResponse)
+        );
     }
 
     #[test]

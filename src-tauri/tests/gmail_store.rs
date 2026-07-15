@@ -12,6 +12,8 @@ fn database() -> Connection {
         include_str!("../migrations/0055_google_drive_root_resource_key.sql"),
         include_str!("../migrations/0056_source_document_cloud_sources.sql"),
         include_str!("../migrations/0057_gmail_connector.sql"),
+        include_str!("../migrations/0058_gmail_label_selection_state.sql"),
+        include_str!("../migrations/0059_gmail_removed_evidence.sql"),
     ] {
         connection.execute_batch(migration).unwrap();
     }
@@ -23,12 +25,15 @@ fn database() -> Connection {
 
 fn connected(c: &Connection) {
     begin_connection(c, "home", "gmail", &"a".repeat(64)).unwrap();
-    mark_authorized(
+    mark_authorized(c, "home", "gmail", "google-user", "user@example.com", "99").unwrap();
+    assert_eq!(
+        load_connection(c, "home", "gmail").unwrap().status,
+        "SELECTING_LABEL"
+    );
+    bind_label(
         c,
         "home",
         "gmail",
-        "google-user",
-        "user@example.com",
         "has:attachment (filename:csv OR filename:pdf)",
         "Label_42",
         "KakeFlow Inbox",
@@ -48,6 +53,74 @@ fn message(history: &str, size: u64) -> RemoteMessage {
         file_name: "gmail-message-1.eml".into(),
         disposition: MessageDisposition::Reviewable,
     }
+}
+
+#[test]
+fn migrations_0058_and_0059_upgrade_released_gmail_foundation_without_data_loss() {
+    let c = Connection::open_in_memory().unwrap();
+    c.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    for migration in [
+        include_str!("../migrations/0001_household_accounts.sql"),
+        include_str!("../migrations/0002_import_provenance.sql"),
+        include_str!("../migrations/0053_google_drive_connections.sql"),
+        include_str!("../migrations/0054_google_drive_inbox.sql"),
+        include_str!("../migrations/0055_google_drive_root_resource_key.sql"),
+        include_str!("../migrations/0056_source_document_cloud_sources.sql"),
+        include_str!("../migrations/0057_gmail_connector.sql"),
+    ] {
+        c.execute_batch(migration).unwrap();
+    }
+    c.execute_batch(
+        "INSERT INTO households(id,name) VALUES('home','Home');
+         INSERT INTO gmail_connections(
+           id,household_id,google_account_id,account_email,client_id_fingerprint,
+           gmail_query,label_id,label_name,status,start_history_id,history_id)
+         VALUES('legacy','home','legacy-account','legacy@example.com',
+           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+           'has:attachment','Label_1','KakeFlow Inbox','CONNECTED','90','100');",
+    )
+    .unwrap();
+    c.execute_batch(include_str!(
+        "../migrations/0058_gmail_label_selection_state.sql"
+    ))
+    .unwrap();
+    assert_eq!(
+        load_connection(&c, "home", "legacy").unwrap().status,
+        "CONNECTED"
+    );
+    begin_connection(&c, "home", "new", &"b".repeat(64)).unwrap();
+    assert_eq!(
+        mark_authorized(&c, "home", "new", "new-account", "new@example.com", "101")
+            .unwrap()
+            .status,
+        "SELECTING_LABEL"
+    );
+    c.execute(
+        "INSERT INTO gmail_inbox(
+           id,household_id,connection_id,provider_message_id,generation_fingerprint,
+           message_history_id,internal_date_ms,file_name,content_sha256,state)
+         VALUES(?1,'home','legacy','legacy-message',?2,'100',1784064000000,
+           'legacy.eml',?3,'READY')",
+        rusqlite::params!["c".repeat(64), "d".repeat(64), "e".repeat(64)],
+    )
+    .unwrap();
+    c.execute_batch(include_str!(
+        "../migrations/0059_gmail_removed_evidence.sql"
+    ))
+    .unwrap();
+    c.execute(
+        "UPDATE gmail_inbox SET state='REMOVED' WHERE provider_message_id='legacy-message'",
+        [],
+    )
+    .unwrap();
+    let preserved: String = c
+        .query_row(
+            "SELECT content_sha256 FROM gmail_inbox WHERE provider_message_id='legacy-message'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(preserved, "e".repeat(64));
 }
 
 #[test]

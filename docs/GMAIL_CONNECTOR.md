@@ -17,11 +17,12 @@ The native foundation is implemented and locally tested:
 - exact base64url decoding of bounded raw RFC 5322 bytes;
 - durable account, label, query, cursor, schedule, lease, retry, Inbox, and
   canonical source-link persistence; and
-- idempotent message identity, review staging, retry, ignore, exact rollback,
-  and full-reconciliation state.
+- bounded initial/history synchronization, exact raw-message hydration into the
+  document vault, idempotent message identity, omission reconciliation, review
+  staging, retry, ignore, and exact rollback state.
 
-Desktop commands, background execution, raw-message hydration, Settings, and
-Import Inbox presentation remain the next implementation milestone. Therefore
+Desktop commands, background execution, Settings, and Import Inbox presentation
+remain the next implementation milestone. Therefore
 the current stable release must not claim that a live Gmail connection is
 available.
 

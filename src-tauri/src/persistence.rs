@@ -140,6 +140,12 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0056_source_document_cloud_sources.sql"
     )),
     M::up(include_str!("../migrations/0057_gmail_connector.sql")),
+    M::up(include_str!(
+        "../migrations/0058_gmail_label_selection_state.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/0059_gmail_removed_evidence.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
