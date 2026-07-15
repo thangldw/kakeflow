@@ -445,7 +445,7 @@ fn write_fx_rates_sheet(
     finish_table(sheet, snapshot.fx_rates.len(), 5)
 }
 
-fn validate_snapshot(
+pub(crate) fn validate_snapshot(
     request: &PortfolioSnapshotXlsxRequest,
     snapshot: &PortfolioSnapshotDetailDto,
 ) -> Result<(), PortfolioSnapshotXlsxError> {

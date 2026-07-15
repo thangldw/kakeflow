@@ -48,6 +48,12 @@ export interface PortfolioSnapshotXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface PortfolioSnapshotCsvSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+}
+
 export interface PortfolioSnapshotPdfSavedDto {
   readonly fileName: string
   readonly pageCount: number
@@ -80,6 +86,10 @@ export function createPortfolioPlatform(invoke: PortfolioInvoke = tauriInvoke) {
       return value.map(parseSummary)
     },
     getSnapshot: async (householdId: string, snapshotId: string): Promise<PortfolioSnapshotDetailDto> => parseDetail(await invoke('portfolio_snapshot_get', { householdId, snapshotId })),
+    saveSnapshotCsv: async (request: PortfolioSnapshotXlsxRequest): Promise<PortfolioSnapshotCsvSavedDto | null> => {
+      const value = await invoke('portfolio_snapshot_csv_save', { request })
+      return value === null ? null : parseSnapshotCsvSaved(value)
+    },
     saveSnapshotXlsx: async (request: PortfolioSnapshotXlsxRequest): Promise<PortfolioSnapshotXlsxSavedDto | null> => {
       const value = await invoke('portfolio_snapshot_xlsx_save', { request })
       return value === null ? null : parseSnapshotXlsxSaved(value)
@@ -89,6 +99,15 @@ export function createPortfolioPlatform(invoke: PortfolioInvoke = tauriInvoke) {
       return value === null ? null : parseSnapshotPdfSaved(value)
     },
   }
+}
+
+function parseSnapshotCsvSaved(value: unknown): PortfolioSnapshotCsvSavedDto {
+  const item = record(value)
+  if (typeof item.fileName !== 'string' || !Number.isSafeInteger(item.rowCount) || !Number.isSafeInteger(item.byteSize)) throw new TypeError('portfolio snapshot CSV summary')
+  const fileName = item.fileName
+  if (fileName.length === 0 || fileName.length > 255 || !/\.csv$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('portfolio snapshot CSV filename')
+  if ((item.rowCount as number) <= 0 || (item.byteSize as number) <= 0) throw new TypeError('portfolio snapshot CSV summary')
+  return item as unknown as PortfolioSnapshotCsvSavedDto
 }
 
 function parseSnapshotXlsxSaved(value: unknown): PortfolioSnapshotXlsxSavedDto {

@@ -51,6 +51,25 @@ describe('portfolio platform boundary', () => {
     }
   })
 
+  it('saves the exact selected snapshot as detailed CSV and validates the native summary', async () => {
+    const request = { householdId: 'home', snapshotId: 'snap-2' }
+    const saved = { fileName: 'kakeflow-portfolio-snapshot-snap-2.csv', rowCount: 18, byteSize: 7_000 }
+    const invoke = vi.fn(async () => saved) as unknown as PortfolioInvoke
+    await expect(createPortfolioPlatform(invoke).saveSnapshotCsv(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('portfolio_snapshot_csv_save', { request })
+
+    await expect(createPortfolioPlatform(async () => null).saveSnapshotCsv(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'snapshot.xlsx', rowCount: 18, byteSize: 7_000 },
+      { fileName: '../snapshot.csv', rowCount: 18, byteSize: 7_000 },
+      { fileName: 'snapshot.csv', rowCount: 0, byteSize: 7_000 },
+      { fileName: 'snapshot.csv', rowCount: 18, byteSize: 0 },
+      { fileName: 'snapshot.csv', rowCount: 1.5, byteSize: 7_000 },
+    ]) {
+      await expect(createPortfolioPlatform(async () => response).saveSnapshotCsv(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('saves the exact selected snapshot as PDF and strictly validates the native summary', async () => {
     const request = { householdId: 'home', snapshotId: 'snap-2' }
     const saved = { fileName: 'kakeflow-portfolio-snapshot-2026-06-30.pdf', pageCount: 5, byteSize: 14_000, rendererVersion: 1 }
