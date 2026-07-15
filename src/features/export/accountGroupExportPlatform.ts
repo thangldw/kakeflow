@@ -71,6 +71,13 @@ export interface TransactionLedgerXlsxSavedDto {
   readonly sheetCount: 2
 }
 
+export interface TransactionLedgerPdfSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly pageCount: number
+  readonly byteSize: number
+}
+
 export type AccountGroupExportInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvoke = tauriInvoke) {
@@ -102,6 +109,10 @@ export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvok
     saveTransactionLedgerXlsx: async (request: ExportCsvRequestDto): Promise<TransactionLedgerXlsxSavedDto | null> => {
       const value = await invoke('transaction_ledger_xlsx_save', { request })
       return value === null ? null : parseTransactionLedgerXlsxSaved(value)
+    },
+    saveTransactionLedgerPdf: async (request: ExportCsvRequestDto): Promise<TransactionLedgerPdfSavedDto | null> => {
+      const value = await invoke('transaction_ledger_pdf_save', { request })
+      return value === null ? null : parseTransactionLedgerPdfSaved(value)
     },
   }
 }
@@ -155,6 +166,16 @@ function parseTransactionLedgerXlsxSaved(value: unknown): TransactionLedgerXlsxS
   return { fileName, rowCount, byteSize, sheetCount: 2 }
 }
 
+function parseTransactionLedgerPdfSaved(value: unknown): TransactionLedgerPdfSavedDto {
+  const item = record(value, 'saved transaction ledger PDF')
+  const fileName = string(item.fileName, 'saved transaction ledger PDF')
+  const rowCount = nonNegativeInteger(item.rowCount, 'saved transaction ledger PDF')
+  const pageCount = positiveInteger(item.pageCount, 'saved transaction ledger PDF')
+  const byteSize = positiveInteger(item.byteSize, 'saved transaction ledger PDF')
+  if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255 || pageCount > 128) throw new TypeError('saved transaction ledger PDF')
+  return { fileName, rowCount, pageCount, byteSize }
+}
+
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new TypeError(label)
   return value as Record<string, unknown>
@@ -168,4 +189,10 @@ function string(value: unknown, label: string): string {
 function nonNegativeInteger(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) throw new TypeError(label)
   return value as number
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  const parsed = nonNegativeInteger(value, label)
+  if (parsed === 0) throw new TypeError(label)
+  return parsed
 }

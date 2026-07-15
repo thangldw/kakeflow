@@ -14,12 +14,16 @@ Gmail connectors remain limited to locally configured test users pending
 provider qualification, and no ingestion path posts automatically.
 
 The development line after `v1.0.0` adds
-[family delivery of recurring-series preferences](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md).
+[family delivery of recurring-series preferences](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md)
+and a source-backed [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md).
 Family schema v4 carries the complete explicit `CONFIRMED`/`IGNORED` household
 preference set as one `SHARED` aggregate inside `KFF4`; it never transports
 detected cadence, predicted amounts, local optimistic versions, or timestamps.
 Receiving remains an explicit review and atomic-Apply workflow, and V1–V3
-artifacts remain compatible.
+artifacts remain compatible. The ledger PDF reuses the exact validated
+transaction export table and selected date, accounting basis, account-group,
+and member-attribution scope already shared by CSV/XLSX; it does not run a
+second query or manufacture totals.
 
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 
@@ -310,7 +314,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   detector-owned `AUTO_DETECTED` cadence and amounts. Schema-v5 local change
   packages can carry the complete explicit household decision set without
   transporting installation-local optimistic versions.
-- Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export, plus a native [Transaction Ledger XLSX](docs/TRANSACTION_LEDGER_XLSX.md) generated from the exact same validated transaction table with typed dates, JPY, Boolean inclusion state, and explicit scope disclosure.
+- Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export, plus native [Transaction Ledger XLSX](docs/TRANSACTION_LEDGER_XLSX.md) and [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md) artifacts generated from the exact same validated transaction table with explicit date, accounting-basis, account-group, member-attribution, and calculation-target disclosure.
 - Automatic discovery with review-gated ingestion from registered local, iCloud Drive, OneDrive, or NAS folders, plus direct read-only Google Drive OAuth folder sync into the same canonical review workflow. Drive uses bounded incremental polling while KakeFlow is open and falls back to a fresh full reconciliation when its cursor or selected tree requires it. Both paths retain restart-safe queue state and never auto-post ledger transactions.
 - Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.

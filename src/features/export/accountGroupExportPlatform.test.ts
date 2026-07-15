@@ -75,4 +75,22 @@ describe('account group and export platform', () => {
       await expect(createAccountGroupExportPlatform(async () => malformed).saveTransactionLedgerXlsx(request)).rejects.toThrow(TypeError)
     }
   })
+
+  it('saves a transaction ledger PDF with the exact CSV request', async () => {
+    const saved = { fileName: 'kakeflow-transactions-2026-07-01-2026-07-31-daily.pdf', rowCount: 1, pageCount: 2, byteSize: 24_000 }
+    const invoke = vi.fn(async () => saved)
+    const platform = createAccountGroupExportPlatform(invoke)
+    await expect(platform.saveTransactionLedgerPdf(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('transaction_ledger_pdf_save', { request })
+    await expect(createAccountGroupExportPlatform(async () => null).saveTransactionLedgerPdf(request)).resolves.toBeNull()
+    for (const malformed of [
+      { ...saved, fileName: '../ledger.pdf' },
+      { ...saved, fileName: 'ledger.xlsx' },
+      { ...saved, byteSize: 0 },
+      { ...saved, pageCount: 0 },
+      { ...saved, pageCount: 129 },
+    ]) {
+      await expect(createAccountGroupExportPlatform(async () => malformed).saveTransactionLedgerPdf(request)).rejects.toThrow(TypeError)
+    }
+  })
 })
