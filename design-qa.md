@@ -79,6 +79,30 @@ final result: passed
 
 ---
 
+# Classification Rules warm-system rollback — 2026-07-16
+
+- Before: `/Users/thang/Documents/kakeflow/docs/audits/rule-builder-2026-07-16/01-before-cobalt.png`
+- After: `/Users/thang/Documents/kakeflow/docs/audits/rule-builder-2026-07-16/02-after-olive.png`
+- Audit: `/Users/thang/Documents/kakeflow/docs/audits/rule-builder-2026-07-16/AUDIT.md`
+- Viewport: `1280 × 720`
+- State: browser preview, light theme, Japanese locale, Classification Rules.
+
+The editorial cobalt/orange experiment was visually inconsistent with the rest
+of KakeFlow. It has been rolled back to the established warm paper, ink, and
+olive system. The useful structural improvements—persistent field labels,
+responsive grid, accessible names, and visible language selection—remain.
+
+## Verification
+
+- No cobalt or signal-orange design tokens remain in the application stylesheet.
+- The language selector remains discoverable but no longer dominates the top bar.
+- Focus rings and actions use the existing olive semantic tokens.
+- The running browser preview showed no console errors, clipping, or overflow.
+
+final result: passed
+
+---
+
 # Classification rule builder visual mix — 2026-07-15
 
 - Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-d0a51b48-ca98-472a-92b0-0195f07cdbda.png`
