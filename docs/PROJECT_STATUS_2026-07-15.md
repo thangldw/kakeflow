@@ -1,178 +1,180 @@
-# KakeFlow project status — 2026-07-15
+# Báo cáo trạng thái dự án KakeFlow — 2026-07-15
 
-## Executive summary
+## Tóm tắt điều hành
 
-KakeFlow has a released `v1.0.0` desktop product and a substantial `v1.1.0`
-feature candidate on `main`. The canonical local-first ledger, import/review
-workflow, dashboards, card reconciliation, investment workspace, reporting,
-folder ingestion, and explicit family-delivery foundations are implemented.
+KakeFlow hiện có phiên bản desktop `v1.0.0` đã phát hành và một nhóm tính năng
+lớn cho `v1.1.0` đã được triển khai trên nhánh `main`. Sổ cái local-first, quy
+trình nhập và duyệt dữ liệu, dashboard, đối soát thẻ tín dụng, quản lý đầu tư,
+báo cáo, theo dõi thư mục và nền tảng chia sẻ dữ liệu gia đình đều đã được xây
+dựng.
 
-The current estimate is:
+Ước lượng tiến độ hiện tại:
 
-- **Core desktop product agreed for v1:** approximately **90% complete**.
-- **Broader product vision including production distribution, native mobile,
-  generally available cloud connectors, and live financial aggregation:**
-  approximately **70–75% complete**.
+- **Sản phẩm desktop cốt lõi theo phạm vi v1:** hoàn thành khoảng **90%**.
+- **Tầm nhìn sản phẩm mở rộng**, bao gồm phát hành production, ứng dụng mobile
+  native, connector cloud dùng rộng rãi và kết nối trực tiếp dịch vụ tài chính:
+  hoàn thành khoảng **70–75%**.
 
-These are scope estimates, not source-line percentages. A capability counts as
-complete only when code, tests, UI integration, and a documented truth boundary
-exist. External qualification, native-platform evidence, and public release are
-counted separately from implementation.
+Đây là ước lượng theo phạm vi tính năng, không phải tỷ lệ số dòng code. Một tính
+năng chỉ được tính là hoàn thành khi có code, kiểm thử, tích hợp giao diện và tài
+liệu mô tả rõ giới hạn dữ liệu. Việc triển khai code, kiểm chứng trên nền tảng
+native, phê duyệt từ nhà cung cấp và phát hành công khai được tính riêng.
 
-## Release state
+## Trạng thái phát hành
 
-| State | Version | Evidence |
+| Trạng thái | Phiên bản | Bằng chứng |
 | --- | --- | --- |
-| Latest public stable | `v1.0.0` | Git tag and GitHub Release with locally verified macOS Apple Silicon DMG |
-| Implemented on `main`, not yet released | `v1.1.0` candidate | Ten feature commits after `v1.0.0`; version/release metadata is prepared locally |
-| Next public release | `v1.1.0` | Blocked until the complete non-security audit, five-report visual QA, OCR/package smoke, DMG verification, commit/tag, and manual GitHub publication pass |
+| Bản ổn định công khai mới nhất | `v1.0.0` | Git tag và GitHub Release kèm DMG macOS Apple Silicon đã kiểm thử local |
+| Đã triển khai trên `main`, chưa phát hành | Ứng viên `v1.1.0` | Mười commit tính năng sau `v1.0.0`; metadata phát hành đang được chuẩn bị local |
+| Bản phát hành công khai tiếp theo | `v1.1.0` | Chờ full audit không bao gồm security, visual QA cho năm loại PDF, kiểm thử OCR/package/DMG, commit, tag và phát hành GitHub thủ công |
 
-The release cadence is now milestone-based. Capability increments receive
-focused tests, commits, and pushes. Full audit, packaging, tagging, and public
-release run only for substantial versions such as `v1.1` and `v1.2`.
+Chu kỳ phát hành đã được chuyển sang theo mốc lớn. Các tính năng nhỏ sẽ được
+chạy kiểm thử theo phạm vi, commit và push. Full audit, đóng gói, tạo tag và phát
+hành công khai chỉ thực hiện tại các phiên bản lớn như `v1.1` và `v1.2`.
 
-## Completed and released in v1.0.0
+## Các phần đã hoàn thành và phát hành trong v1.0.0
 
-### Financial core
+### Nền tảng tài chính
 
-- Canonical double-entry household ledger with Asset, Liability, Income,
-  Expense, transfer, card-purchase, and card-payment semantics.
-- Household/member attribution, shared/private scopes, saved account groups,
-  calculation targets, labels, tags, bulk editing, and source drill-down.
-- Credit-card statements, due dates, cumulative settlement matching, partial,
-  full, overpaid, overdue, and shortfall states without double-counting expense.
-- Budgets, savings goals, financial calendar, fixed-cost review, recurring and
-  unusual-spending detection, three-month forecast, and Action Center.
+- Sổ cái kép chuẩn hóa với Asset, Liability, Income, Expense, transfer, giao
+  dịch mua bằng thẻ và thanh toán dư nợ thẻ.
+- Phân bổ giao dịch theo gia đình/thành viên, phạm vi shared/private, nhóm tài
+  khoản, calculation target, label, tag, chỉnh sửa hàng loạt và truy ngược dữ
+  liệu nguồn.
+- Sao kê thẻ, ngày đến hạn, đối soát thanh toán cộng dồn, các trạng thái thanh
+  toán một phần, đầy đủ, dư, quá hạn và thiếu tiền mà không tính trùng chi phí.
+- Ngân sách, mục tiêu tiết kiệm, lịch tài chính, đánh giá chi phí cố định, phát
+  hiện giao dịch định kỳ/bất thường, dự báo ba tháng và Action Center.
 
-### Data ingestion and evidence
+### Nhập dữ liệu và bằng chứng nguồn
 
-- Immutable CSV, TSV, XLSX, text PDF, scanned/hybrid PDF, receipt image, ZIP,
-  EML, local folder, iCloud/OneDrive/NAS-synced folder, Google Drive test-user,
-  and Gmail test-user ingestion paths.
-- Durable Import Inbox with restart recovery, explicit account mapping,
-  preview, rollback, duplicate handling, receipt matching, item/tax review, and
-  balanced atomic posting.
-- Source viewer for CSV/Excel rows, PDF pages and bounding boxes, and original
-  receipt images with OCR overlays.
-- Generic parser rescue profiles plus strict adapters for major samples and
-  supported Japanese bank, card, wallet, securities, and Money Forward files.
+- Nhập CSV, TSV, XLSX, text PDF, scanned/hybrid PDF, ảnh hóa đơn, ZIP, EML, thư
+  mục local, thư mục iCloud/OneDrive/NAS đã đồng bộ, Google Drive dành cho test
+  user và Gmail dành cho test user.
+- Import Inbox bền vững qua lần khởi động lại, có chọn tài khoản rõ ràng,
+  preview, rollback, xử lý trùng lặp, ghép hóa đơn, duyệt item/thuế và ghi sổ
+  cân bằng theo một transaction nguyên tử.
+- Source viewer cho dòng CSV/Excel, trang PDF và bounding box, ảnh hóa đơn gốc
+  cùng lớp OCR overlay.
+- Custom parser profile dùng để xử lý file chưa hỗ trợ, cùng các adapter chặt
+  chẽ cho những mẫu ngân hàng, thẻ, ví điện tử, chứng khoán và Money Forward đã
+  được xác minh.
 
-### Investment workspace
+### Quản lý đầu tư
 
-- `assetbalance(all)_*.csv` portfolio, position, cash, and FX snapshots kept
-  separate from household spending transactions.
-- Brokerage events for supported SBI, Rakuten Securities, and Monex spot
-  contracts, including buys, sells, dividends, fees, taxes, deposits,
-  withdrawals, splits, mergers, rights, and explicit corporate-action terms.
-- FIFO holdings and realized P&L, dated market prices, native-currency reporting,
-  JPY conversion only with explicit source FX, market value, unrealized P&L,
-  allocation, and missing-price disclosure.
+- Import `assetbalance(all)_*.csv` thành portfolio, position, cash và FX
+  snapshot riêng biệt, không chuyển thành giao dịch chi tiêu gia đình.
+- Xử lý các giao dịch chứng khoán được hỗ trợ từ SBI, Rakuten Securities và
+  Monex: mua, bán, cổ tức, phí, thuế, nạp/rút tiền, split, merger, quyền mua và
+  corporate action có điều kiện rõ ràng.
+- Tính holdings và realized P&L theo FIFO, lịch sử giá, báo cáo theo nguyên tệ,
+  chuyển đổi sang JPY chỉ khi có tỷ giá nguồn, market value, unrealized P&L,
+  asset allocation và cảnh báo thiếu giá.
 
-### Dashboards, reports, and desktop product
+### Dashboard, báo cáo và ứng dụng desktop
 
-- Five customizable Home templates: Financial Overview, Household Ledger,
-  Assets & Liabilities, Card Reconciliation, and Cash Flow.
-- Monthly and annual reviews, transaction ledger, investment performance, and
-  portfolio snapshot views with scoped drill-down and data-quality disclosure.
-- CSV/XLSX/PDF export families released through `v1.0.0`, deterministic Japanese
-  PDF font embedding, and page-by-page Poppler visual-QA tooling.
-- Tauri desktop application, local database/vault, macOS packaged-app and DMG
-  smoke harnesses, Windows packaging foundation, backup/restore, and disabled
-  fail-closed updater contract.
+- Năm template Home tùy chỉnh: Financial Overview, Household Ledger, Assets &
+  Liabilities, Card Reconciliation và Cash Flow.
+- Báo cáo tháng/năm, transaction ledger, investment performance và portfolio
+  snapshot với drill-down theo phạm vi và trạng thái chất lượng dữ liệu.
+- Các nhóm export CSV/XLSX/PDF đã phát hành đến `v1.0.0`, font tiếng Nhật nhúng
+  ổn định và công cụ visual QA từng trang PDF bằng Poppler.
+- Ứng dụng desktop Tauri, database/vault local, kiểm thử app đóng gói và DMG
+  trên macOS, nền tảng đóng gói Windows, backup/restore và updater fail-closed
+  đang tắt.
 
-### Family and multi-device foundations
+### Nền tảng gia đình và đa thiết bị
 
-- Local Family Space, schema-versioned change packages, portable evidence
-  bundles, recipient-encrypted family artifacts, audience partitioning,
-  recipient-set recovery, explicit conflict review, and atomic Apply.
-- Authenticated reference relay and mobile-browser receipt capsule protocol,
-  durable capture queue, Capture Inbox, and review-only promotion.
+- Family Space local, change package có version schema, portable evidence
+  bundle, dữ liệu gia đình mã hóa theo người nhận, phân vùng audience, phục hồi
+  khi danh sách người nhận thay đổi, duyệt conflict và Apply nguyên tử.
+- Relay tham chiếu có xác thực và protocol gửi ảnh hóa đơn từ trình duyệt
+  mobile, hàng đợi capture bền vững, Capture Inbox và luồng promotion chỉ tạo dữ
+  liệu chờ review.
 
-## Implemented after v1.0.0, pending v1.1.0 release
+## Đã triển khai sau v1.0.0, đang chờ phát hành v1.1.0
 
-| Capability | Code state | Release state |
+| Tính năng | Trạng thái code | Trạng thái phát hành |
 | --- | --- | --- |
-| Apply persisted classification rules during Import Inbox review, with stale-rule revalidation | Implemented and focused-tested | Pending v1.1 audit/package |
-| Recurring-series confirm, ignore, restore, forecast/fixed-cost effects | Implemented and focused-tested | Pending v1.1 audit/package |
-| Replicate recurring preferences through schema-v5 packages and family delivery | Implemented and focused-tested | Pending v1.1 audit/package |
-| Transaction Ledger PDF using the exact CSV/XLSX scope | Implemented and focused-tested | Five-report visual QA still required |
-| Correct an already confirmed card-payment link with audit history | Implemented and focused-tested | Pending v1.1 audit/package |
-| Detailed selected Portfolio Snapshot CSV | Implemented and focused-tested | Pending v1.1 audit/package |
-| Annual native-currency Investment Performance CSV | Implemented and focused-tested | Pending v1.1 audit/package |
-| Strict Resona Web入出金明細PLUS 14-field adapter | Implemented and focused-tested | Pending v1.1 audit/package |
-| Strict Mizuho Business Web 13-field adapter | Implemented and focused-tested | Pending v1.1 audit/package |
+| Áp dụng classification rule đã lưu trong Import Inbox và kiểm tra lại rule bị stale | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Confirm, ignore, restore recurring series và cập nhật forecast/fixed-cost | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Đồng bộ recurring preference qua schema-v5 package và family delivery | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Transaction Ledger PDF dùng cùng phạm vi dữ liệu với CSV/XLSX | Đã triển khai và chạy test phạm vi | Còn thiếu visual QA cho bộ năm báo cáo |
+| Sửa liên kết card payment đã confirm và lưu lịch sử audit | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Portfolio Snapshot CSV chi tiết cho đúng snapshot được chọn | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Investment Performance CSV theo năm và nguyên tệ | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Adapter Resona Web入出金明細PLUS 14 trường | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Adapter Mizuho Business Web 13 trường | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
 
-## Current v1.1.0 verification state
+## Trạng thái kiểm chứng v1.1.0 hiện tại
 
-- Release metadata is aligned at `1.1.0` across npm, Cargo, Tauri, changelog,
-  README, release notes, documentation CTAs, and artifact naming.
-- `npm run check:versions` passes.
-- `npm run check:update-channel` reports `DISABLED_UNCONFIGURED` as required.
-- Frontend regression passes: **101 test files / 699 tests**.
-- ESLint, TypeScript/Vite production build, relay **33 tests**, and capture
-  uploader **7 tests** pass.
-- The full Rust regression run exposed one schema-v3 compatibility test failure
-  during the milestone audit. The release remains blocked until that test is
-  reproduced, diagnosed, fixed if necessary, and the complete Rust suite plus
-  clippy pass.
-- Five generated PDF fixtures have not yet been rendered and manually signed
-  off for this candidate.
-- OCR staging, packaged-app smoke, DMG smoke, second persistence smoke,
-  codesign-structure verification, and SHA-256 generation have not yet run for
-  this candidate.
-- No `v1.1.0` commit, tag, DMG, or GitHub Release has been published yet.
+- Metadata `1.1.0` đã đồng bộ giữa npm, Cargo, Tauri, changelog, README, release
+  notes, CTA trên trang dự án và tên artifact.
+- `npm run check:versions` đạt.
+- `npm run check:update-channel` trả về đúng trạng thái
+  `DISABLED_UNCONFIGURED`.
+- Bộ regression frontend đạt: **101 file test / 699 test**.
+- ESLint, TypeScript/Vite production build, **33 test relay** và **7 test capture
+  uploader** đều đạt.
+- Full regression Rust phát hiện một test tương thích schema v3 bị lỗi trong
+  audit milestone. Bản phát hành tiếp tục bị chặn cho đến khi lỗi được tái hiện,
+  phân tích, sửa nếu cần, sau đó toàn bộ Rust suite và clippy phải đạt.
+- Chưa render và duyệt thủ công năm PDF fixture cho ứng viên này.
+- Chưa chạy OCR staging, packaged-app smoke, DMG smoke, lần smoke persistence
+  thứ hai, kiểm tra cấu trúc codesign và tạo SHA-256 cho ứng viên này.
+- Chưa có commit release cuối cùng, tag `v1.1.0`, DMG hoặc GitHub Release
+  `v1.1.0`.
 
-## Not completed
+## Các phần chưa hoàn thành
 
-### Product and data coverage
+### Tính năng và độ phủ dữ liệu
 
-1. Additional high-volume Japanese bank, card, brokerage, pension, insurance,
-   point, mileage, crypto, and other statement adapters beyond the currently
-   strict contracts.
-2. Broader brokerage semantics where source contracts are still ambiguous,
-   including margin/derivatives, unsupported dual-currency settlement, and
-   provider-specific installment/revolving card cases.
-3. Generally available Google Drive and Gmail connectors. The code exists, but
-   provider qualification and packaged real-account validation are incomplete.
-4. A contracted read-only Japanese bank/card aggregation connector. No public
-   consumer API or production partner contract is currently integrated.
-5. Native iOS/Android receipt-capture applications with platform-managed durable
-   storage and reliable background delivery. The current client is a reference
-   mobile-browser implementation.
-6. Broader automatic multi-device coordination. Current delivery remains
-   explicit send/download/review/Apply by product contract; automatic Apply is
-   intentionally not planned.
+1. Các adapter bổ sung cho ngân hàng, thẻ, công ty chứng khoán, lương hưu, bảo
+   hiểm, point, mileage, crypto và các nguồn phổ biến khác chưa có parser riêng.
+2. Các nghiệp vụ chứng khoán chưa đủ hợp đồng nguồn rõ ràng: margin/derivatives,
+   một số hình thức settlement hai tiền tệ, trả góp và revolving card theo từng
+   nhà cung cấp.
+3. Google Drive và Gmail dùng rộng rãi cho production. Code đã có nhưng chưa
+   hoàn tất provider qualification và kiểm thử real-account trên app đóng gói.
+4. Kết nối read-only trực tiếp với ngân hàng/thẻ Nhật thông qua đơn vị
+   aggregation có hợp đồng. Hiện chưa tích hợp đối tác hoặc consumer API phù hợp.
+5. Ứng dụng native iOS/Android để chụp hóa đơn, có durable storage do nền tảng
+   quản lý và background delivery ổn định. Bản hiện tại là client tham chiếu chạy
+   trên trình duyệt mobile.
+6. Điều phối đa thiết bị tự động ở phạm vi rộng hơn. Luồng hiện tại vẫn yêu cầu
+   send/download/review/Apply rõ ràng; automatic Apply chủ động nằm ngoài hợp
+   đồng sản phẩm.
 
-### Distribution and operations
+### Phát hành và vận hành
 
-1. Apple Developer ID signing and notarization. The current macOS artifact is
-   Apple Silicon only and ad-hoc signed.
-2. Native Windows x64 OCR staging, installer execution, installed-app smoke,
-   Authenticode signing, uninstall evidence, and public Windows artifact.
-3. Signed automatic updates, hosted update manifest/artifacts, and platform
-   upgrade/rollback evidence. The updater is intentionally disabled.
-4. Production-hosted relay/mobile delivery operations, service monitoring,
-   support procedures, and provider/legal/commercial readiness.
-5. Full native macOS Intel/universal and Windows ARM64 distribution evidence.
+1. Apple Developer ID signing và notarization. Artifact macOS hiện chỉ hỗ trợ
+   Apple Silicon và dùng ad-hoc signing.
+2. OCR staging native Windows x64, chạy installer, smoke app đã cài đặt,
+   Authenticode signing, kiểm thử uninstall và phát hành artifact Windows.
+3. Automatic update có chữ ký, update manifest/artifact được host và bằng chứng
+   upgrade/rollback trên từng nền tảng. Updater hiện được chủ động vô hiệu hóa.
+4. Vận hành production cho relay/mobile delivery, giám sát dịch vụ, quy trình hỗ
+   trợ và mức độ sẵn sàng về provider/pháp lý/thương mại.
+5. Bằng chứng phát hành macOS Intel/universal và Windows ARM64.
 
-## Recommended next sequence
+## Trình tự công việc đề xuất tiếp theo
 
-1. Resolve the v1.1 Rust compatibility gate and rerun the complete non-security
-   suite once.
-2. Generate and inspect all five PDF fixtures: monthly, annual, investment
-   performance, portfolio snapshot, and transaction ledger.
-3. Commit and push the final v1.1 release metadata, then build/test the DMG from
-   that exact commit.
-4. Create the annotated `v1.1.0` tag and publish the verified DMG manually with
-   its SHA-256; do not use GitHub Actions.
-5. Resume focused capability increments without another full audit/release until
-   the next substantial milestone (`v1.2.0`).
+1. Xử lý gate tương thích Rust của v1.1 và chỉ chạy lại toàn bộ non-security
+   suite một lần.
+2. Tạo và kiểm tra năm PDF fixture: monthly, annual, investment performance,
+   portfolio snapshot và transaction ledger.
+3. Commit/push metadata phát hành v1.1 cuối cùng, sau đó build và kiểm thử DMG
+   từ đúng commit đó.
+4. Tạo tag annotated `v1.1.0` và phát hành DMG đã xác minh cùng SHA-256 theo cách
+   thủ công, không sử dụng GitHub Actions.
+5. Tiếp tục các capability increment bằng kiểm thử theo phạm vi; không chạy full
+   audit hoặc release tiếp cho đến mốc lớn `v1.2.0`.
 
-## Evidence sources
+## Nguồn bằng chứng
 
 - [README](../README.md)
 - [Changelog](../CHANGELOG.md)
-- [v1 release readiness](V1_RELEASE_READINESS.md)
-- [Manual GitHub release](MANUAL_GITHUB_RELEASE.md)
-- [PDF report visual QA](PDF_REPORT_VISUAL_QA.md)
-- Git history through `09c0be5` and public release/tag `v1.0.0`
+- [Điều kiện sẵn sàng phát hành v1](V1_RELEASE_READINESS.md)
+- [Quy trình phát hành GitHub thủ công](MANUAL_GITHUB_RELEASE.md)
+- [Visual QA báo cáo PDF](PDF_REPORT_VISUAL_QA.md)
+- Lịch sử Git đến nhóm tính năng `09c0be5` và tag/release công khai `v1.0.0`
