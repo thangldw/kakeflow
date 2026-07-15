@@ -5,6 +5,10 @@ const drive = vi.hoisted(() => ({
   availability: vi.fn(), list: vi.fn(), connect: vi.fn(), bind: vi.fn(), disconnect: vi.fn(),
   schedule: vi.fn(), updateSchedule: vi.fn(), syncNow: vi.fn(),
 }))
+const syncEvent = vi.hoisted(() => ({
+  subscribe: vi.fn(),
+  listener: null as null | ((event: { householdId: string; connectionId: string; discoveredCount: number; result: 'DISCOVERED' }) => void),
+}))
 vi.mock('../../platform', async (original) => ({
   ...await original<typeof import('../../platform')>(),
   platformClient: {
@@ -12,6 +16,9 @@ vi.mock('../../platform', async (original) => ({
     connectGoogleDrive: drive.connect, bindGoogleDriveFolder: drive.bind, disconnectGoogleDrive: drive.disconnect,
     getGoogleDriveSchedule: drive.schedule, updateGoogleDriveSchedule: drive.updateSchedule, syncGoogleDriveNow: drive.syncNow,
   },
+}))
+vi.mock('./googleDriveSyncEventPlatform', () => ({
+  googleDriveSyncEventPlatform: { subscribe: syncEvent.subscribe },
 }))
 
 import { GoogleDriveSettingsPanel } from './GoogleDriveSettingsPanel'
@@ -39,6 +46,11 @@ describe('GoogleDriveSettingsPanel', () => {
     drive.schedule.mockResolvedValue(schedule); drive.updateSchedule.mockResolvedValue(schedule)
     drive.syncNow.mockResolvedValue({ ...schedule, lastResult: 'DISCOVERED', lastDiscoveredCount: 2 })
     drive.disconnect.mockResolvedValue({ ...connected, status: 'DISCONNECTED' })
+    syncEvent.listener = null
+    syncEvent.subscribe.mockImplementation(async (listener) => {
+      syncEvent.listener = listener
+      return () => undefined
+    })
   })
 
   it('shows availability and the review gate before starting authorization', async () => {
@@ -82,5 +94,23 @@ describe('GoogleDriveSettingsPanel', () => {
     await waitFor(() => expect(drive.disconnect).toHaveBeenCalledWith('family', 'drive-1'))
     expect(await screen.findByText(/取り込み済みの原本と台帳は残ります/)).toBeInTheDocument()
     expect(screen.getByText(/Import Inbox で内容・重複・口座・カテゴリーを確認/)).toBeInTheDocument()
+  })
+
+  it('refreshes connection and schedule only for a completed sync in the active household', async () => {
+    drive.list.mockResolvedValue([connected])
+    render(<GoogleDriveSettingsPanel householdId="family" />)
+    expect(await screen.findByText('家計簿')).toBeInTheDocument()
+    await waitFor(() => expect(syncEvent.subscribe).toHaveBeenCalledOnce())
+    const initialListCalls = drive.list.mock.calls.length
+    const initialScheduleCalls = drive.schedule.mock.calls.length
+
+    syncEvent.listener?.({ householdId: 'other-family', connectionId: 'drive-1', discoveredCount: 4, result: 'DISCOVERED' })
+    await Promise.resolve()
+    expect(drive.list).toHaveBeenCalledTimes(initialListCalls)
+
+    syncEvent.listener?.({ householdId: 'family', connectionId: 'drive-1', discoveredCount: 4, result: 'DISCOVERED' })
+    await waitFor(() => expect(drive.list).toHaveBeenCalledTimes(initialListCalls + 1))
+    await waitFor(() => expect(drive.schedule).toHaveBeenCalledTimes(initialScheduleCalls + 1))
+    expect(drive.schedule).toHaveBeenLastCalledWith('family', 'drive-1')
   })
 })

@@ -289,6 +289,7 @@ fn api_error_code(error: DriveApiError) -> &'static str {
         DriveApiError::Forbidden => "REMOTE_FORBIDDEN",
         DriveApiError::NotFound => "REMOTE_NOT_FOUND",
         DriveApiError::RateLimited => "REMOTE_RATE_LIMITED",
+        DriveApiError::ChangeCursorExpired => "REMOTE_CHANGE_CURSOR_EXPIRED",
         DriveApiError::Retryable => "REMOTE_UNAVAILABLE",
         DriveApiError::Network => "REMOTE_NETWORK_FAILED",
         DriveApiError::InvalidResponse => "REMOTE_INVALID_RESPONSE",

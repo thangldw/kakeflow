@@ -20,7 +20,8 @@ stages 1–4 of the direct desktop connector. The
 native core includes system-browser loopback/PKCE authorization, OS credential
 storage, bounded Drive API access, folder URL/ID binding, race-free recursive
 discovery, incremental change polling, durable sync schedule/lease state,
-manual sync, bounded hydration into immutable local objects, restart-safe
+manual sync, process-scoped background polling while KakeFlow is open,
+bounded hydration into immutable local objects, restart-safe
 durable state, and redacted Tauri command boundaries. The desktop Settings
 panel exposes connection, folder-binding, scheduling, and manual-sync controls.
 These paths are covered by local deterministic tests; they are not evidence
@@ -199,6 +200,11 @@ posted ledger transaction.
 
 Change polling is bounded, resumable, and rate-limit aware. `Sync now` requests
 the same idempotent worker; it does not run an independent import path.
+When automatic sync is enabled, the desktop process claims at most one due
+connection every polling tick and emits only a redacted completion event to
+refresh Settings and Import Inbox. Cursor expiry or a moved-in folder atomically
+marks the connection for a fresh bounded full reconciliation; ledger posting
+remains behind the existing explicit Import Inbox review gate.
 
 ## Remote generation identity
 

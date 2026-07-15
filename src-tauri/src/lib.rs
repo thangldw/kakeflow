@@ -33,6 +33,7 @@ pub mod google_drive_hydration;
 pub mod google_drive_initial_sync;
 pub mod google_drive_oauth;
 pub mod google_drive_oauth_runtime;
+mod google_drive_scheduler;
 pub mod google_drive_store;
 pub mod google_drive_sync_adapter;
 pub mod import_workflow;
@@ -4207,6 +4208,9 @@ pub fn run() {
                         app.handle().clone(),
                     ),
                 );
+                app.manage(google_drive_scheduler::BackgroundGoogleDriveSync::start(
+                    app.handle().clone(),
+                ));
                 app.manage(
                     mobile_capture_background::BackgroundMobileCaptureIntake::start(
                         app.handle().clone(),

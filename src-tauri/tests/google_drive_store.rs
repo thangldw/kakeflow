@@ -89,6 +89,72 @@ fn sync_lease(connection: &Connection) -> SyncLeaseDto {
 }
 
 #[test]
+fn next_due_claim_is_ordered_and_never_claims_disabled_or_leased_work() {
+    let connection = database();
+    connected(&connection);
+    configure_schedule(&connection, "home", "drive", true, 15).unwrap();
+
+    begin_connection(&connection, "other", "drive-other", &"b".repeat(64)).unwrap();
+    mark_authorized(
+        &connection,
+        "other",
+        "drive-other",
+        "google-other",
+        "other@example.com",
+    )
+    .unwrap();
+    select_root_with_baseline(
+        &connection,
+        "other",
+        "drive-other",
+        None,
+        "folder-other",
+        "Other Inbox",
+        None,
+        "other-token",
+    )
+    .unwrap();
+    configure_schedule(&connection, "other", "drive-other", true, 30).unwrap();
+    connection
+        .execute(
+            "UPDATE google_drive_sync_schedules SET next_due_at='2026-01-01T00:00:00.000Z'
+             WHERE connection_id='drive-other'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE google_drive_sync_schedules SET next_due_at='2026-01-02T00:00:00.000Z'
+             WHERE connection_id='drive'",
+            [],
+        )
+        .unwrap();
+
+    let first = claim_next_due_sync(&connection).unwrap().unwrap();
+    assert_eq!(
+        (first.household_id.as_str(), first.connection_id.as_str()),
+        ("other", "drive-other")
+    );
+    let second = claim_next_due_sync(&connection).unwrap().unwrap();
+    assert_eq!(
+        (second.household_id.as_str(), second.connection_id.as_str()),
+        ("home", "drive")
+    );
+    assert!(claim_next_due_sync(&connection).unwrap().is_none());
+
+    fail_sync(
+        &connection,
+        &first.household_id,
+        &first.connection_id,
+        &first.lease_token,
+        "TEST_RETRY",
+    )
+    .unwrap();
+    configure_schedule(&connection, "home", "drive", false, 15).unwrap();
+    assert!(claim_next_due_sync(&connection).unwrap().is_none());
+}
+
+#[test]
 fn lifecycle_requires_order_and_is_household_scoped() {
     let connection = database();
     begin_connection(&connection, "home", "drive", &"a".repeat(64)).unwrap();

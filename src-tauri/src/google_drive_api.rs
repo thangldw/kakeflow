@@ -26,6 +26,8 @@ pub enum DriveApiError {
     NotFound,
     #[error("Google Drive request was rate limited")]
     RateLimited,
+    #[error("Google Drive change cursor expired")]
+    ChangeCursorExpired,
     #[error("Google Drive is temporarily unavailable")]
     Retryable,
     #[error("Google Drive network request failed")]
@@ -357,6 +359,7 @@ impl<T: DriveTransport> DriveApiClient<T> {
             401 => Err(DriveApiError::ReauthorizationRequired),
             403 => Err(DriveApiError::Forbidden),
             404 => Err(DriveApiError::NotFound),
+            410 => Err(DriveApiError::ChangeCursorExpired),
             429 => Err(DriveApiError::RateLimited),
             500..=599 => Err(DriveApiError::Retryable),
             _ => Err(DriveApiError::InvalidResponse),
@@ -613,6 +616,7 @@ mod tests {
             (401, DriveApiError::ReauthorizationRequired),
             (403, DriveApiError::Forbidden),
             (404, DriveApiError::NotFound),
+            (410, DriveApiError::ChangeCursorExpired),
             (429, DriveApiError::RateLimited),
             (503, DriveApiError::Retryable),
         ] {

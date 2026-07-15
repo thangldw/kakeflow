@@ -3,6 +3,7 @@ import { Cloud, FolderOpen, Link2Off, RefreshCw } from 'lucide-react'
 
 import { platformClient } from '../../platform'
 import type { GoogleDriveAvailabilityDto, GoogleDriveConnectionDto, GoogleDriveSyncScheduleDto } from '../../platform'
+import { googleDriveSyncEventPlatform } from './googleDriveSyncEventPlatform'
 import './GoogleDriveSettingsPanel.css'
 
 interface Props { readonly householdId: string | null }
@@ -50,6 +51,27 @@ export function GoogleDriveSettingsPanel({ householdId }: Props) {
   useEffect(() => {
     setAvailability(null); setConnection(null); setSchedule(null); setFolderReference(''); setNotice(''); void load()
     return () => { request.current += 1 }
+  }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) return
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void googleDriveSyncEventPlatform.subscribe((event) => {
+      if (disposed || event.householdId !== householdId) return
+      const current = ++request.current
+      void platformClient.listGoogleDriveConnections(householdId).then(async (connections) => {
+        if (disposed || current !== request.current) return
+        const next = connections.find((item) => item.id === event.connectionId)
+          ?? connections.find((item) => item.status !== 'DISCONNECTED')
+          ?? connections[0]
+          ?? null
+        setConnection(next)
+        if (next?.status === 'CONNECTED') await loadSchedule(next, current)
+        else setSchedule(null)
+      }).catch(() => undefined)
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop }).catch(() => undefined)
+    return () => { disposed = true; unlisten?.() }
   }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const connect = async () => {
