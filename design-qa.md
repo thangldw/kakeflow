@@ -77,8 +77,6 @@ than copying the reference infographic composition.
 
 final result: passed
 
----
-
 # Classification Rules warm-system rollback — 2026-07-16
 
 - Before: `/Users/thang/Documents/kakeflow/docs/audits/rule-builder-2026-07-16/01-before-cobalt.png`
@@ -98,6 +96,31 @@ responsive grid, accessible names, and visible language selection—remain.
 - The language selector remains discoverable but no longer dominates the top bar.
 - Focus rings and actions use the existing olive semantic tokens.
 - The running browser preview showed no console errors, clipping, or overflow.
+
+final result: passed
+
+---
+
+# Claude Design v2 desktop redesign — 2026-07-16
+
+- Source visual truth: `/tmp/kakeflow-claude-design/KakeFlow v2.dc.html`
+- Source captures: `/Users/thang/Documents/kakeflow/docs/audits/claude-redesign-2026-07-16/source/`
+- Implementation captures: `/Users/thang/Documents/kakeflow/docs/audits/claude-redesign-2026-07-16/implementation/`
+- Combined comparisons: `/Users/thang/Documents/kakeflow/docs/audits/claude-redesign-2026-07-16/comparison/`
+- Viewport: `1440 × 900`
+- States: light Japanese desktop shell, dark Vietnamese shell, browser-preview product data.
+
+## Findings and corrections
+
+- Iteration 1: P1 — transaction rows inherited a higher-specificity legacy grid and compressed merchant copy.
+- Fix: normalized the table grid, width and overflow contract; verified the corrected one-line hierarchy in `02-transactions-fixed.png` and `02-transactions-final.png`.
+- Iteration 2: P2 — inactive navigation text was too dim in the new dark theme.
+- Fix: added dark navigation and caption tokens while preserving stronger active-state emphasis.
+- Interaction QA: Japanese/English/Vietnamese switching, light/dark switching, navigation and browser console all passed.
+- Engineering QA: ESLint, production build and all 701 tests across 102 test files passed.
+- Intentional state differences: browser preview contains fewer real sample rows and no persisted investment/rule fixtures; production flows were not replaced with mock-only data.
+
+No actionable P0, P1 or P2 issue remains.
 
 final result: passed
 

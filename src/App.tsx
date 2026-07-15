@@ -17,11 +17,13 @@ import {
   Goal,
   Globe2,
   Home,
+  House,
   Import,
   Leaf,
   Layers,
   LayoutDashboard,
   Menu,
+  Moon,
   MoreHorizontal,
   Search,
   Settings,
@@ -311,6 +313,28 @@ const navigation: NavigationItem[] = [
   { id: 'family', label: '家族スペース', icon: Users },
 ]
 
+const navigationSections: readonly { label: string; pages: readonly PageId[] }[] = [
+  { label: 'メイン', pages: ['overview', 'transactions'] },
+  { label: '取り込み', pages: ['import', 'capture'] },
+  { label: '照合・資産', pages: ['cards', 'investments'] },
+  { label: '計画・分析', pages: ['reports', 'budgets', 'rules'] },
+  { label: '世帯', pages: ['family'] },
+]
+
+const pageMeta: Readonly<Record<PageId, { title: string; description: string }>> = {
+  overview: { title: 'ホーム', description: '世帯の状況・重要アクション・データ品質' },
+  transactions: { title: '取引', description: '確定済み元帳 — 検索・証跡・ドリルダウン' },
+  import: { title: 'インポート', description: 'ファイル検出 → レビュー → 転記' },
+  capture: { title: '撮影 Inbox', description: 'レシート原本・端末内OCR・取込候補' },
+  cards: { title: 'カード照合', description: '明細・引落口座・支払照合' },
+  investments: { title: '資産・投資', description: 'スナップショット・保有・実現損益' },
+  reports: { title: 'カレンダー・レポート', description: '月次・年次・予測・固定費' },
+  budgets: { title: '予算・目標', description: '計画値と確定台帳の比較' },
+  rules: { title: '分類ルール', description: '決定的で説明可能な分類ルール' },
+  family: { title: '家族スペース', description: '世帯メンバー・帰属・共有レビュー' },
+  settings: { title: '設定', description: '口座・ローカルデータ・バックアップ' },
+}
+
 function householdInitials(name: string): string { return name.trim().slice(0, 2) || '家計' }
 
 function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold, importActionableCount }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; importActionableCount: number }) {
@@ -321,8 +345,9 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
       {open && <button className="sidebar-backdrop" aria-label={text('メニューを閉じる')} onClick={close} />}
       <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-label={text('メインナビゲーション')}>
         <div className="brand">
-          <div className="brand-mark"><Leaf size={24} strokeWidth={2.2} /></div>
-          <span>kake<span>flow</span></span>
+          <div className="brand-mark"><House size={18} strokeWidth={2.2} /></div>
+          <span>kakeflow</span>
+          <small className="brand-version">1.1.0</small>
           <button className="icon-btn mobile-close" aria-label={text('メニューを閉じる')} onClick={close}><X size={19} /></button>
         </div>
 
@@ -332,8 +357,9 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
         </div>
 
         <nav>
-          <p className="nav-caption">{text('メニュー')}</p>
-          {navigation.map((item) => (
+          {navigationSections.map((section) => <div className="nav-section" key={section.label}>
+          <p className="nav-caption">{text(section.label)}</p>
+          {navigation.filter((item) => section.pages.includes(item.id)).map((item) => (
             <button
               key={item.id}
               className={`nav-item ${page === item.id ? 'active' : ''}`}
@@ -344,7 +370,7 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
               <span>{text(item.label)}</span>
               {item.id === 'import' && importActionableCount > 0 ? <b aria-hidden="true">{importActionableCount > 99 ? '99+' : importActionableCount}</b> : item.badge && <b>{item.badge}</b>}
             </button>
-          ))}
+          ))}</div>)}
         </nav>
 
         <div className="sidebar-foot">
@@ -356,12 +382,14 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
   )
 }
 
-function Topbar({ openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, attributionScope, setAttributionScope, members, showAccountScope, householdName }: { openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; attributionScope: AttributionScopeDto; setAttributionScope: (scope: AttributionScopeDto) => void; members: readonly HouseholdMemberDto[]; showAccountScope: boolean; householdName: string }) {
+function Topbar({ page, openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, attributionScope, setAttributionScope, members, showAccountScope, theme, onToggleTheme }: { page: PageId; openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; attributionScope: AttributionScopeDto; setAttributionScope: (scope: AttributionScopeDto) => void; members: readonly HouseholdMemberDto[]; showAccountScope: boolean; theme: DashboardPreferencesDto['theme']; onToggleTheme: () => void }) {
   const { locale, setLocale, text } = useI18n()
+  const meta = pageMeta[page]
   return (
     <header className="topbar">
       <button className="icon-btn menu-btn" aria-label={text('メニューを開く')} onClick={openMenu}><Menu size={21} /></button>
-      <div className="top-actions">{showAccountScope && <><label className="scope-picker"><span>{text('口座スコープ')}</span><select aria-label={text('口座スコープ')} value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">{text('すべての口座')}</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="scope-picker"><span>{text('家族集計範囲')}</span><select aria-label={text('家族集計範囲')} value={attributionScopeValue(attributionScope)} onChange={(event) => setAttributionScope(attributionScopeFromValue(event.target.value))}><option value="ALL">{text('世帯全体')}</option><option value="HOUSEHOLD_COMMON">{text('世帯共通')}</option>{members.map((member) => <option key={member.id} value={`MEMBER:${member.id}`}>{member.displayName}{member.status === 'ARCHIVED' ? ' (archived)' : ''}</option>)}</select></label></>}<label className="period-picker"><span>{text('対象月')}</span><input aria-label={text('対象月')} type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><label className="language-picker"><Globe2 size={15} aria-hidden="true" /><span>{text('言語')}</span><select aria-label={text('言語')} value={locale} onChange={(event) => setLocale(event.target.value as 'ja' | 'en' | 'vi')}><option value="ja">日本語</option><option value="en">English</option><option value="vi">Tiếng Việt</option></select></label><div className="top-avatar" aria-label={householdName}>{householdInitials(householdName)}</div></div>
+      <div className="topbar-context"><strong>{text(meta.title)}</strong><span>{text(meta.description)}</span></div>
+      <div className="top-actions">{showAccountScope && <><label className="scope-picker"><span>{text('口座スコープ')}</span><select aria-label={text('口座スコープ')} value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">{text('すべての口座')}</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label className="scope-picker attribution-picker"><span>{text('家族集計範囲')}</span><select aria-label={text('家族集計範囲')} value={attributionScopeValue(attributionScope)} onChange={(event) => setAttributionScope(attributionScopeFromValue(event.target.value))}><option value="ALL">{text('世帯全体')}</option><option value="HOUSEHOLD_COMMON">{text('世帯共通')}</option>{members.map((member) => <option key={member.id} value={`MEMBER:${member.id}`}>{member.displayName}{member.status === 'ARCHIVED' ? ' (archived)' : ''}</option>)}</select></label></>}<label className="period-picker"><span>{text('対象月')}</span><input aria-label={text('対象月')} type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label><div className="language-segment" role="group" aria-label={text('言語')}><Globe2 size={14} aria-hidden="true" /><button className={locale === 'ja' ? 'active' : ''} onClick={() => setLocale('ja')}>日本語</button><button className={locale === 'en' ? 'active' : ''} onClick={() => setLocale('en')}>EN</button><button className={locale === 'vi' ? 'active' : ''} onClick={() => setLocale('vi')}>VI</button></div><button className="theme-toggle" aria-label={text('テーマ切替')} aria-pressed={theme === 'DARK'} onClick={onToggleTheme}><Moon size={15} /></button></div>
     </header>
   )
 }
@@ -380,7 +408,7 @@ function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: str
   const { locale, text } = useI18n()
   return (
     <article className="kpi-card">
-      <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{text(label)}</span></div>
+      <div className="kpi-head"><div className="kpi-icon" style={{ background: accent }}><Icon size={18} /></div><span>{text(label)}</span><small>{text(meta.includes('資金移動') || label.includes('入金') || label.includes('出金') ? '資金移動' : label.includes('純資産') || label === '資産' || label === '負債' ? '残高' : '発生')}</small></div>
       <strong>{value}</strong>
       <div className="kpi-meta">{trend && <em aria-label={locale === 'ja' ? `${trend} 増加` : trend}><ArrowUpRight aria-hidden="true" size={13} /><span aria-hidden="true">{trend}</span></em>}<span>{text(meta)}</span></div>
     </article>
@@ -390,44 +418,27 @@ function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: str
 function TrendChart({ data = spendingTrend.map((point) => ({ month: point.month, income: point.income * 1000, expense: point.expense * 1000 })), incomeLabel = '収入', expenseLabel = '支出' }: { data?: readonly { month: string; income: number; expense: number }[]; incomeLabel?: string; expenseLabel?: string }) {
   const { locale, text } = useI18n()
   if (data.length === 0) return <p className="empty-state">トレンドを表示する取引はまだありません。</p>
-  const max = Math.max(1, ...data.flatMap((point) => [point.income, point.expense])) * 1.08
-  const width = 620
-  const height = 215
-  const pad = 18
-  const x = (i: number) => data.length === 1 ? width / 2 : pad + i * ((width - pad * 2) / (data.length - 1))
-  const y = (v: number) => height - 10 - (v / max) * 170
-  const path = (key: 'income' | 'expense') => data.map((d, i) => `${i ? 'L' : 'M'} ${x(i)} ${y(d[key])}`).join(' ')
+  const max = Math.max(1, ...data.flatMap((point) => [point.income, point.expense]))
   return (
-    <div className="chart-wrap">
-      <div className="chart-y"><span>{yen(Math.round(max))}</span><span>{yen(Math.round(max * .67))}</span><span>{yen(Math.round(max * .34))}</span><span>¥0</span></div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={locale === 'ja' ? `直近6か月の${incomeLabel}と${expenseLabel}` : `${text(incomeLabel)} / ${text(expenseLabel)}, last 6 months`}>
-        {[44, 87, 130, 173].map((line) => <line key={line} x1="18" y1={line} x2="602" y2={line} className="gridline" />)}
-        <path d={`${path('income')} L ${x(data.length - 1)} ${height - 10} L ${x(0)} ${height - 10} Z`} className="area-income" />
-        <path d={path('income')} className="line-income" />
-        <path d={path('expense')} className="line-expense" />
-        {data.map((d, i) => <circle key={`i${d.month}`} cx={x(i)} cy={y(d.income)} r="3.5" className="dot-income" />)}
-        {data.map((d, i) => <circle key={`e${d.month}`} cx={x(i)} cy={y(d.expense)} r="3.5" className="dot-expense" />)}
-      </svg>
+    <div className="chart-wrap chart-bars" role="img" aria-label={locale === 'ja' ? `直近6か月の${incomeLabel}と${expenseLabel}` : `${text(incomeLabel)} / ${text(expenseLabel)}, last 6 months`}>
+      <div className="bar-grid" aria-hidden="true">{[1, .75, .5, .25].map((line) => <i key={line} style={{ bottom: `${line * 100}%` }} />)}</div>
+      <div className="bar-columns">{data.map((point) => <div className="bar-month" key={point.month} aria-label={`${point.month}: ${text(incomeLabel)} ${yen(point.income)}、${text(expenseLabel)} ${yen(point.expense)}`}><div className="bar-pair"><span className="bar-income" style={{ height: `${Math.max(3, point.income / max * 100)}%` }} /><span className="bar-expense" style={{ height: `${Math.max(3, point.expense / max * 100)}%` }} /></div><small>{point.month.includes('-') ? `${Number(point.month.slice(5))}月` : point.month}</small></div>)}</div>
       <table className="visually-hidden"><caption>{locale === 'ja' ? `直近6か月の${incomeLabel}と${expenseLabel}` : `${text(incomeLabel)} / ${text(expenseLabel)}`}</caption><thead><tr><th>{locale === 'ja' ? '月' : text('対象月')}</th><th>{text(incomeLabel)}</th><th>{text(expenseLabel)}</th></tr></thead><tbody>{data.map((point) => <tr key={`table-${point.month}`}><th>{point.month}</th><td>{point.income}{locale === 'ja' ? '円' : ' JPY'}</td><td>{point.expense}{locale === 'ja' ? '円' : ' JPY'}</td></tr>)}</tbody></table>
-      <div className="chart-x">{data.map((d) => <span key={d.month}>{d.month.includes('-') ? `${Number(d.month.slice(5))}月` : d.month}</span>)}</div>
     </div>
   )
 }
 
 function SpendingCard({ expense = currentMonthMetrics.expense, categories, onDetails }: { expense?: number; categories?: readonly { name: string; amount: number }[]; onDetails: () => void }) {
   const { text } = useI18n()
-  const palette = ['#ed714d', '#6f7d57', '#e4aa45', '#7f9ba5', '#c7b8a0', '#8d7ca8']
+  const palette = ['#a64f43', '#9b443b', '#a56c22', '#a34f43', '#9d4a41', '#a65b4b']
   const source = categories ? categories.filter((item) => item.amount > 0).slice(0, 6).map((item, index) => ({ ...item, color: palette[index % palette.length] })) : categoryData
   const categoryTotal = source.reduce((total, item) => total + item.amount, 0)
   const legend = source.map((item) => ({ ...item, pct: categoryTotal > 0 ? Math.round(item.amount / categoryTotal * 100) : 0 }))
-  const gradient = legend.length > 0 ? `conic-gradient(${legend.map((d, i) => `${d.color} ${legend.slice(0, i).reduce((a, b) => a + b.pct, 0)}% ${legend.slice(0, i + 1).reduce((a, b) => a + b.pct, 0)}%`).join(',')})` : '#e8ebe4'
+  const max = Math.max(1, ...legend.map((item) => item.amount))
   return (
     <article className="panel spending-card">
-      <div className="panel-head"><div><h2>{text('支出の内訳')}</h2><p>{text('今月のカテゴリー別')}</p></div><button className="text-btn" onClick={onDetails}>{text('詳細を見る')} <ArrowRight size={14} /></button></div>
-      <div className="spending-body">
-        <div className="donut" style={{ background: gradient }}><div><small>{text('合計')}</small><strong>{yen(expense)}</strong></div></div>
-        <div className="legend">{legend.length > 0 ? legend.map((item) => <div key={item.name}><i style={{ background: item.color }} /><span>{text(item.name)}</span><strong>{yen(item.amount)}</strong><small>{item.pct}%</small></div>) : <p className="empty-state">—</p>}</div>
-      </div>
+      <div className="panel-head"><div><h2>{text('カテゴリ別支出')}</h2><p>{text('発生ベース')} · {yen(expense)}</p></div><button className="text-btn" onClick={onDetails}>{text('詳細を見る')} <ArrowRight size={14} /></button></div>
+      <div className="category-bars">{legend.length > 0 ? legend.map((item) => <button type="button" onClick={onDetails} key={item.name}><span>{text(item.name)}<strong>{yen(item.amount)}</strong></span><i><b style={{ width: `${Math.max(4, item.amount / max * 100)}%`, background: item.color }} /></i></button>) : <p className="empty-state">—</p>}</div>
     </article>
   )
 }
@@ -638,8 +649,8 @@ function Overview({ setPage, openAllActions, householdId, accountGroupId, attrib
       {!desktop && <span className="dashboard-preview-note">{text('表示設定の保存はデスクトップ版で利用できます。')}</span>}
       {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> {text('資産・投資を見る')}</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> {text('カード照合を開く')}</button> : cashFlow ? <button className="primary-btn" onClick={() => setPage('transactions')}><WalletCards size={17} /> {text('資金移動を見る')}</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> {text('ファイルを取り込む')}</button>}
     </PageHeader>
-    <HomeActionCenter householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} asOf={periodFromMonth(month).toDate} revision={revision} desktop={desktop} onAction={(action) => setPage(pageForAction(action))} onViewAll={openAllActions} />
     <section className="kpi-grid">{kpis}</section>
+    <HomeActionCenter householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} asOf={periodFromMonth(month).toDate} revision={revision} desktop={desktop} onAction={(action) => setPage(pageForAction(action))} onViewAll={openAllActions} />
     <section className="dashboard-grid">{panelOrder}</section>
     <DashboardDataQuality counts={importCounts} desktop={desktop} onOpenImport={() => setPage('import')} />
     <div className="data-footnote"><FileCheck2 size={15} /> 確定済み台帳から{cashFlow ? '実際の資産入出金を' : ''}集計 ・ 未確認の候補は含みません</div>
@@ -2945,7 +2956,11 @@ function App() {
   }
   const updateDashboardPreferences = (change: DashboardPreferenceChange) => {
     const householdId = activeHouseholdId
-    if (!householdId || dashboardPreferencesBusy) return
+    if (dashboardPreferencesBusy) return
+    if (!householdId) {
+      setDashboardPreferences((current) => ({ ...current, ...change }))
+      return
+    }
     const previous = dashboardPreferences
     const { widgetOrder, hiddenWidgets, ...globalChange } = change
     const currentLayout = activeDashboardLayout(dashboardPreferences)
@@ -2987,7 +3002,7 @@ function App() {
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
-  return <div className="app-shell"><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
+  return <div className="app-shell"><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} theme={dashboardPreferences.theme} onToggleTheme={() => updateDashboardPreferences({ theme: dashboardPreferences.theme === 'DARK' ? 'LIGHT' : 'DARK' })} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App
