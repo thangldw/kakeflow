@@ -7,8 +7,8 @@ KakeFlow can publish a locally verified release without a GitHub-hosted Actions 
 Capability increments are tested, committed, and pushed to `main` as they are
 completed, but they do not automatically create a public version. Full audit,
 packaging, artifact validation, tagging, and GitHub Release publication are
-reserved for major product milestones. The current stable line is `v0.90.0`;
-the next planned public milestone is `v1.0.0`.
+reserved for major product milestones. The current stable line is `v1.0.0`;
+future public versions follow the same major-milestone gate.
 
 Do not change the application version, create intermediate tags, or publish
 partial installers between those milestones. Focused tests still run with each
