@@ -76,3 +76,55 @@ than copying the reference infographic composition.
   its density is an intentional product constraint.
 
 final result: passed
+
+---
+
+# Brand lockup size correction — 2026-07-15
+
+- Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-75f09e10-9bf4-472d-809f-f5c08f4e41b0.png`
+- Implementation screenshot: `/Users/thang/Documents/kakeflow/docs/audits/logo-size-2026-07-15/implementation.png`
+- Combined comparison: `/Users/thang/Documents/kakeflow/docs/audits/logo-size-2026-07-15/comparison.png`
+- Viewport: `1280 × 720`
+- State: browser preview, light theme, Vietnamese locale, Home.
+- Full-view evidence: the corrected sidebar was captured in the running app.
+- Focused evidence: the supplied crop and corrected upper-left sidebar were placed together in `comparison.png`.
+
+## Findings
+
+No actionable P0, P1, or P2 issue remains. The previous lockup rendered the
+wordmark at 18 px while the icon container remained 32 px, making the pair look
+undersized and optically disconnected. The corrected lockup uses a 40 px fixed
+icon container, a 24 px leaf icon, a 22 px wordmark, 12 px spacing, and a shared
+40 px alignment box.
+
+## Required fidelity surfaces
+
+- Fonts and typography: the wordmark retains the established UI font stack,
+  weight 750, one-line lockup, and tighter optical tracking.
+- Spacing and layout rhythm: icon and name are vertically centered; the wider
+  12 px gap prevents the larger mark from crowding the wordmark.
+- Colors and visual tokens: the existing paper, ink, olive, and light-theme
+  border tokens are unchanged.
+- Image quality and asset fidelity: the existing Lucide Leaf icon is preserved
+  and remains vector-sharp; no placeholder or replacement logo was introduced.
+- Copy and content: the `kakeflow` wordmark and household content are unchanged.
+
+## Interaction and runtime verification
+
+- Opened the local application in the Codex in-app Browser.
+- Confirmed the full wordmark remains on one line and the household selector
+  remains aligned below it.
+- ESLint and the production TypeScript/Vite build pass.
+
+## Comparison history
+
+### Iteration 1
+
+- Earlier finding: P2 — the brand mark and wordmark appeared too small and did
+  not form a strong lockup in the sidebar header.
+- Fix: increased both elements proportionally and gave the mark a fixed flex
+  basis so it cannot shrink.
+- Post-fix evidence: `docs/audits/logo-size-2026-07-15/comparison.png`.
+- Result: passed.
+
+final result: passed
