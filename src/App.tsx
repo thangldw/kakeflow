@@ -95,6 +95,7 @@ import { DelimitedParserProfilesPanel } from './features/parser-profiles/Delimit
 import { CustomParserRescueDialog } from './features/parser-profiles/CustomParserRescueDialog'
 import { PendingImportHandoffPanel } from './features/import/PendingImportHandoffPanel'
 import { GoogleDriveSettingsPanel } from './features/import/GoogleDriveSettingsPanel'
+import { googleDriveSyncEventPlatform } from './features/import/googleDriveSyncEventPlatform'
 import { PostingEntryEditor } from './features/import/PostingEntryEditor'
 import { ReceiptReviewPanel } from './features/import/ReceiptReviewPanel'
 import { validatePostingDecision } from './features/import/receiptSplitPosting'
@@ -1169,6 +1170,16 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   useEffect(() => {
     if (platformClient.runtime !== 'tauri' || !householdId) return
     void refreshGoogleDriveInbox(true)
+  }, [householdId, refreshGoogleDriveInbox])
+
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) return
+    let disposed = false
+    let unlisten: (() => void) | undefined
+    void googleDriveSyncEventPlatform.subscribe((event) => {
+      if (!disposed && event.householdId === householdId) void refreshGoogleDriveInbox(true)
+    }).then((stop) => { if (disposed) stop(); else unlisten = stop }).catch(() => undefined)
+    return () => { disposed = true; unlisten?.() }
   }, [householdId, refreshGoogleDriveInbox])
 
   useEffect(() => {

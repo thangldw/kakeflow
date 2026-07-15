@@ -6,8 +6,9 @@ use crate::{
         DriveApiClient, DriveApiError, DriveChange as ApiChange, DriveFile, DriveTransport,
     },
     google_drive_initial_sync::{
-        ChangePage, DriveChange, DriveNode, FolderPage, InitialSyncApi, InitialSyncReport,
-        InitialSyncStore,
+        ChangePage, DriveChange, DriveNode, FolderPage, FullReconciliationReason,
+        IncrementalSyncApi, IncrementalSyncReport, IncrementalSyncStore, InitialSyncApi,
+        InitialSyncReport, InitialSyncStore,
     },
     google_drive_store::{
         self, DiscoveryDisposition, GoogleDriveStoreError, RemoteNode, SyncLeaseDto,
@@ -130,6 +131,25 @@ impl<T: DriveTransport> InitialSyncApi for GoogleDriveInitialApi<'_, T> {
     }
 }
 
+impl<T: DriveTransport> IncrementalSyncApi for GoogleDriveInitialApi<'_, T> {
+    type Node = DriveFile;
+    type Error = DriveApiError;
+
+    fn list_changes(
+        &mut self,
+        drive_id: Option<&str>,
+        page_token: &str,
+        page_size: u16,
+    ) -> Result<ChangePage<Self::Node>, Self::Error> {
+        InitialSyncApi::list_changes(self, drive_id, page_token, page_size)
+    }
+
+    fn reconciliation_reason(&self, error: &Self::Error) -> Option<FullReconciliationReason> {
+        (*error == DriveApiError::ChangeCursorExpired)
+            .then_some(FullReconciliationReason::CursorInvalid)
+    }
+}
+
 /// SQLite half of the protocol. Every page is fenced by the active schedule
 /// lease and the terminal cursor is published only by `complete_sync`.
 pub struct GoogleDriveInitialStore<'a> {
@@ -167,7 +187,24 @@ impl<'a> GoogleDriveInitialStore<'a> {
         })
     }
 
+    pub fn new_with_expected_baseline(
+        connection: &'a Connection,
+        lease: &SyncLeaseDto,
+        root_folder_id: &str,
+        expected_baseline: &str,
+    ) -> Result<Self, GoogleDriveStoreError> {
+        let mut store = Self::new(connection, lease, root_folder_id)?;
+        store.expected_baseline = expected_baseline.to_owned();
+        Ok(store)
+    }
+
     fn persist(&mut self, nodes: Vec<RemoteNode>) -> Result<(), GoogleDriveStoreError> {
+        google_drive_store::heartbeat_sync_lease(
+            self.connection,
+            &self.household_id,
+            &self.connection_id,
+            &self.lease_token,
+        )?;
         for chunk in nodes.chunks(100) {
             let discovered = google_drive_store::discover_nodes_claimed(
                 self.connection,
@@ -413,6 +450,71 @@ impl InitialSyncStore<DriveFile> for GoogleDriveInitialStore<'_> {
     }
 }
 
+impl IncrementalSyncStore<DriveFile> for GoogleDriveInitialStore<'_> {
+    type Error = GoogleDriveStoreError;
+
+    fn persist_incremental_change_page(
+        &mut self,
+        changes: &[DriveChange<DriveFile>],
+    ) -> Result<Option<FullReconciliationReason>, Self::Error> {
+        InitialSyncStore::persist_change_page(self, changes)?;
+        Ok(self
+            .tree_expansion_detected
+            .then_some(FullReconciliationReason::TreeExpansion))
+    }
+
+    fn require_full_reconciliation(
+        &mut self,
+        _reason: FullReconciliationReason,
+    ) -> Result<(), Self::Error> {
+        google_drive_store::require_full_reconciliation(
+            self.connection,
+            &self.household_id,
+            &self.connection_id,
+            &self.lease_token,
+        )
+        .map(|_| ())
+    }
+
+    fn complete_incremental_sync(
+        &mut self,
+        expected_cursor: &str,
+        terminal_cursor: &str,
+        _report: &IncrementalSyncReport,
+    ) -> Result<(), Self::Error> {
+        if expected_cursor != self.expected_baseline {
+            google_drive_store::fail_sync(
+                self.connection,
+                &self.household_id,
+                &self.connection_id,
+                &self.lease_token,
+                "BASELINE_MISMATCH",
+            )?;
+            return Err(GoogleDriveStoreError::Conflict);
+        }
+        if self.tree_expansion_detected {
+            google_drive_store::fail_sync(
+                self.connection,
+                &self.household_id,
+                &self.connection_id,
+                &self.lease_token,
+                "TREE_EXPANSION",
+            )?;
+            return Err(GoogleDriveStoreError::Conflict);
+        }
+        google_drive_store::complete_sync(
+            self.connection,
+            &self.household_id,
+            &self.connection_id,
+            &self.lease_token,
+            terminal_cursor,
+            self.discovered_generations.len() as u64,
+            false,
+        )?;
+        Ok(())
+    }
+}
+
 fn remote_node(file: &DriveFile, parent_file_id: Option<String>, in_tree: bool) -> RemoteNode {
     let is_folder = file.mime_type == GOOGLE_DRIVE_FOLDER_MIME;
     RemoteNode {
@@ -467,7 +569,10 @@ mod tests {
     use super::*;
     use crate::{
         google_drive_api::{DriveHttpRequest, DriveHttpResponse, DriveTransport},
-        google_drive_initial_sync::{run_initial_sync, InitialSyncLimits},
+        google_drive_initial_sync::{
+            run_incremental_sync, run_initial_sync, FullReconciliationReason, IncrementalSyncError,
+            IncrementalSyncLimits, InitialSyncLimits,
+        },
         persistence::AppState,
     };
     use std::sync::Mutex;
@@ -635,6 +740,129 @@ mod tests {
                 assert!(!google_drive_store::load_schedule(connection, "home", "drive")
                     .unwrap()
                     .running);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn incremental_change_feed_advances_the_durable_cursor_without_full_scan() {
+        let state = setup();
+        state
+            .with_connection(|connection| {
+                let lease = claim(connection);
+                let fake = FakeTransport::new(vec![serde_json::json!({
+                    "changes": [
+                        {"fileId": "fresh", "file": file("fresh", "fresh.csv", "root", "text/csv", 2)}
+                    ],
+                    "newStartPageToken": "terminal"
+                })]);
+                let client = DriveApiClient::new("access", &fake).unwrap();
+                let mut api = GoogleDriveInitialApi::new(&client, "root", None, None);
+                let mut store = GoogleDriveInitialStore::new(connection, &lease, "root").unwrap();
+
+                let report = run_incremental_sync(
+                    &mut api,
+                    &mut store,
+                    None,
+                    &lease.change_page_token,
+                    &IncrementalSyncLimits::default(),
+                )
+                .unwrap();
+
+                assert_eq!(report.changes_replayed, 1);
+                let (cursor, last_full_scan_at, last_change_at): (
+                    String,
+                    Option<String>,
+                    Option<String>,
+                ) = connection
+                    .query_row(
+                        "SELECT change_page_token,last_full_scan_at,last_change_at
+                         FROM google_drive_connections WHERE id='drive'",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .unwrap();
+                assert_eq!(cursor, "terminal");
+                assert!(last_full_scan_at.is_none());
+                assert!(last_change_at.is_some());
+                assert_eq!(
+                    google_drive_store::load_schedule(connection, "home", "drive")
+                        .unwrap()
+                        .last_result,
+                    "DISCOVERED"
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn incremental_tree_expansion_releases_lease_without_advancing_cursor() {
+        let state = setup();
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute(
+                        "UPDATE google_drive_connections SET last_full_scan_at='2026-07-15T00:00:00Z'
+                         WHERE id='drive'",
+                        [],
+                    )
+                    .unwrap();
+                let lease = claim(connection);
+                let fake = FakeTransport::new(vec![serde_json::json!({
+                    "changes": [
+                        {"fileId": "moved-folder", "file": file(
+                            "moved-folder",
+                            "Moved folder",
+                            "root",
+                            GOOGLE_DRIVE_FOLDER_MIME,
+                            2
+                        )}
+                    ],
+                    "newStartPageToken": "terminal"
+                })]);
+                let client = DriveApiClient::new("access", &fake).unwrap();
+                let mut api = GoogleDriveInitialApi::new(&client, "root", None, None);
+                let mut store = GoogleDriveInitialStore::new(connection, &lease, "root").unwrap();
+
+                assert!(matches!(
+                    run_incremental_sync(
+                        &mut api,
+                        &mut store,
+                        None,
+                        &lease.change_page_token,
+                        &IncrementalSyncLimits::default(),
+                    ),
+                    Err(IncrementalSyncError::FullReconciliationRequired(
+                        FullReconciliationReason::TreeExpansion
+                    ))
+                ));
+
+                let cursor: String = connection
+                    .query_row(
+                        "SELECT change_page_token FROM google_drive_connections WHERE id='drive'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(cursor, "baseline");
+                let last_full_scan_at: Option<String> = connection
+                    .query_row(
+                        "SELECT last_full_scan_at FROM google_drive_connections WHERE id='drive'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert!(last_full_scan_at.is_none());
+                let schedule =
+                    google_drive_store::load_schedule(connection, "home", "drive").unwrap();
+                assert!(!schedule.running);
+                assert_eq!(schedule.last_result, "FAILED_RETRYABLE");
+                assert_eq!(
+                    schedule.last_error_code.as_deref(),
+                    Some("FULL_RECONCILIATION_REQUIRED")
+                );
                 Ok(())
             })
             .unwrap();

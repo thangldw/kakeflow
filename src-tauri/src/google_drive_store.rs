@@ -896,6 +896,35 @@ pub fn claim_due_sync(
     Ok(lease)
 }
 
+/// Claims the oldest process-local schedule which is ready to run. Selection
+/// and claiming happen while the caller owns the application's SQLite mutex;
+/// `claim_due_sync` still performs the authoritative conditional update so a
+/// stale candidate can never acquire a second lease.
+pub fn claim_next_due_sync(connection: &Connection) -> Result<Option<SyncLeaseDto>> {
+    let candidate = connection
+        .query_row(
+            "SELECT c.household_id,s.connection_id
+             FROM google_drive_sync_schedules s
+             JOIN google_drive_connections c ON c.id=s.connection_id
+             WHERE c.status='CONNECTED' AND s.enabled=1
+               AND s.lease_token IS NULL
+               AND s.next_due_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+               AND (s.suspension_reason IS NULL OR (
+                    s.suspension_reason='RETRY_BACKOFF'
+                    AND s.suspended_until<=strftime('%Y-%m-%dT%H:%M:%fZ','now')))
+             ORDER BY s.next_due_at,c.household_id,s.connection_id LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    candidate
+        .map(|(household_id, connection_id)| {
+            claim_due_sync(connection, &household_id, &connection_id)
+        })
+        .transpose()
+        .map(Option::flatten)
+}
+
 pub fn assert_sync_lease(
     connection: &Connection,
     household_id: &str,
@@ -1008,6 +1037,44 @@ pub fn fail_sync(
              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE connection_id=?2 AND lease_token=?4",
         params![household_id, connection_id, error_code, lease_token],
+    )?;
+    if changed != 1 {
+        return Err(GoogleDriveStoreError::StaleLease);
+    }
+    let dto = load_schedule(&transaction, household_id, connection_id)?;
+    transaction.commit()?;
+    Ok(dto)
+}
+
+/// Releases the exact incremental lease and durably requires a full crawl.
+/// The marker and lease release are atomic so another worker cannot advance
+/// the stale cursor before reconciliation completes.
+pub fn require_full_reconciliation(
+    connection: &Connection,
+    household_id: &str,
+    connection_id: &str,
+    lease_token: &str,
+) -> Result<SyncScheduleDto> {
+    validate_scoped_ids(household_id, connection_id)?;
+    validate_hash(lease_token)?;
+    let transaction = connection.unchecked_transaction()?;
+    assert_sync_lease_in(&transaction, household_id, connection_id, lease_token)?;
+    transaction.execute(
+        "UPDATE google_drive_connections SET last_full_scan_at=NULL,
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id=?2 AND household_id=?1",
+        params![household_id, connection_id],
+    )?;
+    let changed = transaction.execute(
+        "UPDATE google_drive_sync_schedules SET lease_token=NULL,lease_expires_at=NULL,
+             last_result='FAILED_RETRYABLE',last_discovered_count=0,
+             consecutive_failures=min(consecutive_failures+1,10),
+             last_error_code='FULL_RECONCILIATION_REQUIRED',
+             next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+             suspended_until=NULL,suspension_reason=NULL,
+             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE connection_id=?2 AND lease_token=?3",
+        params![household_id, connection_id, lease_token],
     )?;
     if changed != 1 {
         return Err(GoogleDriveStoreError::StaleLease);

@@ -136,6 +136,208 @@ pub enum InitialSyncError<ApiError, StoreError> {
     PaginationCycle,
 }
 
+/// A bounded change-feed drain which starts from an already durable cursor.
+/// This is deliberately separate from `InitialSyncLimits`: incremental runs
+/// never crawl folders and therefore cannot accidentally inherit crawl bounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncrementalSyncLimits {
+    pub change_page_size: u16,
+    pub max_change_pages: u32,
+    pub max_changes: u64,
+}
+
+impl Default for IncrementalSyncLimits {
+    fn default() -> Self {
+        Self {
+            change_page_size: 100,
+            max_change_pages: 10_000,
+            max_changes: 250_000,
+        }
+    }
+}
+
+impl IncrementalSyncLimits {
+    fn validate(&self) -> bool {
+        (1..=1_000).contains(&self.change_page_size)
+            && self.max_change_pages > 0
+            && self.max_changes > 0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullReconciliationReason {
+    CursorInvalid,
+    TreeExpansion,
+}
+
+/// The incremental API can classify provider failures which make retrying the
+/// same cursor unsafe. Other failures remain ordinary retryable/fatal errors
+/// for the caller to handle without forcing a recursive crawl.
+pub trait IncrementalSyncApi {
+    type Node: DriveNode;
+    type Error;
+
+    fn list_changes(
+        &mut self,
+        drive_id: Option<&str>,
+        page_token: &str,
+        page_size: u16,
+    ) -> Result<ChangePage<Self::Node>, Self::Error>;
+
+    fn reconciliation_reason(&self, _error: &Self::Error) -> Option<FullReconciliationReason> {
+        None
+    }
+}
+
+/// Page writes remain separate from terminal cursor publication. Returning a
+/// reconciliation reason means the page may have updated staging metadata,
+/// but the old cursor must remain durable until a full crawl succeeds.
+pub trait IncrementalSyncStore<Node> {
+    type Error;
+
+    fn persist_incremental_change_page(
+        &mut self,
+        changes: &[DriveChange<Node>],
+    ) -> Result<Option<FullReconciliationReason>, Self::Error>;
+
+    /// Releases/fails the active incremental lease without advancing its
+    /// cursor so a caller can safely claim a new lease for a full crawl.
+    fn require_full_reconciliation(
+        &mut self,
+        reason: FullReconciliationReason,
+    ) -> Result<(), Self::Error>;
+
+    fn complete_incremental_sync(
+        &mut self,
+        expected_cursor: &str,
+        terminal_cursor: &str,
+        report: &IncrementalSyncReport,
+    ) -> Result<(), Self::Error>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncrementalSyncReport {
+    pub starting_cursor: String,
+    pub terminal_cursor: String,
+    pub change_pages: u32,
+    pub changes_replayed: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncrementalSyncError<ApiError, StoreError> {
+    Api(ApiError),
+    Store(StoreError),
+    FullReconciliationRequired(FullReconciliationReason),
+    InvalidInput,
+    InvalidResponse,
+    ChangePageLimitExceeded,
+    ChangeLimitExceeded,
+    PaginationCycle,
+}
+
+/// Drains changes after `starting_cursor` and atomically publishes only the
+/// terminal `newStartPageToken`. Intermediate page tokens are process-local:
+/// a crash or failed page deliberately restarts from the last durable cursor.
+pub fn run_incremental_sync<Api, Store>(
+    api: &mut Api,
+    store: &mut Store,
+    drive_id: Option<&str>,
+    starting_cursor: &str,
+    limits: &IncrementalSyncLimits,
+) -> Result<IncrementalSyncReport, IncrementalSyncError<Api::Error, Store::Error>>
+where
+    Api: IncrementalSyncApi,
+    Store: IncrementalSyncStore<Api::Node>,
+{
+    if !limits.validate() || !valid_token(starting_cursor) {
+        return Err(IncrementalSyncError::InvalidInput);
+    }
+    if drive_id.is_some_and(|id| !valid_identifier(id)) {
+        return Err(IncrementalSyncError::InvalidInput);
+    }
+
+    let mut cursor = starting_cursor.to_owned();
+    let mut seen_tokens = HashSet::from([cursor.clone()]);
+    let mut change_pages = 0_u32;
+    let mut changes_replayed = 0_u64;
+    let terminal_cursor;
+
+    loop {
+        change_pages = change_pages
+            .checked_add(1)
+            .ok_or(IncrementalSyncError::ChangePageLimitExceeded)?;
+        if change_pages > limits.max_change_pages {
+            return Err(IncrementalSyncError::ChangePageLimitExceeded);
+        }
+
+        let page = match api.list_changes(drive_id, &cursor, limits.change_page_size) {
+            Ok(page) => page,
+            Err(error) => {
+                return match api.reconciliation_reason(&error) {
+                    Some(reason) => {
+                        store
+                            .require_full_reconciliation(reason)
+                            .map_err(IncrementalSyncError::Store)?;
+                        Err(IncrementalSyncError::FullReconciliationRequired(reason))
+                    }
+                    None => Err(IncrementalSyncError::Api(error)),
+                };
+            }
+        };
+        if page.changes.len() > usize::from(limits.change_page_size) {
+            return Err(IncrementalSyncError::InvalidResponse);
+        }
+        changes_replayed = changes_replayed
+            .checked_add(page.changes.len() as u64)
+            .ok_or(IncrementalSyncError::ChangeLimitExceeded)?;
+        if changes_replayed > limits.max_changes {
+            return Err(IncrementalSyncError::ChangeLimitExceeded);
+        }
+        if page.changes.iter().any(|change| match change {
+            DriveChange::Upsert(node) => !valid_identifier(node.file_id()),
+            DriveChange::Removed { file_id } => !valid_identifier(file_id),
+        }) {
+            return Err(IncrementalSyncError::InvalidResponse);
+        }
+
+        if let Some(reason) = store
+            .persist_incremental_change_page(&page.changes)
+            .map_err(IncrementalSyncError::Store)?
+        {
+            store
+                .require_full_reconciliation(reason)
+                .map_err(IncrementalSyncError::Store)?;
+            return Err(IncrementalSyncError::FullReconciliationRequired(reason));
+        }
+
+        match (page.next_page_token, page.new_start_page_token) {
+            (Some(next), None) if valid_token(&next) && seen_tokens.insert(next.clone()) => {
+                cursor = next;
+            }
+            (None, Some(terminal)) if valid_token(&terminal) => {
+                terminal_cursor = terminal;
+                break;
+            }
+            (Some(next), None) if !valid_token(&next) => {
+                return Err(IncrementalSyncError::InvalidResponse);
+            }
+            (Some(_), None) => return Err(IncrementalSyncError::PaginationCycle),
+            _ => return Err(IncrementalSyncError::InvalidResponse),
+        }
+    }
+
+    let report = IncrementalSyncReport {
+        starting_cursor: starting_cursor.to_owned(),
+        terminal_cursor: terminal_cursor.clone(),
+        change_pages,
+        changes_replayed,
+    };
+    store
+        .complete_incremental_sync(starting_cursor, &terminal_cursor, &report)
+        .map_err(IncrementalSyncError::Store)?;
+    Ok(report)
+}
+
 /// Performs a complete first sync. No cursor is published unless both the
 /// recursive crawl and the post-baseline change drain finish successfully.
 pub fn run_initial_sync<Api, Store>(
@@ -401,6 +603,32 @@ mod tests {
                 return Err("wrong change request");
             }
             Ok(result)
+        }
+    }
+
+    impl IncrementalSyncApi for MockApi {
+        type Node = TestNode;
+        type Error = &'static str;
+
+        fn list_changes(
+            &mut self,
+            _drive_id: Option<&str>,
+            page_token: &str,
+            _page_size: u16,
+        ) -> Result<ChangePage<Self::Node>, Self::Error> {
+            self.calls.push(format!("incremental:{page_token}"));
+            let (expected_token, result) = self
+                .change_pages
+                .pop_front()
+                .ok_or("unexpected change call")?;
+            if expected_token != page_token {
+                return Err("wrong change request");
+            }
+            Ok(result)
+        }
+
+        fn reconciliation_reason(&self, error: &Self::Error) -> Option<FullReconciliationReason> {
+            (*error == "cursor invalid").then_some(FullReconciliationReason::CursorInvalid)
         }
     }
 
@@ -671,5 +899,237 @@ mod tests {
         );
         assert!(store.current.is_empty());
         assert!(store.completed.is_none());
+    }
+
+    #[derive(Default)]
+    struct IncrementalMockStore {
+        events: Vec<String>,
+        completed: Option<(String, String, IncrementalSyncReport)>,
+        page_reason: Option<FullReconciliationReason>,
+        fail_page: bool,
+    }
+
+    impl IncrementalSyncStore<TestNode> for IncrementalMockStore {
+        type Error = &'static str;
+
+        fn persist_incremental_change_page(
+            &mut self,
+            changes: &[DriveChange<TestNode>],
+        ) -> Result<Option<FullReconciliationReason>, Self::Error> {
+            if self.fail_page {
+                return Err("page write failed");
+            }
+            self.events.push(format!("page:{}", changes.len()));
+            Ok(self.page_reason.take())
+        }
+
+        fn require_full_reconciliation(
+            &mut self,
+            reason: FullReconciliationReason,
+        ) -> Result<(), Self::Error> {
+            self.events.push(format!("reconcile:{reason:?}"));
+            Ok(())
+        }
+
+        fn complete_incremental_sync(
+            &mut self,
+            expected_cursor: &str,
+            terminal_cursor: &str,
+            report: &IncrementalSyncReport,
+        ) -> Result<(), Self::Error> {
+            self.events.push("complete".to_owned());
+            self.completed = Some((
+                expected_cursor.to_owned(),
+                terminal_cursor.to_owned(),
+                report.clone(),
+            ));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn incremental_drain_publishes_only_the_terminal_cursor() {
+        let mut api = MockApi {
+            change_pages: VecDeque::from([
+                (
+                    "durable",
+                    ChangePage {
+                        changes: vec![DriveChange::Upsert(TestNode::file("a", 2))],
+                        next_page_token: Some("transient".to_owned()),
+                        new_start_page_token: None,
+                    },
+                ),
+                (
+                    "transient",
+                    terminal(
+                        "terminal",
+                        vec![DriveChange::Removed {
+                            file_id: "b".to_owned(),
+                        }],
+                    ),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let mut store = IncrementalMockStore::default();
+
+        let report = run_incremental_sync(
+            &mut api,
+            &mut store,
+            Some("shared-drive"),
+            "durable",
+            &IncrementalSyncLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(api.calls, ["incremental:durable", "incremental:transient"]);
+        assert_eq!(store.events, ["page:1", "page:1", "complete"]);
+        assert_eq!(report.change_pages, 2);
+        assert_eq!(report.changes_replayed, 2);
+        assert_eq!(store.completed.unwrap().0, "durable");
+        assert_eq!(report.terminal_cursor, "terminal");
+    }
+
+    #[test]
+    fn incremental_failure_never_publishes_a_cursor() {
+        let mut api = MockApi {
+            change_pages: VecDeque::from([("durable", terminal("terminal", vec![]))]),
+            ..Default::default()
+        };
+        let mut store = IncrementalMockStore {
+            fail_page: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            run_incremental_sync(
+                &mut api,
+                &mut store,
+                None,
+                "durable",
+                &IncrementalSyncLimits::default(),
+            ),
+            Err(IncrementalSyncError::Store("page write failed"))
+        );
+        assert!(store.completed.is_none());
+    }
+
+    #[test]
+    fn incremental_rejects_cycles_limits_and_invalid_terminal_shapes() {
+        let cases = [
+            (
+                ChangePage {
+                    changes: vec![],
+                    next_page_token: Some("durable".to_owned()),
+                    new_start_page_token: None,
+                },
+                IncrementalSyncError::PaginationCycle,
+            ),
+            (
+                ChangePage {
+                    changes: vec![],
+                    next_page_token: None,
+                    new_start_page_token: None,
+                },
+                IncrementalSyncError::InvalidResponse,
+            ),
+        ];
+        for (page, expected) in cases {
+            let mut api = MockApi {
+                change_pages: VecDeque::from([("durable", page)]),
+                ..Default::default()
+            };
+            let mut store = IncrementalMockStore::default();
+            assert_eq!(
+                run_incremental_sync(
+                    &mut api,
+                    &mut store,
+                    None,
+                    "durable",
+                    &IncrementalSyncLimits::default(),
+                ),
+                Err(expected)
+            );
+            assert!(store.completed.is_none());
+        }
+
+        let mut api = MockApi {
+            change_pages: VecDeque::from([("durable", terminal("terminal", vec![]))]),
+            ..Default::default()
+        };
+        let mut store = IncrementalMockStore::default();
+        let limits = IncrementalSyncLimits {
+            max_change_pages: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            run_incremental_sync(&mut api, &mut store, None, "durable", &limits),
+            Err(IncrementalSyncError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn incremental_signals_when_full_reconciliation_is_required() {
+        let mut api = MockApi {
+            change_pages: VecDeque::new(),
+            ..Default::default()
+        };
+        // No queued page makes the mock return an ordinary error, so use the
+        // classified sentinel through a dedicated API below.
+        struct ExpiredApi;
+        impl IncrementalSyncApi for ExpiredApi {
+            type Node = TestNode;
+            type Error = &'static str;
+            fn list_changes(
+                &mut self,
+                _drive_id: Option<&str>,
+                _page_token: &str,
+                _page_size: u16,
+            ) -> Result<ChangePage<Self::Node>, Self::Error> {
+                Err("cursor invalid")
+            }
+            fn reconciliation_reason(
+                &self,
+                _error: &Self::Error,
+            ) -> Option<FullReconciliationReason> {
+                Some(FullReconciliationReason::CursorInvalid)
+            }
+        }
+        let mut expired = ExpiredApi;
+        let mut store = IncrementalMockStore::default();
+        assert_eq!(
+            run_incremental_sync(
+                &mut expired,
+                &mut store,
+                None,
+                "durable",
+                &IncrementalSyncLimits::default(),
+            ),
+            Err(IncrementalSyncError::FullReconciliationRequired(
+                FullReconciliationReason::CursorInvalid
+            ))
+        );
+        assert!(store.completed.is_none());
+        assert_eq!(store.events, ["reconcile:CursorInvalid"]);
+
+        api.change_pages = VecDeque::from([("durable", terminal("terminal", vec![]))]);
+        let mut store = IncrementalMockStore {
+            page_reason: Some(FullReconciliationReason::TreeExpansion),
+            ..Default::default()
+        };
+        assert_eq!(
+            run_incremental_sync(
+                &mut api,
+                &mut store,
+                None,
+                "durable",
+                &IncrementalSyncLimits::default(),
+            ),
+            Err(IncrementalSyncError::FullReconciliationRequired(
+                FullReconciliationReason::TreeExpansion
+            ))
+        );
+        assert!(store.completed.is_none());
+        assert_eq!(store.events, ["page:0", "reconcile:TreeExpansion"]);
     }
 }
