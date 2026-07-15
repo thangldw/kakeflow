@@ -63,6 +63,25 @@ describe('investment performance platform boundary', () => {
     }
   })
 
+  it('saves the exact annual performance request and validates the native CSV summary', async () => {
+    const request = { householdId: 'home', dateFrom: '2026-01-01', dateTo: '2026-12-31' }
+    const saved = { fileName: 'kakeflow-investment-performance-2026.csv', rowCount: 42, byteSize: 9_000 }
+    const invoke = vi.fn(async () => saved) as unknown as InvestmentPerformanceInvoke
+    await expect(createInvestmentPerformancePlatform(invoke).savePerformanceCsv(request)).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('investment_performance_csv_save', { request })
+
+    await expect(createInvestmentPerformancePlatform(async () => null).savePerformanceCsv(request)).resolves.toBeNull()
+    for (const response of [
+      { fileName: 'investment.xlsx', rowCount: 42, byteSize: 9_000 },
+      { fileName: '../investment.csv', rowCount: 42, byteSize: 9_000 },
+      { fileName: 'investment.csv', rowCount: 0, byteSize: 9_000 },
+      { fileName: 'investment.csv', rowCount: 42, byteSize: 0 },
+      { fileName: 'investment.csv', rowCount: 1.5, byteSize: 9_000 },
+    ]) {
+      await expect(createInvestmentPerformancePlatform(async () => response).savePerformanceCsv(request)).rejects.toThrow(TypeError)
+    }
+  })
+
   it('saves the exact annual performance request as PDF and validates the native summary', async () => {
     const request = { householdId: 'home', dateFrom: '2026-01-01', dateTo: '2026-12-31' }
     const saved = { fileName: 'kakeflow-investment-performance-2026.pdf', pageCount: 6, byteSize: 18_000, rendererVersion: 1 }

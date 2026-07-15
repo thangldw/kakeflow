@@ -51,6 +51,7 @@ pub mod import_workflow;
 pub mod investment_fx;
 pub mod investment_market;
 pub mod investment_performance;
+pub mod investment_performance_csv;
 pub mod investment_performance_pdf;
 pub mod investment_performance_xlsx;
 mod key_store;
@@ -3276,6 +3277,39 @@ async fn monthly_household_review_pdf_save(
 }
 
 #[tauri::command]
+async fn investment_performance_csv_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: InvestmentPerformanceRequest,
+) -> Result<Option<investment_performance_csv::InvestmentPerformanceCsvSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(investment_performance_csv::generate_investment_performance_csv(connection, &request))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("Investment performance CSV is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("CSV document", &["csv"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected investment performance CSV destination is unavailable".to_owned())?;
+    investment_performance_csv::save_investment_performance_csv_document(
+        &document,
+        Some(&destination),
+    )
+    .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn investment_performance_xlsx_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4592,6 +4626,7 @@ pub fn run() {
             annual_household_review_pdf_save,
             monthly_household_review_xlsx_save,
             monthly_household_review_pdf_save,
+            investment_performance_csv_save,
             investment_performance_xlsx_save,
             investment_performance_pdf_save,
             portfolio_snapshot_csv_save,

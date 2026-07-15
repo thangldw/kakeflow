@@ -475,7 +475,7 @@ fn write_uncovered_sale_row(
     Ok(())
 }
 
-fn unallocated_corporate_action_ids(report: &InvestmentPerformanceDto) -> Vec<&str> {
+pub(crate) fn unallocated_corporate_action_ids(report: &InvestmentPerformanceDto) -> Vec<&str> {
     let allocated = report
         .corporate_action_allocations
         .iter()
@@ -489,7 +489,7 @@ fn unallocated_corporate_action_ids(report: &InvestmentPerformanceDto) -> Vec<&s
         .collect()
 }
 
-fn validate_report(
+pub(crate) fn validate_report(
     request: &InvestmentPerformanceRequest,
     report: &InvestmentPerformanceDto,
 ) -> Result<(), InvestmentPerformanceXlsxError> {

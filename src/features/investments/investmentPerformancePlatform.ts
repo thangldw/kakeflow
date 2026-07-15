@@ -135,6 +135,12 @@ export interface InvestmentPerformanceXlsxSavedDto {
   readonly byteSize: number
 }
 
+export interface InvestmentPerformanceCsvSavedDto {
+  readonly fileName: string
+  readonly rowCount: number
+  readonly byteSize: number
+}
+
 export interface InvestmentPerformancePdfSavedDto {
   readonly fileName: string
   readonly pageCount: number
@@ -149,6 +155,10 @@ export function createInvestmentPerformancePlatform(invoke: InvestmentPerformanc
       parseHoldings(await invoke('investment_holdings_query', { request })),
     queryPerformance: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformanceDto> =>
       parsePerformance(await invoke('investment_performance_query', { request })),
+    savePerformanceCsv: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformanceCsvSavedDto | null> => {
+      const value = await invoke('investment_performance_csv_save', { request })
+      return value === null ? null : parsePerformanceCsvSaved(value)
+    },
     savePerformanceXlsx: async (request: InvestmentPerformanceRequest): Promise<InvestmentPerformanceXlsxSavedDto | null> => {
       const value = await invoke('investment_performance_xlsx_save', { request })
       return value === null ? null : parsePerformanceXlsxSaved(value)
@@ -158,6 +168,17 @@ export function createInvestmentPerformancePlatform(invoke: InvestmentPerformanc
       return value === null ? null : parsePerformancePdfSaved(value)
     },
   }
+}
+
+function parsePerformanceCsvSaved(value: unknown): InvestmentPerformanceCsvSavedDto {
+  const item = record(value, 'saved investment performance CSV')
+  string(item.fileName, 'saved investment performance CSV filename')
+  safeInteger(item.rowCount, 'saved investment performance CSV rows')
+  safeInteger(item.byteSize, 'saved investment performance CSV bytes')
+  const fileName = item.fileName
+  if (fileName.length === 0 || fileName.length > 255 || !/\.csv$/i.test(fileName) || /[\\/]/.test(fileName) || Array.from(fileName).some((character) => character.charCodeAt(0) < 32)) throw new TypeError('Invalid saved investment performance CSV filename')
+  if (item.rowCount <= 0 || item.byteSize <= 0) throw new TypeError('Invalid saved investment performance CSV')
+  return item as unknown as InvestmentPerformanceCsvSavedDto
 }
 
 function parsePerformanceXlsxSaved(value: unknown): InvestmentPerformanceXlsxSavedDto {
