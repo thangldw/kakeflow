@@ -26,10 +26,10 @@ The desktop connector is implemented and locally tested:
 - Settings and Import Inbox presentation that reuse the existing `.eml`
   preview and explicit review workflow.
 
-These capabilities are present on `main` after `v0.90.0` and are planned for
-the next major release. The public stable release must not claim live Gmail
-availability until the `v1.0.0` release gates and external provider
-qualification described below are complete.
+These capabilities are included in `v1.0.0` for locally configured Google test
+users. The public stable release does not claim generally available live Gmail
+connectivity until the external provider qualification and packaged
+real-account validation described below are complete.
 
 ## Connector boundary
 

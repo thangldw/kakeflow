@@ -4,12 +4,14 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
-Version 0.90.0 is the current stable desktop milestone. It adds two strict MUFG
-BizSTATION business-account adapters based on official export specifications and
-a local [RFC 5322 email attachment path](docs/EMAIL_ATTACHMENT_IMPORT.md) that
-retains the complete `.eml` as immutable evidence. Exact account mapping and
-review remain mandatory; personal MUFG Direct layouts, direct mailbox OAuth, and
-automatic posting are not claimed.
+Version 1.0.0 is the current stable desktop milestone. It combines the
+source-auditable household ledger, card reconciliation, investment workspace,
+native reports, durable file and test-user Google inboxes, and explicit family
+delivery review into one local-first desktop application. The public binary is
+macOS Apple Silicon only, ad-hoc signed, and not notarized; Windows remains a
+source-build target until native installer evidence exists. Google Drive and
+Gmail connectors remain limited to locally configured test users pending
+provider qualification, and no ingestion path posts automatically.
 
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 
@@ -190,8 +192,9 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
   OAuth, label/query binding, bounded raw-message/history APIs, exact raw-EML
   vault hydration, durable Inbox review/rollback, manual synchronization, and
   opt-in incremental polling while KakeFlow is open. Settings and Import Inbox
-  integration are implemented on `main` for the next major release; `v0.90.0`
-  remains the current stable release and does not claim live Gmail access.
+  integration are included in `v1.0.0` for locally configured test users; the
+  release does not claim generally available Gmail access before Google
+  provider qualification and packaged real-account validation.
 - Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
   for the official Shift_JIS business-account record family, with exact
   header/detail/footer/final validation, totals and running-balance
@@ -311,7 +314,10 @@ is tracked in [KakeFlow v1 release readiness](docs/V1_RELEASE_READINESS.md).
    contracted read-only Japanese bank/card aggregation provider. Other mailbox
    providers remain separate connector work. Native iCloud folder selection
    remains available through the durable local inbox.
-3. Extend the metadata-only background family-delivery check into broader multi-device coordination only where explicit send, download, review, audience, and evidence-provenance boundaries remain visible and enforceable.
+3. Extend the opt-in, one-publication-at-a-time encrypted family intake into
+   broader multi-device coordination only where explicit send, download,
+   review, audience, and evidence-provenance boundaries remain visible and
+   enforceable. Automatic Apply remains outside the product contract.
 4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
 5. Add production signing/notarization and activate the currently
    [disabled update channel](docs/UPDATE_CHANNEL.md) only after signing keys,

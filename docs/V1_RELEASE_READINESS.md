@@ -1,8 +1,7 @@
 # KakeFlow v1 release readiness
 
-This document separates locally verifiable product work from provider,
-credential, platform, and distribution evidence. It is a release checklist, not
-a claim that `main` or the current `v0.90.0` binary is already v1.
+This document records the locally verifiable product work and the provider,
+credential, platform, and distribution evidence used to bound `v1.0.0`.
 
 ## Locally verifiable product gates
 
@@ -76,7 +75,7 @@ or the current explicit family-delivery protocol.
 
 ## Release decision
 
-Create `v1.0.0` only when all locally verifiable gates and every platform gate
-for each advertised binary have passed. External integrations that are not yet
-qualified must remain feature-gated and explicitly disclosed; they cannot be
-used as evidence for a production-available connector.
+`v1.0.0` advertises only the macOS Apple Silicon artifact after its local gates
+pass. External integrations that are not yet qualified remain feature-gated and
+explicitly disclosed; they are not evidence for a production-available
+connector. Windows remains unadvertised until its native platform gates pass.
