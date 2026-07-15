@@ -291,7 +291,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Financial calendar with accrual/cash views, no-spend days, card schedules, and drill-down.
 - Monthly/yearly reports with MoM/YoY comparisons, budget/goal progress, spending drivers, reconciliation, and data-quality status.
 - Explainable recurring/subscription and unusual-spending detection derived locally from confirmed ledger history.
-- Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export.
+- Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export, plus a native [Transaction Ledger XLSX](docs/TRANSACTION_LEDGER_XLSX.md) generated from the exact same validated transaction table with typed dates, JPY, Boolean inclusion state, and explicit scope disclosure.
 - Automatic discovery with review-gated ingestion from registered local, iCloud Drive, OneDrive, or NAS folders, plus direct read-only Google Drive OAuth folder sync into the same canonical review workflow. Drive uses bounded incremental polling while KakeFlow is open and falls back to a fresh full reconciliation when its cursor or selected tree requires it. Both paths retain restart-safe queue state and never auto-post ledger transactions.
 - Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
