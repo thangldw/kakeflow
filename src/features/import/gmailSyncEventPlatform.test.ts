@@ -1,0 +1,8 @@
+import type { Event, UnlistenFn } from '@tauri-apps/api/event'
+import { describe, expect, it, vi } from 'vitest'
+import { createGmailSyncEventPlatform, GMAIL_SYNCED_EVENT } from './gmailSyncEventPlatform'
+
+describe('Gmail sync event platform', () => {
+  it('validates and redacts native sync events', async () => { let handler: ((event: Event<unknown>) => void) | undefined; const listener = vi.fn(); await createGmailSyncEventPlatform(async <T>(name: string, next: (event: Event<T>) => void): Promise<UnlistenFn> => { expect(name).toBe(GMAIL_SYNCED_EVENT); handler = next as (event: Event<unknown>) => void; return () => undefined }).subscribe(listener); handler?.({ id: 1, event: GMAIL_SYNCED_EVENT, payload: { householdId: 'family', connectionId: 'gmail-1', discoveredCount: 2, result: 'DISCOVERED', historyId: 'redacted' } }); expect(listener).toHaveBeenCalledWith({ householdId: 'family', connectionId: 'gmail-1', discoveredCount: 2, result: 'DISCOVERED' }) })
+  it.each([null, { householdId: '../family', connectionId: 'gmail-1', discoveredCount: 0, result: 'NO_CHANGES' }, { householdId: 'family', connectionId: 'gmail-1', discoveredCount: -1, result: 'DISCOVERED' }, { householdId: 'family', connectionId: 'gmail-1', discoveredCount: 1, result: 'RUNNING' }])('rejects malformed payloads %#', async (payload) => { let handler: ((event: Event<unknown>) => void) | undefined; await createGmailSyncEventPlatform(async <T>(_name: string, next: (event: Event<T>) => void): Promise<UnlistenFn> => { handler = next as (event: Event<unknown>) => void; return () => undefined }).subscribe(vi.fn()); expect(() => handler?.({ id: 1, event: GMAIL_SYNCED_EVENT, payload })).toThrow(TypeError) })
+})

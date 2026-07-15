@@ -79,6 +79,13 @@ import type {
   GoogleDriveInboxItemDto,
   GoogleDriveInboxFileDto,
   GoogleDriveInboxClaimDto,
+  GmailAvailabilityDto,
+  GmailConnectionDto,
+  GmailLabelDto,
+  GmailSyncScheduleDto,
+  GmailInboxItemDto,
+  GmailInboxFileDto,
+  GmailInboxClaimDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE' | 'CLOUD_FILE_UNAVAILABLE'
@@ -125,6 +132,9 @@ const WEB_GOOGLE_DRIVE_AVAILABILITY: GoogleDriveAvailabilityDto = Object.freeze(
   authorizationMode: 'SYSTEM_BROWSER_LOOPBACK',
   scopeProfile: 'DRIVE_READONLY',
   unavailableReason: 'UNSUPPORTED_RUNTIME',
+})
+const WEB_GMAIL_AVAILABILITY: GmailAvailabilityDto = Object.freeze({
+  available: false, authorizationMode: 'SYSTEM_BROWSER_LOOPBACK', scopeProfile: 'GMAIL_READONLY', unavailableReason: 'CLIENT_ID_NOT_COMPILED',
 })
 
 const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
@@ -275,6 +285,23 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       markGoogleDriveInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_mark_staged') },
       markGoogleDriveInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_mark_failed') },
       reopenGoogleDriveInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'google_drive_inbox_reopen') },
+      getGmailAvailability: async () => WEB_GMAIL_AVAILABILITY,
+      listGmailConnections: async () => [],
+      connectGmail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_connect') },
+      listGmailLabels: async () => [],
+      bindGmailLabel: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_label_bind') },
+      disconnectGmail: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_disconnect') },
+      getGmailSchedule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_schedule_get') },
+      updateGmailSchedule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_schedule_update') },
+      syncGmailNow: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_sync_now') },
+      listGmailInbox: async () => [],
+      ignoreGmailInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_ignore') },
+      retryGmailInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_retry') },
+      readGmailInboxFile: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_file_read') },
+      claimGmailInboxItems: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_claim') },
+      markGmailInboxStaged: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_mark_staged') },
+      markGmailInboxFailed: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_mark_failed') },
+      reopenGmailInboxItem: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'gmail_inbox_reopen') },
       queryDashboard: async (request) => ({ month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 0, expenseJpy: 0, savingsJpy: 0, postedTransactionCount: 0, ...EMPTY_DASHBOARD_ANALYTICS }),
       getDashboardPreferences: async (householdId) => ({ householdId, template: 'FINANCIAL_OVERVIEW', theme: 'SYSTEM', density: 'COMFORTABLE', templateLayouts: defaultDashboardTemplateLayouts(), updatedAt: new Date(0).toISOString() }),
       upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
@@ -428,6 +455,23 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     markGoogleDriveInboxStaged: (householdId, itemId, leaseToken, importRunId) => invokeValidated(invoke, 'google_drive_inbox_mark_staged', parseGoogleDriveInboxItem, { householdId, itemId, leaseToken, importRunId }),
     markGoogleDriveInboxFailed: (householdId, itemId, leaseToken, errorCode) => invokeValidated(invoke, 'google_drive_inbox_mark_failed', parseGoogleDriveInboxItem, { householdId, itemId, leaseToken, errorCode }),
     reopenGoogleDriveInboxItem: (householdId, itemId, importRunId) => invokeValidated(invoke, 'google_drive_inbox_reopen', parseGoogleDriveInboxItem, { householdId, itemId, importRunId }),
+    getGmailAvailability: () => invokeValidated(invoke, 'gmail_availability', parseGmailAvailability),
+    listGmailConnections: (householdId) => invokeValidated(invoke, 'gmail_connections_list', parseGmailConnections, { householdId }),
+    connectGmail: (householdId) => invokeValidated(invoke, 'gmail_connect', parseGmailConnection, { householdId }),
+    listGmailLabels: (householdId, connectionId) => invokeValidated(invoke, 'gmail_labels_list', parseGmailLabels, { householdId, connectionId }),
+    bindGmailLabel: (input) => invokeValidated(invoke, 'gmail_label_bind', parseGmailConnection, { input }),
+    disconnectGmail: (householdId, connectionId) => invokeValidated(invoke, 'gmail_disconnect', parseGmailConnection, { householdId, connectionId }),
+    getGmailSchedule: (householdId, connectionId) => invokeValidated(invoke, 'gmail_schedule_get', parseGmailSchedule, { householdId, connectionId }),
+    updateGmailSchedule: (input) => invokeValidated(invoke, 'gmail_schedule_update', parseGmailSchedule, { input }),
+    syncGmailNow: (householdId, connectionId) => invokeValidated(invoke, 'gmail_sync_now', parseGmailSchedule, { householdId, connectionId }),
+    listGmailInbox: (householdId, connectionId, state, limit) => invokeValidated(invoke, 'gmail_inbox_list', parseGmailInboxItems, { householdId, connectionId: connectionId ?? null, state: state ?? null, limit: limit ?? null }),
+    ignoreGmailInboxItem: (householdId, itemId) => invokeValidated(invoke, 'gmail_inbox_ignore', parseGmailInboxItem, { householdId, itemId }),
+    retryGmailInboxItem: (householdId, itemId) => invokeValidated(invoke, 'gmail_inbox_retry', parseGmailInboxItem, { householdId, itemId }),
+    readGmailInboxFile: (householdId, itemId) => invokeValidated(invoke, 'gmail_inbox_file_read', parseGmailInboxFile, { householdId, itemId }),
+    claimGmailInboxItems: (householdId, itemIds) => invokeValidated(invoke, 'gmail_inbox_claim', parseGmailInboxClaim, { householdId, itemIds }),
+    markGmailInboxStaged: (householdId, itemId, leaseToken, importRunId) => invokeValidated(invoke, 'gmail_inbox_mark_staged', parseGmailInboxItem, { householdId, itemId, leaseToken, importRunId }),
+    markGmailInboxFailed: (householdId, itemId, leaseToken, errorCode) => invokeValidated(invoke, 'gmail_inbox_mark_failed', parseGmailInboxItem, { householdId, itemId, leaseToken, errorCode }),
+    reopenGmailInboxItem: (householdId, itemId, importRunId) => invokeValidated(invoke, 'gmail_inbox_reopen', parseGmailInboxItem, { householdId, itemId, importRunId }),
     queryDashboard: (request) => invokeValidated(invoke, 'dashboard_query', parseDashboard, { request }),
     getDashboardPreferences: (householdId) => invokeValidated(invoke, 'dashboard_preferences_get', parseDashboardPreferences, { householdId }),
     upsertDashboardPreferences: (input) => invokeValidated(invoke, 'dashboard_preferences_upsert', parseDashboardPreferences, { input }),
@@ -2019,6 +2063,83 @@ function parseGoogleDriveInboxClaim(value: unknown): GoogleDriveInboxClaimDto {
   const record = asRecord(value)
   const items = parseGoogleDriveInboxItems(record.items)
   if (items.length < 1 || items.length > 20 || items.some((item) => item.state !== 'PROCESSING' || item.contentSha256 === null)) throw new TypeError('google drive inbox claim')
+  return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
+}
+
+const GMAIL_CONNECTION_STATES = new Set(['AUTHORIZING', 'SELECTING_LABEL', 'CONNECTED', 'AUTH_REQUIRED', 'DISCONNECTED'])
+const GMAIL_INBOX_STATES = new Set(['DISCOVERED', 'PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'FAILED', 'IGNORED', 'REMOVED', 'TOO_LARGE', 'UNSUPPORTED'])
+
+function parseGmailAvailability(value: unknown): GmailAvailabilityDto {
+  const record = asRecord(value)
+  if (typeof record.available !== 'boolean' || record.authorizationMode !== 'SYSTEM_BROWSER_LOOPBACK' || record.scopeProfile !== 'GMAIL_READONLY') throw new TypeError('gmail availability')
+  const unavailableReason = record.unavailableReason === null ? null : asRequiredString(record.unavailableReason)
+  if (unavailableReason !== null && unavailableReason !== 'CLIENT_ID_NOT_COMPILED') throw new TypeError('gmail unavailable reason')
+  if (record.available !== (unavailableReason === null)) throw new TypeError('gmail availability invariant')
+  return { available: record.available, authorizationMode: record.authorizationMode, scopeProfile: record.scopeProfile, unavailableReason }
+}
+
+function parseGmailConnection(value: unknown): GmailConnectionDto {
+  const record = asRecord(value)
+  if (!GMAIL_CONNECTION_STATES.has(String(record.status))) throw new TypeError('gmail connection state')
+  const accountEmail = asNullableString(record.accountEmail); const labelId = asNullableString(record.labelId); const labelName = asNullableString(record.labelName)
+  if (typeof record.labelBound !== 'boolean' || record.labelBound !== (labelId !== null && labelName !== null)) throw new TypeError('gmail label binding')
+  if ((record.status === 'SELECTING_LABEL' || record.status === 'CONNECTED') && accountEmail === null) throw new TypeError('gmail account binding')
+  if (record.status === 'CONNECTED' && !record.labelBound) throw new TypeError('gmail connected invariant')
+  return {
+    id: asRequiredString(record.id), status: record.status as GmailConnectionDto['status'], accountEmail, labelId, labelName,
+    gmailQuery: asRequiredString(record.gmailQuery), labelBound: record.labelBound,
+    lastFullScanAt: record.lastFullScanAt === null ? null : asIsoTimestamp(record.lastFullScanAt), lastChangeAt: record.lastChangeAt === null ? null : asIsoTimestamp(record.lastChangeAt),
+    createdAt: asIsoTimestamp(record.createdAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+function parseGmailConnections(value: unknown): readonly GmailConnectionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('gmail connections')
+  return value.map(parseGmailConnection)
+}
+
+function parseGmailLabels(value: unknown): readonly GmailLabelDto[] {
+  if (!Array.isArray(value)) throw new TypeError('gmail labels')
+  const labels = value.map((value) => { const record = asRecord(value); if (record.kind !== 'SYSTEM' && record.kind !== 'USER') throw new TypeError('gmail label kind'); return { id: asRequiredString(record.id), name: asRequiredString(record.name), kind: record.kind } as GmailLabelDto })
+  if (new Set(labels.map((label) => label.id)).size !== labels.length) throw new TypeError('duplicate gmail label')
+  return labels
+}
+
+function parseGmailSchedule(value: unknown): GmailSyncScheduleDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean' || ![15, 30, 60].includes(Number(record.intervalMinutes)) || !GOOGLE_DRIVE_SYNC_RESULTS.has(String(record.lastResult))) throw new TypeError('gmail schedule')
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt); const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = record.suspensionReason === null ? null : asRequiredString(record.suspensionReason); if (suspensionReason !== null && !GOOGLE_DRIVE_SUSPENSIONS.has(suspensionReason)) throw new TypeError('gmail suspension')
+  const lastDiscoveredCount = asSafeInteger(record.lastDiscoveredCount); const consecutiveFailures = asSafeInteger(record.consecutiveFailures)
+  if (consecutiveFailures > 10 || record.running !== (record.lastResult === 'RUNNING') || record.enabled !== (nextDueAt !== null)) throw new TypeError('gmail schedule invariant')
+  if ((suspensionReason === null && suspendedUntil !== null) || (suspensionReason === 'RETRY_BACKOFF' && suspendedUntil === null)) throw new TypeError('gmail suspension invariant')
+  return { connectionId: asRequiredString(record.connectionId), enabled: record.enabled, intervalMinutes: record.intervalMinutes as 15 | 30 | 60, nextDueAt, running: record.running, lastResult: record.lastResult as GmailSyncScheduleDto['lastResult'], lastDiscoveredCount, consecutiveFailures, suspendedUntil, suspensionReason: suspensionReason as GmailSyncScheduleDto['suspensionReason'], lastErrorCode: asNullableString(record.lastErrorCode), updatedAt: asIsoTimestamp(record.updatedAt) }
+}
+
+function parseGmailInboxItem(value: unknown): GmailInboxItemDto {
+  const record = asRecord(value); if (!GMAIL_INBOX_STATES.has(String(record.state))) throw new TypeError('gmail inbox state')
+  const state = record.state as GmailInboxItemDto['state']; const attemptCount = asSafeInteger(record.attemptCount); const importRunId = asNullableString(record.importRunId); const lastErrorCode = asNullableString(record.lastErrorCode)
+  if (record.mediaType !== 'message/rfc822' || typeof record.contentReady !== 'boolean' || attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('gmail inbox invariant')
+  if (record.contentReady && !['PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'IGNORED', 'FAILED'].includes(state)) throw new TypeError('gmail content state')
+  return { id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), connectionId: asRequiredString(record.connectionId), fileName: asRequiredString(record.fileName), mediaType: record.mediaType, internalDateMs: asSafeInteger(record.internalDateMs), estimatedByteSize: asNullableSafeInteger(record.estimatedByteSize), contentReady: record.contentReady, state, attemptCount, importRunId, lastErrorCode, discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt) }
+}
+
+function parseGmailInboxItems(value: unknown): readonly GmailInboxItemDto[] {
+  if (!Array.isArray(value)) throw new TypeError('gmail inbox')
+  const items = value.map(parseGmailInboxItem); if (new Set(items.map((item) => item.id)).size !== items.length) throw new TypeError('duplicate gmail inbox item')
+  return items
+}
+
+function parseGmailInboxFile(value: unknown): GmailInboxFileDto {
+  const record = asRecord(value); const item = parseGmailInboxItem(record.item)
+  if (!['READY', 'NEEDS_MAPPING'].includes(item.state) || !item.contentReady) throw new TypeError('gmail inbox readable state')
+  if (!Array.isArray(record.fileBytes) || record.fileBytes.length > 25 * 1024 * 1024 || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('gmail inbox file')
+  return { item, fileBytes: record.fileBytes as number[] }
+}
+
+function parseGmailInboxClaim(value: unknown): GmailInboxClaimDto {
+  const record = asRecord(value); const items = parseGmailInboxItems(record.items)
+  if (items.length < 1 || items.length > 20 || items.some((item) => item.state !== 'PROCESSING' || !item.contentReady)) throw new TypeError('gmail inbox claim')
   return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
 }
 

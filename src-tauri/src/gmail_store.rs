@@ -216,6 +216,19 @@ pub fn load_connection(c: &Connection, household: &str, id: &str) -> Result<Gmai
     ).optional()?.ok_or(GmailStoreError::NotFound)
 }
 
+pub fn list_connections(c: &Connection, household: &str) -> Result<Vec<GmailConnectionDto>> {
+    text(household, 128)?;
+    let mut statement = c.prepare(
+        "SELECT id FROM gmail_connections WHERE household_id=?1 ORDER BY updated_at DESC,id",
+    )?;
+    let ids = statement
+        .query_map([household], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    ids.iter()
+        .map(|id| load_connection(c, household, id))
+        .collect()
+}
+
 pub fn disconnect(c: &Connection, household: &str, id: &str) -> Result<GmailConnectionDto> {
     scoped(household, id)?;
     let tx = c.unchecked_transaction()?;
@@ -619,6 +632,29 @@ pub fn mark_inbox_staged(
     hash(lease)?;
     text(run, 128)?;
     let tx = c.unchecked_transaction()?;
+    let source_document_id = tx
+        .query_row(
+            "SELECT d.id FROM source_documents d
+             JOIN gmail_inbox i ON i.household_id=d.household_id
+             WHERE i.household_id=?1 AND i.id=?2 AND d.import_run_id=?3
+               AND d.source_type='GMAIL' AND d.sha256=i.content_sha256
+             ORDER BY d.id LIMIT 2",
+            params![household, item, run],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or(GmailStoreError::Conflict)?;
+    let source_count: i64 = tx.query_row(
+        "SELECT count(*) FROM source_documents d
+         JOIN gmail_inbox i ON i.household_id=d.household_id
+         WHERE i.household_id=?1 AND i.id=?2 AND d.import_run_id=?3
+           AND d.source_type='GMAIL' AND d.sha256=i.content_sha256",
+        params![household, item, run],
+        |row| row.get(0),
+    )?;
+    if source_count != 1 {
+        return Err(GmailStoreError::Conflict);
+    }
     let n=tx.execute("UPDATE gmail_inbox SET state='STAGED',import_run_id=?4,lease_token=NULL,lease_expires_at=NULL,processing_origin_state=NULL,last_error_code=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE household_id=?1 AND id=?2 AND state='PROCESSING' AND lease_token=?3 AND processing_origin_state IN ('READY','NEEDS_MAPPING') AND content_sha256 IS NOT NULL AND EXISTS(SELECT 1 FROM import_runs r WHERE r.id=?4 AND r.household_id=?1 AND r.status='REVIEW_REQUIRED')",params![household,item,lease,run])?;
     if n != 1 {
         return Err(if inbox_exists(&tx, household, item)? {
@@ -627,6 +663,10 @@ pub fn mark_inbox_staged(
             GmailStoreError::NotFound
         });
     }
+    tx.execute(
+        "INSERT INTO gmail_source_links(inbox_id,source_document_id) VALUES(?1,?2)",
+        params![item, source_document_id],
+    )?;
     let dto = load_inbox_item(&tx, household, item)?;
     tx.commit()?;
     Ok(dto)
@@ -737,7 +777,7 @@ pub fn link_source_document(
         });
     }
     c.execute(
-        "INSERT INTO gmail_source_links(inbox_id,source_document_id) VALUES(?1,?2)",
+        "INSERT OR IGNORE INTO gmail_source_links(inbox_id,source_document_id) VALUES(?1,?2)",
         params![item, source_document_id],
     )?;
     Ok(())

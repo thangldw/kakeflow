@@ -195,6 +195,7 @@ impl<T: GmailOAuthTransport> GmailOAuthClient<T> {
             .append_pair("response_type", "code")
             .append_pair("scope", GMAIL_READONLY_SCOPE)
             .append_pair("access_type", "offline")
+            .append_pair("prompt", "consent")
             .append_pair("code_challenge", &gmail_pkce_challenge(&code_verifier)?)
             .append_pair("code_challenge_method", "S256")
             .append_pair("state", &state);

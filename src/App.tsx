@@ -83,6 +83,7 @@ import type { AdapterId, AggregateAssetSnapshotCandidate, BrokerageEventCandidat
 import { DEFAULT_FOLDER_SCAN_INTERVAL_MS } from './features/import/folderAutomation'
 import { attachFolderInboxIdentity, folderInboxFailureCode, folderInboxPreviewOutcome, recordClaimedFolderItems, retainActiveFolderPreviews, selectFolderInboxHydrationBatch } from './features/import/durableFolderInbox'
 import { attachGoogleDriveInboxIdentity, googleDriveInboxFileIsImmutable, googleDriveInboxStateLabel, isGoogleDriveInboxPreviewable, retainActiveGoogleDrivePreviews } from './features/import/googleDriveInbox'
+import { attachGmailInboxIdentity, gmailInboxFileIsImmutable, gmailInboxStateLabel, isGmailInboxPreviewable, retainActiveGmailPreviews } from './features/import/gmailInbox'
 import { toTransactionViewModel } from './features/transactions/transactionViewModel'
 import { FamilyPage } from './features/family/FamilyPage'
 import { LocalSyncFoundationPanel } from './features/sync/LocalSyncFoundationPanel'
@@ -96,6 +97,8 @@ import { CustomParserRescueDialog } from './features/parser-profiles/CustomParse
 import { PendingImportHandoffPanel } from './features/import/PendingImportHandoffPanel'
 import { GoogleDriveSettingsPanel } from './features/import/GoogleDriveSettingsPanel'
 import { googleDriveSyncEventPlatform } from './features/import/googleDriveSyncEventPlatform'
+import { GmailSettingsPanel } from './features/import/GmailSettingsPanel'
+import { gmailSyncEventPlatform } from './features/import/gmailSyncEventPlatform'
 import { PostingEntryEditor } from './features/import/PostingEntryEditor'
 import { ReceiptReviewPanel } from './features/import/ReceiptReviewPanel'
 import { validatePostingDecision } from './features/import/receiptSplitPosting'
@@ -106,7 +109,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient, PlatformIpcError } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -1009,6 +1012,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const [folderBusy, setFolderBusy] = useState<string | null>(null)
   const [driveInboxItems, setDriveInboxItems] = useState<readonly GoogleDriveInboxItemDto[]>([])
   const [driveInboxBusy, setDriveInboxBusy] = useState(false)
+  const [gmailInboxItems, setGmailInboxItems] = useState<readonly GmailInboxItemDto[]>([])
+  const [gmailInboxBusy, setGmailInboxBusy] = useState(false)
   const [portfolioImported, setPortfolioImported] = useState<ReadonlySet<string>>(() => new Set())
   const [aggregateAssetImported, setAggregateAssetImported] = useState<ReadonlySet<string>>(() => new Set())
   const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
@@ -1031,6 +1036,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const hydratedStagedRunsRef = useRef(new Set<string>())
   const inFlightRunsRef = useRef(new Set<string>())
   const hydratedDriveItemsRef = useRef(new Set<string>())
+  const hydratedGmailItemsRef = useRef(new Set<string>())
   const recoveredReviewCount = Object.keys(staged).filter((key) => key.startsWith('recovered:')).length
 
   useEffect(() => {
@@ -1043,6 +1049,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     setPendingReviewRuns([])
     setDriveInboxItems([])
     hydratedDriveItemsRef.current.clear()
+    setGmailInboxItems([])
+    hydratedGmailItemsRef.current.clear()
     setMoneyForwardAccounts({})
     setStandardImportAccounts({})
     setInvestmentImportAccounts({})
@@ -1182,6 +1190,43 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     return () => { disposed = true; unlisten?.() }
   }, [householdId, refreshGoogleDriveInbox])
 
+  const refreshGmailInbox = useCallback(async (hydrate = true) => {
+    if (platformClient.runtime !== 'tauri' || !householdId) { setGmailInboxItems([]); return }
+    setGmailInboxBusy(true)
+    try {
+      const items = await platformClient.listGmailInbox(householdId, undefined, undefined, 200)
+      setGmailInboxItems(items); setPreviews((current) => retainActiveGmailPreviews(current, items))
+      if (!hydrate) return
+      for (const expected of items.filter((item) => isGmailInboxPreviewable(item) && !hydratedGmailItemsRef.current.has(item.id)).slice(0, 20)) {
+        hydratedGmailItemsRef.current.add(expected.id)
+        try {
+          const loaded = await platformClient.readGmailInboxFile(householdId, expected.id)
+          if (!gmailInboxFileIsImmutable(expected, loaded.item)) throw new Error('Gmail evidence changed during preview')
+          const file = new File([new Uint8Array(loaded.fileBytes)], loaded.item.fileName, { type: loaded.item.mediaType, lastModified: loaded.item.internalDateMs })
+          const parsed = (await previewImportFiles([file]))[0]; if (!parsed) throw new Error('Gmail preview missing')
+          const preview = attachGmailInboxIdentity(parsed, loaded.item)
+          setPreviews((current) => [...current.filter((candidate) => candidate.gmailInboxItemId !== expected.id), preview])
+        } catch {
+          hydratedGmailItemsRef.current.delete(expected.id)
+          setNotice(`Gmail の「${expected.fileName}」をプレビューできませんでした。同期後に再試行してください。`)
+        }
+      }
+    } catch { setNotice('Gmail Inbox を読み込めませんでした。接続状態を確認してください。') }
+    finally { setGmailInboxBusy(false) }
+  }, [householdId, setPreviews])
+
+  const retryGmailInboxItem = async (itemId: string) => { if (!householdId) return; setGmailInboxBusy(true); try { await platformClient.retryGmailInboxItem(householdId, itemId); hydratedGmailItemsRef.current.delete(itemId); await refreshGmailInbox(true) } catch { setNotice('Gmail のメールを再試行できませんでした。') } finally { setGmailInboxBusy(false) } }
+  const ignoreGmailInboxItem = async (itemId: string) => { if (!householdId) return; setGmailInboxBusy(true); try { await platformClient.ignoreGmailInboxItem(householdId, itemId); hydratedGmailItemsRef.current.add(itemId); setPreviews((current) => current.filter((preview) => preview.gmailInboxItemId !== itemId)); await refreshGmailInbox(false) } catch { setNotice('Gmail のメールを無視できませんでした。') } finally { setGmailInboxBusy(false) } }
+  const repreviewGmailInboxItem = async (itemId: string) => { hydratedGmailItemsRef.current.delete(itemId); await refreshGmailInbox(true) }
+
+  useEffect(() => { if (platformClient.runtime === 'tauri' && householdId) void refreshGmailInbox(true) }, [householdId, refreshGmailInbox])
+  useEffect(() => {
+    if (platformClient.runtime !== 'tauri' || !householdId) return
+    let disposed = false; let unlisten: (() => void) | undefined
+    void gmailSyncEventPlatform.subscribe((event) => { if (!disposed && event.householdId === householdId) void refreshGmailInbox(true) }).then((stop) => { if (disposed) stop(); else unlisten = stop }).catch(() => undefined)
+    return () => { disposed = true; unlisten?.() }
+  }, [householdId, refreshGmailInbox])
+
   useEffect(() => {
     if (platformClient.runtime !== 'tauri' || !householdId) { setWatchedFolders([]); return }
     void platformClient.listWatchedFolders(householdId).then(setWatchedFolders).catch(() => setNotice('監視フォルダーを読み込めませんでした。'))
@@ -1306,6 +1351,16 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
 
   const startTrackedImport = async (item: ImportPreview, request: Parameters<typeof platformClient.startImport>[0], bytes: Uint8Array) => {
     if (!householdId) return platformClient.startImport(request, bytes)
+    if (item.gmailInboxItemId) {
+      const claim = await platformClient.claimGmailInboxItems(householdId, [item.gmailInboxItemId])
+      if (claim.items.length !== 1 || claim.items[0].id !== item.gmailInboxItemId) throw new Error('Gmail Inbox item was not claimed')
+      let started: Awaited<ReturnType<typeof platformClient.startImport>>
+      try { started = await platformClient.startImport(request, bytes) }
+      catch (error) { try { await platformClient.markGmailInboxFailed(householdId, item.gmailInboxItemId, claim.leaseToken, 'IMPORT_START_FAILED'); await refreshGmailInbox(false) } catch { /* native lease recovery keeps the evidence durable */ } throw error }
+      await platformClient.markGmailInboxStaged(householdId, item.gmailInboxItemId, claim.leaseToken, started.runId)
+      await refreshGmailInbox(false)
+      return started
+    }
     if (item.driveInboxItemId) {
       const claim = await platformClient.claimGoogleDriveInboxItems(householdId, [item.driveInboxItemId])
       if (claim.items.length !== 1 || claim.items[0].id !== item.driveInboxItemId) throw new Error('Google Drive Inbox item was not claimed')
@@ -1587,7 +1642,15 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
         hydratedDriveItemsRef.current.delete(driveInboxItemId)
         await refreshGoogleDriveInbox(true)
       }
-      setNotice(driveInboxItemId ? '未確定のインポートを取り消し、Google Drive Inbox に戻しました。' : '未確定のインポートを取り消しました。')
+      const gmailInboxItemId = previewId.startsWith('gmail:')
+        ? previewId.slice('gmail:'.length)
+        : previews.find((preview) => preview.id === previewId)?.gmailInboxItemId
+          ?? gmailInboxItems.find((item) => item.householdId === householdId && item.importRunId === runId)?.id
+      if (gmailInboxItemId && householdId) {
+        await platformClient.reopenGmailInboxItem(householdId, gmailInboxItemId, runId)
+        hydratedGmailItemsRef.current.delete(gmailInboxItemId); await refreshGmailInbox(true)
+      }
+      setNotice(gmailInboxItemId ? '未確定のインポートを取り消し、Gmail Inbox に戻しました。' : driveInboxItemId ? '未確定のインポートを取り消し、Google Drive Inbox に戻しました。' : '未確定のインポートを取り消しました。')
     } catch {
       setNotice('インポートを取り消せませんでした。')
     } finally {
@@ -1625,6 +1688,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       ].map((x, i) => <article className="status-card" key={x[0]}><span className={`status-orb s${i}`} /><div><strong>{x[1]}</strong><span>{x[0]}</span><small>{x[2]}</small></div></article>)}
     </section>
     <PendingImportHandoffPanel householdId={householdId} accounts={accounts} members={members} pendingRuns={pendingReviewRuns} onApplied={() => { setRecoveryRevision((value) => value + 1); onChanged() }} />
+    {platformClient.runtime === 'tauri' && gmailInboxItems.length > 0 && <section className="panel watched-folders" aria-labelledby="gmail-inbox-title"><div className="panel-head"><div><h2 id="gmail-inbox-title">Gmail Inbox</h2><p>ラベル同期したEML原本と添付をプレビューします。レビューで承認するまで台帳へ反映しません。</p></div><button className="secondary-btn" disabled={gmailInboxBusy} onClick={() => void refreshGmailInbox(true)}>{gmailInboxBusy ? '更新中…' : 'Inbox を更新'}</button></div><div className="watched-folder"><div><strong>添付メールの原本</strong><span>{gmailInboxItems.length}件 ・ Gmail 読み取り専用</span></div>{gmailInboxItems.filter((item) => item.state !== 'REMOVED').map((item) => { const emailPreview = previews.find((preview) => preview.gmailInboxItemId === item.id); const previewFailed = emailPreview?.status === 'error' || emailPreview?.status === 'unsupported'; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>Gmail ・ {item.estimatedByteSize === null ? 'サイズ未取得' : `${(item.estimatedByteSize / 1024).toFixed(1)} KB`} ・ {new Date(item.internalDateMs).toLocaleDateString('ja-JP')}</small></span><b className={!previewFailed && ['READY', 'STAGED'].includes(item.state) ? 'ready' : 'review'}>{previewFailed ? 'プレビューで確認が必要' : gmailInboxStateLabel(item.state)}</b><span className="folder-inbox-actions">{previewFailed && <button className="mini-btn" disabled={gmailInboxBusy} onClick={() => void repreviewGmailInboxItem(item.id)}>再プレビュー</button>}{item.state === 'FAILED' && <button className="mini-btn" disabled={gmailInboxBusy} onClick={() => void retryGmailInboxItem(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" disabled={gmailInboxBusy} onClick={() => void ignoreGmailInboxItem(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div></section>}
     {platformClient.runtime === 'tauri' && driveInboxItems.length > 0 && <section className="panel watched-folders" aria-labelledby="google-drive-inbox-title"><div className="panel-head"><div><h2 id="google-drive-inbox-title">Google Drive Inbox</h2><p>同期済みの原本世代を端末内でプレビューします。取引はレビューで承認するまで台帳へ反映しません。</p></div><button className="secondary-btn" disabled={driveInboxBusy} onClick={() => void refreshGoogleDriveInbox(true)}>{driveInboxBusy ? '更新中…' : 'Inbox を更新'}</button></div><div className="watched-folder"><div><strong>接続フォルダーの原本</strong><span>{driveInboxItems.length}件 ・ Google Drive 読み取り専用</span></div>{driveInboxItems.filter((item) => item.state !== 'REMOVED').map((item) => {
       const drivePreview = previews.find((preview) => preview.driveInboxItemId === item.id)
       const previewFailed = drivePreview?.status === 'error' || drivePreview?.status === 'unsupported'
@@ -1633,7 +1697,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     })}</div></section>}
     {platformClient.runtime === 'tauri' && watchedFolders.length > 0 && <section className="panel watched-folders"><div className="panel-head"><div><h2>同期フォルダー</h2><p>変更履歴と処理状態は端末内データベースに保持され、再起動後も復元されます。</p></div><label className="auto-scan-toggle"><input type="checkbox" checked={folderInbox.autoScan} onChange={(event) => folderInbox.setAutoScan(event.target.checked)} /><span>自動プレビュー</span></label></div>{watchedFolders.map((folder) => <div className="watched-folder" key={folder.id}><div><strong>{folder.label}</strong><span>{folder.provider === 'ICLOUD' ? 'iCloud Drive' : 'ローカル同期'} ・ {folder.displayName}</span></div><button className="secondary-btn" disabled={folderBusy === folder.id} onClick={() => void scanWatchedFolder(folder)}>{folderBusy === folder.id ? 'スキャン中…' : '新しいファイルを確認'}</button><button className="text-btn" disabled={folderBusy === folder.id} onClick={() => void removeWatchedFolder(folder)}>解除</button>{folderInbox.items.filter((item) => item.watchedFolderId === folder.id && item.state !== 'REMOVED').map((item) => { const stateLabel = { DISCOVERED: '検出済み', PROCESSING: '解析中', READY: 'プレビュー完了', NEEDS_MAPPING: '形式の対応付けが必要', STAGED: '取込処理に接続済み', FAILED: '失敗', IGNORED: '無視', REMOVED: '削除済み' }[item.state]; return <div className="watched-file" key={item.id}><FileCheck2 size={15} /><span><strong>{item.fileName}</strong><small>{item.provider === 'ICLOUD' ? 'iCloud Drive' : 'ローカル同期'} ・ {(item.byteSize / 1024).toFixed(1)} KB ・ 試行 {item.attemptCount}</small></span><b className={item.state === 'READY' || item.state === 'STAGED' ? 'ready' : 'review'}>{stateLabel}</b><span className="folder-inbox-actions">{(item.state === 'FAILED' || item.state === 'IGNORED') && <button className="mini-btn" onClick={() => void folderInbox.retry(item.id)}>再試行</button>}{['DISCOVERED', 'READY', 'NEEDS_MAPPING', 'FAILED'].includes(item.state) && <button className="text-btn" onClick={() => void folderInbox.ignore(item.id)}>無視</button>}</span>{item.lastErrorCode && <small className="folder-inbox-error">{item.lastErrorCode}</small>}</div> })}</div>)}</section>}
     <section className="panel import-panel">
-      <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカルで選択したファイルと Google Drive Inbox のプレビュー</p></div></div>
+      <div className="panel-head"><div><h2>最近のファイル</h2><p>ローカル、Google Drive、Gmail Inbox のプレビュー</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>CSV / TSV / Excel / PDF / レシート画像 / ZIP / EMLをここにドロップ</span><small>PayPay・銀行・カード・ゆうちょ公式CSV一括ZIP・メール添付・PNG / JPEGレシート</small></button>
       {parserProfiles.length > 0 && previews.some((item) => /\.(?:csv|tsv)$/i.test(item.filename) && item.fileBytes) && <div className="custom-parser-files">
         <div><strong>保存済みプロファイルを明示的に適用</strong><small>組み込み判定を上書きする場合、ファイルとプロファイルを選んで実データをプレビューします。</small></div>
@@ -2672,7 +2736,7 @@ function App() {
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
-    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
   return <div className="app-shell"><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} householdName={activeHousehold?.name ?? '家計'} /><main>{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }

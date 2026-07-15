@@ -53,9 +53,11 @@ sources in this version. They can still be saved and imported directly through
 the existing PDF/image workflow. Unsupported tabular schemas remain blocked;
 the email container does not bypass adapter validation.
 
-Direct mailbox APIs, background email polling, server-side forwarding, and
-provider OAuth are separate future connector work. KakeFlow currently requires
-the user or a locally configured mail-client rule to export or save the message
-as `.eml`. The message may then be selected, dropped, or discovered in a watched
-folder. Folder discovery can prepare a preview, but posting still requires the
-same explicit account selection and review approval as every other import.
+This document describes the provider-independent local `.eml` path. The direct
+read-only [Gmail connector](GMAIL_CONNECTOR.md) now reuses that exact parser and
+review boundary on `main`; its public availability remains gated by the next
+major release and Google provider qualification. Other mailbox APIs,
+server-side forwarding, and providers remain separate work. A locally exported
+message may still be selected, dropped, or discovered in a watched folder.
+Folder discovery can prepare a preview, but posting always requires the same
+explicit account selection and review approval as every other import.

@@ -791,6 +791,50 @@ export interface GoogleDriveInboxClaimDto {
   readonly items: readonly GoogleDriveInboxItemDto[]
 }
 
+export type GmailUnavailableReasonDto = 'CLIENT_ID_NOT_COMPILED'
+export interface GmailAvailabilityDto {
+  readonly available: boolean
+  readonly authorizationMode: 'SYSTEM_BROWSER_LOOPBACK'
+  readonly scopeProfile: 'GMAIL_READONLY'
+  readonly unavailableReason: GmailUnavailableReasonDto | null
+}
+export type GmailConnectionStatusDto = 'AUTHORIZING' | 'SELECTING_LABEL' | 'CONNECTED' | 'AUTH_REQUIRED' | 'DISCONNECTED'
+export interface GmailConnectionDto {
+  readonly id: string; readonly status: GmailConnectionStatusDto; readonly accountEmail: string | null
+  readonly labelId: string | null; readonly labelName: string | null; readonly gmailQuery: string; readonly labelBound: boolean
+  readonly lastFullScanAt: string | null; readonly lastChangeAt: string | null
+  readonly createdAt: string; readonly updatedAt: string
+}
+export interface GmailLabelDto { readonly id: string; readonly name: string; readonly kind: 'SYSTEM' | 'USER' }
+export interface BindGmailLabelInputDto {
+  readonly householdId: string; readonly connectionId: string; readonly labelId: string; readonly labelName: string; readonly gmailQuery: string
+}
+export type GmailSyncResultDto = GoogleDriveSyncResultDto
+export type GmailSuspensionReasonDto = GoogleDriveSuspensionReasonDto
+export interface GmailSyncScheduleDto {
+  readonly connectionId: string; readonly enabled: boolean; readonly intervalMinutes: 15 | 30 | 60
+  readonly nextDueAt: string | null; readonly running: boolean
+  readonly lastResult: GmailSyncResultDto; readonly lastDiscoveredCount: number
+  readonly consecutiveFailures: number; readonly suspendedUntil: string | null
+  readonly suspensionReason: GmailSuspensionReasonDto | null; readonly lastErrorCode: string | null
+  readonly updatedAt: string
+}
+export interface UpdateGmailScheduleInputDto {
+  readonly householdId: string; readonly connectionId: string; readonly enabled: boolean; readonly intervalMinutes: 15 | 30 | 60
+}
+export type GmailInboxStateDto = WatchedFileInboxStateDto | 'TOO_LARGE' | 'UNSUPPORTED'
+export interface GmailInboxItemDto {
+  readonly id: string; readonly householdId: string; readonly connectionId: string
+  readonly fileName: string; readonly mediaType: 'message/rfc822'; readonly internalDateMs: number
+  readonly estimatedByteSize: number | null; readonly contentReady: boolean; readonly state: GmailInboxStateDto
+  readonly attemptCount: number; readonly importRunId: string | null; readonly lastErrorCode: string | null
+  readonly discoveredAt: string; readonly updatedAt: string
+}
+export interface GmailInboxFileDto {
+  readonly item: GmailInboxItemDto; readonly fileBytes: readonly number[]
+}
+export interface GmailInboxClaimDto { readonly leaseToken: string; readonly leaseExpiresAt: string; readonly items: readonly GmailInboxItemDto[] }
+
 export interface TransactionPageDto {
   readonly items: readonly TransactionRowDto[]
   readonly page: number
@@ -959,6 +1003,23 @@ export type AppCommand =
   | 'google_drive_inbox_mark_staged'
   | 'google_drive_inbox_mark_failed'
   | 'google_drive_inbox_reopen'
+  | 'gmail_availability'
+  | 'gmail_connections_list'
+  | 'gmail_connect'
+  | 'gmail_labels_list'
+  | 'gmail_label_bind'
+  | 'gmail_disconnect'
+  | 'gmail_schedule_get'
+  | 'gmail_schedule_update'
+  | 'gmail_sync_now'
+  | 'gmail_inbox_list'
+  | 'gmail_inbox_ignore'
+  | 'gmail_inbox_retry'
+  | 'gmail_inbox_file_read'
+  | 'gmail_inbox_claim'
+  | 'gmail_inbox_mark_staged'
+  | 'gmail_inbox_mark_failed'
+  | 'gmail_inbox_reopen'
   | 'dashboard_query'
   | 'dashboard_preferences_get'
   | 'dashboard_preferences_upsert'
@@ -1112,6 +1173,23 @@ export interface PlatformClient {
   markGoogleDriveInboxStaged(householdId: string, itemId: string, leaseToken: string, importRunId: string): Promise<GoogleDriveInboxItemDto>
   markGoogleDriveInboxFailed(householdId: string, itemId: string, leaseToken: string, errorCode: string): Promise<GoogleDriveInboxItemDto>
   reopenGoogleDriveInboxItem(householdId: string, itemId: string, importRunId: string): Promise<GoogleDriveInboxItemDto>
+  getGmailAvailability(): Promise<GmailAvailabilityDto>
+  listGmailConnections(householdId: string): Promise<readonly GmailConnectionDto[]>
+  connectGmail(householdId: string): Promise<GmailConnectionDto>
+  listGmailLabels(householdId: string, connectionId: string): Promise<readonly GmailLabelDto[]>
+  bindGmailLabel(input: BindGmailLabelInputDto): Promise<GmailConnectionDto>
+  disconnectGmail(householdId: string, connectionId: string): Promise<GmailConnectionDto>
+  getGmailSchedule(householdId: string, connectionId: string): Promise<GmailSyncScheduleDto>
+  updateGmailSchedule(input: UpdateGmailScheduleInputDto): Promise<GmailSyncScheduleDto>
+  syncGmailNow(householdId: string, connectionId: string): Promise<GmailSyncScheduleDto>
+  listGmailInbox(householdId: string, connectionId?: string, state?: GmailInboxStateDto, limit?: number): Promise<readonly GmailInboxItemDto[]>
+  ignoreGmailInboxItem(householdId: string, itemId: string): Promise<GmailInboxItemDto>
+  retryGmailInboxItem(householdId: string, itemId: string): Promise<GmailInboxItemDto>
+  readGmailInboxFile(householdId: string, itemId: string): Promise<GmailInboxFileDto>
+  claimGmailInboxItems(householdId: string, itemIds: readonly string[]): Promise<GmailInboxClaimDto>
+  markGmailInboxStaged(householdId: string, itemId: string, leaseToken: string, importRunId: string): Promise<GmailInboxItemDto>
+  markGmailInboxFailed(householdId: string, itemId: string, leaseToken: string, errorCode: string): Promise<GmailInboxItemDto>
+  reopenGmailInboxItem(householdId: string, itemId: string, importRunId: string): Promise<GmailInboxItemDto>
   queryDashboard(request: DashboardRequestDto): Promise<DashboardMonthlyTotalsDto>
   getDashboardPreferences(householdId: string): Promise<DashboardPreferencesDto>
   upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>

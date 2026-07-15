@@ -232,18 +232,25 @@ fn immutable_message_identity_ignores_repeated_history_and_label_changes() {
         [],
     )
     .unwrap();
-    let staging = claim_inbox(&c, "home", "gmail", std::slice::from_ref(&second.id)).unwrap();
-    let staged =
-        mark_inbox_staged(&c, "home", &second.id, &staging.lease_token, "run-home").unwrap();
-    assert_eq!(staged.state, "STAGED");
-    assert_eq!(staged.import_run_id.as_deref(), Some("run-home"));
     c.execute_batch(
         "INSERT INTO source_documents(id,household_id,import_run_id,source_type,original_filename,media_type,byte_size,sha256,storage_path)
          VALUES('gmail-doc','home','run-home','GMAIL','message.eml','message/rfc822',600,
          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc','vault://gmail-doc');",
     )
     .unwrap();
-    link_source_document(&c, "home", &second.id, "gmail-doc").unwrap();
+    let staging = claim_inbox(&c, "home", "gmail", std::slice::from_ref(&second.id)).unwrap();
+    let staged =
+        mark_inbox_staged(&c, "home", &second.id, &staging.lease_token, "run-home").unwrap();
+    assert_eq!(staged.state, "STAGED");
+    assert_eq!(staged.import_run_id.as_deref(), Some("run-home"));
+    let links: i64 = c
+        .query_row(
+            "SELECT count(*) FROM gmail_source_links WHERE inbox_id=?1 AND source_document_id='gmail-doc'",
+            [&second.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(links, 1);
     assert!(matches!(
         load_household_inbox_item(&c, "other", &second.id),
         Err(GmailStoreError::NotFound)
@@ -263,6 +270,14 @@ fn immutable_message_identity_ignores_repeated_history_and_label_changes() {
             .state,
         "READY"
     );
+    let links_after_reopen: i64 = c
+        .query_row(
+            "SELECT count(*) FROM gmail_source_links WHERE inbox_id=?1",
+            [&second.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(links_after_reopen, 1);
 }
 
 #[test]

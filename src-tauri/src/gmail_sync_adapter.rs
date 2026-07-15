@@ -489,6 +489,16 @@ mod tests {
                         [],
                     )
                     .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO source_documents(
+                           id,household_id,import_run_id,source_type,original_filename,
+                           media_type,byte_size,sha256,storage_path)
+                         VALUES('gmail-staged-document','home','run-staged','GMAIL',
+                           'keep-staged.eml','message/rfc822',1,?1,'vault://keep-staged')",
+                        [staged_item.content_sha256.as_deref().unwrap()],
+                    )
+                    .unwrap();
                 let claim = gmail_store::claim_inbox(
                     connection,
                     "home",
