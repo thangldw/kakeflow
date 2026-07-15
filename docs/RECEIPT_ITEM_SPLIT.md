@@ -1,6 +1,6 @@
 # Receipt item review and split posting
 
-KakeFlow 0.64 brings structured receipt evidence into Import Inbox before a
+KakeFlow brings structured receipt evidence into Import Inbox before a
 candidate is approved. The original image or PDF remains immutable; the preview
 receives only a bounded projection of the primary evidence, never raw OCR text,
 page pixels, extraction regions, or the original payload JSON.

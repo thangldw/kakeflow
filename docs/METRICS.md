@@ -47,7 +47,7 @@ cash outflow and liability settlement, not a second expense.
   not payment instructions or financial advice.
 - Anomalies compare a transaction with the household's prior merchant/category
   history. Every result includes the baseline, observed value, score, and reason.
-- No peer-household benchmark or opaque global model is used in v0.4.
+- No peer-household benchmark or opaque global model is used in this implementation.
 
 ## Account groups
 
@@ -79,7 +79,7 @@ audiences.
 
 Transactions store attribution and audience independently. Source documents
 store their own audience, which may intentionally differ from every linked
-transaction. The v0.13 analytical scope is a tagged value: `ALL`,
+transaction. the analytical scope is a tagged value: `ALL`,
 `HOUSEHOLD_COMMON`, or `MEMBER(memberId)`. It combines with account-group scope
 using logical AND and applies to posted transaction facts across the dashboard,
 ledger, calendar, reports, intelligence, forecast history, action actuals, and

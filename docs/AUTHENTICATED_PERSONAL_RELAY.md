@@ -1,6 +1,6 @@
 # Authenticated personal desktop relay
 
-KakeFlow 0.53 adds an optional, manual transport for moving schema-v4 local
+KakeFlow adds an optional, manual transport for moving schema-v4 local
 change packages between desktops authenticated as the **same remote
 principal**. The relay does not replace the existing package workflow: sending,
 checking, downloading, staging, reviewing, and applying remain separate user
@@ -58,7 +58,7 @@ with request-size limits. Its explicit WebView CORS allowlist is configured by
 `x-kakeflow-*` headers; a reverse proxy must preserve or equivalently enforce it.
 Desktop configuration accepts HTTPS endpoints, plus loopback HTTP for local
 development. The service stores artifact bytes exactly as received, with a
-durable on-disk index; KakeFlow 0.53 does not encrypt a change package end to
+durable on-disk index; KakeFlow does not encrypt a change package end to
 end.
 
 Each token maps to one server-derived principal. Listings and downloads are
@@ -83,14 +83,14 @@ operator responsibilities.
 
 ## Exact product boundary
 
-Version 0.53 relays only confirmed-household **local change packages**. It does
+KakeFlow relays only confirmed-household **local change packages**. It does
 not remotely transport confirmed-evidence capsules, original source bytes,
 pending-import handoffs, mutable candidates, watched-folder grants, or backups.
 Investment facts still require their confirmed evidence to be hydrated through
 the existing explicit evidence-capsule workflow before the matching package can
 apply.
 
-KakeFlow 0.53 does not claim:
+KakeFlow does not claim:
 
 - cross-member or family-principal synchronization;
 - backend-enforced `SHARED`/`PERSONAL` audience permissions;
@@ -105,7 +105,7 @@ Family Space audience remains a local organization label inside the current
 schema-v5 package. A whole-household schema-v5 package, including its complete
 recurring-series preference aggregate, may contain personal facts for more
 than one member. It therefore remains a same-principal personal relay artifact
-and must not be used for cross-member delivery. KakeFlow v0.54 adds a separate
+and must not be used for cross-member delivery. KakeFlow adds a separate
 family protocol whose relay derives recipients from authenticated membership;
 this does not change or widen the personal-relay contract.
 

@@ -18,7 +18,7 @@ Every raw row is stored as immutable evidence with both the original ordered fie
 
 ## Explicit institution mapping
 
-Version 0.45 accepts between one and 50 distinct normalized `保有金融機関`
+KakeFlow accepts between one and 50 distinct normalized `保有金融機関`
 values in one file. Names are normalized with NFKC and surrounding whitespace is
 removed, then displayed in deterministic first-appearance order. A blank value
 on any detail row or more than 50 distinct values blocks the file.

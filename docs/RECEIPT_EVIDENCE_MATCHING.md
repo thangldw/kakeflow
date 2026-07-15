@@ -1,6 +1,6 @@
 # Receipt evidence matching
 
-KakeFlow 0.21 can attach an offline-OCR receipt candidate to an existing posted
+KakeFlow can attach an offline-OCR receipt candidate to an existing posted
 household expense. This is an evidence workflow, not an automatic transaction
 creation workflow.
 

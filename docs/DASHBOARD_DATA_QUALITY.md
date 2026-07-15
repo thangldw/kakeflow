@@ -1,6 +1,6 @@
 # Dashboard data quality and freshness
 
-KakeFlow 0.30 places a compact data-quality summary underneath the Home analytical widgets. Its purpose is to qualify the dashboard, not to invent a universal completeness score.
+KakeFlow places a compact data-quality summary underneath the Home analytical widgets. Its purpose is to qualify the dashboard, not to invent a universal completeness score.
 
 ## Source-backed facts
 

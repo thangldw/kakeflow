@@ -1,6 +1,6 @@
 # Local change packages
 
-KakeFlow 0.41 provides a user-driven file workflow for moving the current
+KakeFlow provides a user-driven file workflow for moving the current
 household state between KakeFlow desktop installations. It does not connect to a
 server, poll another device, or transmit a file over a network.
 

@@ -1,6 +1,6 @@
 # Mobile receipt capture and desktop Capture Inbox
 
-KakeFlow 0.55 adds a dedicated receipt-capture channel. It is deliberately
+KakeFlow adds a dedicated receipt-capture channel. It is deliberately
 separate from confirmed family snapshots, portable pending-import packages,
 and confirmed-evidence bundles because a newly photographed receipt is still
 unreviewed source evidence.

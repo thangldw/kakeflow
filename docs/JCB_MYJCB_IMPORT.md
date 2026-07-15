@@ -1,6 +1,6 @@
 # JCB MyJCB statement import
 
-KakeFlow 0.42 adds a dedicated adapter for a narrow JCB statement CSV contract.
+KakeFlow adds a dedicated adapter for a narrow JCB statement CSV contract.
 JCB officially confirms that statements can be downloaded in CSV format by
 billing month and that installment/revolving exports can include both the new
 usage amount and the amount due for the month:

@@ -29,7 +29,7 @@ The resolved values are applied to the document root as theme and density attrib
 
 The compact layout editor lets users drag eligible widgets, use the equivalent named up/down buttons from a keyboard, hide or restore a widget, and reset the active template. The rendered DOM follows the visual order so focus and screen-reader reading order stay coherent. A polite announcement reports completed moves.
 
-Version 0.48 stores a separate layout for each of the five templates. Switching templates restores the target template's order and visibility; it does not copy, reset, or overwrite another template. Reset affects only the template currently shown.
+KakeFlow stores a separate layout for each of the five templates. Switching templates restores the target template's order and visibility; it does not copy, reset, or overwrite another template. Reset affects only the template currently shown.
 
 Every saved order is exhaustive and contains each known widget exactly once. Templates filter that order to their eligible widgets; Cash Flow never exposes the accrual-only category panel. Hidden IDs remain available in the editor, and KakeFlow refuses to hide the last visible eligible widget. The renderer also falls back to the first eligible widget if migrated or template-filtered data would otherwise produce an empty Home.
 
@@ -41,8 +41,8 @@ Preferences are stored in SQLite under the active household and contain the acti
 
 Loads and saves are household-scoped. If the user switches household while a request is in flight, a stale response cannot overwrite the new household's preferences. Database restore validation rejects unknown enum values, duplicate/unknown/missing widget IDs, hiding all widgets, malformed timestamps, and invalid household relations.
 
-Version 0.50 makes the complete preference aggregate portable through local change-package schema v4. Export carries the active template, theme, density, and the exhaustive order and hidden-widget set for each of the five templates. Applying that aggregate replaces all five destination layouts atomically; it never merges individual panels or changes ledger facts.
+KakeFlow makes the complete preference aggregate portable through local change-package schema v4. Export carries the active template, theme, density, and the exhaustive order and hidden-widget set for each of the five templates. Applying that aggregate replaces all five destination layouts atomically; it never merges individual panels or changes ledger facts.
 
-Schema-v1, schema-v2, and schema-v3 change packages remain readable. Their legacy dashboard payloads contain only template, theme, and density, so applying one preserves every destination per-template layout. This compatibility rule prevents an older package from silently resetting a layout created by v0.48 or later.
+Schema-v1, schema-v2, and schema-v3 change packages remain readable. Their legacy dashboard payloads contain only template, theme, and density, so applying one preserves every destination per-template layout. This compatibility rule prevents an older package from silently resetting a layout created by a newer schema.
 
 Layout portability remains a user-driven local-file workflow. It does not provide cloud synchronization, remote identity, or concurrent editing, and it does not include machine-specific window size or operating-system appearance settings.

@@ -1,8 +1,8 @@
 # Investment performance accounting
 
-KakeFlow v0.15 derives investment holdings, realized performance, dated market valuation, and explicit corporate-action allocations from immutable brokerage events and provenance-bearing observations.
+KakeFlow derives investment holdings, realized performance, dated market valuation, and explicit corporate-action allocations from immutable brokerage events and provenance-bearing observations.
 
-## Market valuation (v0.8)
+## Market valuation
 
 Valuation selects the latest confirmed instrument price on or before the requested
 date. Prices imported with `assetbalance(all)_*.csv` snapshots are reused with
@@ -21,7 +21,7 @@ The cost-basis method is **FIFO (first in, first out)**. A sale consumes the old
 - Net sale proceeds = gross sale amount - sale fee - sale tax.
 - Realized P&L = allocated net sale proceeds - allocated FIFO cost basis.
 
-## Corporate actions (v0.7)
+## Corporate actions
 
 KakeFlow supports three non-cash corporate actions with an explicit
 `new units / old unit` ratio:
@@ -39,7 +39,7 @@ create a realized allocation or gain by themselves.
 Actions without the explicit quantities, ratios, allocation, target, or required
 currency conversion are rejected or reported as skipped rather than guessed.
 
-## Complex corporate actions (v0.9)
+## Complex corporate actions
 
 - `SPIN_OFF` creates target-instrument lots while allocating source-lot cost only
   from an explicit source-provided ratio. Acquisition date and source lineage are retained.
@@ -52,7 +52,7 @@ Every allocation identifies both the corporate-action source row and the
 originating purchase event. Missing terms are surfaced as issues and do not
 produce an estimated lot or gain.
 
-## Mixed and cross-currency mergers (v0.15)
+## Mixed and cross-currency mergers
 
 A merger source row must provide the target instrument/currency, new-shares per
 old-share ratio, and the fraction of source cost basis assigned to the stock
@@ -82,7 +82,7 @@ conversion rate, output basis/currency, proceeds, and realized P&L. Security,
 cash, and offset legs are balanced independently in each currency; cash movement
 is reported in the cash leg currency.
 
-## FX reporting (v0.7)
+## FX reporting
 
 Brokerage events and FIFO lots always retain their original currency. FX rates
 are immutable observations containing an effective date, pair, provider,

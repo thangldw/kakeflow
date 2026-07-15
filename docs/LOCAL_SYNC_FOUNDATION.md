@@ -1,6 +1,6 @@
 # Local sync foundation
 
-KakeFlow 0.34 prepares a local, inspectable contract for a future optional
+KakeFlow prepares a local, inspectable contract for a future optional
 multi-device service. It does **not** connect to a server or transmit financial
 data.
 
@@ -29,7 +29,7 @@ Delivery state lives in a separate outbox row so a future acknowledgement does
 not mutate the canonical envelope. In 0.34 the outbox has no transport and every
 status is labelled `端末内のみ`.
 
-KakeFlow 0.36 completes the canonical ledger side of the transactional capture
+KakeFlow completes the canonical ledger side of the transactional capture
 layer. Household, member, and account payloads retain their complete scalar
 state. A transaction capture is a deterministic aggregate containing its full
 header, ordered journal entries, sorted labels and tags, source references, and
@@ -42,7 +42,7 @@ two-database replay test that verifies equal debit and credit totals and exact
 metadata/reference reconstruction. This is a contract proof only: there is no
 incoming-envelope application runtime in 0.36.
 
-KakeFlow 0.37 adds seven portable, user-authored planning and configuration
+KakeFlow adds seven portable, user-authored planning and configuration
 aggregates: the household monthly-budget plan, savings goals, classification
 rules with sorted labels and tags, account groups with ordered members, explicit
 card-to-bank settlement mappings, saved dashboard preferences, and versioned
@@ -53,7 +53,7 @@ The [planning and configuration contract](REPLICABLE_PLANNING_CONFIG_CAPTURE.md)
 has its own dependency-ordered two-database replay proof. It does not add an
 incoming-envelope application runtime or transmit an outbox record.
 
-KakeFlow 0.38 adds a separate, user-driven [local change package](LOCAL_CHANGE_PACKAGES.md)
+KakeFlow adds a separate, user-driven [local change package](LOCAL_CHANGE_PACKAGES.md)
 workflow. It exports one consistent current-state snapshot for all eleven
 covered aggregate kinds, stages it durably on another installation, requires an
 explicit decision for every conflict or omission deletion, and applies the
@@ -61,14 +61,14 @@ accepted result in one SQLite transaction. Incoming package writes are guarded
 from local capture, so applying a package does not echo it into the outbox. This
 is file transfer initiated by the user, not outbox delivery or network sync.
 
-KakeFlow 0.39 introduces package schema v2 and extends that atomic graph with
+KakeFlow introduces package schema v2 and extends that atomic graph with
 card statements and card payments. Ordered statement lines, due dates,
 unconfirmed suggestions, confirmed settlement links, and portable statement
 source references now reconstruct the Cards and forecast read models on the
 receiving installation. Schema-v1 packages remain accepted and cannot delete
 the new card graph by omission.
 
-KakeFlow 0.41 introduces package schema v3 with five whole investment
+KakeFlow introduces package schema v3 with five whole investment
 aggregates: portfolio snapshots, brokerage events, investment FX rates, market
 prices, and aggregate asset history. The matching evidence capsule is hydrated
 first; apply then resolves exact origin/document/row aliases, reconstructs the

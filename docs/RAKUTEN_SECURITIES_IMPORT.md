@@ -1,6 +1,6 @@
 # Rakuten Securities domestic trade-history import
 
-KakeFlow 0.52 adds a dedicated adapter for the domestic-stock CSV exported from
+KakeFlow adds a dedicated adapter for the domestic-stock CSV exported from
 Rakuten Securities. Rakuten Securities' official
 [Japanese stock trade-history guide](https://www.rakuten-sec.co.jp/ITS/qaAssTrad0001.html)
 documents the selectable spot, odd-lot, and credit categories, the CSV filename

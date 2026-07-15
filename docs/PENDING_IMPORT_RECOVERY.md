@@ -1,6 +1,6 @@
 # Pending import recovery
 
-KakeFlow 0.47 makes the review boundary durable. A manual upload, receipt extraction, or watched-folder file already staged as `REVIEW_REQUIRED` remains available in Import Inbox after the application or workspace restarts.
+KakeFlow makes the review boundary durable. A manual upload, receipt extraction, or watched-folder file already staged as `REVIEW_REQUIRED` remains available in Import Inbox after the application or workspace restarts.
 
 ## Native discovery contract
 
@@ -32,4 +32,4 @@ If discovery fails, the current same-household recovered list remains visible an
 
 ## Boundary
 
-Recovery itself remains a same-device operation. KakeFlow 0.49 adds a separate, versioned [pending-import handoff format](PENDING_IMPORT_HANDOFF.md) for explicitly copying one candidate-bearing review through a passphrase-protected local file. Confirmed evidence capsules and local change packages continue to contain confirmed facts, not mutable Inbox decisions.
+Recovery itself remains a same-device operation. KakeFlow adds a separate, versioned [pending-import handoff format](PENDING_IMPORT_HANDOFF.md) for explicitly copying one candidate-bearing review through a passphrase-protected local file. Confirmed evidence capsules and local change packages continue to contain confirmed facts, not mutable Inbox decisions.

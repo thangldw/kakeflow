@@ -1,6 +1,6 @@
 # Yucho Direct bulk ZIP import
 
-KakeFlow 0.28 can open a ZIP produced by Yucho Direct's bulk CSV download as a manual import. The archive is a transport container only: each CSV becomes an independent child preview and is parsed by the normal adapter pipeline.
+KakeFlow can open a ZIP produced by Yucho Direct's bulk CSV download as a manual import. The archive is a transport container only: each CSV becomes an independent child preview and is parsed by the normal adapter pipeline.
 
 Official references:
 

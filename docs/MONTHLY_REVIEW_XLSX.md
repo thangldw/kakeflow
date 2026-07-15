@@ -1,6 +1,6 @@
 # Monthly Household Review XLSX
 
-KakeFlow 0.67 can save the validated Monthly Household Review as a native Excel workbook. The export runs the same `MonthlyFinancialReportRequest` and report query as the visible monthly screen, including the selected calendar month, saved account group, and household/member attribution scope. The later [Monthly Household Review CSV](MONTHLY_REVIEW_CSV.md) uses that same request and resolved data-quality `asOf` date without changing the workbook contract.
+KakeFlow can save the validated Monthly Household Review as a native Excel workbook. The export runs the same `MonthlyFinancialReportRequest` and report query as the visible monthly screen, including the selected calendar month, saved account group, and household/member attribution scope. The later [Monthly Household Review CSV](MONTHLY_REVIEW_CSV.md) uses that same request and resolved data-quality `asOf` date without changing the workbook contract.
 
 ## Reporting period and scope
 

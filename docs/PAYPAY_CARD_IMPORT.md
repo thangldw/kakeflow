@@ -1,6 +1,6 @@
 # PayPay Card finalized-statement import
 
-KakeFlow 0.66 adds a deliberately narrow adapter for a finalized PayPay Card
+KakeFlow adds a deliberately narrow adapter for a finalized PayPay Card
 billing CSV. PayPay Card officially confirms that a statement can be downloaded
 as CSV from the PayPay app or web member menu, one billing month at a time. It
 also states that unfinalized statements cannot be downloaded and that older

@@ -1,6 +1,6 @@
 # SBI Securities trade-history import
 
-KakeFlow 0.51 adds a dedicated adapter for the CSV downloaded from SBI
+KakeFlow adds a dedicated adapter for the CSV downloaded from SBI
 Securities' `口座管理` → `取引履歴` → `約定履歴` screen. SBI's official
 [domestic trade-history help](https://search.sbisec.co.jp/v2/popwin/help/manage_10_01.html)
 documents the CSV download, its 10,000-row file boundary, the available detail
@@ -59,7 +59,7 @@ from a filename or a nearby row.
 The source settlement arithmetic must reconcile. A mismatch becomes an
 explicit `ADJUSTED` event with a warning and a balanced, auditable adjustment
 leg; KakeFlow preserves SBI's settlement amount instead of silently replacing
-it with a calculated value. Version 0.51 does not split that difference into
+it with a calculated value. KakeFlow does not split that difference into
 fee and tax legs because the supported field family does not establish those
 components independently for every accepted domestic and foreign row.
 

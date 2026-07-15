@@ -1,6 +1,6 @@
 # Replicable planning and configuration capture
 
-KakeFlow 0.37 extends the local change-envelope contract to the household plans
+KakeFlow extends the local change-envelope contract to the household plans
 and reusable settings that shape day-to-day work. It captures seven portable,
 user-authored aggregates without connecting to a server or applying an envelope
 to another installation.
@@ -71,7 +71,7 @@ by the separate [replicable ledger contract](REPLICABLE_LEDGER_CAPTURE.md).
 
 ## Boundary of this release
 
-KakeFlow 0.37 does not capture or transport source documents, source rows,
+KakeFlow does not capture or transport source documents, source rows,
 encrypted source bytes, import runs, candidates, watched-folder state,
 investment or portfolio observations, card statements, statement purchases,
 confirmed card-payment links, receipt links, or derived analytics. Card due

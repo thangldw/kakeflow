@@ -1,6 +1,6 @@
 # Pending import handoff
 
-KakeFlow 0.49 can move one unconfirmed, candidate-bearing Import Inbox review between desktop installations using a local `.kakeflow-review` file. The handoff is deliberately separate from confirmed evidence capsules and local change packages: it carries mutable review inputs, not approved ledger facts.
+KakeFlow can move one unconfirmed, candidate-bearing Import Inbox review between desktop installations using a local `.kakeflow-review` file. The handoff is deliberately separate from confirmed evidence capsules and local change packages: it carries mutable review inputs, not approved ledger facts.
 
 ## Scope and boundary
 

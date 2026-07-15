@@ -1,6 +1,6 @@
 # Yucho Direct transaction import
 
-KakeFlow 0.27 recognizes the personal-account transaction CSV exported by Yucho Direct. The adapter follows Japan Post Bank's published format rather than guessing aliases from third-party files.
+KakeFlow recognizes the personal-account transaction CSV exported by Yucho Direct. The adapter follows Japan Post Bank's published format rather than guessing aliases from third-party files.
 
 Official references:
 

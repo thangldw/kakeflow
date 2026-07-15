@@ -1,6 +1,6 @@
 # Audience-partitioned family evidence delivery
 
-KakeFlow v0.57 extends the manual family-delivery workflow with family snapshot
+KakeFlow extends the manual family-delivery workflow with family snapshot
 schema v3 and the `KFF3` artifact envelope. Card and investment aggregates can
 now travel only when the same audience partition also contains their complete,
 immutable source evidence. Receiving or staging an artifact never changes the
@@ -93,9 +93,9 @@ same immutable publication identity and recipient rules used by V1/V2.
   `FAMILY_AUDIENCE_PARTITION_V4` artifact and adds the household recurring-
   preference aggregate. Historical KFF3/V3 artifacts remain decoded as the
   exact 18-kind contract documented above; they are never reinterpreted as V4.
-- KakeFlow v0.58 wraps V1/V2/V3 artifacts in the recipient-encrypted `KFE1`
+- KakeFlow wraps V1/V2/V3 artifacts in the recipient-encrypted `KFE1`
   transport while retaining the exact inner artifact and review contract.
-- Delivery remains manual in v0.58: there is no background scheduling or
+- Delivery remains manual in this implementation: there is no background scheduling or
   automatic apply.
 - The relay stores opaque ciphertext, but `KFE1` is not a sender-signature or
   backup-erasure protocol and cannot erase bytes already downloaded.
