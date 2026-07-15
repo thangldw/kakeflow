@@ -8,6 +8,11 @@ explicit Portfolio Snapshot. Therefore the v0.73 PDF release gate requires
 exactly the `monthly`, `annual`, `investment-performance`, and
 `portfolio-snapshot` fixture reports.
 
+The post-v1.0 development line also implements `transaction-ledger`. It is an
+accepted visual-QA report type but does not retroactively change the historical
+v0.73 required set. A later release advertising it must explicitly add
+`transaction-ledger` to that release's `--require` list.
+
 Each PDF must be generated from the fixed synthetic household fixture used by
 its report contract test. The selected household, reporting period, accounting
 basis where defined, account scope, and source coverage must be visible in the
@@ -37,8 +42,9 @@ point-in-time snapshot without choosing a latest snapshot or current quote.
 
 ## Reproducible render command
 
-Generate all four fixture PDFs from their Rust contract tests in a clean
-checkout:
+Generate the historical four fixture PDFs, plus the optional development-line
+ledger fixture when reviewing that increment, from their Rust contract tests
+in a clean checkout:
 
 ```sh
 KAKEFLOW_MONTHLY_REVIEW_PDF_FIXTURE="$PWD/tmp/pdfs/monthly-review.pdf" \
@@ -57,6 +63,11 @@ KAKEFLOW_INVESTMENT_PERFORMANCE_PDF_FIXTURE="$PWD/tmp/pdfs/investment-performanc
 KAKEFLOW_PORTFOLIO_SNAPSHOT_PDF_FIXTURE="$PWD/tmp/pdfs/portfolio-snapshot.pdf" \
   cargo test --manifest-path src-tauri/Cargo.toml \
   portfolio_snapshot_pdf --lib
+
+KAKEFLOW_TRANSACTION_LEDGER_PDF_FIXTURE="$PWD/tmp/pdfs/transaction-ledger.pdf" \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  transaction_ledger_pdf::tests::pdf_uses_exact_canonical_scope_and_is_deterministic \
+  --lib -- --exact
 ```
 
 Then render and validate it:
@@ -68,6 +79,12 @@ node scripts/pdf-report-visual-qa.mjs \
   annual="$PWD/tmp/pdfs/annual-review.pdf" \
   investment-performance="$PWD/tmp/pdfs/investment-performance.pdf" \
   portfolio-snapshot="$PWD/tmp/pdfs/portfolio-snapshot.pdf"
+
+# Increment-level ledger review (not the historical v0.73 four-report gate)
+node scripts/pdf-report-visual-qa.mjs \
+  --require transaction-ledger \
+  --output tmp/pdfs/transaction-ledger-qa \
+  transaction-ledger="$PWD/tmp/pdfs/transaction-ledger.pdf"
 ```
 
 Use `--replace` only when intentionally regenerating the same review directory.

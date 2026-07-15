@@ -13,6 +13,7 @@ export const PDF_REPORT_TYPES = [
   'annual',
   'investment-performance',
   'portfolio-snapshot',
+  'transaction-ledger',
 ]
 export const V073_REQUIRED_REPORT_TYPES = [
   'monthly',
@@ -210,6 +211,13 @@ function visualChecklist(reports) {
       '- [ ] Nullable quantity, cost, price, value, and P&L remain blank or unavailable instead of becoming zero.',
       '- [ ] Asset-class, position, and FX rows retain the snapshot source document plus positive source row.',
       '- [ ] No performance, return, trend, current quote, or live valuation is inferred from the snapshot.',
+    )
+  }
+  if (reports.some(({ type }) => type === 'transaction-ledger')) {
+    lines.push(
+      '- [ ] Transaction rows preserve the selected date range, accounting basis, account group, and attribution scope.',
+      '- [ ] Every visible transaction retains its ID, debit/credit accounts, category, calculation-target state, and attribution metadata.',
+      '- [ ] Wrapped payee, description, category, account, and identifier text remains complete and does not collide with adjacent rows.',
     )
   }
   lines.push('', '## Pages', '')

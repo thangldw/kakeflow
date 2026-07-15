@@ -77,6 +77,7 @@ pub mod source_pdf_preview;
 pub mod source_preview;
 mod source_viewer;
 pub mod sync_foundation;
+pub mod transaction_ledger_pdf;
 pub mod transaction_ledger_xlsx;
 pub mod watched_file_inbox;
 pub mod watched_folders;
@@ -3032,6 +3033,38 @@ async fn transaction_ledger_xlsx_save(
 }
 
 #[tauri::command]
+async fn transaction_ledger_pdf_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    request: ExportCsvRequest,
+) -> Result<Option<transaction_ledger_pdf::TransactionLedgerPdfSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(transaction_ledger_pdf::generate_transaction_ledger_pdf(
+            connection, &request,
+        ))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("Transaction ledger PDF is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected transaction ledger PDF destination is unavailable".to_owned())?;
+    transaction_ledger_pdf::save_transaction_ledger_pdf_document(&document, Some(&destination))
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn annual_household_review_csv_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -4507,6 +4540,7 @@ pub fn run() {
             export_csv_generate,
             export_csv_save,
             transaction_ledger_xlsx_save,
+            transaction_ledger_pdf_save,
             annual_household_review_csv_save,
             monthly_household_review_csv_save,
             annual_household_review_xlsx_save,

@@ -368,6 +368,7 @@ describe('KakeFlow desktop read models', () => {
       }
       if (command === 'export_csv_save') return { fileName: 'transactions.csv', rowCount: 1, byteSize: 100 }
       if (command === 'transaction_ledger_xlsx_save') return { fileName: 'kakeflow-transactions-2026-07-01-2026-07-31.xlsx', rowCount: 1, byteSize: 8_000, sheetCount: 2 }
+      if (command === 'transaction_ledger_pdf_save') return { fileName: 'kakeflow-transactions-2026-07-01-2026-07-31.pdf', rowCount: 1, pageCount: 2, byteSize: 24_000 }
       if (command === 'annual_household_review_csv_save') return { fileName: 'kakeflow-annual-review-2026.csv', rowCount: 6, byteSize: 800 }
       if (command === 'annual_household_review_xlsx_save') return { fileName: 'kakeflow-annual-review-2026.xlsx', rowCount: 48, byteSize: 8_000 }
       if (command === 'annual_household_review_pdf_save') return { fileName: 'kakeflow-annual-review-2026.pdf', pageCount: 8, byteSize: 24_000, rendererVersion: 1 }
@@ -721,6 +722,9 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '取引台帳Excelを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('transaction_ledger_xlsx_save', { request: ledgerCsvRequest }))
     expect(await screen.findByText(/kakeflow-transactions-2026-07-01-2026-07-31\.xlsx（1行）を保存しました/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取引台帳PDFを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('transaction_ledger_pdf_save', { request: ledgerCsvRequest }))
+    expect(await screen.findByText(/kakeflow-transactions-2026-07-01-2026-07-31\.pdf（1行・2ページ）を保存しました/)).toBeInTheDocument()
 
     view.unmount()
     render(<App />)
@@ -871,6 +875,24 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '取引台帳Excelを保存' }))
     expect(await screen.findByText('取引台帳Excelを書き出せませんでした。対象期間とグループを確認してください。')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '台帳エクスポート' })).toBeInTheDocument()
+  })
+
+  it('reports canceled and failed transaction ledger PDF saves', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'transaction_ledger_pdf_save' ? null : fallback(command, args))
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /グループ・出力/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '取引台帳PDFを保存' }))
+    expect(await screen.findByText('PDFエクスポートをキャンセルしました。')).toBeInTheDocument()
+
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'transaction_ledger_pdf_save') throw new Error('save failed')
+      return fallback(command, args)
+    })
+    fireEvent.click(screen.getByRole('button', { name: '取引台帳PDFを保存' }))
+    expect(await screen.findByText('取引台帳PDFを書き出せませんでした。対象期間とグループを確認してください。')).toBeInTheDocument()
   })
 
   it('reports canceled and failed monthly CSV, Excel, and PDF saves without changing the review', async () => {
