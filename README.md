@@ -17,7 +17,9 @@ The development line after `v1.0.0` adds
 [family delivery of recurring-series preferences](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md)
 and a source-backed [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md),
 plus a detailed [Portfolio Snapshot CSV](docs/PORTFOLIO_SNAPSHOT_CSV.md) for the
-exact selected snapshot.
+exact selected snapshot and a native-currency
+[Investment Performance CSV](docs/INVESTMENT_PERFORMANCE_CSV.md) for the exact
+selected annual FIFO report.
 Family schema v4 carries the complete explicit `CONFIRMED`/`IGNORED` household
 preference set as one `SHARED` aggregate inside `KFF4`; it never transports
 detected cadence, predicted amounts, local optimistic versions, or timestamps.
@@ -30,6 +32,11 @@ The detailed portfolio CSV keeps summary, asset-class, position, and
 snapshot-local FX grains in one BOM-prefixed table with source document/row
 lineage and explicit null statuses; it remains separate from the existing
 date-range snapshot-summary CSV.
+The annual investment CSV keeps currency totals, FIFO realized allocations,
+corporate-action allocations, uncovered sales, skipped events, unallocated
+actions, lineage, and explicit disclosures in one BOM-prefixed table. It does
+not combine currencies or infer valuation, unrealized P&L, allocation,
+ROI/TWR/IRR, or forecast metrics.
 
 Version 0.73 completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
 

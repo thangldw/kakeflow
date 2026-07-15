@@ -2,6 +2,8 @@
 
 KakeFlow exports the annual Investment Performance report as a native Excel workbook generated from the existing `InvestmentPerformanceRequest` and `InvestmentPerformanceDto`. The workbook does not introduce another investment calculation model: native code runs the same `investment_performance_query` used by the visible annual investment report and writes only the validated facts returned by that query.
 
+The companion [annual CSV](INVESTMENT_PERFORMANCE_CSV.md) uses the same request, FIFO calculation, native-currency separation, provenance, and exception semantics in a flat record-grain format.
+
 ## Request and period semantics
 
 The export reuses the exact request fields:

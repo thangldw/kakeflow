@@ -73,6 +73,39 @@ describe('InvestmentPeriodReport', () => {
     expect(screen.getByText('実現損益 ¥35,000')).toBeInTheDocument()
   })
 
+  it('saves CSV with the selected annual scope, blocks overlap, and preserves the report on cancel or failure', async () => {
+    let finishCsv: ((value: { fileName: string; rowCount: number; byteSize: number } | null) => void) | undefined
+    const saveCsv = vi.fn(() => new Promise<{ fileName: string; rowCount: number; byteSize: number } | null>((resolve) => { finishCsv = resolve }))
+    const saveXlsx = vi.fn()
+    const savePdf = vi.fn()
+    const view = render(<InvestmentPeriodReport householdId="home" revision={1} initialYear={2026} queryPerformance={vi.fn().mockResolvedValue(report)} savePerformanceCsv={saveCsv} savePerformanceXlsx={saveXlsx} savePerformancePdf={savePdf} />)
+    await screen.findByText('実現損益 ¥35,000')
+    fireEvent.change(screen.getByLabelText('投資実績の対象年'), { target: { value: '2025' } })
+    await waitFor(() => expect(screen.getByRole('button', { name: '年間投資CSVを保存' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '年間投資CSVを保存' }))
+
+    const request = { householdId: 'home', dateFrom: '2025-01-01', dateTo: '2025-12-31' }
+    expect(saveCsv).toHaveBeenCalledWith(request)
+    expect(screen.getByRole('button', { name: 'CSVを作成中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '年間投資Excelを保存' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '年間投資PDFを保存' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '年間投資Excelを保存' }))
+    fireEvent.click(screen.getByRole('button', { name: '年間投資PDFを保存' }))
+    expect(saveXlsx).not.toHaveBeenCalled()
+    expect(savePdf).not.toHaveBeenCalled()
+    finishCsv?.({ fileName: 'kakeflow-investment-performance-2025.csv', rowCount: 42, byteSize: 9_000 })
+    expect(await screen.findByText('kakeflow-investment-performance-2025.csv（42行）を保存しました。')).toBeInTheDocument()
+
+    view.rerender(<InvestmentPeriodReport householdId="home" revision={1} initialYear={2025} queryPerformance={vi.fn().mockResolvedValue(report)} savePerformanceCsv={vi.fn().mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('disk full'))} savePerformanceXlsx={saveXlsx} savePerformancePdf={savePdf} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '年間投資CSVを保存' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: '年間投資CSVを保存' }))
+    expect(await screen.findByText('投資CSVエクスポートをキャンセルしました。')).toBeInTheDocument()
+    expect(screen.getByText('実現損益 ¥35,000')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '年間投資CSVを保存' }))
+    expect(await screen.findByText('投資CSVを書き出せませんでした。対象年と確定した証券取引を確認してください。')).toBeInTheDocument()
+    expect(screen.getByText('実現損益 ¥35,000')).toBeInTheDocument()
+  })
+
   it('saves PDF with the exact Excel scope, blocks overlap, and preserves the report on cancel or failure', async () => {
     let finishPdf: ((value: { fileName: string; pageCount: number; byteSize: number } | null) => void) | undefined
     const savePdf = vi.fn(() => new Promise<{ fileName: string; pageCount: number; byteSize: number } | null>((resolve) => { finishPdf = resolve }))
