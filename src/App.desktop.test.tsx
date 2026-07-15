@@ -1696,6 +1696,12 @@ describe('KakeFlow desktop read models', () => {
         const snapshotId = (args?.request as { snapshotId: string }).snapshotId
         return { fileName: `kakeflow-${snapshotId}.xlsx`, rowCount: 12, byteSize: 6_000, sheetCount: 4 }
       }
+      if (command === 'portfolio_snapshot_csv_save') {
+        if (saveOutcome === 'CANCEL') return null
+        if (saveOutcome === 'ERROR') throw new Error('save failed')
+        const snapshotId = (args?.request as { snapshotId: string }).snapshotId
+        return { fileName: `kakeflow-${snapshotId}.csv`, rowCount: 4, byteSize: 2_000 }
+      }
       if (command === 'portfolio_snapshot_pdf_save') {
         if (saveOutcome === 'CANCEL') return null
         if (saveOutcome === 'ERROR') throw new Error('save failed')
@@ -1727,6 +1733,12 @@ describe('KakeFlow desktop read models', () => {
     expect(selectedRequest).not.toHaveProperty('asOf')
     expect(await screen.findByText('kakeflow-snapshot-jun.xlsx（12行）を保存しました。')).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高CSVを保存' }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('portfolio_snapshot_csv_save', { request: selectedRequest }))
+    const csvRequest = nativeInvoke.mock.calls.find(([command]) => command === 'portfolio_snapshot_csv_save')?.[1]?.request
+    expect(csvRequest).toEqual(selectedRequest)
+    expect(await screen.findByText('kakeflow-snapshot-jun.csv（4行）を保存しました。')).toBeInTheDocument()
+
     fireEvent.click(screen.getByRole('button', { name: '選択中の残高PDFを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('portfolio_snapshot_pdf_save', { request: selectedRequest }))
     const pdfRequest = nativeInvoke.mock.calls.find(([command]) => command === 'portfolio_snapshot_pdf_save')?.[1]?.request
@@ -1737,9 +1749,20 @@ describe('KakeFlow desktop read models', () => {
     saveOutcome = 'PENDING'
     fireEvent.click(screen.getByRole('button', { name: '選択中の残高PDFを保存' }))
     expect(screen.getByRole('button', { name: 'PDFを作成中…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '選択中の残高CSVを保存' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '選択中の残高Excelを保存' })).toBeDisabled()
     finishPdf?.({ fileName: 'kakeflow-snapshot-jun.pdf', pageCount: 5, byteSize: 14_000 })
     await waitFor(() => expect(screen.getByRole('button', { name: '選択中の残高PDFを保存' })).toBeEnabled())
+
+    saveOutcome = 'CANCEL'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高CSVを保存' }))
+    expect(await screen.findByText('資産スナップショットCSVエクスポートをキャンセルしました。')).toBeInTheDocument()
+    expect(juneSnapshot).toHaveClass('active')
+
+    saveOutcome = 'ERROR'
+    fireEvent.click(screen.getByRole('button', { name: '選択中の残高CSVを保存' }))
+    expect(await screen.findByText('資産スナップショットCSVを書き出せませんでした。選択中のスナップショットを確認してください。')).toBeInTheDocument()
+    expect(juneSnapshot).toHaveClass('active')
 
     saveOutcome = 'CANCEL'
     fireEvent.click(screen.getByRole('button', { name: '選択中の残高Excelを保存' }))
