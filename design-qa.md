@@ -79,6 +79,55 @@ final result: passed
 
 ---
 
+# Classification rule builder visual mix — 2026-07-15
+
+- Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-d0a51b48-ca98-472a-92b0-0195f07cdbda.png`
+- Implementation screenshot: `/Users/thang/Documents/kakeflow/docs/audits/rule-builder-2026-07-15/rule-builder-mixed-language.png`
+- Viewport: `1280 × 720`
+- State: browser preview, Japanese locale, Classification Rules.
+- Full-view comparison: the reference and rendered screen were inspected for hierarchy, grid rhythm, typography, accent use, and control density.
+- Focused comparison: the rule-builder panel and global language control are fully legible in the implementation capture, so a separate crop was unnecessary.
+
+## Findings
+
+No actionable P0/P1/P2 issue remains. The previous unlabeled eight-control grid
+was visually flat and hard to scan. The revised panel introduces an editorial
+section kicker, explicit field labels, a balanced 12-column form grid, cobalt
+focus/action accents, and a restrained orange tag accent while preserving the
+warm KakeFlow canvas and financial semantics.
+
+## Required fidelity surfaces
+
+- Typography: strong Japanese hierarchy remains; the compact monospace kicker
+  borrows the reference's technical editorial voice without changing body copy.
+- Spacing: 14 px row rhythm, 12 px column rhythm, 44 px controls, and grouped
+  labels make the form scan in a predictable left-to-right sequence.
+- Colors: cobalt is limited to navigation/focus/action emphasis; orange appears
+  only as a secondary metadata accent. Olive remains KakeFlow's trust color.
+- Image quality: no new raster or decorative assets were required; Lucide's
+  globe icon uses the existing vector icon system.
+- Copy: Japanese financial terminology and existing accessible names are
+  preserved.
+
+## Verification
+
+- The language selector is visibly outlined in the top bar and exposes Japanese,
+  English, and Vietnamese.
+- The Classification Rules navigation and form controls remain functional.
+- Responsive rules collapse the form to two columns and then one column.
+
+## Comparison history
+
+- Iteration 1 finding: P2 — flat unlabeled fields and a weak disabled action
+  made the form look unfinished.
+- Fix: added labels, section hierarchy, responsive grid, visible focus states,
+  and restrained cobalt/orange accents.
+- Post-fix evidence: `rule-builder-mixed-language.png`.
+
+final result: passed
+
+---
+
 # Brand lockup size correction — 2026-07-15
 
 - Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-75f09e10-9bf4-472d-809f-f5c08f4e41b0.png`
