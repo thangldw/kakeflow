@@ -2011,6 +2011,15 @@ describe('KakeFlow desktop read models', () => {
 
   it.each([
     {
+      name: 'Mizuho Business Web statement',
+      filename: 'mizuho-business.csv',
+      accountLabel: 'mizuho-business.csvの取込先銀行口座',
+      accountId: 'family-bank',
+      missing: 'みずほビジネスWEB 入出金明細CSVの取込先銀行口座を選択してください。',
+      adapterId: 'mizuho-business-web-statement-v1',
+      csv: '照会口座,番号,勘定日,（起算日）,出金（円）,入金（円）,小切手区分,残高（円）,取引区分,明細区分,金融機関名,支店名,摘要\nみずほ銀行 東京中央支店 普通 1234567,001,2026年7月2日,2026年7月1日,10000,,,-1000,振替支払,,,,ラクテンカード',
+    },
+    {
       name: 'Resona Web deposit/withdrawal Meisai Plus',
       filename: 'resona.csv',
       accountLabel: 'resona.csvの取込先銀行口座',
