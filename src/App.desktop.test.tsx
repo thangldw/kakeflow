@@ -1613,7 +1613,7 @@ describe('KakeFlow desktop read models', () => {
       csv: '1,123,東京支店,1,0,普通,0012345,カケフロウ,2026.7.1-2026.7.31,全明細,2026.7.31,12:34,,,\n2,2026.7.1,振込,給与,0,300000,300000\n8\n9,0,1,,0,300000,0,300000',
     },
     {
-      name: 'PayPay', filename: 'paypay.csv', accountLabel: 'paypay.csvの取込先ウォレット口座', accountId: 'family-wallet', missing: 'PayPay履歴の取込先ウォレット口座を選択してください。', adapterId: 'paypay-history-v1',
+      name: 'PayPay', filename: 'paypay.csv', accountLabel: 'paypay.csvの取込先ウォレット口座', accountId: 'family-wallet', missing: 'PayPay履歴の取込先ウォレット口座を選択してください。', adapterId: 'paypay-history-v2', expectedAdapterVersion: '2',
       csv: 'Date & Time,Amount Outgoing (Yen),Amount Incoming (Yen),Transaction Type,Payment Option,Transaction ID,Description\n2026/07/12 12:00,1200,,Payment,PayPay Balance,pay-1,STORE',
     },
     {

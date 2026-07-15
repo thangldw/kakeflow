@@ -1,9 +1,8 @@
 import path from 'node:path'
-
-const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u
+import { assertReleaseVersion, windowsInstallerArtifactName } from './release-version-contract.mjs'
 
 export function installerForVersion(version, architecture = 'x64', repositoryRoot = process.cwd()) {
-  if (!VERSION.test(version)) throw new Error(`Invalid KakeFlow version: ${version}`)
+  assertReleaseVersion(version)
   if (!['x64', 'arm64'].includes(architecture)) throw new Error(`Unsupported Windows installer architecture: ${architecture}`)
   const tauriArchitecture = architecture === 'arm64' ? 'arm64' : 'x64'
   return path.join(
@@ -13,7 +12,7 @@ export function installerForVersion(version, architecture = 'x64', repositoryRoo
     'release',
     'bundle',
     'nsis',
-    `KakeFlow_${version}_${tauriArchitecture}-setup.exe`,
+    windowsInstallerArtifactName(version, tauriArchitecture),
   )
 }
 

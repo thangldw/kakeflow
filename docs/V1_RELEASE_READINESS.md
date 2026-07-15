@@ -24,6 +24,10 @@ The following must be complete on the v1 release commit:
 
 Focused tests run with each capability increment. Full audit, packaging, version
 bump, tag, and public release run only once for the v1 release candidate.
+`npm run check:versions` enforces the release-version contract across both lock
+files, the first changelog entry, README stable marker, project-page production
+CTAs, and the exact DMG/NSIS artifact naming rules; roadmap and historical prose
+are not interpreted as current-release metadata.
 
 ## Platform evidence gates
 
