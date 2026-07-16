@@ -60,7 +60,7 @@ describe('HomeActionCenter', () => {
   it('presents clearly bounded sample actions without querying native data in browser preview', () => {
     const query = vi.fn()
     render(<HomeActionCenter {...baseProps} desktop={false} query={query} />)
-    expect(screen.getByText('Amazon Mastercard 支払期日 07-27')).toBeInTheDocument()
+    expect(screen.getByText('PayPayカード 支払期日 07-27')).toBeInTheDocument()
     expect(screen.getByText('重複6件・振替候補3件')).toBeInTheDocument()
     expect(query).not.toHaveBeenCalled()
   })

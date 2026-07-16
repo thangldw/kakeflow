@@ -43,7 +43,7 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import { cardSettlements, categoryData, importItems, spendingTrend, transactions } from './data'
+import { cardSettlements, categoryData, importItems, previewPortfolioSnapshot, spendingTrend, transactions } from './data'
 import { previewImportFiles } from './features/import/importService'
 import type { ImportPreview } from './features/import/importService'
 import { sha256Text } from './features/import/importService'
@@ -528,7 +528,7 @@ function ReconciliationMini({ liveCards, desktop, onOpen }: { liveCards: readonl
 
 function DashboardDataQuality({ counts, desktop, onOpenImport }: { counts: ImportRunCountsDto | null; desktop: boolean; onOpenImport: () => void }) {
   const { localeCode, text } = useI18n()
-  const data = desktop ? counts : { sourceDocuments: 12, sourceRecords: 1_248, pendingCandidates: 4, readyCandidates: 2, failed: 0, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho-202607.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 4 } as ImportRunCountsDto
+  const data = desktop ? counts : { sourceDocuments: 15, sourceRecords: 1_286, pendingCandidates: 4, readyCandidates: 2, failed: 0, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'mufg_smbc_202607.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 5 } as ImportRunCountsDto
   const reviewCount = (data?.pendingCandidates ?? 0) + (data?.readyCandidates ?? 0)
   const state = !data || data.sourceDocuments === 0 ? '原本データなし' : data.failed > 0 ? '取込エラーあり' : reviewCount > 0 ? '確認待ちあり' : '確認済みデータを反映'
   const latest = data?.latestSuccessfulImportAt ? new Intl.DateTimeFormat(localeCode, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(data.latestSuccessfulImportAt)) : text('まだありません')
@@ -2061,8 +2061,9 @@ function CardsPage({ cards, householdId, accounts, revision, onChanged, month }:
 }
 
 function InvestmentsPage({ householdId, revision, openImport }: { householdId: string | null; revision: number; openImport: () => void }) {
-  const [snapshots, setSnapshots] = useState<readonly PortfolioSnapshotSummaryDto[]>([])
-  const [detail, setDetail] = useState<PortfolioSnapshotDetailDto | null>(null)
+  const browserPreview = platformClient.runtime === 'web'
+  const [snapshots, setSnapshots] = useState<readonly PortfolioSnapshotSummaryDto[]>(() => browserPreview ? [previewPortfolioSnapshot] : [])
+  const [detail, setDetail] = useState<PortfolioSnapshotDetailDto | null>(() => browserPreview ? previewPortfolioSnapshot : null)
   const [notice, setNotice] = useState('')
   const [snapshotExportNotice, setSnapshotExportNotice] = useState('')
   const [savingSnapshotXlsx, setSavingSnapshotXlsx] = useState(false)
@@ -2075,7 +2076,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
   const [aggregateAssets, setAggregateAssets] = useState<readonly AggregateAssetSnapshotDto[]>([])
   const [aggregateRange, setAggregateRange] = useState<{ from: string | null; to: string | null }>({ from: null, to: null })
   useEffect(() => {
-    if (!householdId || platformClient.runtime !== 'tauri') return
+    if (!householdId || browserPreview) return
     let active = true
     void portfolioPlatform.listSnapshots(householdId).then(async (items) => {
       if (!active) return
@@ -2090,7 +2091,7 @@ function InvestmentsPage({ householdId, revision, openImport }: { householdId: s
     void investmentMarketPlatform.queryValuation({ householdId, asOf }).then((nextValuation) => { if (active) setValuation(nextValuation) }).catch(() => { if (active) setValuation(null) })
     void aggregateAssetHistoryPlatform.listHistory({ householdId, limit: 240 }).then((items) => { if (active) setAggregateAssets(items) }).catch(() => { if (active) { setAggregateAssets([]); setNotice('Money Forward総資産履歴を読み込めませんでした。') } })
     return () => { active = false }
-  }, [householdId, revision])
+  }, [browserPreview, householdId, revision])
   const selectSnapshot = async (snapshotId: string) => {
     if (!householdId) return
     try { setDetail(await portfolioPlatform.getSnapshot(householdId, snapshotId)); setSnapshotExportNotice('') }
@@ -3050,7 +3051,7 @@ function App() {
   }
 
   const pageContent = {
-    overview: <Overview setPage={navigateToPage} openAllActions={openAllActions} householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? '家計'} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
+    overview: <Overview setPage={navigateToPage} openAllActions={openAllActions} householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? (platformClient.runtime === 'web' ? '田中家' : '家計')} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
     transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} members={householdMembers} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} />,
     capture: <CaptureInboxWorkspace householdId={activeHouseholdId} accounts={accounts} onOpenImport={() => setPage('import')} onChanged={() => setLedgerRevision((value) => value + 1)} />,
@@ -3062,7 +3063,8 @@ function App() {
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} />{platformClient.runtime === 'tauri' && <DelimitedParserProfilesPanel householdId={activeHouseholdId} />}</>,
   }[page]
-  return <div className="app-shell"><DesktopTitleBar householdName={activeHousehold?.name ?? '家計'} /><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} showBasis={basisAppliesToPage} basis={workspaceBasis} setBasis={setWorkspaceBasis} theme={dashboardPreferences.theme} onToggleTheme={() => updateDashboardPreferences({ theme: dashboardPreferences.theme === 'DARK' ? 'LIGHT' : 'DARK' })} /><main><div className="workspace-content">{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</div></main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
+  const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? '田中家' : '家計')
+  return <div className="app-shell"><DesktopTitleBar householdName={displayedHouseholdName} /><Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} importActionableCount={folderInboxCounts?.actionable ?? 0} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} showBasis={basisAppliesToPage} basis={workspaceBasis} setBasis={setWorkspaceBasis} theme={dashboardPreferences.theme} onToggleTheme={() => updateDashboardPreferences({ theme: dashboardPreferences.theme === 'DARK' ? 'LIGHT' : 'DARK' })} /><main><div className="workspace-content">{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">家族集計範囲: <strong>{activeAttributionLabel}</strong>。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">口座スコープ: <strong>{activeAccountGroup?.name ?? 'すべての口座'}</strong>{activeAccountGroup ? ` ・ ${activeAccountGroup.accountIds.length}口座` : ''}</p>}</div></main></div>{platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0 && <Onboarding onCreated={(household) => { setHouseholds([household]); globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id); setActiveHouseholdId(household.id) }} />}</div>
 }
 
 export default App

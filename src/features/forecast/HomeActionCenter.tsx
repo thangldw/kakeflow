@@ -7,10 +7,10 @@ import { homeActionSlice } from './actionCenterModel'
 
 const platform = createForecastActionPlatform()
 const previewActions: readonly ActionItemDto[] = [
-  { id: 'preview-card', kind: 'CARD_PAYMENT_DUE', priority: 'HIGH', title: 'Amazon Mastercard 支払期日 07-27', detail: '口座引落予定を確認してください。', dueOn: '2026-07-27', amountJpy: 20_170, entityId: 'preview-card', reasons: ['支払期日が近づいています'] },
+  { id: 'preview-card', kind: 'CARD_PAYMENT_DUE', priority: 'HIGH', title: 'PayPayカード 支払期日 07-27', detail: '三井住友銀行の口座引落 ¥20,170 と全額照合済みです。', dueOn: '2026-07-27', amountJpy: 20_170, entityId: 'preview-card', reasons: ['カード請求と銀行引落を照合済み'] },
   { id: 'preview-import', kind: 'IMPORT_REVIEW', priority: 'MEDIUM', title: '重複6件・振替候補3件', detail: '転記前のレビューが必要です。', dueOn: null, amountJpy: null, entityId: 'preview-import', reasons: ['候補は確定台帳に含まれません'] },
   { id: 'preview-ocr', kind: 'IMPORT_REVIEW', priority: 'MEDIUM', title: '低信頼度OCR 2件', detail: 'レシート原本と抽出値を確認してください。', dueOn: null, amountJpy: null, entityId: 'preview-ocr', reasons: ['OCR信頼度が基準未満です'] },
-  { id: 'preview-budget', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '交際費が予算の112%', detail: '月末までの支出ペースを確認してください。', dueOn: null, amountJpy: 12_000, entityId: 'preview-budget', reasons: ['予算超過'] },
+  { id: 'preview-budget', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '教育費が予算の112%', detail: '夏期講習と教材費の支出ペースを確認してください。', dueOn: null, amountJpy: 12_000, entityId: 'preview-budget', reasons: ['予算超過'] },
 ]
 
 export function HomeActionCenter({ householdId, accountGroupId, attributionScope, asOf, revision, desktop, onAction, onViewAll, query = platform.query }: {
