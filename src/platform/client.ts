@@ -127,6 +127,13 @@ const WEB_STATUS: AppStatusDto = Object.freeze({
   integrity: 'failed',
 })
 
+const WEB_DEMO_HOUSEHOLD: HouseholdDto = Object.freeze({
+  id: 'demo-tanaka-family',
+  name: '田中家',
+  baseCurrency: 'JPY',
+  createdAt: '2025-07-31T00:00:00.000Z',
+})
+
 const WEB_GOOGLE_DRIVE_AVAILABILITY: GoogleDriveAvailabilityDto = Object.freeze({
   available: false,
   authorizationMode: 'SYSTEM_BROWSER_LOOPBACK',
@@ -234,7 +241,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       pickAndStagePendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_pick_and_stage') },
       applyPendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_apply') },
       discardPendingImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'pending_import_discard') },
-      listHouseholds: async () => [],
+      listHouseholds: async () => [WEB_DEMO_HOUSEHOLD],
       createHousehold: async (input) => ({ id: input.id, name: input.name, baseCurrency: 'JPY', createdAt: new Date(0).toISOString() }),
       listHouseholdMembers: async () => [],
       createHouseholdMember: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'household_member_create') },

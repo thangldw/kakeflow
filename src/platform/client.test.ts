@@ -40,7 +40,9 @@ describe('platform client', () => {
     })
     await expect(client.getLocalSyncFoundationStatus('family')).rejects.toMatchObject({ command: 'local_sync_foundation_status' })
     await expect(client.getDesktopRelayStatus('family')).rejects.toMatchObject({ command: 'relay_status' })
-    await expect(client.listHouseholds()).resolves.toEqual([])
+    await expect(client.listHouseholds()).resolves.toEqual([{
+      id: 'demo-tanaka-family', name: '田中家', baseCurrency: 'JPY', createdAt: '2025-07-31T00:00:00.000Z',
+    }])
     await expect(client.listHouseholdMembers('family')).resolves.toEqual([])
     await expect(client.createHouseholdMember({} as never)).rejects.toMatchObject({ command: 'household_member_create' })
     await expect(client.listAccounts('family')).resolves.toEqual([])
