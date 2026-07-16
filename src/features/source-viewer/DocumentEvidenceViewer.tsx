@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { X } from 'lucide-react'
 import type { ExtractedRegionDto } from '../../platform'
 import type { DocumentEvidenceReadModel } from './documentEvidence'
 import { EvidencePageOverlay } from './EvidencePageOverlay'
@@ -47,8 +48,15 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
   const [pendingPdfPages, setPendingPdfPages] = useState<readonly number[]>([])
   const [failedPdfPages, setFailedPdfPages] = useState<readonly number[]>([])
   const [pdfPasswordStatus, setPdfPasswordStatus] = useState<Exclude<PdfPasswordStatus, 'SUCCESS'> | null>(null)
+  const [verifiedSha, setVerifiedSha] = useState('')
   const pageNumbers = useMemo(() => evidence.pages.map((page) => page.pageNumber), [evidence.pages])
   const pageKey = pageNumbers.join(',')
+  useEffect(() => {
+    setVerifiedSha(document.querySelector<HTMLElement>('.evidence-list')?.dataset.sha256 ?? '')
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') globalThis.dispatchEvent(new CustomEvent('kakeflow:evidence-close')) }
+    globalThis.addEventListener('keydown', close)
+    return () => globalThis.removeEventListener('keydown', close)
+  }, [])
   useEffect(() => {
     setRenderedPdfPages({})
     setFailedPdfPages([])
@@ -87,8 +95,8 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
     setSelected({ pageNumber, regionIndex })
     onSelectRegion?.(pageNumber, region, regionIndex)
   }
-  return <article className="evidence-viewer" aria-labelledby={evidenceTitleId}>
-    <header className="evidence-header"><div><p>Source Evidence · v{evidence.evidenceVersion}</p><h2 id={evidenceTitleId}>{filename ?? `ソースレコード ${evidence.sourceRecordId}`}</h2></div><div className="evidence-confidence"><span>{methodLabels[evidence.method]}</span><strong>{confidence(evidence.confidenceBps)}</strong></div></header>
+  return <div className="evidence-viewer-backdrop" role="presentation"><article className="evidence-viewer" role="dialog" aria-modal="true" aria-labelledby={evidenceTitleId}>
+    <header className="evidence-header"><div><p>Source Evidence · v{evidence.evidenceVersion}</p><h2 id={evidenceTitleId}>{filename ?? `ソースレコード ${evidence.sourceRecordId}`}</h2><code>SHA-256 {verifiedSha || '検証中…'} ✓</code></div><div className="evidence-confidence"><span>{methodLabels[evidence.method]}</span><strong>{confidence(evidence.confidenceBps)}</strong><button className="icon-btn" aria-label="原本ソースを閉じる" onClick={() => globalThis.dispatchEvent(new CustomEvent('kakeflow:evidence-close'))}><X size={18} /></button></div></header>
     {evidence.issues.length > 0 && <aside className="evidence-issues" role="status"><strong>抽出時の注意</strong><ul>{evidence.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul></aside>}
     {pdfPasswordStatus && <PdfPasswordPrompt filename={filename} status={pdfPasswordStatus} onSubmit={retryPdfPassword} onCancel={() => setPdfPasswordStatus(null)} />}
 
@@ -115,5 +123,5 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
     </section>
 
     <details className="evidence-raw"><summary>抽出テキスト全文</summary><pre>{evidence.text || '抽出テキストなし'}</pre></details>
-  </article>
+  </article></div>
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "1.0.0"
+version = "1.1.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "MIT"
@@ -26,6 +26,7 @@ tauri-plugin-single-instance = "2.4.2"
 rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }
 rusqlite_migration = "2.3"
 sha2 = "0.10"
+unicode-normalization = "0.1"
 thiserror = "2"
 zeroize = "1.8"
 base64 = "0.22"

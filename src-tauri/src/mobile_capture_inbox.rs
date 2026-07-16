@@ -54,6 +54,21 @@ pub struct IngestMobileCaptureInput {
     pub capsule_bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IngestLocalCaptureInput {
+    pub household_id: String,
+    pub artifact_id: String,
+    pub capture_id: String,
+    pub original_filename: String,
+    pub media_type: String,
+    pub captured_at: Option<String>,
+    pub audience_visibility: String,
+    pub audience_member_id: Option<String>,
+    pub source_kind: Option<String>,
+    pub file_bytes: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MobileCaptureInboxItemDto {
@@ -149,6 +164,79 @@ pub fn ingest(
         let _ = vault.delete(&stored.sha256);
     }
     result
+}
+
+/// Stores a receipt selected or dropped on the desktop without requiring a
+/// mobile capsule. The immutable vault digest is also the deduplication key,
+/// so selecting the same image again returns the existing inbox item.
+pub fn ingest_local(
+    connection: &Connection,
+    vault: &DocumentVault,
+    input: &IngestLocalCaptureInput,
+) -> Result<MobileCaptureInboxItemDto> {
+    validate_local_ingest(input)?;
+    let stored = vault
+        .put(&input.file_bytes, &input.media_type)
+        .map_err(|_| MobileCaptureError::Vault)?;
+    let existing_artifact: Option<String> = connection
+        .query_row(
+            "SELECT artifact_id FROM mobile_capture_receipts WHERE household_id=?1 AND source_sha256=?2 ORDER BY received_at,artifact_id LIMIT 1",
+            params![input.household_id, stored.sha256],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| MobileCaptureError::Database)?;
+    if let Some(artifact_id) = existing_artifact {
+        connection
+            .execute(
+                "DELETE FROM mobile_capture_discards WHERE household_id=?1 AND artifact_id=?2",
+                params![input.household_id, artifact_id],
+            )
+            .map_err(|_| MobileCaptureError::Database)?;
+        return get(connection, &input.household_id, &artifact_id);
+    }
+    let result = insert_local_receipt(connection, input, &stored.sha256, stored.plaintext_size);
+    if result.is_err() && !stored.deduplicated {
+        let _ = vault.delete(&stored.sha256);
+    }
+    result
+}
+
+fn insert_local_receipt(
+    connection: &Connection,
+    input: &IngestLocalCaptureInput,
+    source_sha256: &str,
+    byte_size: u64,
+) -> Result<MobileCaptureInboxItemDto> {
+    let sender_membership_id = if input.source_kind.as_deref() == Some("WATCHED_FOLDER") {
+        "watched-folder"
+    } else {
+        "local-desktop"
+    };
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
+        .map_err(|_| MobileCaptureError::Database)?;
+    let household: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM households WHERE id=?1)",
+            [&input.household_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| MobileCaptureError::Database)?;
+    if !household {
+        return Err(MobileCaptureError::InvalidInput);
+    }
+    tx.execute(
+        "INSERT INTO mobile_capture_receipts(household_id,artifact_id,sender_membership_id,origin_device_id,capture_id,capsule_sha256,source_sha256,source_media_type,source_byte_size,original_filename,captured_at,audience_visibility,audience_member_id,storage_path) VALUES(?1,?2,?3,'local-desktop',?4,?5,?5,?6,?7,?8,?9,?10,?11,?12)",
+        params![input.household_id,input.artifact_id,sender_membership_id,input.capture_id,source_sha256,input.media_type,byte_size,input.original_filename,input.captured_at,input.audience_visibility,input.audience_member_id,format!("vault://{source_sha256}")],
+    )
+    .map_err(|error| if error.sqlite_error_code() == Some(rusqlite::ErrorCode::ConstraintViolation) { MobileCaptureError::Conflict } else { MobileCaptureError::Database })?;
+    tx.execute(
+        "INSERT INTO mobile_capture_inbox(household_id,artifact_id,state) VALUES(?1,?2,'RECEIVED')",
+        params![input.household_id, input.artifact_id],
+    )
+    .map_err(|_| MobileCaptureError::Database)?;
+    tx.commit().map_err(|_| MobileCaptureError::Database)?;
+    get(connection, &input.household_id, &input.artifact_id)
 }
 
 /// Background intake stores the immutable receipt rows and advances the
@@ -261,7 +349,7 @@ pub fn list(connection: &Connection, household_id: &str) -> Result<Vec<MobileCap
     valid_id(household_id)?;
     let mut statement = connection
         .prepare(&format!(
-            "{} WHERE receipt.household_id=?1 ORDER BY receipt.received_at DESC,receipt.artifact_id LIMIT {}",
+            "{} WHERE receipt.household_id=?1 AND NOT EXISTS (SELECT 1 FROM mobile_capture_discards discarded WHERE discarded.household_id=receipt.household_id AND discarded.artifact_id=receipt.artifact_id) ORDER BY receipt.received_at DESC,receipt.artifact_id LIMIT {}",
             SELECT_ITEM,
             MAX_INBOX_ITEMS + 1
         ))
@@ -515,6 +603,20 @@ pub fn mark_ocr_review_required(
     get(connection, household_id, artifact_id)
 }
 
+pub fn discard(connection: &Connection, household_id: &str, artifact_id: &str) -> Result<()> {
+    valid_id(household_id)?;
+    valid_id(artifact_id)?;
+    let item = get(connection, household_id, artifact_id)?;
+    if matches!(item.state.as_str(), "PROMOTED" | "DUPLICATE") {
+        return Err(MobileCaptureError::InvalidState);
+    }
+    connection.execute(
+        "INSERT INTO mobile_capture_discards(household_id,artifact_id) VALUES(?1,?2) ON CONFLICT(household_id,artifact_id) DO NOTHING",
+        params![household_id, artifact_id],
+    ).map_err(|_| MobileCaptureError::Database)?;
+    Ok(())
+}
+
 pub fn promote(
     connection: &Connection,
     input: &PromoteMobileCaptureInput,
@@ -615,6 +717,33 @@ fn validate_ingest(input: &IngestMobileCaptureInput) -> Result<()> {
     }
     Ok(())
 }
+fn validate_local_ingest(input: &IngestLocalCaptureInput) -> Result<()> {
+    for id in [&input.household_id, &input.artifact_id, &input.capture_id] {
+        valid_id(id)?;
+    }
+    if input.original_filename.trim().is_empty()
+        || input.original_filename.len() > 255
+        || input.original_filename.chars().any(char::is_control)
+        || !matches!(
+            input.media_type.as_str(),
+            "image/png" | "image/jpeg" | "application/pdf"
+        )
+        || input.file_bytes.is_empty()
+        || input.file_bytes.len() > 25 * 1024 * 1024
+        || !matches!(
+            input.source_kind.as_deref(),
+            None | Some("LOCAL") | Some("WATCHED_FOLDER")
+        )
+        || !matches!(input.audience_visibility.as_str(), "SHARED" | "PERSONAL")
+        || (input.audience_visibility == "SHARED") != input.audience_member_id.is_none()
+    {
+        return Err(MobileCaptureError::InvalidInput);
+    }
+    if let Some(id) = &input.audience_member_id {
+        valid_id(id)?;
+    }
+    Ok(())
+}
 fn valid_id(value: &str) -> Result<()> {
     if value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
         Err(MobileCaptureError::InvalidInput)
@@ -700,6 +829,62 @@ mod tests {
             .with_connection(|c| {
                 assert_eq!(
                     c.query_row("SELECT count(*) FROM import_runs", [], |r| r
+                        .get::<_, u64>(0))?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+    #[test]
+    fn local_ingestion_deduplicates_by_immutable_source() {
+        let (state, vault, _) = setup();
+        let bytes = vec![137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4];
+        let make = |artifact: &str, capture: &str| IngestLocalCaptureInput {
+            household_id: "family".into(),
+            artifact_id: artifact.into(),
+            capture_id: capture.into(),
+            original_filename: "local-receipt.png".into(),
+            media_type: "image/png".into(),
+            captured_at: Some("2026-07-16T00:00:00Z".into()),
+            source_kind: Some("LOCAL".into()),
+            audience_visibility: "SHARED".into(),
+            audience_member_id: None,
+            file_bytes: bytes.clone(),
+        };
+        let first = state
+            .with_connection(|connection| {
+                Ok(ingest_local(
+                    connection,
+                    &vault,
+                    &make("local-1", "capture-local-1"),
+                ))
+            })
+            .unwrap()
+            .unwrap();
+        let repeated = state
+            .with_connection(|connection| {
+                Ok(ingest_local(
+                    connection,
+                    &vault,
+                    &make("local-2", "capture-local-2"),
+                ))
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.artifact_id, repeated.artifact_id);
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM mobile_capture_receipts",
+                        [],
+                        |row| row.get::<_, u64>(0)
+                    )?,
+                    1
+                );
+                assert_eq!(
+                    connection.query_row("SELECT count(*) FROM import_runs", [], |row| row
                         .get::<_, u64>(0))?,
                     0
                 );

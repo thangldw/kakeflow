@@ -132,10 +132,11 @@ use read_model::{
     CreateAccountInput, CreateClassificationRuleInput, CreateHouseholdInput,
     CreateHouseholdMemberInput, CreateManualTransactionInput, CreateSavingsGoalInput,
     DashboardMonthlyTotalsDto, HouseholdDto, HouseholdMemberDto, ImportRunCountsDto,
-    MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto, TransactionDetailDto,
-    TransactionPageDto, TransactionPageRequest, TransactionRowDto, UpdateAccountOwnershipInput,
-    UpdateCardStatementDueDateInput, UpdateClassificationRuleInput, UpdateHouseholdMemberInput,
-    UpdatePostedTransactionInput, UpdateSavingsGoalInput, UpsertMonthlyCategoryBudgetInput,
+    LastClassificationApplicationDto, MonthlyCategoryBudgetDto, RenameAccountInput, SavingsGoalDto,
+    TransactionDetailDto, TransactionPageDto, TransactionPageRequest, TransactionRowDto,
+    UpdateAccountOwnershipInput, UpdateCardStatementDueDateInput, UpdateClassificationRuleInput,
+    UpdateHouseholdMemberInput, UpdatePostedTransactionInput, UpdateSavingsGoalInput,
+    UpsertMonthlyCategoryBudgetInput,
 };
 use record_scope::AttributionScope;
 use recurring_analytics::{
@@ -751,6 +752,17 @@ fn mobile_capture_ingest(
 }
 
 #[tauri::command]
+fn mobile_capture_local_ingest(
+    state: tauri::State<'_, AppState>,
+    vault: tauri::State<'_, DocumentVault>,
+    input: mobile_capture_inbox::IngestLocalCaptureInput,
+) -> Result<mobile_capture_inbox::MobileCaptureInboxItemDto, String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::ingest_local(connection, &vault, &input)
+    })
+}
+
+#[tauri::command]
 fn mobile_capture_image_preview(
     state: tauri::State<'_, AppState>,
     vault: tauri::State<'_, DocumentVault>,
@@ -770,6 +782,17 @@ fn mobile_capture_mark_ocr_review_required(
 ) -> Result<mobile_capture_inbox::MobileCaptureInboxItemDto, String> {
     mobile_capture_result(&state, |connection| {
         mobile_capture_inbox::mark_ocr_review_required(connection, &household_id, &artifact_id)
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_discard(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    artifact_id: String,
+) -> Result<(), String> {
+    mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::discard(connection, &household_id, &artifact_id)
     })
 }
 
@@ -2709,6 +2732,91 @@ fn budget_upsert(
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MonthlyReviewMemoDto {
+    household_id: String,
+    month: String,
+    memo: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UpsertMonthlyReviewMemoInput {
+    household_id: String,
+    month: String,
+    memo: String,
+}
+
+fn valid_review_month(value: &str) -> bool {
+    value.len() == 7
+        && value.as_bytes()[4] == b'-'
+        && value
+            .bytes()
+            .enumerate()
+            .all(|(index, byte)| index == 4 || byte.is_ascii_digit())
+        && matches!(
+            &value[5..7],
+            "01" | "02" | "03" | "04" | "05" | "06" | "07" | "08" | "09" | "10" | "11" | "12"
+        )
+}
+
+#[tauri::command]
+fn monthly_review_memo_get(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+) -> Result<Option<MonthlyReviewMemoDto>, String> {
+    if household_id.trim().is_empty() || !valid_review_month(&month) {
+        return Err("Monthly review memo input is invalid".to_owned());
+    }
+    state
+        .with_connection(|connection| {
+            match connection.query_row(
+                "SELECT household_id,month,memo,updated_at FROM monthly_review_memos WHERE household_id=?1 AND month=?2",
+                rusqlite::params![household_id, month],
+                |row| Ok(MonthlyReviewMemoDto { household_id: row.get(0)?, month: row.get(1)?, memo: row.get(2)?, updated_at: row.get(3)? }),
+            ) {
+                Ok(value) => Ok(Some(value)),
+                Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                Err(error) => Err(error.into()),
+            }
+        })
+        .map_err(|_| "Monthly review memo is temporarily unavailable".to_owned())
+}
+
+#[tauri::command]
+fn monthly_review_memo_upsert(
+    state: tauri::State<'_, AppState>,
+    input: UpsertMonthlyReviewMemoInput,
+) -> Result<Option<MonthlyReviewMemoDto>, String> {
+    let memo = input.memo.trim().to_owned();
+    if input.household_id.trim().is_empty()
+        || !valid_review_month(&input.month)
+        || memo.chars().count() > 1200
+    {
+        return Err("Monthly review memo input is invalid".to_owned());
+    }
+    state
+        .with_connection(|connection| {
+            if memo.is_empty() {
+                connection.execute("DELETE FROM monthly_review_memos WHERE household_id=?1 AND month=?2", rusqlite::params![input.household_id, input.month])?;
+                return Ok(None);
+            }
+            connection.execute(
+                "INSERT INTO monthly_review_memos(household_id,month,memo) VALUES(?1,?2,?3) ON CONFLICT(household_id,month) DO UPDATE SET memo=excluded.memo,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+                rusqlite::params![input.household_id, input.month, memo],
+            )?;
+            connection.query_row(
+                "SELECT household_id,month,memo,updated_at FROM monthly_review_memos WHERE household_id=?1 AND month=?2",
+                rusqlite::params![input.household_id, input.month],
+                |row| Ok(MonthlyReviewMemoDto { household_id: row.get(0)?, month: row.get(1)?, memo: row.get(2)?, updated_at: row.get(3)? }),
+            ).map(Some).map_err(Into::into)
+        })
+        .map_err(|_| "Monthly review memo is temporarily unavailable".to_owned())
+}
+
 #[tauri::command]
 fn savings_goals_list(
     state: tauri::State<'_, AppState>,
@@ -3484,6 +3592,16 @@ fn classification_rules_list(
 }
 
 #[tauri::command]
+fn classification_application_last(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Option<LastClassificationApplicationDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::last_classification_application(connection, &household_id)
+    })
+}
+
+#[tauri::command]
 fn classification_rule_create(
     state: tauri::State<'_, AppState>,
     input: CreateClassificationRuleInput,
@@ -3921,6 +4039,18 @@ fn import_preview(
 }
 
 #[tauri::command]
+fn import_duplicate_resolution_set(
+    state: tauri::State<'_, AppState>,
+    run_id: String,
+    candidate_id: String,
+    resolution: String,
+) -> Result<ImportPreview, String> {
+    workflow_result(&state, |connection| {
+        import_workflow::set_duplicate_resolution(connection, &run_id, &candidate_id, &resolution)
+    })
+}
+
+#[tauri::command]
 fn pending_review_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -4281,7 +4411,26 @@ fn mobile_capture_ocr(
     let (bytes, media_type) = mobile_capture_result(&state, |connection| {
         mobile_capture_inbox::image(connection, &vault, &household_id, &artifact_id)
     })?;
-    let document = run_local_ocr(&paths, bytes, media_type)?;
+    let document = if media_type == "application/pdf" {
+        let config = ocr::OcrConfig {
+            executable: paths.bundled_executable.clone(),
+            tessdata_dir: paths.bundled_tessdata.clone(),
+            ..ocr::OcrConfig::default()
+        };
+        let attempt = document_pdf_ocr::attempt_pdf_ocr(
+            &bytes,
+            &media_type,
+            None,
+            &paths.temporary_directory,
+            config,
+        );
+        let status = attempt.status;
+        attempt
+            .document
+            .ok_or_else(|| format!("PDF OCR failed: {status}"))?
+    } else {
+        run_local_ocr(&paths, bytes, media_type)?
+    };
     let (extraction_id, item) = mobile_capture_result(&state, |connection| {
         mobile_capture_inbox::record_extraction(connection, &household_id, &artifact_id, &document)
     })?;
@@ -4519,9 +4668,11 @@ pub fn run() {
             mobile_capture_inbox_list,
             mobile_capture_cursor_update,
             mobile_capture_ingest,
+            mobile_capture_local_ingest,
             mobile_capture_image_preview,
             mobile_capture_ocr,
             mobile_capture_mark_ocr_review_required,
+            mobile_capture_discard,
             mobile_capture_promote,
             mobile_capture_background_status,
             mobile_capture_background_enable,
@@ -4591,6 +4742,8 @@ pub fn run() {
             recurring_series_preference_delete,
             budgets_query,
             budget_upsert,
+            monthly_review_memo_get,
+            monthly_review_memo_upsert,
             savings_goals_list,
             savings_goal_create,
             savings_goal_update,
@@ -4633,6 +4786,7 @@ pub fn run() {
             portfolio_snapshot_xlsx_save,
             portfolio_snapshot_pdf_save,
             classification_rules_list,
+            classification_application_last,
             classification_rule_create,
             classification_rule_update,
             classification_rule_delete,
@@ -4694,6 +4848,7 @@ pub fn run() {
             card_statement_due_date_update,
             import_start,
             import_preview,
+            import_duplicate_resolution_set,
             pending_review_list,
             import_commit,
             import_rollback,

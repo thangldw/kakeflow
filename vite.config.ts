@@ -3,6 +3,40 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalizedId = id.replaceAll('\\\\', '/')
+          if (normalizedId.includes('/src/platform/')) return 'app-platform'
+          if (normalizedId.includes('/src/ingestion/') || normalizedId.includes('/src/features/import/')) return 'app-import'
+          if (normalizedId.includes('/src/features/investments/')) return 'app-investments'
+          if (normalizedId.includes('/src/features/sync/')) return 'app-sync'
+          if (
+            normalizedId.includes('/src/features/reports/')
+            || normalizedId.includes('/src/features/calendar/')
+            || normalizedId.includes('/src/features/forecast/')
+            || normalizedId.includes('/src/features/fixed-costs/')
+            || normalizedId.includes('/src/features/financial-intelligence/')
+          ) return 'app-analysis'
+          if (normalizedId.includes('/src/features/capture/') || normalizedId.includes('/src/features/source-viewer/')) return 'app-capture'
+
+          if (!normalizedId.includes('/node_modules/')) return undefined
+
+          if (/\/node_modules\/(react|react-dom|scheduler)\//.test(normalizedId)) return 'vendor-react'
+          if (normalizedId.includes('/node_modules/lucide-react/')) return 'vendor-icons'
+          if (normalizedId.includes('/node_modules/@tauri-apps/')) return 'vendor-tauri'
+          if (
+            normalizedId.includes('/node_modules/read-excel-file/')
+            || normalizedId.includes('/node_modules/fflate/')
+            || normalizedId.includes('/node_modules/postal-mime/')
+          ) return 'vendor-import'
+
+          return 'vendor'
+        },
+      },
+    },
+  },
   server: { port: 1420, strictPort: true },
   clearScreen: false,
 })

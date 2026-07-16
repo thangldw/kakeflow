@@ -18,9 +18,22 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByRole('heading', { name: 'カード支払い' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'データ品質' })).toBeInTheDocument()
     expect(screen.getByText('ブラウザプレビュー用のサンプル状態')).toBeInTheDocument()
-    expect(screen.getByLabelText('ホームの表示テンプレート')).toBeDisabled()
-    expect(screen.getByText('表示設定の保存はデスクトップ版で利用できます。')).toBeInTheDocument()
+    expect(screen.getByLabelText('ホームの表示テンプレート')).toBeEnabled()
+    expect(screen.getByText('ブラウザでは表示設定を一時的に試せます。保存はデスクトップ版で利用できます。')).toBeInTheDocument()
     expect(screen.getByText('PayPayカード 支払期日 07-27')).toBeInTheDocument()
+  })
+
+  it('switches dashboard templates in browser preview without persisting them', async () => {
+    await renderApp()
+
+    const cashFlowTemplate = screen.getByRole('button', { name: 'テンプレート: キャッシュフロー' })
+    expect(cashFlowTemplate).toBeEnabled()
+    fireEvent.click(cashFlowTemplate)
+
+    expect(cashFlowTemplate).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CASH_FLOW')
+    expect(screen.getByRole('heading', { name: '入出金の推移' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /資金移動を見る/ })).toBeInTheDocument()
   })
 
   it('identifies the non-persistent browser preview runtime', async () => {
@@ -37,7 +50,7 @@ describe('KakeFlow application shell', () => {
 
     expect(screen.getByRole('heading', { name: 'インポート Inbox' })).toBeInTheDocument()
     expect(screen.getByText('paypay_2026.csv')).toBeInTheDocument()
-    expect(screen.getByText('反映可能')).toBeInTheDocument()
+    expect(screen.getByText(/プレビュー可/)).toBeInTheDocument()
   })
 
   it('filters transactions without changing accounting totals', async () => {
@@ -94,6 +107,10 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByRole('heading', { name: '設定' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'バックアップを作成' })).toBeDisabled()
     expect(screen.getByText('デスクトップ版で利用できます。')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(document.querySelectorAll('.drive-state-UNAVAILABLE')).toHaveLength(2)
+      expect(Array.from(document.querySelectorAll('.google-drive-settings')).every((panel) => panel.getAttribute('aria-busy') === 'false')).toBe(true)
+    })
   })
 
   it('presents Family Space as local organization rather than access control', async () => {

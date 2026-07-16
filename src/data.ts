@@ -26,16 +26,16 @@ export const categoryData = [
 ]
 
 export const transactions: Transaction[] = [
-  { id: '1', date: '7月25日', merchant: '架空テクノロジー株式会社', detail: '健太・月例給与', category: '収入', account: '三菱UFJ銀行・健太', amount: 600000, status: 'confirmed', icon: 'income' },
-  { id: '2', date: '7月25日', merchant: '架空メディカル株式会社', detail: '美咲・月例給与', category: '収入', account: '三菱UFJ銀行・美咲', amount: 400000, status: 'confirmed', icon: 'income' },
-  { id: '3', date: '7月23日', merchant: '成城石井', detail: '週末まとめ買い・食料品', category: '食費', account: 'PayPay残高', amount: -13876, status: 'confirmed', icon: 'food' },
-  { id: '4', date: '7月20日', merchant: 'イトーヨーカドー', detail: '食料品・飲料', category: '食費', account: 'Rakuten Card', amount: -11521, status: 'confirmed', icon: 'food', accountingEffect: 'ACCRUAL_ONLY' },
-  { id: '5', date: '7月17日', merchant: 'イオン', detail: '食料品・日用品', category: '食費', account: 'PayPayカード', amount: -10255, status: 'confirmed', icon: 'food', accountingEffect: 'ACCRUAL_ONLY' },
-  { id: '6', date: '7月16日', merchant: 'LOHACO 教材', detail: '子どもの教材', category: '教育・子ども', account: 'PayPayカード', amount: -7200, status: 'confirmed', icon: 'subscription', accountingEffect: 'ACCRUAL_ONLY' },
-  { id: '7', date: '7月12日', merchant: '東京電力', detail: '7月分電気料金', category: '住居・光熱', account: '三井住友銀行・家計', amount: -26400, status: 'confirmed', icon: 'home' },
-  { id: '8', date: '7月27日', merchant: '住宅ローン返済', detail: '元金120,000円・利息30,000円', category: '資金移動', account: '三井住友銀行・家計', amount: -150000, status: 'confirmed', icon: 'home', accountingEffect: 'CASH_ONLY' },
-  { id: '9', date: '7月27日', merchant: '楽天カード支払い', detail: '6月請求のSMBC口座引落', category: '資金移動', account: '三井住友銀行・家計', amount: -204987, status: 'confirmed', icon: 'subscription', accountingEffect: 'CASH_ONLY' },
-  { id: '10', date: '7月27日', merchant: 'PayPayカード支払い', detail: '6月請求のSMBC口座引落', category: '資金移動', account: '三井住友銀行・家計', amount: -20170, status: 'confirmed', icon: 'subscription', accountingEffect: 'CASH_ONLY' },
+  { id: '1', date: '7月25日', merchant: '架空テクノロジー株式会社', detail: '健太・月例給与', category: '収入', account: '三菱UFJ銀行・健太', amount: 600000, transactionType: 'INCOME', status: 'confirmed', icon: 'income' },
+  { id: '2', date: '7月25日', merchant: '架空メディカル株式会社', detail: '美咲・月例給与', category: '収入', account: '三菱UFJ銀行・美咲', amount: 400000, transactionType: 'INCOME', status: 'confirmed', icon: 'income' },
+  { id: '3', date: '7月23日', merchant: '成城石井', detail: '週末まとめ買い・食料品', category: '食費', account: 'PayPay残高', amount: -13876, transactionType: 'EXPENSE', status: 'confirmed', icon: 'food' },
+  { id: '4', date: '7月20日', merchant: 'イトーヨーカドー', detail: '食料品・飲料', category: '食費', account: 'Rakuten Card', amount: -11521, transactionType: 'CARD_PURCHASE', status: 'confirmed', icon: 'food', accountingEffect: 'ACCRUAL_ONLY' },
+  { id: '5', date: '7月17日', merchant: 'イオン', detail: '食料品・日用品', category: '食費', account: 'PayPayカード', amount: -10255, transactionType: 'CARD_PURCHASE', status: 'confirmed', icon: 'food', accountingEffect: 'ACCRUAL_ONLY' },
+  { id: '6', date: '7月16日', merchant: 'LOHACO 教材', detail: '子どもの教材', category: '教育・子ども', account: 'PayPayカード', amount: -7200, transactionType: 'CARD_PURCHASE', status: 'confirmed', icon: 'subscription', accountingEffect: 'ACCRUAL_ONLY' },
+  { id: '7', date: '7月12日', merchant: '東京電力', detail: '7月分電気料金', category: '住居・光熱', account: '三井住友銀行・家計', amount: -26400, transactionType: 'EXPENSE', status: 'confirmed', icon: 'home' },
+  { id: '8', date: '7月27日', merchant: '住宅ローン返済', detail: '元金120,000円・利息30,000円', category: '資金移動', account: '三井住友銀行・家計', amount: -150000, transactionType: 'TRANSFER', status: 'confirmed', icon: 'home', accountingEffect: 'CASH_ONLY' },
+  { id: '9', date: '7月27日', merchant: '楽天カード支払い', detail: '6月請求のSMBC口座引落', category: '資金移動', account: '三井住友銀行・家計', amount: -204987, transactionType: 'CARD_PAYMENT', status: 'confirmed', icon: 'subscription', accountingEffect: 'CASH_ONLY' },
+  { id: '10', date: '7月27日', merchant: 'PayPayカード支払い', detail: '6月請求のSMBC口座引落', category: '資金移動', account: '三井住友銀行・家計', amount: -20170, transactionType: 'CARD_PAYMENT', status: 'confirmed', icon: 'subscription', accountingEffect: 'CASH_ONLY' },
 ]
 
 export const cardSettlements: CardSettlement[] = [

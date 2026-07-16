@@ -2,16 +2,11 @@
 
 ## Release acceptance scope
 
-KakeFlow v1.0.0 implements four PDF exports: the source-backed Monthly Household
-Review, Annual Household Review, Investment Performance report, and one
-explicit Portfolio Snapshot. Therefore the v1.0.0 PDF release gate requires
-exactly the `monthly`, `annual`, `investment-performance`, and
-`portfolio-snapshot` fixture reports.
-
-The development line after v1.0.0 also implements `transaction-ledger`. It is an
-accepted visual-QA report type but does not retroactively change the historical
-v1.0.0 required set. A later release advertising it must explicitly add
-`transaction-ledger` to that release's `--require` list.
+KakeFlow v1.1.0 advertises five PDF exports: the source-backed Monthly Household
+Review, Annual Household Review, Investment Performance report, one explicit
+Portfolio Snapshot, and the exact scoped Transaction Ledger. Therefore the
+v1.1.0 PDF release gate requires exactly `monthly`, `annual`,
+`investment-performance`, `portfolio-snapshot`, and `transaction-ledger`.
 
 Each PDF must be generated from the fixed synthetic household fixture used by
 its report contract test. The selected household, reporting period, accounting
@@ -42,9 +37,8 @@ point-in-time snapshot without choosing a latest snapshot or current quote.
 
 ## Reproducible render command
 
-Generate the four v1.0.0 fixture PDFs, plus the optional development-line
-ledger fixture when reviewing that increment, from their Rust contract tests
-in a clean checkout:
+Generate all five fixture PDFs from their Rust contract tests in a clean
+checkout:
 
 ```sh
 KAKEFLOW_MONTHLY_REVIEW_PDF_FIXTURE="$PWD/tmp/pdfs/monthly-review.pdf" \
@@ -70,20 +64,16 @@ KAKEFLOW_TRANSACTION_LEDGER_PDF_FIXTURE="$PWD/tmp/pdfs/transaction-ledger.pdf" \
   --lib -- --exact
 ```
 
-Then render and validate it:
+Then render and validate the complete v1.1.0 set:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --output tmp/pdfs/v100-report-qa \
+  --require monthly,annual,investment-performance,portfolio-snapshot,transaction-ledger \
+  --output tmp/pdfs/v110-report-qa \
   monthly="$PWD/tmp/pdfs/monthly-review.pdf" \
   annual="$PWD/tmp/pdfs/annual-review.pdf" \
   investment-performance="$PWD/tmp/pdfs/investment-performance.pdf" \
-  portfolio-snapshot="$PWD/tmp/pdfs/portfolio-snapshot.pdf"
-
-# Increment-level ledger review (outside the v1.0.0 four-report gate)
-node scripts/pdf-report-visual-qa.mjs \
-  --require transaction-ledger \
-  --output tmp/pdfs/transaction-ledger-qa \
+  portfolio-snapshot="$PWD/tmp/pdfs/portfolio-snapshot.pdf" \
   transaction-ledger="$PWD/tmp/pdfs/transaction-ledger.pdf"
 ```
 
@@ -92,21 +82,21 @@ The command requires Poppler's `pdfinfo` and `pdftoppm`. The Codex bundled PDF
 runtime provides both commands; local macOS environments can install Poppler
 with `brew install poppler`.
 
-The release command may state the required set explicitly, but doing so does not
-change the v1.0.0 acceptance scope:
+The current v1.1.0 release command must state all five reports explicitly:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
-  --require monthly,annual,investment-performance,portfolio-snapshot \
-  --output tmp/pdfs/v100-report-qa \
+  --require monthly,annual,investment-performance,portfolio-snapshot,transaction-ledger \
+  --output tmp/pdfs/v110-report-qa \
   monthly=/absolute/path/monthly-review.pdf \
   annual=/absolute/path/annual-review.pdf \
   investment-performance=/absolute/path/investment-performance.pdf \
-  portfolio-snapshot=/absolute/path/portfolio-snapshot.pdf
+  portfolio-snapshot=/absolute/path/portfolio-snapshot.pdf \
+  transaction-ledger=/absolute/path/transaction-ledger.pdf
 ```
 
 The names supplied to `--require` and the named PDF arguments must match
-exactly. A subset is useful for local diagnosis, but it is not complete v1.0.0
+exactly. A subset is useful for local diagnosis, but it is not complete v1.1.0
 release evidence.
 
 The workflow calls `pdfinfo -box` for structural evidence and renders every page
@@ -126,8 +116,8 @@ correct.
 All gates fail closed; failed runs remove their staging directory and never
 publish partial QA evidence.
 
-- The current required report set is present exactly once. For v1.0.0 that set is
-  exactly `monthly,annual,investment-performance,portfolio-snapshot`.
+- The current required report set is present exactly once. For v1.1.0 that set
+  is exactly `monthly,annual,investment-performance,portfolio-snapshot,transaction-ledger`.
 - Every input is a regular, non-empty `%PDF-` file no larger than 32 MiB.
 - `pdfinfo` succeeds, reports PDF version, reports 1-40 pages, and reports a
   page size between 200 and 2,000 points on each axis.
@@ -227,7 +217,7 @@ alone.
 Archive these files with the locally verified release evidence:
 
 - every fixture PDF in the explicitly required report set (monthly, annual,
-  investment-performance, and portfolio-snapshot PDFs for v1.0.0);
+  investment-performance, portfolio-snapshot, and transaction-ledger);
 - `manifest.json`;
 - every normalized PNG page;
 - the completed `VISUAL_REVIEW.md`;

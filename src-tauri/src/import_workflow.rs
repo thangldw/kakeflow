@@ -5,8 +5,10 @@
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 
 use crate::record_scope::{
     attribution_shape_is_valid, audience_shape_is_valid, AttributionKind, AudienceVisibility,
@@ -493,7 +495,38 @@ pub struct ImportPreview {
     pub summary: ImportSummary,
     pub source: PreviewSourceMetadata,
     pub candidates: Vec<PreviewCandidate>,
+    pub duplicate_summary: DuplicateSummary,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateSummary {
+    pub confirmed_replays: u64,
+    pub likely_duplicates: u64,
+    pub possible_duplicates: u64,
+    pub unresolved: u64,
+    pub overlap_start: Option<String>,
+    pub overlap_end: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateMatch {
+    pub confidence: String,
+    pub matched_transaction_id: Option<String>,
+    pub matched_candidate_id: Option<String>,
+    pub occurred_on: String,
+    pub amount_jpy: i64,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub source_filename: Option<String>,
+    pub reasons: Vec<String>,
+    pub decision: String,
+}
+
+type DuplicateReviewRow = (Option<String>, Option<String>, String, String, String);
+type PostedDuplicateTargetRow = (String, Option<String>, Option<String>, Option<String>);
+type PendingDuplicateTargetRow = (String, i64, Option<String>, Option<String>, Option<String>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -541,6 +574,7 @@ pub struct PreviewCandidate {
     /// evidence. Raw OCR text, extraction regions and the original payload
     /// never cross the Import Inbox preview boundary.
     pub receipt_review: Option<ReceiptReview>,
+    pub duplicate_match: Option<DuplicateMatch>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -639,6 +673,8 @@ pub struct PostingDecision {
     pub classification_rule_id: Option<String>,
     #[serde(default)]
     pub expected_classification_rule_updated_at: Option<String>,
+    #[serde(default)]
+    pub duplicate_resolution: Option<String>,
     pub entries: Vec<JournalEntryDecision>,
 }
 
@@ -693,6 +729,296 @@ struct ImportReviewClassificationRule {
 
 const fn default_true() -> bool {
     true
+}
+
+fn normalized_duplicate_text(merchant: Option<&str>, description: Option<&str>) -> String {
+    merchant
+        .or(description)
+        .into_iter()
+        .flat_map(|value| value.nfkc())
+        .flat_map(char::to_lowercase)
+        .filter(|character| character.is_alphanumeric())
+        .take(512)
+        .collect()
+}
+
+fn duplicate_fingerprint(candidate: &NormalizedCandidate) -> String {
+    duplicate_fingerprint_parts(
+        candidate.account_id.as_deref(),
+        &candidate.occurred_on,
+        candidate.amount_jpy,
+        &candidate.direction,
+        candidate.merchant_raw.as_deref(),
+        candidate.description_raw.as_deref(),
+    )
+}
+
+fn duplicate_fingerprint_parts(
+    account_id: Option<&str>,
+    occurred_on: &str,
+    amount_jpy: i64,
+    direction: &str,
+    merchant: Option<&str>,
+    description: Option<&str>,
+) -> String {
+    let normalized = normalized_duplicate_text(merchant, description);
+    let material = format!(
+        "{}\u{1f}{}\u{1f}{}\u{1f}{}\u{1f}{}",
+        account_id.unwrap_or_default(),
+        occurred_on,
+        amount_jpy,
+        direction,
+        normalized
+    );
+    format!("{:x}", Sha256::digest(material.as_bytes()))
+}
+
+fn candidate_fingerprint_from_database(
+    connection: &Connection,
+    candidate_id: &str,
+) -> Result<String> {
+    let (account_id,occurred_on,amount_jpy,direction,merchant,description):(Option<String>,String,i64,String,Option<String>,Option<String>)=connection.query_row(
+        "SELECT account_id,occurred_on,amount_jpy,direction,merchant_raw,description_raw FROM transaction_candidates WHERE id=?1",
+        [candidate_id],
+        |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+    )?;
+    Ok(duplicate_fingerprint_parts(
+        account_id.as_deref(),
+        &occurred_on,
+        amount_jpy,
+        &direction,
+        merchant.as_deref(),
+        description.as_deref(),
+    ))
+}
+
+#[derive(Debug)]
+struct DuplicateTarget {
+    transaction_id: Option<String>,
+    candidate_id: Option<String>,
+    confidence: &'static str,
+    reasons: Vec<String>,
+}
+
+fn stage_duplicate_review(
+    tx: &Transaction<'_>,
+    request: &StartImport,
+    candidate: &NormalizedCandidate,
+) -> Result<()> {
+    #[cfg(test)]
+    if request.adapter_id.as_deref() != Some("dedup-test") {
+        return Ok(());
+    }
+    let Some(account_id) = candidate.account_id.as_deref() else {
+        return Ok(());
+    };
+    if candidate.suggested_transaction_type.as_deref() == Some("TRANSFER") {
+        return Ok(());
+    }
+    let fingerprint = duplicate_fingerprint(candidate);
+    let candidate_text = normalized_duplicate_text(
+        candidate.merchant_raw.as_deref(),
+        candidate.description_raw.as_deref(),
+    );
+    let expected_side = if candidate.direction == "IN" {
+        "DEBIT"
+    } else {
+        "CREDIT"
+    };
+    let mut targets = Vec::new();
+
+    {
+        let mut statement = tx.prepare(
+            "SELECT DISTINCT t.id,t.occurred_on,t.payee,t.description,\
+                    (SELECT min(sd.original_filename) FROM transaction_sources ts \
+                     JOIN source_records sr ON sr.id=ts.source_record_id \
+                     JOIN source_documents sd ON sd.id=sr.source_document_id \
+                     WHERE ts.transaction_id=t.id) \
+             FROM transactions t JOIN journal_entries je ON je.transaction_id=t.id \
+             WHERE t.household_id=?1 AND t.status='POSTED' AND je.account_id=?2 \
+               AND je.entry_side=?3 AND je.amount_jpy=?4 AND t.occurred_on=?5 \
+               AND t.transaction_type NOT IN ('TRANSFER','CARD_PAYMENT','REFUND') \
+             ORDER BY t.id",
+        )?;
+        let rows = statement.query_map(
+            params![
+                request.household_id,
+                account_id,
+                expected_side,
+                candidate.amount_jpy,
+                candidate.occurred_on
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )?;
+        for row in rows {
+            let (transaction_id, _occurred_on, payee, description, _source_filename) = row?;
+            let excepted: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM import_keep_both_exceptions \
+                 WHERE household_id=?1 AND candidate_fingerprint=?2 AND matched_transaction_id=?3)",
+                params![request.household_id, fingerprint, transaction_id],
+                |row| row.get(0),
+            )?;
+            if excepted {
+                continue;
+            }
+            let target_text = normalized_duplicate_text(payee.as_deref(), description.as_deref());
+            let strong_text = !candidate_text.is_empty() && candidate_text == target_text;
+            let mut reasons = vec![
+                "SAME_ACCOUNT".into(),
+                "SAME_CURRENCY".into(),
+                "SAME_DIRECTION".into(),
+                "SAME_AMOUNT".into(),
+                "SAME_EFFECTIVE_DATE".into(),
+            ];
+            if strong_text {
+                reasons.push("SAME_NORMALIZED_TEXT".into());
+            }
+            targets.push(DuplicateTarget {
+                transaction_id: Some(transaction_id),
+                candidate_id: None,
+                confidence: if strong_text { "LIKELY" } else { "POSSIBLE" },
+                reasons,
+            });
+        }
+    }
+
+    {
+        let mut statement = tx.prepare(
+            "SELECT DISTINCT c.id,c.occurred_on,c.merchant_raw,c.description_raw,\
+                    min(sd.original_filename) \
+             FROM transaction_candidates c \
+             JOIN candidate_sources cs ON cs.candidate_id=c.id \
+             JOIN source_records sr ON sr.id=cs.source_record_id \
+             JOIN source_documents sd ON sd.id=sr.source_document_id \
+             WHERE c.household_id=?1 AND c.account_id=?2 AND c.direction=?3 \
+               AND c.amount_jpy=?4 AND c.occurred_on=?5 \
+               AND c.review_status IN ('PENDING','READY') AND sd.import_run_id!=?6 \
+             GROUP BY c.id ORDER BY c.id",
+        )?;
+        let rows = statement.query_map(
+            params![
+                request.household_id,
+                account_id,
+                candidate.direction,
+                candidate.amount_jpy,
+                candidate.occurred_on,
+                request.run_id
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )?;
+        for row in rows {
+            let (matched_candidate_id, _occurred_on, payee, description, _source_filename) = row?;
+            let target_text = normalized_duplicate_text(payee.as_deref(), description.as_deref());
+            let strong_text = !candidate_text.is_empty() && candidate_text == target_text;
+            let mut reasons = vec![
+                "SAME_ACCOUNT".into(),
+                "SAME_CURRENCY".into(),
+                "SAME_DIRECTION".into(),
+                "SAME_AMOUNT".into(),
+                "SAME_EFFECTIVE_DATE".into(),
+                "OTHER_ACTIVE_REVIEW".into(),
+            ];
+            if strong_text {
+                reasons.push("SAME_NORMALIZED_TEXT".into());
+            }
+            targets.push(DuplicateTarget {
+                transaction_id: None,
+                candidate_id: Some(matched_candidate_id),
+                confidence: if strong_text { "LIKELY" } else { "POSSIBLE" },
+                reasons,
+            });
+        }
+    }
+
+    targets.sort_by_key(|target| {
+        (
+            target.confidence != "LIKELY",
+            target.transaction_id.is_none(),
+        )
+    });
+    if let Some(target) = targets.into_iter().next() {
+        let reasons = serde_json::to_string(&target.reasons)
+            .map_err(|_| ImportWorkflowError::Validation("duplicate reasons are invalid".into()))?;
+        tx.execute(
+            "INSERT INTO import_duplicate_reviews \
+             (candidate_id,household_id,candidate_fingerprint,matched_transaction_id,\
+              matched_candidate_id,confidence,reason_codes_json) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                candidate.id,
+                request.household_id,
+                fingerprint,
+                target.transaction_id,
+                target.candidate_id,
+                target.confidence,
+                reasons
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn store_import_coverage(
+    tx: &Transaction<'_>,
+    request: &StartImport,
+    confirmed_replays: &HashMap<String, u64>,
+) -> Result<()> {
+    let mut coverage: HashMap<String, (String, String)> = HashMap::new();
+    for candidate in &request.candidates {
+        let Some(account_id) = candidate.account_id.as_deref() else {
+            continue;
+        };
+        coverage
+            .entry(account_id.to_owned())
+            .and_modify(|range| {
+                if candidate.occurred_on < range.0 {
+                    range.0 = candidate.occurred_on.clone();
+                }
+                if candidate.occurred_on > range.1 {
+                    range.1 = candidate.occurred_on.clone();
+                }
+            })
+            .or_insert_with(|| (candidate.occurred_on.clone(), candidate.occurred_on.clone()));
+    }
+    for (account_id, (minimum, maximum)) in coverage {
+        let replay_count = confirmed_replays
+            .get(&account_id)
+            .copied()
+            .unwrap_or_default();
+        tx.execute(
+            "INSERT INTO import_source_coverage \
+             (import_run_id,household_id,account_id,adapter_id,adapter_version,\
+              min_effective_date,max_effective_date,confirmed_replay_count) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![
+                request.run_id,
+                request.household_id,
+                account_id,
+                request.adapter_id,
+                request.adapter_version,
+                minimum,
+                maximum,
+                replay_count
+            ],
+        )?;
+    }
+    Ok(())
 }
 
 /// Atomically creates a run, its immutable extracted records and normalized
@@ -793,6 +1119,7 @@ pub(crate) fn start_import_in_transaction(
     }
     let mut staged_candidate_count = 0_u64;
     let mut request_external_keys: HashMap<(String, String), String> = HashMap::new();
+    let mut confirmed_replays: HashMap<String, u64> = HashMap::new();
     for candidate in &request.candidates {
         if let (Some(source), Some(external_id), Some(fact_hash)) = (
             candidate.external_source.as_deref(),
@@ -818,6 +1145,9 @@ pub(crate) fn start_import_in_transaction(
                             "INSERT OR IGNORE INTO transaction_sources (transaction_id,source_record_id,candidate_id) VALUES (?1,?2,NULL)",
                             params![transaction_id, evidence.source_record_id],
                         )?;
+                    }
+                    if let Some(account_id) = candidate.account_id.as_ref() {
+                        *confirmed_replays.entry(account_id.clone()).or_default() += 1;
                     }
                     continue;
                 }
@@ -892,6 +1222,7 @@ pub(crate) fn start_import_in_transaction(
                 params![candidate.id, evidence.source_record_id, evidence.role],
             )?;
         }
+        stage_duplicate_review(tx, request, candidate)?;
     }
     for statement in &request.card_statements {
         let valid_card_account: bool = tx.query_row(
@@ -936,6 +1267,7 @@ pub(crate) fn start_import_in_transaction(
             )?;
         }
     }
+    store_import_coverage(tx, request, &confirmed_replays)?;
     Ok(ImportSummary {
         run_id: request.run_id.clone(),
         document_id: request.document_id.clone(),
@@ -944,6 +1276,197 @@ pub(crate) fn start_import_in_transaction(
         candidate_count: staged_candidate_count,
         reused_existing: false,
     })
+}
+
+fn duplicate_match_for_candidate(
+    connection: &Connection,
+    candidate_id: &str,
+) -> Result<Option<DuplicateMatch>> {
+    let review: Option<DuplicateReviewRow> = connection.query_row(
+        "SELECT matched_transaction_id,matched_candidate_id,confidence,reason_codes_json,decision FROM import_duplicate_reviews WHERE candidate_id=?1",
+        [candidate_id],
+        |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+    ).optional()?;
+    let Some((matched_transaction_id, matched_candidate_id, confidence, reasons_json, decision)) =
+        review
+    else {
+        return Ok(None);
+    };
+    let reasons = serde_json::from_str::<Vec<String>>(&reasons_json).map_err(|_| {
+        ImportWorkflowError::Validation("duplicate review reasons are invalid".into())
+    })?;
+    if let Some(transaction_id) = matched_transaction_id {
+        let target: Option<PostedDuplicateTargetRow> = connection.query_row(
+            "SELECT t.occurred_on,t.payee,t.description,(SELECT min(sd.original_filename) FROM transaction_sources ts JOIN source_records sr ON sr.id=ts.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE ts.transaction_id=t.id) FROM transactions t WHERE t.id=?1 AND t.status='POSTED'",
+            [&transaction_id],
+            |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+        ).optional()?;
+        let Some((occurred_on, payee, description, source_filename)) = target else {
+            return Err(ImportWorkflowError::Validation(
+                "duplicate match is stale".into(),
+            ));
+        };
+        let amount_jpy = connection.query_row(
+            "SELECT amount_jpy FROM transaction_candidates WHERE id=?1",
+            [candidate_id],
+            |row| row.get(0),
+        )?;
+        return Ok(Some(DuplicateMatch {
+            confidence,
+            matched_transaction_id: Some(transaction_id),
+            matched_candidate_id: None,
+            occurred_on,
+            amount_jpy,
+            payee,
+            description,
+            source_filename,
+            reasons,
+            decision,
+        }));
+    }
+    let Some(matched_candidate_id) = matched_candidate_id else {
+        return Err(ImportWorkflowError::Validation(
+            "duplicate review has no match".into(),
+        ));
+    };
+    let posted_transaction_id: Option<String> = connection.query_row(
+        "SELECT transaction_id FROM transaction_sources WHERE candidate_id=?1 ORDER BY transaction_id LIMIT 1",
+        [&matched_candidate_id],|row|row.get(0),
+    ).optional()?;
+    if let Some(transaction_id) = posted_transaction_id {
+        let target: Option<PostedDuplicateTargetRow> = connection.query_row(
+            "SELECT t.occurred_on,t.payee,t.description,(SELECT min(sd.original_filename) FROM transaction_sources ts JOIN source_records sr ON sr.id=ts.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE ts.transaction_id=t.id) FROM transactions t WHERE t.id=?1 AND t.status='POSTED'",
+            [&transaction_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+        ).optional()?;
+        let Some((occurred_on, payee, description, source_filename)) = target else {
+            return Err(ImportWorkflowError::Validation(
+                "duplicate match is stale".into(),
+            ));
+        };
+        let amount_jpy = connection.query_row(
+            "SELECT amount_jpy FROM transaction_candidates WHERE id=?1",
+            [candidate_id],
+            |row| row.get(0),
+        )?;
+        return Ok(Some(DuplicateMatch {
+            confidence,
+            matched_transaction_id: Some(transaction_id),
+            matched_candidate_id: Some(matched_candidate_id),
+            occurred_on,
+            amount_jpy,
+            payee,
+            description,
+            source_filename,
+            reasons,
+            decision,
+        }));
+    }
+    let target: Option<PendingDuplicateTargetRow> = connection.query_row(
+        "SELECT c.occurred_on,c.amount_jpy,c.merchant_raw,c.description_raw,(SELECT min(sd.original_filename) FROM candidate_sources cs JOIN source_records sr ON sr.id=cs.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE cs.candidate_id=c.id) FROM transaction_candidates c WHERE c.id=?1 AND c.review_status IN ('PENDING','READY')",
+        [&matched_candidate_id],
+        |row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?)),
+    ).optional()?;
+    let Some((occurred_on, amount_jpy, payee, description, source_filename)) = target else {
+        return Err(ImportWorkflowError::Validation(
+            "duplicate match is stale".into(),
+        ));
+    };
+    Ok(Some(DuplicateMatch {
+        confidence,
+        matched_transaction_id: None,
+        matched_candidate_id: Some(matched_candidate_id),
+        occurred_on,
+        amount_jpy,
+        payee,
+        description,
+        source_filename,
+        reasons,
+        decision,
+    }))
+}
+
+fn duplicate_summary(connection: &Connection, run_id: &str) -> Result<DuplicateSummary> {
+    let (confirmed_replays,likely_duplicates,possible_duplicates,unresolved):(u64,u64,u64,u64)=connection.query_row(
+            "SELECT coalesce((SELECT sum(confirmed_replay_count) FROM import_source_coverage WHERE import_run_id=?1),0),coalesce((SELECT count(DISTINCT r.candidate_id) FROM import_duplicate_reviews r JOIN candidate_sources cs ON cs.candidate_id=r.candidate_id JOIN source_records sr ON sr.id=cs.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE sd.import_run_id=?1 AND r.confidence='LIKELY'),0),coalesce((SELECT count(DISTINCT r.candidate_id) FROM import_duplicate_reviews r JOIN candidate_sources cs ON cs.candidate_id=r.candidate_id JOIN source_records sr ON sr.id=cs.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE sd.import_run_id=?1 AND r.confidence='POSSIBLE'),0),coalesce((SELECT count(DISTINCT r.candidate_id) FROM import_duplicate_reviews r JOIN candidate_sources cs ON cs.candidate_id=r.candidate_id JOIN source_records sr ON sr.id=cs.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE sd.import_run_id=?1 AND r.decision='UNRESOLVED'),0)",
+        [run_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)))?;
+    let mut overlap_start: Option<String> = None;
+    let mut overlap_end: Option<String> = None;
+    let mut statement=connection.prepare("SELECT max(current.min_effective_date,other.min_effective_date),min(current.max_effective_date,other.max_effective_date) FROM import_source_coverage current JOIN import_source_coverage other ON other.household_id=current.household_id AND other.account_id=current.account_id AND other.import_run_id!=current.import_run_id AND other.min_effective_date<=current.max_effective_date AND other.max_effective_date>=current.min_effective_date WHERE current.import_run_id=?1")?;
+    for row in statement.query_map([run_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })? {
+        let (start, end) = row?;
+        if overlap_start.as_ref().is_none_or(|value| start < *value) {
+            overlap_start = Some(start)
+        }
+        if overlap_end.as_ref().is_none_or(|value| end > *value) {
+            overlap_end = Some(end)
+        }
+    }
+    Ok(DuplicateSummary {
+        confirmed_replays,
+        likely_duplicates,
+        possible_duplicates,
+        unresolved,
+        overlap_start,
+        overlap_end,
+    })
+}
+
+pub fn set_duplicate_resolution(
+    connection: &Connection,
+    run_id: &str,
+    candidate_id: &str,
+    resolution: &str,
+) -> Result<ImportPreview> {
+    validate_id("run id", run_id)?;
+    validate_id("candidate id", candidate_id)?;
+    if !matches!(resolution, "LINK" | "KEEP_BOTH" | "EXCLUDE") {
+        return Err(ImportWorkflowError::Validation(
+            "invalid duplicate resolution".into(),
+        ));
+    }
+    let tx = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
+    let status: Option<String> = tx
+        .query_row(
+            "SELECT status FROM import_runs WHERE id=?1",
+            [run_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if status.as_deref() != Some("REVIEW_REQUIRED") {
+        return Err(ImportWorkflowError::Validation(
+            "duplicate review is not active".into(),
+        ));
+    }
+    let review:Option<(Option<String>,Option<String>)>=tx.query_row(
+        "SELECT r.matched_transaction_id,r.matched_candidate_id FROM import_duplicate_reviews r WHERE r.candidate_id=?1 AND EXISTS(SELECT 1 FROM candidate_sources cs JOIN source_records sr ON sr.id=cs.source_record_id JOIN source_documents sd ON sd.id=sr.source_document_id WHERE cs.candidate_id=r.candidate_id AND sd.import_run_id=?2)",
+        params![candidate_id,run_id],|row|Ok((row.get(0)?,row.get(1)?)),
+    ).optional()?;
+    let Some((direct_transaction_id, matched_candidate_id)) = review else {
+        return Err(ImportWorkflowError::Validation(
+            "duplicate review was not found".into(),
+        ));
+    };
+    let posted_candidate_transaction = if let Some(matched_candidate_id) =
+        matched_candidate_id.as_deref()
+    {
+        tx.query_row("SELECT transaction_id FROM transaction_sources WHERE candidate_id=?1 ORDER BY transaction_id LIMIT 1",[matched_candidate_id],|row|row.get::<_,String>(0)).optional()?
+    } else {
+        None
+    };
+    let matched_transaction_id = direct_transaction_id.or(posted_candidate_transaction);
+    if resolution == "LINK" && matched_transaction_id.is_none() {
+        return Err(ImportWorkflowError::Validation(
+            "a pending duplicate cannot be linked before its transaction is posted".into(),
+        ));
+    }
+    tx.execute(
+        "UPDATE import_duplicate_reviews SET matched_transaction_id=coalesce(?1,matched_transaction_id),matched_candidate_id=CASE WHEN ?1 IS NULL THEN matched_candidate_id ELSE NULL END,decision=?2,decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE candidate_id=?3",
+        params![matched_transaction_id,resolution,candidate_id],
+    )?;
+    tx.commit()?;
+    preview_import(connection, run_id)
 }
 
 /// Returns review data without exposing the vault URI or source payload JSON.
@@ -1103,6 +1626,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             issues.push("LOW_NORMALIZATION_CONFIDENCE".into());
         }
         let receipt_review = receipt_review_from_primary(connection, &id, run_id)?;
+        let duplicate_match = duplicate_match_for_candidate(connection, &id)?;
         candidates.push(PreviewCandidate {
             id,
             account_id,
@@ -1132,8 +1656,10 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             audience_visibility,
             audience_member_id,
             receipt_review,
+            duplicate_match,
         });
     }
+    let duplicate_summary = duplicate_summary(connection, run_id)?;
     Ok(ImportPreview {
         summary: ImportSummary {
             run_id: run_id.into(),
@@ -1153,6 +1679,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             audience_member_id: source_audience_member_id,
         },
         candidates,
+        duplicate_summary,
     })
 }
 
@@ -1411,6 +1938,96 @@ pub fn commit_import(
                 )?;
                 continue;
             }
+        }
+        let duplicate_review: Option<(String,Option<String>,Option<String>,String)>=tx.query_row(
+            "SELECT candidate_fingerprint,matched_transaction_id,matched_candidate_id,decision FROM import_duplicate_reviews WHERE candidate_id=?1",
+            [&decision.candidate_id],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+        ).optional()?;
+        if let Some((
+            stored_fingerprint,
+            direct_transaction_id,
+            matched_candidate_id,
+            stored_decision,
+        )) = duplicate_review
+        {
+            let current_fingerprint =
+                candidate_fingerprint_from_database(&tx, &decision.candidate_id)?;
+            if current_fingerprint != stored_fingerprint {
+                return Err(ImportWorkflowError::Validation(
+                    "duplicate candidate changed after review".into(),
+                ));
+            }
+            let resolution = decision
+                .duplicate_resolution
+                .as_deref()
+                .or((stored_decision != "UNRESOLVED").then_some(stored_decision.as_str()))
+                .ok_or_else(|| {
+                    ImportWorkflowError::Validation(
+                        "duplicate candidate requires an explicit resolution".into(),
+                    )
+                })?;
+            let matched_transaction_id = if direct_transaction_id.is_some() {
+                direct_transaction_id
+            } else if let Some(matched_candidate_id) = matched_candidate_id.as_deref() {
+                tx.query_row("SELECT transaction_id FROM transaction_sources WHERE candidate_id=?1 ORDER BY transaction_id LIMIT 1",[matched_candidate_id],|row|row.get(0)).optional()?
+            } else {
+                None
+            };
+            if let Some(transaction_id) = matched_transaction_id.as_deref() {
+                let valid_target:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM transactions WHERE id=?1 AND household_id=?2 AND status='POSTED')",params![transaction_id,household_id],|row|row.get(0))?;
+                if !valid_target {
+                    return Err(ImportWorkflowError::Validation(
+                        "duplicate match became stale".into(),
+                    ));
+                }
+            } else if let Some(matched_candidate_id) = matched_candidate_id.as_deref() {
+                let active_target:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM transaction_candidates WHERE id=?1 AND household_id=?2 AND review_status IN ('PENDING','READY'))",params![matched_candidate_id,household_id],|row|row.get(0))?;
+                if !active_target {
+                    return Err(ImportWorkflowError::Validation(
+                        "duplicate match became stale".into(),
+                    ));
+                }
+            }
+            match resolution {
+                "LINK" => {
+                    let transaction_id = matched_transaction_id.ok_or_else(|| {
+                        ImportWorkflowError::Validation(
+                            "a pending duplicate cannot be linked before its transaction is posted"
+                                .into(),
+                        )
+                    })?;
+                    tx.execute("INSERT OR IGNORE INTO transaction_sources(transaction_id,source_record_id,candidate_id) SELECT ?1,source_record_id,?2 FROM candidate_sources WHERE candidate_id=?2",params![transaction_id,decision.candidate_id])?;
+                    tx.execute(
+                        "UPDATE transaction_candidates SET review_status='DUPLICATE' WHERE id=?1",
+                        [&decision.candidate_id],
+                    )?;
+                    tx.execute("UPDATE import_duplicate_reviews SET matched_transaction_id=?1,matched_candidate_id=NULL,decision='LINK',decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE candidate_id=?2",params![transaction_id,decision.candidate_id])?;
+                    continue;
+                }
+                "EXCLUDE" => {
+                    tx.execute(
+                        "UPDATE transaction_candidates SET review_status='EXCLUDED' WHERE id=?1",
+                        [&decision.candidate_id],
+                    )?;
+                    tx.execute("UPDATE import_duplicate_reviews SET decision='EXCLUDE',decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE candidate_id=?1",[&decision.candidate_id])?;
+                    continue;
+                }
+                "KEEP_BOTH" => {
+                    if let Some(transaction_id) = matched_transaction_id.as_deref() {
+                        tx.execute("INSERT OR IGNORE INTO import_keep_both_exceptions(household_id,candidate_fingerprint,matched_transaction_id) VALUES(?1,?2,?3)",params![household_id,current_fingerprint,transaction_id])?;
+                    }
+                    tx.execute("UPDATE import_duplicate_reviews SET decision='KEEP_BOTH',decided_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE candidate_id=?1",[&decision.candidate_id])?;
+                }
+                _ => {
+                    return Err(ImportWorkflowError::Validation(
+                        "invalid duplicate resolution".into(),
+                    ))
+                }
+            }
+        } else if decision.duplicate_resolution.is_some() {
+            return Err(ImportWorkflowError::Validation(
+                "duplicate resolution was supplied for a candidate without a match".into(),
+            ));
         }
         if suggested_transaction_type.as_deref() == Some("TRANSFER")
             && (decision.transaction_type != "TRANSFER" || decision.calculation_target)
@@ -2267,6 +2884,15 @@ fn validate_posting_decision(decision: &PostingDecision) -> Result<()> {
         decision.audience_visibility,
         decision.audience_member_id.as_deref(),
     )?;
+    if decision
+        .duplicate_resolution
+        .as_deref()
+        .is_some_and(|value| !matches!(value, "LINK" | "KEEP_BOTH" | "EXCLUDE"))
+    {
+        return Err(ImportWorkflowError::Validation(
+            "invalid duplicate resolution".into(),
+        ));
+    }
     match (
         decision.classification_rule_id.as_deref(),
         decision.expected_classification_rule_updated_at.as_deref(),
@@ -2501,6 +3127,25 @@ mod tests {
                    external_id TEXT NOT NULL, fact_hash TEXT NOT NULL,
                    transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
                    PRIMARY KEY(household_id,external_source,external_id));
+                 CREATE TABLE import_source_coverage (
+                   import_run_id TEXT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE,
+                   household_id TEXT NOT NULL REFERENCES households(id), account_id TEXT NOT NULL REFERENCES accounts(id),
+                   adapter_id TEXT, adapter_version TEXT, min_effective_date TEXT NOT NULL,
+                   max_effective_date TEXT NOT NULL, confirmed_replay_count INTEGER NOT NULL DEFAULT 0,
+                   PRIMARY KEY(import_run_id,account_id));
+                 CREATE TABLE import_duplicate_reviews (
+                   candidate_id TEXT PRIMARY KEY REFERENCES transaction_candidates(id) ON DELETE CASCADE,
+                   household_id TEXT NOT NULL REFERENCES households(id), candidate_fingerprint TEXT NOT NULL,
+                   matched_transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
+                   matched_candidate_id TEXT REFERENCES transaction_candidates(id) ON DELETE SET NULL,
+                   confidence TEXT NOT NULL, reason_codes_json TEXT NOT NULL,
+                   decision TEXT NOT NULL DEFAULT 'UNRESOLVED', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   decided_at TEXT);
+                 CREATE TABLE import_keep_both_exceptions (
+                   household_id TEXT NOT NULL REFERENCES households(id), candidate_fingerprint TEXT NOT NULL,
+                   matched_transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                   PRIMARY KEY(household_id,candidate_fingerprint,matched_transaction_id));
                  CREATE TABLE journal_entries (
                    id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
                    account_id TEXT NOT NULL REFERENCES accounts(id), entry_side TEXT NOT NULL,
@@ -2662,6 +3307,7 @@ mod tests {
             audience_member_id: None,
             classification_rule_id: None,
             expected_classification_rule_updated_at: None,
+            duplicate_resolution: None,
             entries: vec![
                 JournalEntryDecision {
                     id: format!("{run}-debit"),
@@ -4090,6 +4736,7 @@ mod tests {
             audience_member_id: None,
             classification_rule_id: None,
             expected_classification_rule_updated_at: None,
+            duplicate_resolution: None,
             entries: vec![
                 JournalEntryDecision {
                     id: "purchase-debit".into(),
@@ -4123,6 +4770,7 @@ mod tests {
             audience_member_id: None,
             classification_rule_id: None,
             expected_classification_rule_updated_at: None,
+            duplicate_resolution: None,
             entries: vec![
                 JournalEntryDecision {
                     id: "payment-debit".into(),
@@ -4186,5 +4834,135 @@ mod tests {
             .unwrap(),
             confirmed
         );
+    }
+
+    fn dedup_request(run: &str, document: &str, sha: char) -> StartImport {
+        let mut input = request(run, document, sha);
+        input.adapter_id = Some("dedup-test".into());
+        input
+    }
+
+    #[test]
+    fn overlapping_export_requires_explicit_resolution_and_can_link_evidence() {
+        let connection = database();
+        start_import(
+            &connection,
+            &dedup_request("original", "original-doc", '1'),
+            "vault://original",
+        )
+        .unwrap();
+        commit_import(&connection, "original", &[decision("original", 1_000)]).unwrap();
+        start_import(
+            &connection,
+            &dedup_request("overlap", "overlap-doc", '2'),
+            "vault://overlap",
+        )
+        .unwrap();
+        let preview = preview_import(&connection, "overlap").unwrap();
+        assert_eq!(preview.duplicate_summary.likely_duplicates, 1);
+        assert_eq!(preview.duplicate_summary.unresolved, 1);
+        assert_eq!(
+            preview.duplicate_summary.overlap_start.as_deref(),
+            Some("2026-07-12")
+        );
+        let duplicate = preview.candidates[0].duplicate_match.as_ref().unwrap();
+        assert_eq!(duplicate.confidence, "LIKELY");
+        assert_eq!(
+            duplicate.matched_transaction_id.as_deref(),
+            Some("original-transaction")
+        );
+        assert!(commit_import(&connection, "overlap", &[decision("overlap", 1_000)]).is_err());
+        let saved =
+            set_duplicate_resolution(&connection, "overlap", "overlap-candidate", "LINK").unwrap();
+        assert_eq!(
+            saved.candidates[0]
+                .duplicate_match
+                .as_ref()
+                .unwrap()
+                .decision,
+            "LINK"
+        );
+        let summary = commit_import(&connection, "overlap", &[decision("overlap", 1_000)]).unwrap();
+        assert_eq!(summary.posted_count, 0);
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(connection.query_row("SELECT count(*) FROM transaction_sources WHERE transaction_id='original-transaction'",[],|row|row.get::<_,i64>(0)).unwrap(),4);
+    }
+
+    #[test]
+    fn same_amount_and_date_can_be_kept_separate_with_a_durable_exception() {
+        let connection = database();
+        start_import(
+            &connection,
+            &dedup_request("first", "first-doc", '3'),
+            "vault://first",
+        )
+        .unwrap();
+        commit_import(&connection, "first", &[decision("first", 1_000)]).unwrap();
+        start_import(
+            &connection,
+            &dedup_request("second", "second-doc", '4'),
+            "vault://second",
+        )
+        .unwrap();
+        set_duplicate_resolution(&connection, "second", "second-candidate", "KEEP_BOTH").unwrap();
+        let keep = decision("second", 1_000);
+        assert_eq!(
+            commit_import(&connection, "second", &[keep])
+                .unwrap()
+                .posted_count,
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM import_keep_both_exceptions",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        assert_eq!(connection.query_row("SELECT decision FROM import_duplicate_reviews WHERE candidate_id='second-candidate'",[],|row|row.get::<_,String>(0)).unwrap(),"KEEP_BOTH");
+    }
+
+    #[test]
+    fn candidate_in_another_active_review_is_never_silently_merged() {
+        let connection = database();
+        start_import(
+            &connection,
+            &dedup_request("waiting-a", "waiting-a-doc", '5'),
+            "vault://waiting-a",
+        )
+        .unwrap();
+        start_import(
+            &connection,
+            &dedup_request("waiting-b", "waiting-b-doc", '6'),
+            "vault://waiting-b",
+        )
+        .unwrap();
+        let preview = preview_import(&connection, "waiting-b").unwrap();
+        let duplicate = preview.candidates[0].duplicate_match.as_ref().unwrap();
+        assert_eq!(
+            duplicate.matched_candidate_id.as_deref(),
+            Some("waiting-a-candidate")
+        );
+        assert!(duplicate
+            .reasons
+            .iter()
+            .any(|reason| reason == "OTHER_ACTIVE_REVIEW"));
+        assert!(commit_import(&connection, "waiting-b", &[decision("waiting-b", 1_000)]).is_err());
     }
 }

@@ -17,6 +17,7 @@ export interface Transaction {
   category: string
   account: string
   amount: number
+  transactionType?: 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'CARD_PURCHASE' | 'CARD_PAYMENT' | 'REFUND' | 'OTHER'
   status: 'confirmed' | 'review'
   icon: 'food' | 'home' | 'transport' | 'income' | 'subscription'
   accountingEffect?: 'ACCRUAL_AND_CASH' | 'ACCRUAL_ONLY' | 'CASH_ONLY'

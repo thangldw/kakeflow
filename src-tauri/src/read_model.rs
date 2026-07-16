@@ -2828,6 +2828,24 @@ pub struct AppliedClassificationDto {
     pub transaction_updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LastClassificationApplicationDto {
+    pub transaction_id: String,
+    pub payee: Option<String>,
+    pub description: Option<String>,
+    pub rule_id: Option<String>,
+    pub rule_name: String,
+    pub rule_priority: Option<i64>,
+    pub merchant_contains: Option<String>,
+    pub description_contains: Option<String>,
+    pub category_account_id: String,
+    pub category_name: String,
+    pub labels: Vec<String>,
+    pub tags: Vec<String>,
+    pub applied_at: String,
+}
+
 pub fn list_classification_rules(
     connection: &Connection,
     household_id: &str,
@@ -2856,6 +2874,44 @@ pub fn list_classification_rules(
         rule.tags = rule_values(connection, "classification_rule_tags", "tag", &rule.id)?;
     }
     Ok(rules)
+}
+
+pub fn last_classification_application(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Option<LastClassificationApplicationDto>, RepositoryError> {
+    validate_id(household_id, MAX_HOUSEHOLD_ID_LEN)?;
+    ensure_household_exists(connection, household_id)?;
+    connection
+        .query_row(
+            "SELECT app.transaction_id,t.payee,t.description,app.rule_id,
+                    COALESCE(r.name,'削除済みルール'),r.priority,r.merchant_contains,r.description_contains,
+                    app.applied_category_account_id,category.name,
+                    (SELECT group_concat(label,char(31)) FROM transaction_labels WHERE transaction_id=app.transaction_id),
+                    (SELECT group_concat(tag,char(31)) FROM transaction_tags WHERE transaction_id=app.transaction_id),
+                    app.applied_at
+             FROM classification_rule_applications app
+             JOIN transactions t ON t.id=app.transaction_id AND t.household_id=app.household_id
+             LEFT JOIN classification_rules r ON r.id=app.rule_id AND r.household_id=app.household_id
+             JOIN accounts category ON category.id=app.applied_category_account_id
+             WHERE app.household_id=?1
+             ORDER BY app.applied_at DESC,app.id DESC LIMIT 1",
+            [household_id],
+            |row| {
+                let labels: Option<String> = row.get(10)?;
+                let tags: Option<String> = row.get(11)?;
+                Ok(LastClassificationApplicationDto {
+                    transaction_id: row.get(0)?, payee: row.get(1)?, description: row.get(2)?,
+                    rule_id: row.get(3)?, rule_name: row.get(4)?, rule_priority: row.get(5)?,
+                    merchant_contains: row.get(6)?, description_contains: row.get(7)?, category_account_id: row.get(8)?, category_name: row.get(9)?,
+                    labels: labels.map(|value| value.split(char::from(31_u8)).map(str::to_owned).collect()).unwrap_or_default(),
+                    tags: tags.map(|value| value.split(char::from(31_u8)).map(str::to_owned).collect()).unwrap_or_default(),
+                    applied_at: row.get(12)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(map_database_error)
 }
 
 pub fn create_classification_rule(

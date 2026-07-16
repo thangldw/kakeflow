@@ -4,7 +4,7 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
-Version 1.0.0 is the current stable desktop milestone. It combines the
+Version 1.1.0 is the current stable desktop milestone. It combines the
 source-auditable household ledger, card reconciliation, investment workspace,
 native reports, durable file and test-user Google inboxes, and explicit family
 delivery review into one local-first desktop application. The public binary is
@@ -13,7 +13,7 @@ source-build target until native installer evidence exists. Google Drive and
 Gmail connectors remain limited to locally configured test users pending
 provider qualification, and no ingestion path posts automatically.
 
-The development line after `v1.0.0` adds
+Version `v1.1.0` adds
 [family delivery of recurring-series preferences](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md)
 and a source-backed [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md),
 plus a detailed [Portfolio Snapshot CSV](docs/PORTFOLIO_SNAPSHOT_CSV.md) for the
@@ -166,9 +166,9 @@ npm run desktop:smoke
 ```
 
 The smoke command compiles and verifies the native executable but never launches
-the app, opens a user database, creates an installer, or accesses signing keys.
-GitHub Actions runs it independently on macOS and Windows. Signing, Apple
-notarization, and production update credentials remain external release steps.
+the app, opens a user database, or creates an installer. GitHub Actions runs it
+independently on macOS and Windows. KakeFlow deliberately distributes through
+GitHub Releases without paid platform signing or an automatic update channel.
 
 When GitHub-hosted runners are unavailable, follow the checked [manual GitHub
 release procedure](docs/MANUAL_GITHUB_RELEASE.md): run every local desktop gate,
@@ -183,6 +183,10 @@ known-failing quota job.
 - Card purchases count as expenses; the later bank debit is a liability payment and must not double-count spending.
 - Dashboard metrics read confirmed ledger data, not raw extraction candidates.
 - Every displayed number should remain traceable to its original source.
+- KakeFlow does not connect directly to bank, credit-card, brokerage, or
+  financial-aggregation APIs. Financial data enters only through user-provided
+  files, user-controlled synced folders, or explicitly configured document
+  inboxes, preserving the legal, licensing, and review boundary.
 
 ## Intended architecture
 
@@ -215,7 +219,10 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - macOS Keychain or Windows Credential Manager stores the active master key.
 - Backup archives and restore work have aggregate byte, entry, and record budgets.
 - Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
-- The checked-in desktop workflow produces **unsigned/ad-hoc** macOS and Windows artifacts. Public distribution still requires Apple Developer ID signing/notarization and a Windows code-signing certificate.
+- The checked-in desktop workflow produces an **ad-hoc-signed macOS DMG** and an
+  **unsigned Windows installer** for direct GitHub distribution. Release notes
+  must disclose the resulting Gatekeeper or SmartScreen warning; paid platform
+  signing and notarization are intentionally outside the project scope.
 
 ## Current capabilities
 
@@ -345,7 +352,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable,
-  category, labels, and tags. The development line after `v1.0.0` also adds
+  category, labels, and tags. Version `v1.1.0` also adds
   [review-time import suggestions](docs/IMPORT_REVIEW_CLASSIFICATION_RULES.md)
   that require an explicit Apply, preserve field provenance, fail atomically
   when the candidate or exact rule revision is stale, and never approve or post
@@ -362,21 +369,23 @@ require their own product, provider, platform, and release evidence before a
 later release can advertise them.
 
 1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Qualify the implemented Gmail and Google Drive connectors with packaged
-   real-account validation and the required Google provider review, then add a
-   contracted read-only Japanese bank/card aggregation provider. Other mailbox
-   providers remain separate connector work. Native iCloud folder selection
-   remains available through the durable local inbox.
+2. Qualify the implemented Gmail and Google Drive document connectors with
+   packaged real-account validation and the required Google provider review.
+   Other mailbox providers remain separate connector work. Native iCloud folder
+   selection remains available through the durable local inbox. Direct bank,
+   card, brokerage, and financial-aggregation APIs are permanently outside the
+   product scope for legal and licensing reasons.
 3. Extend the opt-in, one-publication-at-a-time encrypted family intake into
    broader multi-device coordination only where explicit send, download,
    review, audience, and evidence-provenance boundaries remain visible and
    enforceable. Automatic Apply remains outside the product contract.
 4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
-5. Add production signing/notarization and activate the currently
-   [disabled update channel](docs/UPDATE_CHANNEL.md) only after signing keys,
-   hosted endpoint, signed artifacts, and platform upgrade evidence exist. The
-   codebase targets macOS and Windows; current public installer releases are
-   macOS Apple Silicon only.
+5. Complete native Windows x64 OCR, NSIS install/uninstall, and packaged-app
+   evidence before publishing the unsigned Windows installer beside the
+   ad-hoc-signed macOS Apple Silicon DMG on GitHub Releases. The
+   [update channel](docs/UPDATE_CHANNEL.md) remains disabled; users install new
+   versions manually. Paid signing, notarization, Store distribution, and
+   additional architectures are not roadmap commitments.
 
 ## Family delivery boundary
 

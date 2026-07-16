@@ -47,6 +47,7 @@ describe('toTransactionViewModel', () => {
       calculationTarget: true,
       labels: [],
       tags: [],
+      transactionType: 'EXPENSE',
       attributionLabel: '世帯共通',
       audienceLabel: '共有',
     })

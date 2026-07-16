@@ -4,6 +4,10 @@ import { Users } from 'lucide-react'
 import { platformClient } from '../../platform'
 import type { AccountDto, HouseholdMemberDto } from '../../platform'
 import { LocalSyncFoundationPanel } from '../sync/LocalSyncFoundationPanel'
+import { FamilyDeliveryPanel } from '../sync/FamilyDeliveryPanel'
+import { FamilySnapshotReviewPanel } from '../sync/FamilySnapshotReviewPanel'
+import { LocalChangePackagePanel } from '../sync/LocalChangePackagePanel'
+import { PortableEvidenceBundlePanel } from '../sync/PortableEvidenceBundlePanel'
 
 interface FamilyPageProps {
   readonly householdId: string | null
@@ -18,6 +22,8 @@ export function FamilyPage({ householdId, members, accounts, onMembersChanged }:
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [nameError, setNameError] = useState('')
+  const [transferTab, setTransferTab] = useState<'INBOUND' | 'OUTBOUND'>('INBOUND')
+  const [reviewRevision, setReviewRevision] = useState(0)
   const activeMembers = members.filter((member) => member.status === 'ACTIVE')
 
   const createMember = async () => {
@@ -57,6 +63,11 @@ export function FamilyPage({ householdId, members, accounts, onMembersChanged }:
       </> : <p className="empty-state">家族メンバーの管理はデスクトップ版で利用できます。</p>}
     </section>
     <LocalSyncFoundationPanel householdId={householdId} members={members} allowBinding />
+    <section className="family-transfer-workspace" aria-labelledby="family-transfer-title"><div className="panel-head"><div><h2 id="family-transfer-title">データ受け渡し</h2><p>暗号化パッケージは内容をレビューしてから原子的に適用します。</p></div><div className="workspace-tabs family-transfer-tabs" role="tablist" aria-label="家族データの受け渡し"><button role="tab" aria-selected={transferTab === 'INBOUND'} className={transferTab === 'INBOUND' ? 'active' : ''} onClick={() => setTransferTab('INBOUND')}>受信</button><button role="tab" aria-selected={transferTab === 'OUTBOUND'} className={transferTab === 'OUTBOUND' ? 'active' : ''} onClick={() => setTransferTab('OUTBOUND')}>送信</button></div></div>
+      <div hidden={transferTab !== 'INBOUND'}><FamilyDeliveryPanel householdId={householdId} members={members} view="INBOUND" onReviewStaged={() => { setTransferTab('INBOUND'); setReviewRevision((value) => value + 1) }} /><FamilySnapshotReviewPanel householdId={householdId} revision={reviewRevision} /></div>
+      <div hidden={transferTab !== 'OUTBOUND'}><FamilyDeliveryPanel householdId={householdId} members={members} view="OUTBOUND" /><LocalChangePackagePanel householdId={householdId} /></div>
+      <PortableEvidenceBundlePanel householdId={householdId} />
+    </section>
   </>
 }
 
