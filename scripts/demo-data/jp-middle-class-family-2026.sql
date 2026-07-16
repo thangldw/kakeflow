@@ -102,6 +102,17 @@ WITH RECURSIVE m(i,d) AS (
 )
 INSERT INTO demo_months SELECT strftime('%Y-%m',d),d,i FROM m;
 
+-- Deterministic household-spending seasonality. Ordinary month-to-month changes
+-- stay around 10-15%; December and July increase by about 20%.
+CREATE TEMP TABLE demo_monthly_variation (
+  month TEXT PRIMARY KEY, factor_bps INTEGER NOT NULL,
+  CHECK (factor_bps BETWEEN 8000 AND 14000)
+) STRICT;
+INSERT INTO demo_monthly_variation VALUES
+  ('2025-08',10000), ('2025-09',11200), ('2025-10',9856), ('2025-11',11039),
+  ('2025-12',13247), ('2026-01',11657), ('2026-02',10258), ('2026-03',11589),
+  ('2026-04',10200), ('2026-05',11424), ('2026-06',10053), ('2026-07',12064);
+
 -- Gross annual household income: father JPY 8.4m + mother JPY 5.6m = JPY 14m.
 INSERT INTO transactions
   (id,household_id,occurred_on,posted_on,transaction_type,payee,description,status,
@@ -236,21 +247,33 @@ SELECT 'je-demo-paypay-topup-'||month||'-1','demo-paypay-topup-'||month,'demo-pa
 UNION ALL
 SELECT 'je-demo-paypay-topup-'||month||'-2','demo-paypay-topup-'||month,'demo-bank-joint','CREDIT',60000,2 FROM demo_months;
 
-CREATE TEMP TABLE demo_groceries (id TEXT PRIMARY KEY, occurred_on TEXT, payee TEXT, amount_jpy INTEGER) STRICT;
-WITH RECURSIVE d(n,day) AS (
-  VALUES(0,date('2025-08-02'))
-  UNION ALL SELECT n+1,date(day,'+3 days') FROM d WHERE day<'2026-07-29'
-)
+CREATE TEMP TABLE demo_groceries (
+  id TEXT PRIMARY KEY, occurred_on TEXT, payee TEXT, description TEXT,
+  amount_jpy INTEGER, source_account_id TEXT
+) STRICT;
+WITH RECURSIVE trip(n) AS (VALUES(0) UNION ALL SELECT n+1 FROM trip WHERE n<7)
 INSERT INTO demo_groceries
-SELECT 'demo-grocery-'||printf('%03d',n),day,
-       CASE n%3 WHEN 0 THEN 'ライフ' WHEN 1 THEN 'イトーヨーカドー' ELSE 'コープみらい' END,
-       6200+((n*137)%4200) FROM d WHERE day<='2026-07-31';
+SELECT 'demo-supermarket-'||m.month||'-'||printf('%02d',trip.n+1),
+       date(m.month_start,'+'||(2+trip.n*3)||' days'),
+       CASE trip.n
+         WHEN 0 THEN 'ライフ' WHEN 1 THEN 'イトーヨーカドー'
+         WHEN 2 THEN 'コープみらい' WHEN 3 THEN 'イオン'
+         WHEN 4 THEN '業務スーパー' WHEN 5 THEN 'オーケー'
+         WHEN 6 THEN '西友' ELSE '成城石井' END,
+       CASE trip.n%3 WHEN 0 THEN '週末まとめ買い・食料品' WHEN 1 THEN '食料品・飲料'
+         ELSE '食料品・日用品' END,
+       CAST(ROUND((6200+(trip.n*750))*v.factor_bps/10000.0) AS INTEGER),
+       CASE trip.n%4 WHEN 0 THEN 'demo-paypay' WHEN 1 THEN 'demo-card-rakuten'
+         WHEN 2 THEN 'demo-card-paypay' ELSE 'demo-bank-joint' END
+FROM demo_months m JOIN demo_monthly_variation v ON v.month=m.month CROSS JOIN trip;
 INSERT INTO transactions
   (id,household_id,occurred_on,posted_on,transaction_type,payee,description,status,calculation_target)
-SELECT id,'demo-tanaka-family',occurred_on,occurred_on,'EXPENSE',payee,'家族4人の食料品','POSTED',1 FROM demo_groceries;
+SELECT id,'demo-tanaka-family',occurred_on,occurred_on,
+       CASE WHEN source_account_id LIKE 'demo-card-%' THEN 'CARD_PURCHASE' ELSE 'EXPENSE' END,
+       payee,description,'POSTED',1 FROM demo_groceries;
 INSERT INTO journal_entries (id,transaction_id,account_id,entry_side,amount_jpy,line_number)
 SELECT 'je-'||id||'-1',id,'demo-exp-groceries','DEBIT',amount_jpy,1 FROM demo_groceries
-UNION ALL SELECT 'je-'||id||'-2',id,'demo-bank-joint','CREDIT',amount_jpy,2 FROM demo_groceries;
+UNION ALL SELECT 'je-'||id||'-2',id,source_account_id,'CREDIT',amount_jpy,2 FROM demo_groceries;
 
 CREATE TEMP TABLE demo_dining (id TEXT PRIMARY KEY, occurred_on TEXT, payee TEXT, amount_jpy INTEGER) STRICT;
 WITH RECURSIVE d(n,day) AS (

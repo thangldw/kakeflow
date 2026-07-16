@@ -32,6 +32,14 @@ goals, account groups, labels/tags, portfolio positions, market prices, two card
 statements and fully reconciled bank payments. Card payments do not create a
 second expense.
 
+The twelve-month supermarket series contains 96 purchases across Life,
+Ito-Yokado, Coop Mirai, Aeon, Gyomu Super, OK, Seiyu and Seijo Ishii. Payments
+rotate between PayPay QR/balance, Rakuten Card, PayPay Card and the household
+SMBC account. Ordinary month-to-month supermarket totals vary by roughly
+10-15%; December and July increase by approximately 20%. The verifier treats
+these seasonal bounds, month coverage and transaction count as data-quality
+invariants.
+
 ## Files
 
 - `jp-middle-class-family-2026.sql` — data-only SQL for a database already

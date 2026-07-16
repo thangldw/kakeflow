@@ -50,7 +50,7 @@ describe('KakeFlow application shell', () => {
 
     expect(screen.getByText('LOHACO 教材')).toBeInTheDocument()
     expect(screen.queryByText('成城石井')).not.toBeInTheDocument()
-    expect(screen.getByText('支出 ¥637,080')).toBeInTheDocument()
+    expect(screen.getByText('支出 ¥747,943')).toBeInTheDocument()
   })
 
   it('switches between accrual expense and cash movement without double counting card payments', async () => {
@@ -63,7 +63,7 @@ describe('KakeFlow application shell', () => {
 
     expect(screen.getByText('楽天カード支払い')).toBeInTheDocument()
     expect(screen.queryByText('LOHACO 教材')).not.toBeInTheDocument()
-    expect(screen.getByText('現金流出 ¥812,237')).toBeInTheDocument()
+    expect(screen.getByText('現金流出 ¥923,100')).toBeInTheDocument()
   })
 
   it('explains reconciled card payments separately from expenses', async () => {

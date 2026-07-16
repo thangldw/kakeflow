@@ -73,7 +73,46 @@ export function readDemoSummary(databasePath) {
       'paypayQrPayments', (SELECT count(DISTINCT t.id)
         FROM transactions t JOIN journal_entries je ON je.transaction_id=t.id
         WHERE t.household_id='demo-tanaka-family' AND t.transaction_type='EXPENSE'
-          AND je.account_id='demo-paypay' AND je.entry_side='CREDIT')
+          AND je.account_id='demo-paypay' AND je.entry_side='CREDIT'),
+      'historyMonths', (SELECT count(DISTINCT substr(occurred_on,1,7)) FROM transactions
+        WHERE household_id='demo-tanaka-family' AND occurred_on>='2025-08-01' AND occurred_on<'2026-08-01'),
+      'supermarketTransactions', (SELECT count(*) FROM transactions WHERE id LIKE 'demo-supermarket-%'),
+      'ordinarySupermarketVariationMinBps', (WITH monthly AS (
+          SELECT substr(t.occurred_on,1,7) month, SUM(je.amount_jpy) total
+          FROM transactions t JOIN journal_entries je ON je.transaction_id=t.id
+          WHERE t.id LIKE 'demo-supermarket-%' AND je.account_id='demo-exp-groceries' AND je.entry_side='DEBIT'
+          GROUP BY substr(t.occurred_on,1,7)
+        ), changes AS (
+          SELECT month, CAST(ROUND(ABS(total-LAG(total) OVER (ORDER BY month))*10000.0/LAG(total) OVER (ORDER BY month)) AS INTEGER) variation_bps
+          FROM monthly
+        ) SELECT MIN(variation_bps) FROM changes WHERE month NOT IN ('2025-08','2025-12','2026-07')),
+      'ordinarySupermarketVariationMaxBps', (WITH monthly AS (
+          SELECT substr(t.occurred_on,1,7) month, SUM(je.amount_jpy) total
+          FROM transactions t JOIN journal_entries je ON je.transaction_id=t.id
+          WHERE t.id LIKE 'demo-supermarket-%' AND je.account_id='demo-exp-groceries' AND je.entry_side='DEBIT'
+          GROUP BY substr(t.occurred_on,1,7)
+        ), changes AS (
+          SELECT month, CAST(ROUND(ABS(total-LAG(total) OVER (ORDER BY month))*10000.0/LAG(total) OVER (ORDER BY month)) AS INTEGER) variation_bps
+          FROM monthly
+        ) SELECT MAX(variation_bps) FROM changes WHERE month NOT IN ('2025-08','2025-12','2026-07')),
+      'decemberSupermarketVariationBps', (WITH monthly AS (
+          SELECT substr(t.occurred_on,1,7) month, SUM(je.amount_jpy) total
+          FROM transactions t JOIN journal_entries je ON je.transaction_id=t.id
+          WHERE t.id LIKE 'demo-supermarket-%' AND je.account_id='demo-exp-groceries' AND je.entry_side='DEBIT'
+          GROUP BY substr(t.occurred_on,1,7)
+        ), changes AS (
+          SELECT month, CAST(ROUND((total-LAG(total) OVER (ORDER BY month))*10000.0/LAG(total) OVER (ORDER BY month)) AS INTEGER) variation_bps
+          FROM monthly
+        ) SELECT variation_bps FROM changes WHERE month='2025-12'),
+      'julySupermarketVariationBps', (WITH monthly AS (
+          SELECT substr(t.occurred_on,1,7) month, SUM(je.amount_jpy) total
+          FROM transactions t JOIN journal_entries je ON je.transaction_id=t.id
+          WHERE t.id LIKE 'demo-supermarket-%' AND je.account_id='demo-exp-groceries' AND je.entry_side='DEBIT'
+          GROUP BY substr(t.occurred_on,1,7)
+        ), changes AS (
+          SELECT month, CAST(ROUND((total-LAG(total) OVER (ORDER BY month))*10000.0/LAG(total) OVER (ORDER BY month)) AS INTEGER) variation_bps
+          FROM monthly
+        ) SELECT variation_bps FROM changes WHERE month='2026-07')
     );
   `)
   return JSON.parse(rows)
@@ -93,13 +132,21 @@ export function assertDemoSummary(summary) {
     reconciledCardStatements: 2,
     institutionMappingMismatches: 0,
     salaryDestinationMismatches: 0,
-    paypayQrPayments: 36,
+    paypayQrPayments: 60,
+    historyMonths: 12,
+    supermarketTransactions: 96,
   }
   for (const [key, value] of Object.entries(expected)) {
     if (summary[key] !== value) throw new Error(`${key}: expected ${value}, received ${summary[key]}`)
   }
   if (summary.transactions < 300 || summary.journalEntries < 600) {
     throw new Error('demo dump does not contain enough transaction history')
+  }
+  if (summary.ordinarySupermarketVariationMinBps < 1_000 || summary.ordinarySupermarketVariationMaxBps > 1_500) {
+    throw new Error(`ordinary supermarket variation must stay within 10-15%, received ${summary.ordinarySupermarketVariationMinBps}-${summary.ordinarySupermarketVariationMaxBps} bps`)
+  }
+  for (const key of ['decemberSupermarketVariationBps', 'julySupermarketVariationBps']) {
+    if (Math.abs(summary[key] - 2_000) > 5) throw new Error(`${key}: expected approximately 2000 bps, received ${summary[key]}`)
   }
 }
 
