@@ -44,6 +44,7 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
   const evidenceTitleId = useId()
   const receipt = evidence.receipt
   const [selected, setSelected] = useState<{ pageNumber: number; regionIndex: number } | null>(null)
+  const [selectedPageNumber, setSelectedPageNumber] = useState(evidence.pages[0]?.pageNumber ?? 1)
   const [renderedPdfPages, setRenderedPdfPages] = useState<Readonly<Record<number, EvidencePageImage>>>({})
   const [pendingPdfPages, setPendingPdfPages] = useState<readonly number[]>([])
   const [failedPdfPages, setFailedPdfPages] = useState<readonly number[]>([])
@@ -51,6 +52,12 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
   const [verifiedSha, setVerifiedSha] = useState('')
   const pageNumbers = useMemo(() => evidence.pages.map((page) => page.pageNumber), [evidence.pages])
   const pageKey = pageNumbers.join(',')
+  const firstPageNumber = pageNumbers[0] ?? 1
+  const selectedPage = evidence.pages.find((page) => page.pageNumber === selectedPageNumber) ?? evidence.pages[0]
+  useEffect(() => {
+    setSelectedPageNumber(firstPageNumber)
+    setSelected(null)
+  }, [evidence.sourceRecordId, firstPageNumber])
   useEffect(() => {
     setVerifiedSha(document.querySelector<HTMLElement>('.evidence-list')?.dataset.sha256 ?? '')
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') globalThis.dispatchEvent(new CustomEvent('kakeflow:evidence-close')) }
@@ -92,6 +99,7 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
   }
   const resolvedPageImages = { ...renderedPdfPages, ...pageImages }
   const selectRegion = (pageNumber: number, region: ExtractedRegionDto, regionIndex: number) => {
+    setSelectedPageNumber(pageNumber)
     setSelected({ pageNumber, regionIndex })
     onSelectRegion?.(pageNumber, region, regionIndex)
   }
@@ -116,10 +124,14 @@ export function DocumentEvidenceViewer({ evidence, filename, pageImages, pdfSour
     </section>}
 
     <section className="evidence-pages" aria-labelledby="evidence-pages-title"><header><div><p>Located evidence</p><h3 id="evidence-pages-title">ページ・領域</h3></div><span>{evidence.pages.length}ページ</span></header>
-      {evidence.pages.length === 0 ? <p className="evidence-empty">この抽出結果にはページ情報がありません。</p> : evidence.pages.map((page) => <section className="evidence-page" key={page.pageNumber} aria-labelledby={`${evidenceTitleId}-page-${page.pageNumber}`}><header><h4 id={`${evidenceTitleId}-page-${page.pageNumber}`}>Page {page.pageNumber}</h4><span>{pendingPdfPages.includes(page.pageNumber) ? '原本を描画中…' : failedPdfPages.includes(page.pageNumber) ? '原本プレビュー unavailable' : `${page.regions.length} regions · ${confidence(page.confidenceBps ?? evidence.confidenceBps)}`}</span></header>{(page.issues?.length ?? 0) > 0 && <p className="evidence-overlay-empty" role="status">{page.issues.join(' / ')}</p>}<EvidencePageOverlay pageNumber={page.pageNumber} regions={page.regions} image={resolvedPageImages[page.pageNumber]} widthPixels={page.widthPixels} heightPixels={page.heightPixels} selectedRegionIndexes={selected?.pageNumber === page.pageNumber ? [selected.regionIndex] : []} onSelectRegion={(region, index) => selectRegion(page.pageNumber, region, index)} /><ol>{page.regions.map((region, index) => {
+      {evidence.pages.length === 0 ? <p className="evidence-empty">この抽出結果にはページ情報がありません。</p> : <div className="evidence-workspace">
+        <nav className="evidence-page-rail" aria-label="原本ページ"><strong>ページ</strong>{evidence.pages.map((page) => <button key={page.pageNumber} type="button" className={page.pageNumber === selectedPage?.pageNumber ? 'selected' : ''} aria-current={page.pageNumber === selectedPage?.pageNumber ? 'page' : undefined} aria-label={`Page ${page.pageNumber}を表示`} onClick={() => { setSelectedPageNumber(page.pageNumber); setSelected(null) }}><span className="evidence-page-thumbnail"><span>PAGE</span><b>{page.pageNumber}</b><small>{page.regions.length} regions</small></span><span>Page {page.pageNumber}</span></button>)}</nav>
+        {selectedPage && <section className="evidence-page evidence-page-canvas" aria-labelledby={`${evidenceTitleId}-page-${selectedPage.pageNumber}`}><header><h4 id={`${evidenceTitleId}-page-${selectedPage.pageNumber}`}>Page {selectedPage.pageNumber}</h4><span>{pendingPdfPages.includes(selectedPage.pageNumber) ? '原本を描画中…' : failedPdfPages.includes(selectedPage.pageNumber) ? '原本プレビュー unavailable' : `${selectedPage.regions.length} regions · ${confidence(selectedPage.confidenceBps ?? evidence.confidenceBps)}`}</span></header>{(selectedPage.issues?.length ?? 0) > 0 && <p className="evidence-overlay-empty" role="status">{selectedPage.issues.join(' / ')}</p>}<EvidencePageOverlay pageNumber={selectedPage.pageNumber} regions={selectedPage.regions} image={resolvedPageImages[selectedPage.pageNumber]} widthPixels={selectedPage.widthPixels} heightPixels={selectedPage.heightPixels} selectedRegionIndexes={selected?.pageNumber === selectedPage.pageNumber ? [selected.regionIndex] : []} onSelectRegion={(region, index) => selectRegion(selectedPage.pageNumber, region, index)} /></section>}
+        {selectedPage && <aside className="evidence-region-panel" aria-label={`Page ${selectedPage.pageNumber}の抽出領域`}><header><div><p>Extracted regions</p><h4>抽出領域</h4></div><strong>{confidence(selectedPage.confidenceBps ?? evidence.confidenceBps)}</strong></header><ol>{selectedPage.regions.map((region, index) => {
           const content = <><div className="region-copy"><q>{region.text || '（空の領域）'}</q><span>{region.provenance}</span></div><div className="region-meta"><RegionLocation region={region} /><strong>{confidence(region.confidenceBps)}</strong></div></>
-          return <li key={`${region.provenance}-${index}`} className={selected?.pageNumber === page.pageNumber && selected.regionIndex === index ? 'selected' : ''}><button type="button" onClick={() => selectRegion(page.pageNumber, region, index)} aria-label={`Page ${page.pageNumber} region ${index + 1}を表示`}>{content}</button></li>
-        })}</ol></section>)}
+          return <li key={`${region.provenance}-${index}`} className={selected?.pageNumber === selectedPage.pageNumber && selected.regionIndex === index ? 'selected' : ''}><button type="button" onClick={() => selectRegion(selectedPage.pageNumber, region, index)} aria-label={`Page ${selectedPage.pageNumber} region ${index + 1}を表示`}>{content}</button></li>
+        })}</ol>{selectedPage.regions.length === 0 && <p className="evidence-empty">このページに抽出領域はありません。</p>}<div className="evidence-normalization-note"><strong>正規化ルール</strong><span>原本・抽出座標・信頼度を保持します。税、値引、ポイントは自動配分しません。</span></div></aside>}
+      </div>}
     </section>
 
     <details className="evidence-raw"><summary>抽出テキスト全文</summary><pre>{evidence.text || '抽出テキストなし'}</pre></details>

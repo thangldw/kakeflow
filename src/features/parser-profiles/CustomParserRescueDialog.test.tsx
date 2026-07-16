@@ -13,7 +13,7 @@ describe('CustomParserRescueDialog', () => {
     const onSaved = vi.fn()
     render(<CustomParserRescueDialog householdId="family" filename="local.csv" bytes={new TextEncoder().encode('Date,Description,Amount\n2026/07/12,Local shop,-1200')} accounts={accounts} api={{ create, list: vi.fn().mockResolvedValue([]) }} onCancel={vi.fn()} onSaved={onSaved} />)
 
-    expect(screen.getByRole('dialog')).toHaveAccessibleName('このCSVを読み取る')
+    expect(screen.getByRole('dialog')).toHaveAccessibleName(/手動マッピングで取り込む/)
     expect(screen.getAllByRole('option', { name: 'Date' }).length).toBeGreaterThan(0)
     expect(screen.queryByRole('option', { name: 'その他' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('日付列'), { target: { value: 'Date' } })
@@ -22,7 +22,7 @@ describe('CustomParserRescueDialog', () => {
     fireEvent.change(screen.getByLabelText('救済取込先口座'), { target: { value: 'bank' } })
 
     expect(await screen.findByText('utf-8 ・ 区切り「,」・ 候補 1件 ・ 除外 0行 ・ エラー 0件')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'プロファイルを保存してプレビューへ' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存して取り込む' }))
     await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', dateColumn: 'Date', payeeColumn: 'Description', signedAmountColumn: 'Amount' })))
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ version: 1 }), 'bank')
   })
@@ -54,7 +54,7 @@ describe('CustomParserRescueDialog', () => {
     fireEvent.change(screen.getByLabelText('符号付き金額列'), { target: { value: 'Amount' } })
     fireEvent.change(screen.getByLabelText('救済取込先口座'), { target: { value: 'bank' } })
 
-    fireEvent.click(screen.getByRole('button', { name: 'プロファイルを保存してプレビューへ' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存して取り込む' }))
     expect(await screen.findByText('プロファイルは保存済みです。適用を再試行してください。')).toBeInTheDocument()
     expect(screen.getByLabelText('救済正の値の方向')).toBeDisabled()
     expect(screen.getByLabelText('符号付き金額列')).toBeDisabled()

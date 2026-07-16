@@ -463,7 +463,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ホーム' }))
     fireEvent.click(await screen.findByRole('button', { name: '4件すべて見る' }))
     expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
-    expect(screen.getByRole('tab', { name: '予測・アクション' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: '予測とアクション' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('implements the report selector as a keyboard-operable ARIA tab set', async () => {
@@ -780,7 +780,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByLabelText('対象月'), { target: { value: '2026-08' } })
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, fromDate: '2026-08-01' })))
-    fireEvent.click(screen.getByRole('button', { name: /詳細フィルター/ }))
+    fireEvent.click(screen.getByRole('button', { name: /詳細フィルタ/ }))
     fireEvent.change(screen.getByLabelText('計算対象で絞り込み'), { target: { value: 'EXCLUDED' } })
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, calculationTargetFilter: 'EXCLUDED' })))
     expect(scope).toHaveValue('daily')
@@ -821,7 +821,7 @@ describe('KakeFlow desktop read models', () => {
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', expect.any(Object))
 
     fireEvent.click(screen.getByRole('tab', { name: /分析・予測/ }))
-    fireEvent.click(screen.getByRole('tab', { name: /予測・アクション/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /予測とアクション/ }))
     expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
     expect(screen.getByText('食費予算を超過')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', expect.any(Object))
@@ -1068,14 +1068,14 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByPlaceholderText('店舗、カテゴリー、口座を検索'), { target: { value: '八百屋' } })
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ search: '八百屋', page: 1 })))
 
-    fireEvent.click(screen.getByRole('button', { name: '手動取引を追加' }))
+    fireEvent.click(screen.getByRole('button', { name: '＋ 手入力取引' }))
     fireEvent.change(screen.getByLabelText('手動取引の支払先'), { target: { value: '八百屋' } })
     fireEvent.change(screen.getByLabelText('手動取引の金額'), { target: { value: '1500' } })
     fireEvent.change(screen.getByLabelText('手動取引の借方口座'), { target: { value: 'family-other-expense' } })
     fireEvent.change(screen.getByLabelText('手動取引の貸方口座'), { target: { value: 'family-bank' } })
     fireEvent.change(screen.getByLabelText('手動取引の家族内の帰属'), { target: { value: 'taro' } })
     fireEvent.change(screen.getByLabelText('手動取引の表示区分'), { target: { value: 'hanako' } })
-    fireEvent.click(screen.getByRole('button', { name: '取引を記録' }))
+    fireEvent.click(screen.getByRole('button', { name: '転記' }))
 
     await waitFor(() => expect(desktop.createManualTransaction).toHaveBeenCalledWith(expect.objectContaining({
       householdId: 'family', transactionType: 'EXPENSE', payee: '八百屋',
@@ -2537,13 +2537,13 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [file] } })
 
     fireEvent.click(await screen.findByRole('button', { name: 'このファイルを読み取る' }))
-    expect(screen.getByRole('dialog', { name: 'このCSVを読み取る' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: /手動マッピングで取り込む/ })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('日付列'), { target: { value: 'Date' } })
     fireEvent.change(screen.getByLabelText('支払先列'), { target: { value: 'Description' } })
     fireEvent.change(screen.getByLabelText('符号付き金額列'), { target: { value: 'Amount' } })
     fireEvent.change(screen.getByLabelText('救済取込先口座'), { target: { value: 'family-bank' } })
     expect(await screen.findByText('utf-8 ・ 区切り「,」・ 候補 1件 ・ 除外 0行 ・ エラー 0件')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'プロファイルを保存してプレビューへ' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存して取り込む' }))
 
     expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '取込開始' }))

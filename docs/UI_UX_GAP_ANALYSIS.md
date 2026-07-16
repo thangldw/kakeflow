@@ -16,13 +16,13 @@
 | Home | Loading skeleton, first-run CTA, Action Center, template presets, drag/drop reorder, show/hide tray, reset/cancel/done và KPI basis semantics |
 | Transactions | Type chips, advanced removable filters, bulk category/calculation/attribution/labels/tags, right detail drawer 340px, split remainder `¥0`, manual double-entry dialog, evidence, CSV/Excel/PDF và toast |
 | Import | Local/Connector tabs, production master-detail 330px, immutable source, explicit review-before-post, dedup resolution, parser rescue/profiles, protected PDF/OCR, ZIP/EML, Money Forward/brokerage mapping, Drive/Gmail/iCloud/watched-folder flows |
-| Capture | JPEG/PNG/PDF ≤25MB, immediate SHA-256 state, local/watched/mobile source labels, explicit OCR then promotion, confidence/progress, discard without deleting audit evidence, live badge; mobile token/background configuration moved to Settings → Connectors |
-| Cards | Pill system supports all 8 presentation states with icon+text, explicit bank mapping, due-date override, partial/over/under payment and balance-coverage disclosure |
+| Capture | JPEG/PNG/PDF ≤25MB, immediate SHA-256 state, local/watched/mobile source labels, two-column OCR work cards, explicit OCR then promotion, confidence/progress, discard without deleting audit evidence, live badge; mobile token/background configuration moved to Settings → Connectors |
+| Cards | Pill system supports all 8 presentation states with icon+text, explicit bank mapping, due-date override, partial/over/under payment, balance-coverage disclosure and the designed per-card mapping/due-date/unlink action footer |
 | Investments | Snapshot, FIFO, trend/valuation tabs; FX, market valuation without interpolation, aggregate history, brokerage-instrument history và period/export reports |
 | Reports | 3 primary ARIA tabs, monthly/annual review, forecast/actions, recurring/anomaly/fixed-cost views, SQLite monthly memo và view-level exports |
 | Budget/Rules | Threshold/progress/required pace; deterministic rule editor, persisted last-application explanation và create-rule prefill |
 | Family/Sync | Receive/send tabs, snapshots, change packages, relay/delivery, conflict review và portable evidence bundles |
-| Settings/Evidence | Progressive connector/parser/account-group/export sections, mobile capture connector, backup/restore, full-screen immutable evidence overlay with SHA/source metadata |
+| Settings/Evidence | Progressive connector/parser/account-group/export sections, mobile capture connector, backup/restore, sync diagnostics, and a full-screen immutable three-column evidence workspace with page rail, canvas/overlay, normalized regions, confidence, SHA/source metadata and protected-PDF retry |
 
 Form tạo account group đã được kiểm tra lại sau handoff: tên, loại và CTA nằm
 trên cùng một hàng ở desktop, chuyển thành một cột ở mobile, không tạo hàng rỗng

@@ -2,7 +2,7 @@
 
 ## Visual truth
 
-- Source of truth: `design_handoff_kakeflow_v2/README.md`, `IA_MAPPING.md`, `P1_SPECS.md`, `VISUAL_QA.md` and the 26 handoff screenshots.
+- Source of truth: `design_handoff_kakeflow_v2/README.md`, `IA_MAPPING.md`, `P1_SPECS.md`, `VISUAL_QA.md` and all 33 handoff screenshots.
 - Reviewed reference screens: Home, Transactions detail, Capture Inbox, Calendar/Reports, and Settings connectors/profiles.
 - Implementation: `http://127.0.0.1:1420/` in the in-app Browser, light theme, July 2026.
 - Primary viewport: 1440 × 900 at DPR 1. The handoff images are 914 × 540 exports of the same desktop composition, so comparison used normalized shell geometry and component hierarchy rather than raw pixel dimensions.
@@ -14,7 +14,9 @@
 - Capture source and implementation were emitted together after the final connector-placement fix. The production Capture page now contains only local JPEG/PNG/PDF intake, watched-folder routing, explicit OCR/promotion states, and the no-auto-posting gate. Mobile relay credentials are absent from this page.
 - Settings source and implementation were emitted together with the connector disclosure open. Drive, Gmail, iCloud, and the mobile-to-desktop relay are grouped under Settings as specified by the information architecture.
 - The reported broken account-group form and the corrected implementation were emitted together at the same 1740 × 672 viewport. The corrected form measures 659px / 180px / 101px for name, kind, and CTA; all controls are 38px high, the export panel remains a separate column, and the document has no horizontal overflow.
-- Transaction list geometry and semantics match the handoff: selection column, date, description, category, account, type, amount, evidence, type filters, advanced filters, neutral transfer/card-payment styling, and tabular amounts. The native detail drawer, split editor, and source-evidence workflow are covered by desktop integration tests; the Browser preview cannot invoke that native detail command.
+- Transaction list geometry and semantics match the handoff: selection column, date, description, category, account, type, amount, evidence, type filters, advanced filter disclosure, neutral transfer/card-payment styling, and tabular amounts. The new copy contract uses `＋ 手入力取引`, `手入力取引（複式）`, `貸借差額`, and `転記`; native detail, split, manual-posting, and source-evidence behavior are covered by desktop integration tests.
+- Phase-3 surfaces were audited against screenshots 27–33: dashboard layout edit, manual entry, advanced filters, duplicate resolution, card actions, Capture OCR cards, and Settings connector/sync diagnostics. The compact dedup labels retain detailed accessible names, while card actions focus or invoke their existing native mapping/due-date/unlink operations.
+- The evidence viewer now uses the handoff’s full-screen three-column workspace: page thumbnails at left, original/overlay canvas in the center, and extracted/normalized regions with confidence at right. Protected-PDF retry, SHA lineage, receipt normalization, and raw text remain intact.
 - Runtime sample rows and empty states differ from the static handoff fixtures, but layout, hierarchy, interaction gates, and state semantics remain equivalent.
 
 Implementation captures:
@@ -25,6 +27,8 @@ Implementation captures:
 - `tmp/design-qa-v2/settings-connectors-implementation.png`
 - `tmp/design-qa/account-group-form-fixed.png`
 - `tmp/design-qa/account-group-form-fixed-1740x672.png`
+- `tmp/qa-tx-advanced-filter.png`
+- `tmp/qa-compare-tx-advanced-filter.png`
 
 ## Required fidelity surfaces
 
@@ -49,7 +53,8 @@ Implementation captures:
 ## Iteration history
 
 - Moved mobile relay credentials and background polling out of production Capture and into Settings → Connectors.
-- Replaced the inline manual-entry form with the handoff’s centered two-column double-entry dialog and explicit `残り ¥0 ✓` completion gate.
+- Replaced the inline manual-entry form with the handoff’s centered two-column double-entry dialog and explicit `貸借差額 ¥0 ✓` completion gate.
+- Aligned Reports analysis labels, rescue-dialog title/CTA, compact dedup decisions, card footer actions, Capture OCR card density, and the evidence viewer’s three-column hierarchy with screenshots 16–33.
 - Kept OCR and promotion as separate user actions so receipt intake never posts directly to the ledger.
 - Preserved the implemented deduplication workflow and aligned its review states with the v2 Import master-detail layout.
 - Corrected account-group grid placement so an empty account list cannot push the primary CTA into the flexible name column; added explicit desktop placement, matched control sizing/focus treatment, and a mobile reset.

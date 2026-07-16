@@ -112,6 +112,10 @@ button { transition: background-color 120ms ease, border-color 120ms ease, color
 .manual-balance-check { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--hairline); border-radius: 7px; color: var(--text2); }
 .manual-balance-check.balanced { border-color: color-mix(in oklch,var(--asset) 55%,var(--hairline)); background: color-mix(in oklch,var(--asset) 8%,var(--surface)); color: var(--asset); }
 .manual-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.card-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; padding-top: 9px; border-top: 1px solid var(--hairline); }
+.card-detail-actions button { min-height: 28px; padding: 4px 8px; color: var(--text2); background: var(--surface); border: 1px solid var(--hairline); border-radius: 5px; font-size: 9px; cursor: pointer; }
+.card-detail-actions button:hover:not(:disabled),.card-detail-actions button:focus-visible { color: var(--primary); border-color: var(--primary); }
+.card-detail-actions button:disabled { opacity: .45; cursor: default; }
 .dashboard-layout-editor { position: sticky; top: 0; z-index: 8; }
 .dashboard-layout-head > div:last-child { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .dashboard-layout-head > div:last-child .primary-btn { color: white; background: var(--primary); border-color: var(--primary); }

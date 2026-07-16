@@ -107,7 +107,7 @@ export function CustomParserRescueDialog({ householdId, filename, bytes, account
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
   }}>
-    <div className="panel-head"><div><h2 id="rescue-title">このCSVを読み取る</h2><p>{filename} ・ JPY取引のみ ・ 保存後もレビュー必須</p></div><button className="icon-btn" aria-label="マッピングを閉じる" onClick={onCancel}><X size={18} /></button></div>
+    <div className="panel-head"><div><h2 id="rescue-title">手動マッピングで取り込む — {filename}</h2><p>JPY取引のみ ・ 保存後もレビュー必須</p></div><button className="icon-btn" aria-label="マッピングを閉じる" onClick={onCancel}><X size={18} /></button></div>
     <div className="rescue-grid">
       <label>プロファイル名<input autoFocus aria-label="救済プロファイル名" disabled={Boolean(savedProfile)} value={name} onChange={(event) => setName(event.target.value)} /></label>
       <label>ヘッダー行<select aria-label="救済ヘッダー行" disabled={Boolean(savedProfile)} value={headerRow} onChange={(event) => setHeader(Number(event.target.value))}>{headerCandidates.map((row) => <option key={row.sourceRow} value={row.sourceRow}>行 {row.sourceRow}: {row.fields.slice(0, 3).join(' / ')}</option>)}</select></label>
@@ -121,6 +121,6 @@ export function CustomParserRescueDialog({ householdId, filename, bytes, account
     <div className="rescue-sample"><strong>ローカルプレビュー</strong>{rows.slice(rows.findIndex((row) => row.sourceRow === headerRow), rows.findIndex((row) => row.sourceRow === headerRow) + 4).map((row) => <code key={row.sourceRow}>行 {row.sourceRow}: {row.fields.map((value) => value.slice(0, 32)).join(' | ')}</code>)}</div>
     {preview && <p role="status">{preview.encoding} ・ 区切り「{preview.delimiter === '\t' ? 'TAB' : preview.delimiter}」・ 候補 {preview.candidateCount}件 ・ 除外 {preview.rejectedRowCount}行 ・ エラー {errorCount}件</p>}
     {(validation || notice || (preview?.issues.length ?? 0) > 0) && <div className="rescue-errors" role="alert">{notice || validation || preview?.issues.slice(0, 3).map((issue) => `${issue.row ? `行 ${issue.row}: ` : ''}${issue.message}`).join(' / ')}</div>}
-    <div className="rescue-actions"><button className="secondary-btn" onClick={onCancel}>キャンセル</button><button className="primary-btn" disabled={busy || !canSave} onClick={() => void save()}>{busy ? '保存中…' : savedProfile ? '保存済みプロファイルを再適用' : 'プロファイルを保存してプレビューへ'}</button></div>
+    <div className="rescue-actions"><button className="secondary-btn" onClick={onCancel}>キャンセル</button><button className="primary-btn" disabled={busy || !canSave} onClick={() => void save()}>{busy ? '保存中…' : savedProfile ? '保存済みプロファイルを再適用' : '保存して取り込む'}</button></div>
   </section></div>
 }
