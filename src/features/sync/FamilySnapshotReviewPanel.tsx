@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { platformClient } from '../../platform'
 import type { FamilySnapshotResolutionInputDto, FamilySnapshotReviewDto } from '../../platform'
+import { showToast } from '../../toast'
 import './FamilySnapshotReviewPanel.css'
 
 interface Props { readonly householdId: string | null; readonly revision?: number }
@@ -46,8 +47,8 @@ export function FamilySnapshotReviewPanel({ householdId, revision = 0 }: Props) 
   const apply = async () => {
     if (!review) return
     setBusy(true); setNotice({ kind: 'status', text: 'この端末の台帳へまとめて反映しています…' })
-    try { setReview(await platformClient.applyFamilySnapshot(review.packageId)); setNotice({ kind: 'status', text: `${review.recordCount}件をこの端末へ反映しました。` }) }
-    catch { setNotice({ kind: 'error', text: '反映できませんでした。台帳への変更は行われていません。内容を再確認してください。' }) }
+    try { setReview(await platformClient.applyFamilySnapshot(review.packageId)); setNotice({ kind: 'status', text: `${review.recordCount}件をこの端末へ反映しました。` }); showToast(`${review.recordCount}件の家族データを反映しました。`) }
+    catch { setNotice({ kind: 'error', text: '反映できませんでした。台帳への変更は行われていません。内容を再確認してください。' }); showToast('家族データを反映できませんでした。', 'error') }
     finally { setBusy(false) }
   }
   const discard = async () => {

@@ -16,6 +16,7 @@ interface Props {
   readonly householdId: string | null
   readonly members: readonly HouseholdMemberDto[]
   readonly onReviewStaged?: () => void
+  readonly view?: 'FULL' | 'CONFIG' | 'INBOUND' | 'OUTBOUND'
 }
 type Notice = { readonly kind: 'status' | 'error'; readonly text: string } | null
 type DialogState =
@@ -96,7 +97,7 @@ function errorCopy(error: unknown): string {
   }[error.code]
 }
 
-export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Props) {
+export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view = 'FULL' }: Props) {
   const [status, setStatus] = useState<FamilyDeliveryStatusDto | null>(null)
   const [endpoint, setEndpoint] = useState('')
   const [token, setToken] = useState('')
@@ -403,7 +404,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged }: Pr
   if (platformClient.runtime !== 'tauri') return null
   const connected = status && status.connectionState !== 'NOT_CONFIGURED'
   const displayMemberships = status?.memberships ?? members.map((member) => ({ memberId: member.id, memberName: member.displayName, state: member.status === 'ARCHIVED' ? 'ARCHIVED_BLOCKED' as const : 'UNLINKED' as const, remoteMembershipIds: [], inviteId: null, inviteExpiresAt: null, deviceCount: 0, lastDeliveryAt: null }))
-  return <section className="panel family-delivery" aria-busy={Boolean(busy)}>
+  return <section className={`panel family-delivery family-delivery-${view.toLowerCase()}`} aria-busy={Boolean(busy)}>
     <div className="panel-head"><div><h2>家族へのデータ配信</h2><p>本人確認された家族メンバーへ、世帯共有または指定メンバーの個人データを手動で届けます。</p></div><b className={`family-delivery-state state-${status?.connectionState ?? 'NOT_CONFIGURED'}`}>{connectionLabels[status?.connectionState ?? 'NOT_CONFIGURED']}</b></div>
     <p className="family-delivery-boundary">送信・受信だけでは台帳を変更しません。個人データの配信先はメンバー対応付けから自動決定され、任意の相手へ広げることはできません。</p>
     <div className="family-connection-form">

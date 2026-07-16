@@ -2575,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "kakeflow"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2601,6 +2601,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tempfile",
  "thiserror 2.0.18",
+ "unicode-normalization",
  "windows-sys 0.61.2",
  "x25519-dalek",
  "zeroize",

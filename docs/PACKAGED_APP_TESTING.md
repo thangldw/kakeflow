@@ -138,10 +138,10 @@ macOS or Linux. On Windows it:
 artifact. `KAKEFLOW_SMOKE_EXECUTABLE` remains the lower-level packaged-app
 override and is not needed when running the installer harness.
 
-This gate validates an unsigned per-user installation lifecycle. It does not
-validate Authenticode, SmartScreen reputation, elevation or all-users install,
-MSI behavior, or automatic updates. Those remain separate
-release requirements. A passing helper test on macOS is not Windows installer
+This gate validates the supported unsigned per-user installation lifecycle. It
+does not validate Authenticode, SmartScreen reputation, elevation or all-users
+install, MSI behavior, or automatic updates; those are outside the direct
+GitHub distribution scope. A passing helper test on macOS is not Windows installer
 evidence; the acceptance JSON is valid only when produced by the Windows harness.
 
 ## macOS DMG validation
@@ -178,9 +178,9 @@ top-level workspace shells, but not report subtabs, entity drill-downs, financia
 mutations, or pixel-level rendering. This harness also does
 not claim a screenshot: Tauri does not expose a stable window-capture API, while
 OS screen capture is permission-gated on macOS and unreliable on unattended CI.
-It also does not exercise OS file-picker dialogs or validate signing,
-notarization, Gatekeeper, and SmartScreen behavior. Those checks need signed
-release credentials and/or a dedicated interactive runner.
+It also does not exercise OS file-picker dialogs or claim production signing,
+notarization, Gatekeeper bypass, or SmartScreen reputation. Paid publisher
+identity checks are outside project scope; release notes disclose the warnings.
 
 The DMG harness is macOS-only. It proves mount-level and bundle integrity but
 does not launch from the read-only volume: macOS LaunchServices and Tauri startup

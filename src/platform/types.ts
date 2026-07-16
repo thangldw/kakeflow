@@ -123,11 +123,23 @@ export interface ReceiptReviewDto {
   readonly reconciliation: { readonly status: 'EXACT' | 'DELTA' | 'NO_ITEMS'; readonly itemTotalJpy: number | null; readonly totalAmountJpy: number | null; readonly deltaJpy: number | null } | null
   readonly provenance: { readonly sourceRecordId: string; readonly sourceRowNumber: number; readonly documentPageNumber: number | null }
 }
-export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evidence'> { readonly evidenceCount: number; readonly evidenceRoles: readonly string[]; readonly issues: readonly string[]; readonly receiptReview: ReceiptReviewDto | null }
+export interface DuplicateMatchDto {
+  readonly confidence: 'LIKELY' | 'POSSIBLE'
+  readonly matchedTransactionId: string | null; readonly matchedCandidateId: string | null
+  readonly occurredOn: string; readonly amountJpy: number; readonly payee: string | null; readonly description: string | null
+  readonly sourceFilename: string | null; readonly reasons: readonly string[]
+  readonly decision: 'UNRESOLVED' | 'LINK' | 'KEEP_BOTH' | 'EXCLUDE'
+}
+export interface DuplicateSummaryDto {
+  readonly confirmedReplays: number; readonly likelyDuplicates: number; readonly possibleDuplicates: number; readonly unresolved: number
+  readonly overlapStart: string | null; readonly overlapEnd: string | null
+}
+export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evidence'> { readonly evidenceCount: number; readonly evidenceRoles: readonly string[]; readonly issues: readonly string[]; readonly receiptReview: ReceiptReviewDto | null; readonly duplicateMatch?: DuplicateMatchDto | null }
 export interface ImportPreviewDto {
   readonly summary: ImportSummaryDto
   readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }
   readonly candidates: readonly PreviewCandidateDto[]
+  readonly duplicateSummary?: DuplicateSummaryDto
 }
 export interface PendingReviewRunDto {
   readonly runId: string
@@ -158,6 +170,7 @@ export interface PostingDecisionDto {
   readonly calculationTarget: boolean
   readonly classificationRuleId?: string
   readonly expectedClassificationRuleUpdatedAt?: string
+  readonly duplicateResolution?: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE'
 }
 export interface CommitSummaryDto { readonly runId: string; readonly postedCount: number }
 export interface ReceiptMatchSuggestionDto {
@@ -421,7 +434,7 @@ export interface FamilySnapshotResolutionInputDto { readonly entityKind: string;
 export type MobileCaptureInboxStateDto = 'RECEIVED' | 'OCR_READY' | 'OCR_REVIEW_REQUIRED' | 'PROMOTED' | 'DUPLICATE' | 'REJECTED_INVALID' | 'FAILED_RETRYABLE'
 export interface MobileCaptureInboxItemDto {
   readonly artifactId: string; readonly captureId: string; readonly originalFilename: string
-  readonly mediaType: 'image/png' | 'image/jpeg'; readonly byteSize: number; readonly sourceSha256: string
+  readonly mediaType: 'image/png' | 'image/jpeg' | 'application/pdf'; readonly byteSize: number; readonly sourceSha256: string
   readonly capturedAt: string | null; readonly receivedAt: string
   readonly senderMembershipId?: string; readonly senderMemberName?: string | null
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null; readonly audienceMemberName?: string | null
@@ -433,12 +446,19 @@ export interface MobileCaptureStatusDto {
   readonly endpoint: string | null; readonly localDeviceId: string; readonly captureInboundCursor: number
   readonly items: readonly MobileCaptureInboxItemDto[]
 }
-export interface MobileCaptureImagePreviewDto { readonly filename: string; readonly mediaType: 'image/png' | 'image/jpeg'; readonly byteSize: number; readonly dataUrl: string }
+export interface MobileCaptureImagePreviewDto { readonly filename: string; readonly mediaType: 'image/png' | 'image/jpeg' | 'application/pdf'; readonly byteSize: number; readonly dataUrl: string }
 export interface MobileCaptureIngestInputDto {
   readonly householdId: string; readonly artifactId: string; readonly claimedDigest: string
   readonly originDeviceId: string; readonly senderMembershipId: string
   readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
   readonly capsuleBytes: readonly number[]
+}
+export interface LocalCaptureIngestInputDto {
+  readonly householdId: string; readonly artifactId: string; readonly captureId: string
+  readonly originalFilename: string; readonly mediaType: 'image/png' | 'image/jpeg' | 'application/pdf'; readonly capturedAt: string | null
+  readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null
+  readonly sourceKind?: 'LOCAL' | 'WATCHED_FOLDER'
+  readonly fileBytes: readonly number[]
 }
 export interface MobileCaptureOcrResultDto {
   readonly item: MobileCaptureInboxItemDto; readonly extractionId: string; readonly document: ExtractedDocumentDto
@@ -869,6 +889,8 @@ export interface ImportRunCountsDto {
 
 export interface MonthlyCategoryBudgetDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly categoryName: string; readonly budgetJpy: number; readonly actualJpy: number; readonly remainingJpy: number }
 export interface UpsertMonthlyCategoryBudgetInputDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly budgetJpy: number }
+export interface MonthlyReviewMemoDto { readonly householdId: string; readonly month: string; readonly memo: string; readonly updatedAt: string }
+export interface UpsertMonthlyReviewMemoInputDto { readonly householdId: string; readonly month: string; readonly memo: string }
 export type SavingsGoalStatusDto = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'CANCELLED'
 export interface SavingsGoalDto { readonly id: string; readonly householdId: string; readonly name: string; readonly targetJpy: number; readonly savedJpy: number; readonly targetDate: string; readonly status: SavingsGoalStatusDto; readonly createdAt: string; readonly updatedAt: string }
 export interface CreateSavingsGoalInputDto { readonly id: string; readonly householdId: string; readonly name: string; readonly targetJpy: number; readonly savedJpy: number; readonly targetDate: string; readonly status: SavingsGoalStatusDto }
@@ -894,6 +916,12 @@ export interface ApplyClassificationRuleInputDto {
 export interface AppliedClassificationDto {
   readonly transactionId: string; readonly ruleId: string; readonly categoryAccountId: string; readonly categoryName: string
   readonly labels: readonly string[]; readonly tags: readonly string[]; readonly transactionUpdatedAt: string
+}
+export interface LastClassificationApplicationDto {
+  readonly transactionId: string; readonly payee: string | null; readonly description: string | null
+  readonly ruleId: string | null; readonly ruleName: string; readonly rulePriority: number | null
+  readonly merchantContains: string | null; readonly descriptionContains: string | null
+  readonly categoryAccountId: string; readonly categoryName: string; readonly labels: readonly string[]; readonly tags: readonly string[]; readonly appliedAt: string
 }
 
 export type AppCommand =
@@ -954,9 +982,11 @@ export type AppCommand =
   | 'mobile_capture_status'
   | 'mobile_capture_cursor_update'
   | 'mobile_capture_ingest'
+  | 'mobile_capture_local_ingest'
   | 'mobile_capture_image_preview'
   | 'mobile_capture_ocr'
   | 'mobile_capture_mark_ocr_review_required'
+  | 'mobile_capture_discard'
   | 'mobile_capture_promote'
   | 'households_list'
   | 'household_create'
@@ -1031,11 +1061,14 @@ export type AppCommand =
   | 'dashboard_preferences_upsert'
   | 'budgets_query'
   | 'budget_upsert'
+  | 'monthly_review_memo_get'
+  | 'monthly_review_memo_upsert'
   | 'savings_goals_list'
   | 'savings_goal_create'
   | 'savings_goal_update'
   | 'savings_goal_delete'
   | 'classification_rules_list'
+  | 'classification_application_last'
   | 'classification_rule_create'
   | 'classification_rule_update'
   | 'classification_rule_delete'
@@ -1045,6 +1078,7 @@ export type AppCommand =
   | 'pending_review_list'
   | 'import_start'
   | 'import_preview'
+  | 'import_duplicate_resolution_set'
   | 'import_commit'
   | 'import_rollback'
   | 'backup_create'
@@ -1113,9 +1147,11 @@ export interface PlatformClient {
   getMobileCaptureStatus(householdId: string): Promise<MobileCaptureStatusDto>
   updateMobileCaptureCursor(householdId: string, nextCursor: number): Promise<MobileCaptureStatusDto>
   ingestMobileCapture(input: MobileCaptureIngestInputDto): Promise<MobileCaptureInboxItemDto>
+  ingestLocalCapture(input: LocalCaptureIngestInputDto): Promise<MobileCaptureInboxItemDto>
   getMobileCaptureImagePreview(householdId: string, artifactId: string): Promise<MobileCaptureImagePreviewDto>
   ocrMobileCapture(householdId: string, artifactId: string): Promise<MobileCaptureOcrResultDto>
   markMobileCaptureOcrReviewRequired(householdId: string, artifactId: string): Promise<MobileCaptureInboxItemDto>
+  discardMobileCapture(householdId: string, artifactId: string): Promise<void>
   promoteMobileCapture(input: MobileCapturePromoteInputDto): Promise<MobileCapturePromoteResultDto>
   exportChangePackage(householdId: string): Promise<string | null>
   pickAndStageChangePackage(householdId: string): Promise<ChangePackageReviewDto | null>
@@ -1202,11 +1238,14 @@ export interface PlatformClient {
   upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
+  getMonthlyReviewMemo(householdId: string, month: string): Promise<MonthlyReviewMemoDto | null>
+  upsertMonthlyReviewMemo(input: UpsertMonthlyReviewMemoInputDto): Promise<MonthlyReviewMemoDto | null>
   listSavingsGoals(householdId: string): Promise<readonly SavingsGoalDto[]>
   createSavingsGoal(input: CreateSavingsGoalInputDto): Promise<SavingsGoalDto>
   updateSavingsGoal(input: UpdateSavingsGoalInputDto): Promise<SavingsGoalDto>
   deleteSavingsGoal(householdId: string, goalId: string): Promise<void>
   listClassificationRules(householdId: string): Promise<readonly ClassificationRuleDto[]>
+  getLastClassificationApplication(householdId: string): Promise<LastClassificationApplicationDto | null>
   createClassificationRule(input: CreateClassificationRuleInputDto): Promise<ClassificationRuleDto>
   updateClassificationRule(input: UpdateClassificationRuleInputDto): Promise<ClassificationRuleDto>
   deleteClassificationRule(householdId: string, ruleId: string): Promise<void>
@@ -1216,6 +1255,7 @@ export interface PlatformClient {
   listPendingReviews(householdId: string): Promise<PendingReviewListDto>
   startImport(request: StartImportDto, fileBytes: Uint8Array): Promise<ImportSummaryDto>
   previewImport(runId: string): Promise<ImportPreviewDto>
+  setImportDuplicateResolution(runId: string, candidateId: string, resolution: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE'): Promise<ImportPreviewDto>
   commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
   createBackup(passphrase: string): Promise<BackupSummaryDto | null>

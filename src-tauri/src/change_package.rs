@@ -3628,6 +3628,27 @@ mod tests {
             })
             .unwrap();
         package.schema_version = 3;
+        package.covered_kinds = V3_COVERED_KINDS
+            .iter()
+            .map(|kind| (*kind).to_owned())
+            .collect();
+        package
+            .records
+            .retain(|record| package.covered_kinds.contains(&record.entity_kind));
+        package.counts_by_kind = package
+            .covered_kinds
+            .iter()
+            .map(|kind| {
+                (
+                    kind.clone(),
+                    package
+                        .records
+                        .iter()
+                        .filter(|record| &record.entity_kind == kind)
+                        .count() as u64,
+                )
+            })
+            .collect();
         resign_package(&mut package);
         validate_package(&package).unwrap();
 

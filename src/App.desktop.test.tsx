@@ -11,6 +11,13 @@ const desktop = vi.hoisted(() => ({
   queryDashboard: vi.fn(),
   importSummary: vi.fn(),
   listPendingReviews: vi.fn(),
+  listMobileCaptureInbox: vi.fn(),
+  getMonthlyReviewMemo: vi.fn(),
+  upsertMonthlyReviewMemo: vi.fn(),
+  getMobileCaptureBackgroundStatus: vi.fn(),
+  enableMobileCaptureBackground: vi.fn(),
+  disableMobileCaptureBackground: vi.fn(),
+  runMobileCaptureBackgroundNow: vi.fn(),
   getDashboardPreferences: vi.fn(),
   upsertDashboardPreferences: vi.fn(),
   queryTransactions: vi.fn(),
@@ -144,6 +151,13 @@ vi.mock('./platform', async () => {
       markWatchedFileInboxStaged: desktop.markWatchedFileInboxStaged,
       importSummary: desktop.importSummary,
       listPendingReviews: desktop.listPendingReviews,
+      listMobileCaptureInbox: desktop.listMobileCaptureInbox,
+      getMonthlyReviewMemo: desktop.getMonthlyReviewMemo,
+      upsertMonthlyReviewMemo: desktop.upsertMonthlyReviewMemo,
+      getMobileCaptureBackgroundStatus: desktop.getMobileCaptureBackgroundStatus,
+      enableMobileCaptureBackground: desktop.enableMobileCaptureBackground,
+      disableMobileCaptureBackground: desktop.disableMobileCaptureBackground,
+      runMobileCaptureBackgroundNow: desktop.runMobileCaptureBackgroundNow,
       startImport: desktop.startImport,
       previewImport: desktop.previewImport,
       commitImport: desktop.commitImport,
@@ -263,6 +277,13 @@ describe('KakeFlow desktop read models', () => {
     desktop.listCardSettlements.mockReset().mockResolvedValue([])
     desktop.importSummary.mockReset().mockResolvedValue({ totalRuns: 3, discovered: 0, extracting: 0, reviewRequired: 1, posted: 2, failed: 0, rolledBack: 0, sourceDocuments: 2, sourceRecords: 42, pendingCandidates: 1, readyCandidates: 2, latestSuccessfulImportAt: '2026-07-12T14:55:16Z', latestSourceFilename: 'yucho.csv', latestSourceType: 'MANUAL_UPLOAD', distinctSourceTypes: 2 })
     desktop.listPendingReviews.mockReset().mockImplementation(async (householdId: string) => ({ householdId, runs: [] }))
+    desktop.listMobileCaptureInbox.mockReset().mockResolvedValue([])
+    desktop.getMonthlyReviewMemo.mockReset().mockResolvedValue(null)
+    desktop.upsertMonthlyReviewMemo.mockReset().mockResolvedValue(null)
+    desktop.getMobileCaptureBackgroundStatus.mockReset().mockResolvedValue({ householdId: 'family', enabled: false, intervalMinutes: 30, nextDueAt: null, running: false, leaseExpiresAt: null, lastAttemptAt: null, lastSuccessAt: null, lastResult: 'DISABLED', lastIngestedCount: 0, consecutiveFailures: 0, suspendedUntil: null, suspensionReason: null, lastErrorCode: null, updatedAt: '2026-07-15T00:00:00Z' })
+    desktop.enableMobileCaptureBackground.mockReset()
+    desktop.disableMobileCaptureBackground.mockReset()
+    desktop.runMobileCaptureBackgroundNow.mockReset()
     desktop.confirmCardMatch.mockReset().mockResolvedValue({ statementId: 'statement-1', paymentId: 'payment-1', reconciliationStatus: 'FULLY_RECONCILED' })
     desktop.confirmCardPaymentLink.mockReset().mockResolvedValue({})
     desktop.unlinkCardPaymentLink.mockReset().mockResolvedValue({})
@@ -452,8 +473,8 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('Financial Calendar')
 
     const calendar = screen.getByRole('tab', { name: 'カレンダー' })
-    const monthly = screen.getByRole('tab', { name: '月次レポート' })
-    const exportTab = screen.getByRole('tab', { name: 'グループ・出力' })
+    const monthly = screen.getByRole('tab', { name: '月次・年次レビュー' })
+    const analysis = screen.getByRole('tab', { name: '分析・予測' })
     const panel = screen.getByRole('tabpanel')
     expect(calendar).toHaveAttribute('id', 'report-tab-calendar')
     expect(calendar).toHaveAttribute('aria-controls', 'report-tabpanel')
@@ -465,16 +486,16 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.keyDown(calendar, { key: 'ArrowRight' })
     expect(monthly).toHaveFocus()
     expect(monthly).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'report-tab-monthly')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'report-tab-review')
 
     fireEvent.keyDown(monthly, { key: 'End' })
-    expect(exportTab).toHaveFocus()
-    expect(exportTab).toHaveAttribute('aria-selected', 'true')
-    fireEvent.keyDown(exportTab, { key: 'Home' })
+    expect(analysis).toHaveFocus()
+    expect(analysis).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(analysis, { key: 'Home' })
     expect(calendar).toHaveFocus()
     fireEvent.keyDown(calendar, { key: 'ArrowLeft' })
-    expect(exportTab).toHaveFocus()
-    expect(exportTab).toHaveAttribute('aria-selected', 'true')
+    expect(analysis).toHaveFocus()
+    expect(analysis).toHaveAttribute('aria-selected', 'true')
   })
 
   it('loads and persists household dashboard appearance and focus presets', async () => {
@@ -670,7 +691,7 @@ describe('KakeFlow desktop read models', () => {
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
 
-    fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
     await screen.findByText('Monthly Review')
     fireEvent.click(screen.getByRole('button', { name: '前年同月比' }))
     fireEvent.click(screen.getByRole('button', { name: '月次CSVを保存' }))
@@ -697,12 +718,14 @@ describe('KakeFlow desktop read models', () => {
     expect(monthlyPdfRequest).not.toHaveProperty('comparison')
     expect(await screen.findByText(/kakeflow-monthly-review-2026-07\.pdf（4ページ）を保存しました/)).toBeInTheDocument()
 
+    fireEvent.click(screen.getByRole('tab', { name: /分析・予測/ }))
     fireEvent.click(screen.getByRole('tab', { name: /定期・異常/ }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_intelligence_query', { request: expect.objectContaining({ attributionScope: memberScope }) }))
     fireEvent.click(screen.getByRole('tab', { name: /固定費/ }))
     expect(await screen.findByText(/市場相場に基づく節約可能額は算出していません/)).toBeInTheDocument()
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('fixed_cost_review_query', { request: expect.objectContaining({ householdId: 'family', attributionScope: memberScope, asOf: '2026-07-31' }) }))
-    fireEvent.click(screen.getByRole('tab', { name: /年次レビュー/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /^年次レビュー$/ }))
     expect(await screen.findByText(/集計対象外・現在の未完了月・将来月は年間KPIから除外/)).toBeInTheDocument()
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_report_yearly_query', { request: expect.objectContaining({ householdId: 'family', accountGroupId: null, attributionScope: memberScope, year: '2026', asOf: reportAsOf }) }))
     fireEvent.click(screen.getByRole('button', { name: '年次CSVを保存' }))
@@ -718,7 +741,8 @@ describe('KakeFlow desktop read models', () => {
     const annualXlsxRequest = nativeInvoke.mock.calls.find(([command]) => command === 'annual_household_review_xlsx_save')?.[1]?.request
     expect(annualPdfRequest).toEqual(annualXlsxRequest)
     expect(await screen.findByText(/kakeflow-annual-review-2026\.pdf（8ページ）を保存しました/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('口座グループ・出力'))
     fireEvent.click(await screen.findByRole('button', { name: 'CSVを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('export_csv_save', { request: expect.objectContaining({ attributionScope: memberScope }) }))
     const ledgerCsvRequest = nativeInvoke.mock.calls.find(([command]) => command === 'export_csv_save')?.[1]?.request
@@ -756,7 +780,8 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByLabelText('対象月'), { target: { value: '2026-08' } })
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, fromDate: '2026-08-01' })))
-    fireEvent.click(within(screen.getByLabelText('計算対象フィルター')).getByRole('button', { name: '集計対象外' }))
+    fireEvent.click(screen.getByRole('button', { name: /詳細フィルター/ }))
+    fireEvent.change(screen.getByLabelText('計算対象で絞り込み'), { target: { value: 'EXCLUDED' } })
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, calculationTargetFilter: 'EXCLUDED' })))
     expect(scope).toHaveValue('daily')
     expect(screen.getByLabelText('家族集計範囲')).toHaveValue('MEMBER:taro')
@@ -764,16 +789,19 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
     await screen.findByText('Financial Calendar')
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', { request: expect.objectContaining({ accountGroupId: 'daily' }) }))
-    fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
     fireEvent.click(await screen.findByRole('button', { name: '月次Excelを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('monthly_household_review_xlsx_save', { request: expect.objectContaining({
       householdId: 'family', accountGroupId: 'daily', attributionScope: { kind: 'MEMBER', memberId: 'taro' }, month: '2026-08', asOf: '2026-08-31',
     }) }))
-    fireEvent.click(screen.getByRole('tab', { name: /グループ・出力/ }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('口座グループ・出力'))
     expect(await screen.findByLabelText('エクスポートグループ')).toHaveValue('daily')
 
     fireEvent.click(screen.getByRole('button', { name: '削除' }))
-    await waitFor(() => expect(scope).toHaveValue(''))
+    await waitFor(() => expect(localStorage.getItem('kakeflow.accountScope')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    await waitFor(() => expect(screen.getByLabelText('口座スコープ')).toHaveValue(''))
     expect(localStorage.getItem('kakeflow.accountScope')).toBeNull()
     expect(container.querySelector('.scope-footnote')).toHaveTextContent('口座スコープ: すべての口座')
   })
@@ -787,11 +815,12 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByText('No-spend days')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', expect.any(Object))
 
-    fireEvent.click(screen.getByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
     expect(await screen.findByText('Monthly Review')).toBeInTheDocument()
     expect(screen.getByText('食費')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', expect.any(Object))
 
+    fireEvent.click(screen.getByRole('tab', { name: /分析・予測/ }))
     fireEvent.click(screen.getByRole('tab', { name: /予測・アクション/ }))
     expect(await screen.findByText('現金・貯蓄予測')).toBeInTheDocument()
     expect(screen.getByText('食費予算を超過')).toBeInTheDocument()
@@ -810,6 +839,7 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /分析・予測/ }))
     fireEvent.click(await screen.findByRole('tab', { name: /定期・異常/ }))
 
     expect(await screen.findByText('Netflix')).toBeInTheDocument()
@@ -848,6 +878,7 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
+    fireEvent.click(await screen.findByRole('tab', { name: /分析・予測/ }))
     fireEvent.click(await screen.findByRole('tab', { name: /定期・異常/ }))
 
     expect(await screen.findByText('Netflix')).toBeInTheDocument()
@@ -865,8 +896,8 @@ describe('KakeFlow desktop read models', () => {
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'transaction_ledger_xlsx_save' ? null : fallback(command, args))
     render(<App />)
     await screen.findByText('生協')
-    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    fireEvent.click(await screen.findByRole('tab', { name: /グループ・出力/ }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('口座グループ・出力'))
     expect(await screen.findByRole('heading', { name: '台帳エクスポート' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '取引台帳Excelを保存' }))
     expect(await screen.findByText('Excelエクスポートをキャンセルしました。')).toBeInTheDocument()
@@ -885,8 +916,8 @@ describe('KakeFlow desktop read models', () => {
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'transaction_ledger_pdf_save' ? null : fallback(command, args))
     render(<App />)
     await screen.findByText('生協')
-    fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    fireEvent.click(await screen.findByRole('tab', { name: /グループ・出力/ }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('口座グループ・出力'))
     fireEvent.click(await screen.findByRole('button', { name: '取引台帳PDFを保存' }))
     expect(await screen.findByText('PDFエクスポートをキャンセルしました。')).toBeInTheDocument()
 
@@ -904,7 +935,7 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    fireEvent.click(await screen.findByRole('tab', { name: /月次レポート/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: /月次・年次レビュー/ }))
     fireEvent.click(await screen.findByRole('button', { name: '月次CSVを保存' }))
     expect(await screen.findByText('月次CSVエクスポートをキャンセルしました。')).toBeInTheDocument()
 
@@ -947,7 +978,8 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    fireEvent.click(await screen.findByRole('tab', { name: /年次レビュー/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: /月次・年次レビュー/ }))
+    fireEvent.click(await screen.findByRole('tab', { name: /^年次レビュー$/ }))
     fireEvent.click(await screen.findByRole('button', { name: '年次PDFを保存' }))
     expect(await screen.findByText('PDFエクスポートをキャンセルしました。')).toBeInTheDocument()
     expect(screen.getByText('Annual Household Review')).toBeInTheDocument()
@@ -1054,7 +1086,7 @@ describe('KakeFlow desktop read models', () => {
       ]),
     })))
     expect(desktop.createManualTransaction.mock.calls.at(-1)?.[0]).not.toHaveProperty('calculationTarget')
-    expect(await screen.findByText('手動取引を台帳に記録しました。')).toBeInTheDocument()
+    expect((await screen.findAllByText('手動取引を台帳に記録しました。')).length).toBeGreaterThanOrEqual(1)
   })
 
   it('marks excluded ledger rows without removing them from the ledger', async () => {
@@ -1255,17 +1287,17 @@ describe('KakeFlow desktop read models', () => {
     desktop.scanWatchedFolder.mockResolvedValue({ watchedFolderId: 'icloud-folder', files: [] })
     render(<App />)
     await screen.findByText('生協')
-    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('コネクタ'))
     const connect = await screen.findByRole('button', { name: 'iCloud Drive を接続' })
     fireEvent.click(connect)
     expect(await screen.findByRole('button', { name: 'iCloud Drive を接続中…' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '同期フォルダーを追加' })).toBeDisabled()
     resolveSelection(selected)
     await waitFor(() => expect(desktop.selectIcloudFolder).toHaveBeenCalledWith('family', 'iCloud Drive Inbox'))
     await waitFor(() => expect(desktop.scanWatchedFolder).toHaveBeenCalledWith('family', 'icloud-folder'))
     expect(await screen.findByText(/永続 Inbox に接続しました/)).toBeInTheDocument()
     expect(screen.getByText(/iCloud Drive ・ 家計簿/)).toBeInTheDocument()
-    expect(screen.getByText(/Apple API へ直接接続しません/)).toBeInTheDocument()
+    expect(screen.getByText(/Apple API への直接接続ではありません/)).toBeInTheDocument()
     expect(screen.queryByText(/Mobile Documents|Users|Documents|C:\\/)).not.toBeInTheDocument()
   })
 
@@ -1273,7 +1305,8 @@ describe('KakeFlow desktop read models', () => {
     desktop.selectIcloudFolder.mockResolvedValue(null)
     render(<App />)
     await screen.findByText('生協')
-    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('コネクタ'))
     fireEvent.click(await screen.findByRole('button', { name: 'iCloud Drive を接続' }))
     expect(await screen.findByText('iCloud Drive フォルダーの接続をキャンセルしました。')).toBeInTheDocument()
     expect(desktop.scanWatchedFolder).not.toHaveBeenCalled()
@@ -1283,7 +1316,8 @@ describe('KakeFlow desktop read models', () => {
     desktop.selectIcloudFolder.mockRejectedValue(new Error('private native path'))
     render(<App />)
     await screen.findByText('生協')
-    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByText('コネクタ'))
     fireEvent.click(await screen.findByRole('button', { name: 'iCloud Drive を接続' }))
     expect(await screen.findByText(/macOS または Windows の iCloud Drive がローカルに同期済みか確認/)).toBeInTheDocument()
     expect(screen.queryByText('private native path')).not.toBeInTheDocument()
@@ -1517,7 +1551,9 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(await screen.findByRole('button', { name: 'インポート（1件の確認対象）' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'コネクタ' }))
     fireEvent.click(await screen.findByRole('button', { name: '更新' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'ローカル' }))
     fireEvent.change(await screen.findByLabelText('bank.csvの取込先銀行口座'), { target: { value: 'family-bank' } })
     fireEvent.click(await screen.findByRole('button', { name: '取込開始' }))
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
@@ -1545,9 +1581,9 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
 
-    expect(await screen.findByText('一部支払済み')).toBeInTheDocument()
+    expect(await screen.findByText('◐ 一部支払済み')).toBeInTheDocument()
     expect(screen.getByText('✓ 全額照合')).toBeInTheDocument()
-    expect(screen.getAllByText('過払い').some((element) => element.classList.contains('overpaid'))).toBe(true)
+    expect(screen.getByText('⚠ 過払い')).toHaveClass('overpaid')
     expect(screen.getAllByText('¥100,000').length).toBeGreaterThan(0)
     expect(screen.getAllByText('¥104,987').length).toBeGreaterThan(0)
     expect(screen.getByText(/一致度未算出/)).toBeInTheDocument()
@@ -1617,6 +1653,7 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '資産・投資' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '推移・評価' }))
 
     expect(await screen.findByRole('heading', { name: '総資産履歴（Money Forward）' })).toBeInTheDocument()
     expect(screen.getByText('資産のみ・純資産ではありません')).toBeInTheDocument()
@@ -1656,6 +1693,7 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.change(screen.getByLabelText('家族集計範囲'), { target: { value: 'MEMBER:taro' } })
     fireEvent.click(screen.getByRole('button', { name: '資産・投資' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '実現損益（FIFO）' }))
     expect(await screen.findByRole('heading', { name: '年間投資実績・税金' })).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('投資実績の対象年'), { target: { value: '2025' } })
     fireEvent.click(await screen.findByRole('button', { name: '年間投資CSVを保存' }))

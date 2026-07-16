@@ -43,8 +43,8 @@
           <h1>家計の流れを、<br><em>正しくひとつに。</em></h1>
           <p class="hero-lede">銀行、カード、PayPay、レシート、PDF、証券口座。ばらばらの記録をあなたのパソコンでつなぎ、二重計上を防ぎながら、数字の根拠までたどれる家計簿にします。</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v1.0.0/KakeFlow_1.0.0_aarch64.dmg">macOS ARM64 版をダウンロード</a>
-            <a class="button button-paper" href="https://github.com/thangldw/kakeflow/releases/tag/v1.0.0" target="_blank" rel="noopener noreferrer">v1.0.0 リリースノート</a>
+            <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v1.1.0/KakeFlow_1.1.0_aarch64.dmg">macOS ARM64 版をダウンロード</a>
+            <a class="button button-paper" href="https://github.com/thangldw/kakeflow/releases/tag/v1.1.0" target="_blank" rel="noopener noreferrer">v1.1.0 リリースノート</a>
           </div>
           <p class="release-note">現在の公開バイナリは未署名の macOS ARM64 版です。Windows はソースからビルドできます。</p>
           <ul class="trust-row" aria-label="KakeFlow の基本原則">
@@ -165,15 +165,17 @@
       </div>
       <div class="boundary-grid">
         <article class="available">
-          <span>AVAILABLE IN v1.0.0</span>
+          <span>AVAILABLE IN v1.1.0</span>
           <h3>現在の安定版</h3>
           <ul>
             <li>対応 CSV・XLSX・text PDF・スキャン PDF・レシート画像のローカル取り込み</li>
-            <li>銀行・カード・PayPay・証券と、PayPay Card の確定済み11列CSVを含む専用 adapter</li>
+            <li>銀行・カード・PayPay・証券と、Resona・Mizuho Business Web・PayPay Card を含む専用 adapter</li>
             <li>カード支払い、振替、レシートの明示的な照合</li>
             <li>レシート品目・8%/10% 税率の事前レビューと明示的なカテゴリ分割</li>
             <li>家計簿、Cash Flow、資産負債、投資、月次・年次・年間投資・資産スナップショットの native XLSX 出力</li>
-            <li>日本語フォントを埋め込んだ月次・年次・投資パフォーマンス・資産スナップショット PDF とページ単位の visual QA</li>
+            <li>日本語フォントを埋め込んだ月次・年次・投資・資産・取引台帳 PDF とページ単位の visual QA</li>
+            <li>取引台帳 PDF、詳細な資産スナップショット CSV、年間投資パフォーマンス CSV</li>
+            <li>Import Inbox の明示的な分類ルール適用、定期支出レビュー、家族 preference 配信</li>
             <li>フォルダ Inbox、ルール、ラベル、タグ、CSV export</li>
             <li>ローカル同期済み iCloud Drive フォルダの provider-aware 永続 Inbox</li>
             <li>検証用モバイルブラウザーの IndexedDB 送信キューと bounded retry</li>
@@ -186,18 +188,19 @@
           <h3>進行中の拡張</h3>
           <ul>
             <li>スキャン PDF OCR の Windows 実機 staging・installer 検証</li>
-            <li>Windows の署名済み installer と配布検証</li>
+            <li>Windows x64 の unsigned installer と実機配布検証</li>
             <li>より広い金融機関 adapter と native mobile capture / background delivery</li>
             <li>実装済み Google Drive・Gmail connector の provider qualification と packaged real-account 検証</li>
-            <li>外部 aggregator は契約・提供条件を確認後に検討</li>
+            <li>法務・ライセンス境界により銀行・カード・証券 API と外部 aggregator は対象外</li>
           </ul>
         </article>
         <article class="limitations">
           <span>CURRENT LIMITS</span>
           <h3>現在の制約</h3>
           <ul>
-            <li>公開 DMG は Apple notarization 前の未署名 build</li>
+            <li>GitHub 配布の macOS DMG は ad-hoc 署名・notarization なし、Windows installer は unsigned</li>
             <li>すべての金融機関や statement 形式を網羅していない</li>
+            <li>金融データは user-provided file と user-controlled inbox のみ。銀行・カード等への direct API 接続は行わない</li>
             <li>OCR・自動分類の低 confidence 候補は人の確認が必要</li>
             <li>家計データの完全性は、取り込んだ原本の範囲に依存</li>
             <li>EML は表形式添付1件のみ。Gmail direct connector は test user 限定で、provider qualification 前</li>
@@ -209,7 +212,7 @@
     <section class="closing-section">
       <div><p class="eyebrow">OPEN SOURCE · LOCAL-FIRST · REVIEWABLE</p><h2>あなたのパソコンで、<br>正しい家計簿を育てる。</h2></div>
       <div class="closing-actions">
-        <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v1.0.0/KakeFlow_1.0.0_aarch64.dmg">macOS ARM64 版を試す</a>
+        <a class="button button-primary" href="https://github.com/thangldw/kakeflow/releases/download/v1.1.0/KakeFlow_1.1.0_aarch64.dmg">macOS ARM64 版を試す</a>
         <a class="button button-paper" href="https://github.com/thangldw/kakeflow" target="_blank" rel="noopener noreferrer">GitHub で見る</a>
       </div>
     </section>

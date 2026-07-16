@@ -1,14 +1,15 @@
 # Update channel contract
 
-KakeFlow does not currently ship an automatic updater. The checked-in
+KakeFlow does not ship an automatic updater. Direct GitHub distribution and
+manual user installation are the supported lifecycle. The checked-in
 `packaging/update-channel.json` is an authoritative, fail-closed declaration:
 
 ```text
 stable -> DISABLED_UNCONFIGURED
 ```
 
-The production update signing key and hosted HTTPS endpoint do not exist in the
-repository. Current builds explicitly set `bundle.createUpdaterArtifacts` to
+No production update signing key or hosted HTTPS endpoint is planned. Current
+builds explicitly set `bundle.createUpdaterArtifacts` to
 `false`, do not install the Tauri updater dependencies, do not configure the
 plugin, and grant no updater capability. The application therefore neither
 checks for nor downloads updates. Users install a verified release manually.
@@ -18,9 +19,11 @@ configuration, JavaScript and Rust manifests, and every desktop capability. It
 is part of `desktop:smoke`; a partial or accidental activation fails before a
 release build.
 
-## Atomic future activation
+## Unsupported activation boundary
 
-Changing the descriptor to `ENABLED` is accepted only when one change supplies
+Automatic-update activation is outside the funded roadmap. If that decision is
+revisited in the future, changing the descriptor to `ENABLED` is accepted only
+when one change supplies
 all structural prerequisites:
 
 - `bundle.createUpdaterArtifacts` is exactly `true`;

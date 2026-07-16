@@ -64,6 +64,11 @@
 .family-redeem-summary { display: grid; gap: 9px; margin: 0; }
 .family-redeem-summary div { padding: 10px; border-radius: 8px; background: var(--soft); }
 .family-redeem-summary dd { margin: 3px 0 0; font-weight: 700; }
+.family-delivery-config .family-outbound-section,.family-delivery-config .family-inbound-section { display: none; }
+.family-delivery-inbound .family-background-section,.family-delivery-inbound .family-membership-section,.family-delivery-inbound .family-identity-summary,.family-delivery-inbound .family-join-row,.family-delivery-inbound .family-outbound-section { display: none; }
+.family-delivery-outbound .family-background-section,.family-delivery-outbound .family-membership-section,.family-delivery-outbound .family-identity-summary,.family-delivery-outbound .family-join-row,.family-delivery-outbound .family-inbound-section { display: none; }
+.family-delivery-inbound .family-connection-form label:first-child,.family-delivery-outbound .family-connection-form label:first-child,.family-delivery-inbound .family-connection-form label:nth-child(n+3),.family-delivery-outbound .family-connection-form label:nth-child(n+3),.family-delivery-inbound .family-connection-form > button,.family-delivery-outbound .family-connection-form > button { display: none; }
+.family-delivery-inbound .family-connection-form,.family-delivery-outbound .family-connection-form { grid-template-columns: minmax(260px,520px); }
 @media (max-width: 1180px) { .family-connection-form { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 760px) {
   .family-connection-form,.family-join-row,.family-identity-summary { grid-template-columns: 1fr; }

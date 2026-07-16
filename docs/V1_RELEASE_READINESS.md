@@ -1,7 +1,7 @@
 # KakeFlow v1 release readiness
 
 This document records the locally verifiable product work and the provider,
-credential, platform, and distribution evidence used to bound `v1.0.0`.
+credential, platform, and distribution evidence used to bound `v1.1.0`.
 
 ## Locally verifiable product gates
 
@@ -24,8 +24,9 @@ The following must be complete on the v1 release commit:
 - the manual release gates in [MANUAL_GITHUB_RELEASE.md](MANUAL_GITHUB_RELEASE.md)
   pass without relying on a GitHub-hosted runner.
 
-Focused tests run with each capability increment. Full audit, packaging, version
-bump, tag, and public release run only once for the v1 release candidate.
+Focused tests run with each capability increment. Full non-security audit,
+packaging, version bump, tag, and public release run only for a substantial
+product milestone such as v1.1 or v1.2, never for every incremental commit.
 `npm run check:versions` enforces the release-version contract across both lock
 files, the first changelog entry, README stable marker, project-page production
 CTAs, and the exact DMG/NSIS artifact naming rules; roadmap and historical prose
@@ -54,15 +55,19 @@ The codebase cannot manufacture the following evidence:
   validation;
 - Gmail restricted-scope consent/provider qualification and packaged
   real-account validation;
-- Apple Developer ID signing/notarization credentials;
-- Windows Authenticode credentials and reputation;
-- a production update signing key and hosted update endpoint; and
-- a commercial/legal contract, sandbox, and exact API contract for any Japanese
-  bank/card aggregation provider.
+Paid Apple Developer ID/notarization, Windows Authenticode/Azure Artifact
+Signing, Store distribution, and a signed automatic-update channel are outside
+the funded product scope. Public artifacts are distributed through GitHub as an
+ad-hoc-signed macOS DMG and, only after native installer evidence passes, an
+unsigned Windows installer. Their Gatekeeper and SmartScreen limitations must
+be disclosed and are not release blockers.
 
 Until a gate is satisfied, the release must show the connector or distribution
 channel as unavailable or qualified only for local/test-user use. File-first
 ingestion remains functional and must not be presented as live aggregation.
+Direct bank, card, brokerage, and financial-aggregation APIs are not a deferred
+availability gate: they are permanently outside product scope for legal and
+licensing reasons.
 
 ## Separate product tracks
 
@@ -75,7 +80,7 @@ or the current explicit family-delivery protocol.
 
 ## Release decision
 
-`v1.0.0` advertises only the macOS Apple Silicon artifact after its local gates
+`v1.1.0` advertises only the macOS Apple Silicon artifact after its local gates
 pass. External integrations that are not yet qualified remain feature-gated and
 explicitly disclosed; they are not evidence for a production-available
 connector. Windows remains unadvertised until its native platform gates pass.

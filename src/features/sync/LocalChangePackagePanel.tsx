@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { platformClient } from '../../platform'
 import type { ChangePackageReviewDto, ChangePackageResolutionInputDto } from '../../platform'
+import { showToast } from '../../toast'
 
 interface Props { readonly householdId: string | null }
 type Choice = ChangePackageResolutionInputDto['resolution']
@@ -61,7 +62,7 @@ export function LocalChangePackagePanel({ householdId }: Props) {
     setBusy(true); setNotice('')
     try {
       const name = await platformClient.exportChangePackage(householdId)
-      if (current === request.current) setNotice(name ? `${name} を保存しました。` : '保存をキャンセルしました。')
+      if (current === request.current) { setNotice(name ? `${name} を保存しました。` : '保存をキャンセルしました。'); if (name) showToast('変更パッケージを保存しました。') }
     } catch { if (current === request.current) setNotice('変更パッケージを作成できませんでした。') }
     finally { if (current === request.current) setBusy(false) }
   }
@@ -84,8 +85,8 @@ export function LocalChangePackagePanel({ householdId }: Props) {
     if (!review) return
     const current = ++request.current; const packageId = review.packageId
     setBusy(true); setNotice('台帳へまとめて反映しています…')
-    try { const next = await platformClient.applyChangePackage(packageId); if (current === request.current) { setReview(next); setNotice('変更パッケージを台帳へ反映しました。') } }
-    catch { if (current === request.current) setNotice('反映できませんでした。台帳への変更は行われていません。内容を再確認してください。') }
+    try { const next = await platformClient.applyChangePackage(packageId); if (current === request.current) { setReview(next); setNotice('変更パッケージを台帳へ反映しました。'); showToast('変更パッケージを台帳へ反映しました。') } }
+    catch { if (current === request.current) { setNotice('反映できませんでした。台帳への変更は行われていません。内容を再確認してください。'); showToast('変更パッケージを反映できませんでした。', 'error') } }
     finally { if (current === request.current) setBusy(false) }
   }
 

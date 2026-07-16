@@ -41,6 +41,7 @@ import type {
   PendingReviewRunDto,
   Invoke,
   MonthlyCategoryBudgetDto,
+  MonthlyReviewMemoDto,
   PlatformClient,
   PreviewCandidateDto,
   ReceiptReviewDto,
@@ -56,6 +57,7 @@ import type {
   WatchedFileInboxClaimDto,
   SavingsGoalDto,
   AppliedClassificationDto,
+  LastClassificationApplicationDto,
   AttributionKindDto,
   AudienceVisibilityDto,
   ClassificationPreviewDto,
@@ -225,9 +227,11 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       getMobileCaptureStatus: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_status') },
       updateMobileCaptureCursor: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_cursor_update') },
       ingestMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_ingest') },
+      ingestLocalCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_local_ingest') },
       getMobileCaptureImagePreview: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_image_preview') },
       ocrMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_ocr') },
       markMobileCaptureOcrReviewRequired: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_mark_ocr_review_required') },
+      discardMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_discard') },
       promoteMobileCapture: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'mobile_capture_promote') },
       exportChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_export_save') },
       pickAndStageChangePackage: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'change_package_pick_and_stage') },
@@ -314,11 +318,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       upsertDashboardPreferences: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'dashboard_preferences_upsert') },
       listBudgets: async () => [],
       upsertBudget: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'budget_upsert') },
+      getMonthlyReviewMemo: async () => null,
+      upsertMonthlyReviewMemo: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'monthly_review_memo_upsert') },
       listSavingsGoals: async () => [],
       createSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_create') },
       updateSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_update') },
       deleteSavingsGoal: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'savings_goal_delete') },
       listClassificationRules: async () => [],
+      getLastClassificationApplication: async () => null,
       createClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_create') },
       updateClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_update') },
       deleteClassificationRule: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'classification_rule_delete') },
@@ -328,6 +335,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listPendingReviews: async (householdId) => ({ householdId, runs: [] }),
       startImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_start') },
       previewImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_preview') },
+      setImportDuplicateResolution: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_duplicate_resolution_set') },
       commitImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_commit') },
       rollbackImport: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'import_rollback') },
       createBackup: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'backup_create') },
@@ -396,9 +404,11 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     getMobileCaptureStatus: (householdId) => invokeValidated(invoke, 'mobile_capture_status', parseMobileCaptureStatus, { householdId }),
     updateMobileCaptureCursor: (householdId, nextCursor) => invokeValidated(invoke, 'mobile_capture_cursor_update', parseMobileCaptureStatus, { householdId, nextCursor }),
     ingestMobileCapture: (input) => invokeValidated(invoke, 'mobile_capture_ingest', parseMobileCaptureInboxItem, { input }),
+    ingestLocalCapture: (input) => invokeValidated(invoke, 'mobile_capture_local_ingest', parseMobileCaptureInboxItem, { input }),
     getMobileCaptureImagePreview: (householdId, artifactId) => invokeValidated(invoke, 'mobile_capture_image_preview', parseMobileCaptureImagePreview, { householdId, artifactId }),
     ocrMobileCapture: (householdId, artifactId) => invokeValidated(invoke, 'mobile_capture_ocr', parseMobileCaptureOcrResult, { householdId, artifactId }),
     markMobileCaptureOcrReviewRequired: (householdId, artifactId) => invokeValidated(invoke, 'mobile_capture_mark_ocr_review_required', parseMobileCaptureInboxItem, { householdId, artifactId }),
+    discardMobileCapture: async (householdId, artifactId) => { await invokeValidated(invoke, 'mobile_capture_discard', parseVoid, { householdId, artifactId }) },
     promoteMobileCapture: (input) => invokeValidated(invoke, 'mobile_capture_promote', parseMobileCapturePromoteResult, { input }),
     exportChangePackage: (householdId) => invokeValidated(invoke, 'change_package_export_save', parseNullableString, { householdId }),
     pickAndStageChangePackage: (householdId) => invokeValidated(invoke, 'change_package_pick_and_stage', parseNullableChangePackageReview, { householdId }),
@@ -485,11 +495,14 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     upsertDashboardPreferences: (input) => invokeValidated(invoke, 'dashboard_preferences_upsert', parseDashboardPreferences, { input }),
     listBudgets: (householdId, month) => invokeValidated(invoke, 'budgets_query', parseBudgets, { householdId, month }),
     upsertBudget: (input) => invokeValidated(invoke, 'budget_upsert', parseBudget, { input }),
+    getMonthlyReviewMemo: (householdId, month) => invokeValidated(invoke, 'monthly_review_memo_get', parseNullableMonthlyReviewMemo, { householdId, month }),
+    upsertMonthlyReviewMemo: (input) => invokeValidated(invoke, 'monthly_review_memo_upsert', parseNullableMonthlyReviewMemo, { input }),
     listSavingsGoals: (householdId) => invokeValidated(invoke, 'savings_goals_list', parseSavingsGoals, { householdId }),
     createSavingsGoal: (input) => invokeValidated(invoke, 'savings_goal_create', parseSavingsGoal, { input }),
     updateSavingsGoal: (input) => invokeValidated(invoke, 'savings_goal_update', parseSavingsGoal, { input }),
     deleteSavingsGoal: async (householdId, goalId) => { await invokeValidated(invoke, 'savings_goal_delete', parseVoid, { householdId, goalId }) },
     listClassificationRules: (householdId) => invokeValidated(invoke, 'classification_rules_list', parseClassificationRules, { householdId }),
+    getLastClassificationApplication: (householdId) => invokeValidated(invoke, 'classification_application_last', parseNullableLastClassificationApplication, { householdId }),
     createClassificationRule: (input) => invokeValidated(invoke, 'classification_rule_create', parseClassificationRule, { input }),
     updateClassificationRule: (input) => invokeValidated(invoke, 'classification_rule_update', parseClassificationRule, { input }),
     deleteClassificationRule: async (householdId, ruleId) => { await invokeValidated(invoke, 'classification_rule_delete', parseVoid, { householdId, ruleId }) },
@@ -499,6 +512,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     listPendingReviews: (householdId) => invokeValidated(invoke, 'pending_review_list', (value) => parsePendingReviewList(value, householdId), { householdId }),
     startImport: (request, fileBytes) => invokeValidated(invoke, 'import_start', parseImportSummaryDto, { request: { import: request, fileBytes: Array.from(fileBytes) } }),
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
+    setImportDuplicateResolution: (runId, candidateId, resolution) => invokeValidated(invoke, 'import_duplicate_resolution_set', parseImportPreview, { runId, candidateId, resolution }),
     commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
     createBackup: (passphrase) => invokeValidated(invoke, 'backup_create', parseNullableBackupSummary, { passphrase }),
@@ -927,13 +941,13 @@ const MOBILE_CAPTURE_STATES = new Set(['RECEIVED', 'OCR_READY', 'OCR_REVIEW_REQU
 
 function parseMobileCaptureInboxItem(value: unknown): MobileCaptureInboxItemDto {
   const item = asRecord(value)
-  if (!MOBILE_CAPTURE_STATES.has(String(item.state)) || !['image/png', 'image/jpeg'].includes(String(item.mediaType))
+  if (!MOBILE_CAPTURE_STATES.has(String(item.state)) || !['image/png', 'image/jpeg', 'application/pdf'].includes(String(item.mediaType))
       || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility))) throw new TypeError('mobile capture item')
   const audienceVisibility = item.audienceVisibility as MobileCaptureInboxItemDto['audienceVisibility']
   const audienceMemberId = asNullableStrictString(item.audienceMemberId)
   if ((audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('mobile capture audience')
   const byteSize = asSafeInteger(item.byteSize)
-  if (byteSize < 1 || byteSize > 20 * 1024 * 1024) throw new TypeError('mobile capture byte size')
+  if (byteSize < 1 || byteSize > 25 * 1024 * 1024) throw new TypeError('mobile capture byte size')
   const state = item.state as MobileCaptureInboxItemDto['state']
   const latestExtractionId = asNullableStrictString(item.latestExtractionId)
   const localRunId = asNullableStrictString(item.localRunId)
@@ -976,10 +990,10 @@ function parseMobileCaptureStatus(value: unknown): MobileCaptureStatusDto {
 
 function parseMobileCaptureImagePreview(value: unknown): MobileCaptureImagePreviewDto {
   const record = asRecord(value)
-  if (!['image/png', 'image/jpeg'].includes(String(record.mediaType))) throw new TypeError('mobile capture image preview')
+  if (!['image/png', 'image/jpeg', 'application/pdf'].includes(String(record.mediaType))) throw new TypeError('mobile capture image preview')
   const byteSize = asSafeInteger(record.byteSize)
   if (byteSize < 1 || byteSize > 20 * 1024 * 1024 || typeof record.dataUrl !== 'string'
-      || !record.dataUrl.startsWith(`data:${record.mediaType};base64,`) || record.dataUrl.length > 30 * 1024 * 1024) throw new TypeError('mobile capture image preview')
+      || !record.dataUrl.startsWith(`data:${record.mediaType};base64,`) || record.dataUrl.length > 36 * 1024 * 1024) throw new TypeError('mobile capture image preview')
   return { filename: asRequiredString(record.filename), mediaType: record.mediaType as MobileCaptureImagePreviewDto['mediaType'], byteSize, dataUrl: record.dataUrl }
 }
 
@@ -1226,10 +1240,15 @@ function parseImportPreview(value: unknown): ImportPreviewDto {
   const record = asRecord(value)
   const source = asRecord(record.source)
   if (!Array.isArray(record.candidates) || typeof source.sourceType !== 'string' || typeof source.originalFilename !== 'string' || typeof source.mediaType !== 'string' || typeof source.sha256 !== 'string') throw new TypeError('import preview')
+  const duplicateSummary = record.duplicateSummary == null ? undefined : (() => {
+    const summary = asRecord(record.duplicateSummary)
+    return { confirmedReplays: asSafeInteger(summary.confirmedReplays), likelyDuplicates: asSafeInteger(summary.likelyDuplicates), possibleDuplicates: asSafeInteger(summary.possibleDuplicates), unresolved: asSafeInteger(summary.unresolved), overlapStart: asNullableString(summary.overlapStart), overlapEnd: asNullableString(summary.overlapEnd) }
+  })()
   return {
     summary: parseImportSummaryDto(record.summary),
     source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256, ...parseAudience(source) },
     candidates: record.candidates.map(parsePreviewCandidate),
+    ...(duplicateSummary ? { duplicateSummary } : {}),
   }
 }
 
@@ -1244,6 +1263,11 @@ function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
   if (record.suggestedTransactionType !== null && typeof record.suggestedTransactionType !== 'undefined' && record.suggestedTransactionType !== 'TRANSFER') throw new TypeError('candidate suggested type')
   const externalFactHash = asNullableString(record.externalFactHash)
   if (externalFactHash !== null && !/^[0-9a-f]{64}$/.test(externalFactHash)) throw new TypeError('candidate fact hash')
+  const duplicateMatch = record.duplicateMatch == null ? null : (() => {
+    const match = asRecord(record.duplicateMatch)
+    if (!['LIKELY', 'POSSIBLE'].includes(String(match.confidence)) || !['UNRESOLVED', 'LINK', 'KEEP_BOTH', 'EXCLUDE'].includes(String(match.decision)) || !Array.isArray(match.reasons) || !match.reasons.every((reason) => typeof reason === 'string')) throw new TypeError('duplicate match')
+    return { confidence: match.confidence as 'LIKELY' | 'POSSIBLE', matchedTransactionId: asNullableString(match.matchedTransactionId), matchedCandidateId: asNullableString(match.matchedCandidateId), occurredOn: asRequiredString(match.occurredOn), amountJpy: asSafeInteger(match.amountJpy), payee: asNullableString(match.payee), description: asNullableString(match.description), sourceFilename: asNullableString(match.sourceFilename), reasons: match.reasons, decision: match.decision as 'UNRESOLVED' | 'LINK' | 'KEEP_BOTH' | 'EXCLUDE' }
+  })()
   return {
     id: asRequiredString(record.id), accountId: asNullableString(record.accountId),
     occurredOn: asRequiredString(record.occurredOn), postedOn: asNullableString(record.postedOn),
@@ -1261,6 +1285,7 @@ function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
     reviewStatus: record.reviewStatus as PreviewCandidateDto['reviewStatus'],
     evidenceCount: asSafeInteger(record.evidenceCount), evidenceRoles: record.evidenceRoles, issues: record.issues,
     receiptReview: parseReceiptReview(record.receiptReview),
+    ...(typeof record.duplicateMatch === 'undefined' ? {} : { duplicateMatch }),
   }
 }
 
@@ -1631,6 +1656,23 @@ function parseBudgets(value: unknown): readonly MonthlyCategoryBudgetDto[] {
   return value.map(parseBudget)
 }
 
+function parseMonthlyReviewMemo(value: unknown): MonthlyReviewMemoDto {
+  const record = asRecord(value)
+  const month = asRequiredString(record.month)
+  const memo = asRequiredString(record.memo)
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || memo.length > 1200) throw new TypeError('monthly review memo')
+  return {
+    householdId: asRequiredString(record.householdId),
+    month,
+    memo,
+    updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+function parseNullableMonthlyReviewMemo(value: unknown): MonthlyReviewMemoDto | null {
+  return value === null ? null : parseMonthlyReviewMemo(value)
+}
+
 const GOAL_STATUSES = ['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'] as const
 
 function parseSavingsGoal(value: unknown): SavingsGoalDto {
@@ -1683,6 +1725,19 @@ function parseAppliedClassification(value: unknown): AppliedClassificationDto {
     categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
     labels: parseStringList(record.labels), tags: parseStringList(record.tags),
     transactionUpdatedAt: asRequiredString(record.transactionUpdatedAt),
+  }
+}
+
+function parseNullableLastClassificationApplication(value: unknown): LastClassificationApplicationDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  return {
+    transactionId: asRequiredString(record.transactionId), payee: asNullableString(record.payee), description: asNullableString(record.description),
+    ruleId: asNullableString(record.ruleId), ruleName: asRequiredString(record.ruleName),
+    rulePriority: record.rulePriority === null ? null : asSafeInteger(record.rulePriority),
+    merchantContains: asNullableString(record.merchantContains), descriptionContains: asNullableString(record.descriptionContains),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName), labels: parseStringList(record.labels), tags: parseStringList(record.tags),
+    appliedAt: asRequiredString(record.appliedAt),
   }
 }
 

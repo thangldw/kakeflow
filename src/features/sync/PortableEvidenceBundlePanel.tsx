@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { platformClient } from '../../platform'
 import type { EvidenceBundleSummaryDto } from '../../platform'
+import { showToast } from '../../toast'
 
 interface Props { readonly householdId: string | null }
 
@@ -36,7 +37,7 @@ export function PortableEvidenceBundlePanel({ householdId }: Props) {
       const result = await platformClient.exportEvidenceBundle(householdId, passphrase)
       if (current !== request.current) return
       if (!result) setNotice('保存をキャンセルしました。')
-      else { setSummary(result); setNotice('確定済み原本カプセルを保存しました。'); setPassphrase('') }
+      else { setSummary(result); setNotice('確定済み原本カプセルを保存しました。'); setPassphrase(''); showToast('確定済み原本カプセルを保存しました。') }
     } catch { if (current === request.current) setNotice('原本カプセルを作成できませんでした。確定済みデータと保存先を確認してください。') }
     finally { if (current === request.current) setBusy(null) }
   }
@@ -49,7 +50,7 @@ export function PortableEvidenceBundlePanel({ householdId }: Props) {
       const result = await platformClient.pickAndImportEvidenceBundle(householdId, passphrase)
       if (current !== request.current) return
       if (!result) setNotice('ファイルの選択をキャンセルしました。')
-      else { setSummary(result); setNotice(`確定済み原本を${result.importedDocumentCount}件追加しました。既存の原本${result.deduplicatedDocumentCount}件は再利用されています。`); setPassphrase('') }
+      else { setSummary(result); setNotice(`確定済み原本を${result.importedDocumentCount}件追加しました。既存の原本${result.deduplicatedDocumentCount}件は再利用されています。`); setPassphrase(''); showToast(`${result.importedDocumentCount}件の原本を追加しました。`) }
     } catch { if (current === request.current) setNotice('原本カプセルを読み込めませんでした。パスフレーズとファイルを確認してください。台帳は変更されていません。') }
     finally { if (current === request.current) setBusy(null) }
   }

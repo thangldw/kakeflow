@@ -62,6 +62,7 @@ export function toTransactionViewModel(row: TransactionRowDto): Transaction {
     category: nonBlank(row.categoryName) ?? presentation.category,
     account: [nonBlank(row.creditAccountName), nonBlank(row.debitAccountName)].filter(Boolean).join(' → ') || '口座情報なし',
     amount: signedAmount(row.amountJpy, presentation.sign),
+    transactionType: type === 'INCOME' || type === 'EXPENSE' || type === 'TRANSFER' || type === 'CARD_PURCHASE' || type === 'CARD_PAYMENT' || type === 'REFUND' ? type : 'OTHER',
     status: row.status.trim().toUpperCase() === 'POSTED' ? 'confirmed' : 'review',
     icon: presentation.icon,
     accountingEffect: presentation.accountingEffect,
