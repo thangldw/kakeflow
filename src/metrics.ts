@@ -7,7 +7,7 @@ export const currentMonthMetrics = {
   expense: sum(categoryData.map((category) => category.amount)),
   budget: 800_000,
   netWorth: 51_240_000,
-  cashOutflow: 812_237,
+  cashOutflow: 923_100,
 } as const
 
 export const savings = currentMonthMetrics.income - currentMonthMetrics.expense
