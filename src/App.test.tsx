@@ -20,14 +20,14 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText('ブラウザプレビュー用のサンプル状態')).toBeInTheDocument()
     expect(screen.getByLabelText('ホームの表示テンプレート')).toBeDisabled()
     expect(screen.getByText('表示設定の保存はデスクトップ版で利用できます。')).toBeInTheDocument()
-    expect(screen.getByText('ブラウザプレビューではデスクトップの対応項目を読み込みません。')).toBeInTheDocument()
+    expect(screen.getByText('Amazon Mastercard 支払期日 07-27')).toBeInTheDocument()
   })
 
   it('identifies the non-persistent browser preview runtime', async () => {
     await renderApp()
 
     await waitFor(() => expect(screen.getByText('ブラウザプレビュー')).toBeInTheDocument())
-    expect(screen.getByText('デスクトップ版で安全に保存')).toBeInTheDocument()
+    expect(screen.getByText('ローカル · デスクトップ版')).toBeInTheDocument()
   })
 
   it('navigates to the import inbox', async () => {

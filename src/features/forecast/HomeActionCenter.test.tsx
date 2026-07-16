@@ -57,10 +57,11 @@ describe('HomeActionCenter', () => {
     expect(await screen.findByText('現在、対応が必要な項目はありません。')).toBeInTheDocument()
   })
 
-  it('never presents browser preview actions as live data', () => {
+  it('presents clearly bounded sample actions without querying native data in browser preview', () => {
     const query = vi.fn()
     render(<HomeActionCenter {...baseProps} desktop={false} query={query} />)
-    expect(screen.getByText('ブラウザプレビューではデスクトップの対応項目を読み込みません。')).toBeInTheDocument()
+    expect(screen.getByText('Amazon Mastercard 支払期日 07-27')).toBeInTheDocument()
+    expect(screen.getByText('重複6件・振替候補3件')).toBeInTheDocument()
     expect(query).not.toHaveBeenCalled()
   })
 })

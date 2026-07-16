@@ -1723,6 +1723,7 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.change(screen.getByLabelText('家族集計範囲'), { target: { value: 'MEMBER:taro' } })
     fireEvent.click(screen.getByRole('button', { name: '資産・投資' }))
+    fireEvent.change(await screen.findByLabelText('資産スナップショット'), { target: { value: 'snapshot-jul' } })
     const exportButton = await screen.findByRole('button', { name: '選択中の残高Excelを保存' })
 
     fireEvent.click(exportButton)

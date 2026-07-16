@@ -6,6 +6,12 @@ import type { ActionItemDto, ForecastActionRequestDto, ForecastActionDto } from 
 import { homeActionSlice } from './actionCenterModel'
 
 const platform = createForecastActionPlatform()
+const previewActions: readonly ActionItemDto[] = [
+  { id: 'preview-card', kind: 'CARD_PAYMENT_DUE', priority: 'HIGH', title: 'Amazon Mastercard 支払期日 07-27', detail: '口座引落予定を確認してください。', dueOn: '2026-07-27', amountJpy: 20_170, entityId: 'preview-card', reasons: ['支払期日が近づいています'] },
+  { id: 'preview-import', kind: 'IMPORT_REVIEW', priority: 'MEDIUM', title: '重複6件・振替候補3件', detail: '転記前のレビューが必要です。', dueOn: null, amountJpy: null, entityId: 'preview-import', reasons: ['候補は確定台帳に含まれません'] },
+  { id: 'preview-ocr', kind: 'IMPORT_REVIEW', priority: 'MEDIUM', title: '低信頼度OCR 2件', detail: 'レシート原本と抽出値を確認してください。', dueOn: null, amountJpy: null, entityId: 'preview-ocr', reasons: ['OCR信頼度が基準未満です'] },
+  { id: 'preview-budget', kind: 'BUDGET_OVERRUN', priority: 'HIGH', title: '交際費が予算の112%', detail: '月末までの支出ペースを確認してください。', dueOn: null, amountJpy: 12_000, entityId: 'preview-budget', reasons: ['予算超過'] },
+]
 
 export function HomeActionCenter({ householdId, accountGroupId, attributionScope, asOf, revision, desktop, onAction, onViewAll, query = platform.query }: {
   readonly householdId: string | null
@@ -36,7 +42,7 @@ export function HomeActionCenter({ householdId, accountGroupId, attributionScope
 
   const actions = snapshot?.key === requestScope ? snapshot.actions : null
 
-  if (!desktop) return <section className="home-action-status" aria-labelledby="home-action-title"><div><p>Action Center</p><h2 id="home-action-title">対応が必要な項目</h2></div><span>ブラウザプレビューではデスクトップの対応項目を読み込みません。</span></section>
+  if (!desktop) return <div className="home-action-center home-action-center--preview"><ActionCenter actions={previewActions} totalCount={previewActions.length} onAction={onAction} /></div>
   if (actions === null && !unavailable) return <section className="home-action-status" aria-labelledby="home-action-title" aria-busy="true"><div><p>Action Center</p><h2 id="home-action-title">対応項目を確認中</h2></div></section>
   if (actions === null) return <section className="home-action-status home-action-status--error" aria-labelledby="home-action-title"><div><p>Action Center</p><h2 id="home-action-title">対応項目を読み込めません</h2><span role="status">ダッシュボードの集計値はそのまま確認できます。</span></div><button type="button" className="secondary-btn" onClick={() => setRetry((value) => value + 1)}>再試行</button></section>
 
