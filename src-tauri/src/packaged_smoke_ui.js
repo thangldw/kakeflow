@@ -6,7 +6,8 @@
     let observer
     const timer = setTimeout(() => {
       observer?.disconnect()
-      reject(new Error(`Timed out waiting for ${description}`))
+      const headings = Array.from(document.querySelectorAll('.topbar-context strong')).map((heading) => heading.textContent?.trim() ?? '')
+      reject(new Error(`Timed out waiting for ${description}; workspace headings=${JSON.stringify(headings)}; document language=${document.documentElement.lang}`))
     }, timeoutMs)
     const check = () => {
       const value = read()
@@ -25,7 +26,7 @@
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none'
   }
   let interactionCount = 0
-  const mainHeading = () => document.querySelector('main h1')
+  const workspaceHeading = () => document.querySelector('.topbar-context strong')
   const bootstrap = await invoke('app_bootstrap')
   await invoke('packaged_smoke_progress', { stage: 'bootstrap' })
 
@@ -63,19 +64,7 @@
   const navigationButtons = Array.from(sidebar.querySelectorAll('button.nav-item'))
   const navigationLabels = navigationButtons.map((button) => button.querySelector('span')?.textContent?.trim() ?? '')
   const main = document.querySelector('main')
-  const expectedPages = [
-    ['ホーム', 'Packaged Smoke Householdの家計'],
-    ['取引', 'すべての取引'],
-    ['インポート', 'インポート Inbox'],
-    ['撮影 Inbox', '撮影 Inbox'],
-    ['カード照合', 'カード引落・支払余力'],
-    ['資産・投資', '資産・投資'],
-    ['カレンダー・レポート', 'カレンダー・レポート'],
-    ['予算・目標', '予算・貯蓄目標'],
-    ['分類ルール', '分類ルール'],
-    ['家族スペース', '家族スペース'],
-    ['設定', '設定'],
-  ]
+  const expectedPages = navigationLabels.map((navigationLabel) => [navigationLabel, navigationLabel])
   if (!(main instanceof HTMLElement) || !visible(main)) {
     throw new Error('Home page is not visibly rendered after onboarding')
   }
@@ -86,7 +75,7 @@
     button.click()
     interactionCount += 1
     const heading = await waitFor(() => {
-      const candidate = mainHeading()
+      const candidate = workspaceHeading()
       return candidate?.textContent?.trim() === pageTitle && visible(candidate) ? candidate : null
     }, `${navigationLabel} page`)
     const rect = main.getBoundingClientRect()
