@@ -126,6 +126,31 @@ final result: passed
 
 ---
 
+# Shared date and month control system — 2026-07-16
+
+- Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-6710644d-bcf1-43f2-8b5c-8c2dc6cb4e55.png`
+- Implementation screenshots: `/Users/thang/Documents/kakeflow/docs/audits/date-controls-system-2026-07-16/01-light-assets.png` and `02-dark-assets.png`
+- Focused comparison: `/Users/thang/Documents/kakeflow/docs/audits/date-controls-system-2026-07-16/comparison.png`
+- Viewport: `1440 × 900`
+- State: Assets & investments, Japanese locale, light and dark themes.
+
+## Comparison history
+
+- Earlier P2: native date/month styling was limited to one range filter, while six related controls retained fragmented border, focus and dark-mode rules.
+- Earlier P2: the legacy olive `:focus` rule conflicted with the new navy keyboard focus language.
+- Fix: added a shared date/month foundation, preserved intentional compact heights, unified adjacent action heights and established one navy focus contract.
+- Post-fix evidence: light, dark and focused screenshots plus the source/implementation comparison.
+- Interaction evidence: the range accepted dates and applied successfully; browser console remained clean.
+- Engineering evidence: ESLint, production build and 112 focused tests passed.
+
+Desktop-only date editors are not rendered by the web preview, so their visual verification uses the same shared CSS contract and desktop regression tests rather than mock-only fixture data.
+
+No actionable P0, P1 or P2 issue remains.
+
+final result: passed
+
+---
+
 # Classification rule builder visual mix — 2026-07-15
 
 - Source visual truth: `/var/folders/sm/d8hb2_5s40965vv4h1zxl_xc0000gn/T/codex-clipboard-d0a51b48-ca98-472a-92b0-0195f07cdbda.png`

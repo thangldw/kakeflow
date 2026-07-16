@@ -1163,6 +1163,35 @@ html[data-theme='dark'] .bar-grid i { background: #292d34; }
 html[data-theme='dark'] .category-bars button > i,html[data-theme='dark'] .progress { background: #2b2f36; }
 html[data-theme='dark'] .card-detail dl > div,html[data-theme='dark'] .source-record-viewer pre,html[data-theme='dark'] .document-evidence-viewer pre { background: #191c20; }
 
+/* Shared native date and month controls */
+:is(input[type='date'],input[type='month']) {
+  box-sizing: border-box;
+  min-width: 0;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 10px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: none;
+  font: 500 11px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+html:not([data-theme='dark']) :is(input[type='date'],input[type='month']):hover { border-color: #aeb8ca; }
+html:not([data-theme='dark']) :is(input,select,textarea):focus:not(:focus-visible) { border-color: var(--line); outline: 0; }
+html:not([data-theme='dark']) :is(input,select,textarea):focus-visible {
+  border-color: var(--primary);
+  outline: 2px solid rgba(70,95,150,.22);
+  outline-offset: 1px;
+}
+:is(input[type='date'],input[type='month'])::-webkit-calendar-picker-indicator { cursor: pointer; opacity: .58; }
+html[data-theme='dark'] :is(input[type='date'],input[type='month']) { color-scheme: dark; background: var(--paper); border-color: #3a404a; }
+.period-picker input[type='month'] { width: 145px; height: 30px; min-height: 30px; padding: 0 9px; font-size: 10.5px; }
+.due-date-editor input[type='date'] { height: 36px; min-height: 36px; }
+.due-date-editor .secondary-btn { min-height: 36px; }
+.planning-form > button { min-height: 38px; }
+
 /* Investment history date range */
 .aggregate-asset-range {
   display: grid;
