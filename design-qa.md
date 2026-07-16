@@ -77,6 +77,62 @@ than copying the reference infographic composition.
 
 final result: passed
 
+---
+
+# KakeFlow v2 README handoff implementation — 2026-07-16
+
+- Specification: `/Users/thang/Documents/kakeflow/design_handoff_kakeflow_v2/README.md`
+- Visual reference only: `/Users/thang/Documents/kakeflow/design_handoff_kakeflow_v2/KakeFlow v2.dc.html`
+- Source captures: `/Users/thang/Documents/kakeflow/docs/audits/handoff-v2-2026-07-16/source/`
+- Implementation captures: `/Users/thang/Documents/kakeflow/docs/audits/handoff-v2-2026-07-16/implementation/`
+- Combined comparisons: `/Users/thang/Documents/kakeflow/docs/audits/handoff-v2-2026-07-16/home-reference-vs-implementation-final.png` and `/Users/thang/Documents/kakeflow/docs/audits/handoff-v2-2026-07-16/all-workspaces-reference-vs-implementation.png`
+- Viewport: `1280 × 720`; light theme; Japanese locale; browser-preview product data.
+
+## Scope verified
+
+- Recreated the desktop title bar, 232 px workspace sidebar, compact global header,
+  account/family scope popover, month stepper and month grid, three accounting
+  bases, and warm-paper OKLCH token system in React and CSS.
+- Verified all 11 requested workspaces: Home, Transactions, Import Inbox,
+  Capture, Credit Cards, Investments, Reports, Budgets, Classification Rules,
+  Family, and Settings.
+- Kept production data flows and existing components. The prototype HTML was
+  opened only as a visual/interaction reference and no prototype source was
+  copied into the application.
+- Moved language, theme, and density controls into Settings; added explicit
+  investment snapshot selection and literal `NULL` rendering for unknown market
+  fields; kept card payments visibly outside expense aggregation.
+- Added realistic preview-only Action Center records so the primary Home flow
+  remains demonstrable in browser preview without replacing native data.
+
+## Visual and interaction findings
+
+- P1 resolved: the legacy shell and cool-gray surfaces did not match the handoff.
+  The final shell uses the reference hierarchy, dimensions, paper surfaces,
+  cobalt selection/action color, and semantic green/orange financial states.
+- P1 resolved: dashboard template selection previously used generic selects.
+  It now uses the five compact selectable chips from the specification.
+- P2 resolved: investment detail automatically selected a snapshot and rendered
+  missing values as dashes. Selection is now explicit and missing financial data
+  is displayed as `NULL`.
+- P2 resolved: card-payment status relied on selector-dependent generated copy.
+  It is now a semantic React information surface with an icon and explanatory
+  text.
+- P2 resolved: settings controls were scattered in the global header. They now
+  form one clear Environment Preferences panel.
+
+## Verification
+
+- Reference and implementation were captured at the same viewport and reviewed
+  together in two combined comparison sheets.
+- Navigation, scope selection, period selection, accounting-basis selection,
+  dashboard templates, theme, locale, and Settings controls were exercised.
+- Focused component tests, desktop integration tests, ESLint, and production
+  TypeScript/Vite build pass.
+- No actionable P0, P1, or P2 mismatch remains.
+
+final result: passed
+
 # Classification Rules warm-system rollback — 2026-07-16
 
 - Before: `/Users/thang/Documents/kakeflow/docs/audits/rule-builder-2026-07-16/01-before-cobalt.png`
