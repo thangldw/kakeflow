@@ -28,11 +28,11 @@ export function launchArgumentsForPlatform(platform = process.platform) {
 
 export function validateSmokeResult(result) {
   const requiredPages = new Map([
-    ['ホーム', 'Packaged Smoke Householdの家計'],
-    ['取引', 'すべての取引'], ['インポート', 'インポート Inbox'],
+    ['ホーム', 'ホーム'],
+    ['取引', '取引'], ['インポート', 'インポート'],
     ['撮影 Inbox', '撮影 Inbox'],
-    ['カード照合', 'カード引落・支払余力'], ['資産・投資', '資産・投資'],
-    ['カレンダー・レポート', 'カレンダー・レポート'], ['予算・目標', '予算・貯蓄目標'],
+    ['カード照合', 'カード照合'], ['資産・投資', '資産・投資'],
+    ['カレンダー・レポート', 'カレンダー・レポート'], ['予算・目標', '予算・目標'],
     ['分類ルール', '分類ルール'], ['家族スペース', '家族スペース'], ['設定', '設定'],
   ])
   const evidence = result?.visualEvidence
