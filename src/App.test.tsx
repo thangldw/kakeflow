@@ -19,6 +19,7 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByRole('heading', { name: 'データ品質' })).toBeInTheDocument()
     expect(screen.getByText('ブラウザプレビュー用のサンプル状態')).toBeInTheDocument()
     expect(screen.getByLabelText('ホームの表示テンプレート')).toBeEnabled()
+    expect(screen.getByRole('combobox', { name: '世帯を切り替える' })).toHaveAttribute('aria-label', '世帯を切り替える')
     expect(screen.getByText('ブラウザでは表示設定を一時的に試せます。保存はデスクトップ版で利用できます。')).toBeInTheDocument()
     expect(screen.getByText('PayPayカード 支払期日 07-27')).toBeInTheDocument()
   })
