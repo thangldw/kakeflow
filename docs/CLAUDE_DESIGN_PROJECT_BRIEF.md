@@ -16,7 +16,7 @@ KakeFlow is a local-first desktop household-finance workspace for Japan that imp
 - Platforms: standalone desktop application for macOS and Windows.
 - Technical shell: Tauri 2 with React and TypeScript; native data services are implemented in Rust.
 - Data model: local-first. The desktop ledger is the system of record.
-- Current repository version metadata: `1.1.0`.
+- Current repository version metadata: `1.0.0`.
 
 ## 3. Core user promise
 

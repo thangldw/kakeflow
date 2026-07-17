@@ -29,22 +29,28 @@ source-only import.
 
 - Original PDF bytes remain the immutable source document.
 - Every page has an explicit outcome, including empty OCR pages.
-- OCR line and word regions retain one-based page numbers, pixel coordinates,
-  confidence, and Tesseract provenance for source-viewer overlays.
+- OCR line regions retain one-based page numbers, pixel coordinates,
+  confidence, and `PADDLEOCR_V5_LINE` provenance for source-viewer overlays.
 - Passwords are ephemeral and are not added to import evidence.
-- OCR is limited to 25 MiB, 32 pages, 80 million rendered pixels, 120 seconds
-  total, and 30 seconds per page.
+- OCR is limited to 25 MiB, 32 pages, 32 million rendered pixels, and bounded
+  page/region dimensions before data is accepted back by the native layer.
 - Oversized, timed-out, engine-missing, model-missing, password, and no-text
   outcomes remain distinguishable in Import Inbox.
 
 ## Runtime packaging
 
-Development builds may discover Tesseract 5.5.2 from `PATH`. A release bundle
-is considered OCR-ready only when its resource directory contains an executable
-`ocr/tesseract` (or `tesseract.exe`), `eng.traineddata`, `jpn.traineddata`, and
-`tessdata/configs/tsv`. The macOS release staging script uses a pinned static
-vcpkg build and verifies the staged resource manifest before packaging.
+The primary OCR path uses `@paddleocr/paddleocr-js` with checksum-pinned
+PP-OCRv5 mobile detection and recognition models. ONNX Runtime Web assets are
+staged under `public/ocr/paddleocr` and loaded lazily so application startup does
+not parse or preload the OCR engine. `npm run paddleocr:verify` checks model
+size/checksum and the bundled WASM runtime before packaging.
 
-Windows OCR is not claimed until the corresponding static executable and
-installer have been built and exercised on Windows. Current public installers
-remain unsigned/ad-hoc macOS Apple Silicon artifacts.
+Native code rasterizes bounded PDF pages but does not recognize them. The same
+PP-OCRv5 pipeline then handles direct images, Capture Inbox originals, and every
+rendered PDF page, preserving blank-page outcomes and page numbering. The
+legacy packaged Tesseract runtime remains only as a compatibility/rollback path
+during migration and can be removed after native Windows and Linux validation.
+
+Windows and Linux OCR are not claimed as release evidence until their packaged
+applications have been exercised on those operating systems. Current public
+installers remain unsigned/ad-hoc macOS Apple Silicon artifacts.

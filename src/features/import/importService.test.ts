@@ -1,9 +1,22 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { zipSync } from 'fflate'
-import { excelRowsToCsv, previewImportFile, previewImportFiles } from './importService'
+import { excelRowsToCsv, previewImportFile, previewImportFiles, takeFileInputSelection } from './importService'
 
 describe('import preview service', () => {
+  it('snapshots a live file selection before clearing the input', () => {
+    const file = new File(['date,amount'], 'statement.csv', { type: 'text/csv' })
+    let liveFiles: readonly File[] = [file]
+    const input = {
+      get files() { return liveFiles as unknown as FileList },
+      get value() { return liveFiles.length > 0 ? 'statement.csv' : '' },
+      set value(value: string) { if (value === '') liveFiles = [] },
+    }
+
+    expect(takeFileInputSelection(input)).toEqual([file])
+    expect(liveFiles).toEqual([])
+  })
+
   it('keeps an RFC 5322 email immutable while parsing its one supported attachment', async () => {
     const csv = '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n2026/07/27,ラクテンカードサービス,,204987,,100000,,,出'
     const boundary = 'kakeflow-email-boundary'
@@ -59,6 +72,31 @@ describe('import preview service', () => {
 
     expect(result).toMatchObject({ adapterId: 'paypay-history-v2', recordCount: 1, status: 'ready' })
     expect(result.parsed?.metadata).toMatchObject({ schemaBasis: 'EXACT_SEVEN_COLUMN_HISTORY', businessEvents: 1 })
+  })
+
+  it('decodes the official Rakuten e-NAVI UTF-8 BOM export', async () => {
+    const csv = [
+      '"利用日","利用店名・商品名","利用者","支払方法","利用金額","手数料/利息","支払総額","7月支払金額","当月請求額","8月繰越残高","新規サイン"',
+      '"2026/06/29","ﾛﾘﾎﾟﾂﾌﾟｺﾃｲｱｲﾋﾟ-ｱｸ","本人","1回払い","1078","0","1078","1078","1078","0","*"',
+      '"2026/06/18","ANTHROPIC* CLAUDE SU利用国US","本人","1回払い","3666","0","3666","3666","3666","0","*"',
+      '"","現地利用額　　　　　　　　２２．０００変換レート　１６６．６３７円","","","","","","","","",""',
+    ].join('\n')
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode(csv)])
+
+    const result = await previewImportFile(new File([bytes], 'enavi202607(9127).csv', { type: 'text/csv' }))
+
+    expect(result).toMatchObject({ adapterId: 'rakuten-enavi-v1', encoding: 'utf-8-bom', recordCount: 1, status: 'ready' })
+    expect(result.parsed?.records[0]).toMatchObject({
+      kind: 'card-statement', issuer: 'RAKUTEN_CARD', statementMonth: '7', statementTotal: 4744,
+      transactions: [expect.objectContaining({
+        billingAmount: 1078,
+        sourceFields: {
+          利用日: '2026/06/29', '利用店名・商品名': 'ﾛﾘﾎﾟﾂﾌﾟｺﾃｲｱｲﾋﾟ-ｱｸ', 利用者: '本人', 支払方法: '1回払い',
+          利用金額: '1078', '手数料/利息': '0', 支払総額: '1078', '7月支払金額': '1078',
+          当月請求額: '1078', '8月繰越残高': '0', 新規サイン: '*',
+        },
+      }), expect.objectContaining({ billingAmount: 3666, originalAmount: 22, exchangeRate: 166.637 })],
+    })
   })
 
   it('decodes a CP932 strict personal-bank ledger before exact v2 detection', async () => {

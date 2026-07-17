@@ -1,17 +1,18 @@
 # Changelog
 
-## 1.1.0 — 2026-07-15
+## 1.0.0 — 2026-07-17
 
+- Replace the production shell and all primary workspaces with the KakeFlow v2 handoff, including compact desktop navigation, responsive workspace sizing, semantic card identity, accessible popovers, dashboard templates, and the new application icon.
+- Unify CSV, statement-PDF, scanned-PDF, and receipt-image intake behind the same review-first Import Inbox, retaining original statement fields and explicit account/card mapping before anything can reach the ledger.
+- Add checksum-pinned PaddleOCR PP-OCRv5 local OCR for images and rendered PDF pages, with Tesseract retained as a packaged compatibility fallback during the migration window.
+- Add exact/probable import deduplication decisions, bulk approval of only valid resolved candidates, Capture Inbox OCR progress/retry/promotion states, and immutable source evidence throughout the workflow.
+- Expand card reconciliation with visible masked card identity, due-date overrides, explicit settlement-bank mapping, unlink actions, and projected balance coverage without initiating payments.
 - Add explicit classification-rule suggestions to Import Inbox, including stale-suggestion revalidation and a user-controlled Apply boundary before posting.
 - Add restart-safe recurring-series review, ignored-series restore, schema-v5 change-package replication, and explicit family delivery of confirmed/ignored recurring preferences.
 - Add a source-backed Transaction Ledger PDF that reuses the exact validated CSV/XLSX scope, plus a five-report page-by-page visual release gate.
 - Allow confirmed card-payment links to be corrected with auditable reconciliation updates instead of requiring destructive re-import.
 - Add a detailed selected Portfolio Snapshot CSV and an annual native-currency Investment Performance CSV with FIFO allocations, exceptions, and source lineage.
 - Add strict official-format Resona Web入出金明細PLUS and Mizuho Business Web bank adapters with explicit account mapping, balance/sequence validation, immutable physical-row provenance, and fail-closed correction handling.
-- Continue publishing only a locally audited macOS Apple Silicon DMG. It is ad-hoc signed and not notarized; Windows remains source-build only, the updater stays disabled, Google connectors remain test-user only, and no ingestion or family-delivery path applies automatically.
-
-## 1.0.0 — 2026-07-15
-
 - Promote the source-auditable local-first desktop application to its first stable major release, with one canonical double-entry household ledger behind dashboards, card settlement, budgets, goals, reports, and investment views.
 - Add strict personal Japanese bank and PayPay history v2 adapters, immutable physical-row provenance, explicit account mapping, split-funding validation, and review-first posting.
 - Add read-only Gmail ingestion for locally configured test users, preserving exact raw EML evidence through the durable Import Inbox; general availability remains gated on Google provider qualification and packaged real-account validation.

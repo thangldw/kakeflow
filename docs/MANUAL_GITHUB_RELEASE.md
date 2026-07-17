@@ -14,8 +14,10 @@ identity.
 Capability increments are tested, committed, and pushed to `main` as they are
 completed, but they do not automatically create a public version. Full audit,
 packaging, artifact validation, tagging, and GitHub Release publication are
-reserved for major product milestones. The current stable line is `v1.1.0`;
-future public versions follow the same major-milestone gate.
+reserved for major product milestones. The current release-candidate line is
+`v1.0.0`; it becomes the stable public line only after the clean-commit, tag,
+artifact and GitHub Release gates below pass. Future public versions follow the
+same major-milestone gate.
 
 Do not change the application version, create intermediate tags, or publish
 partial installers between those milestones. Focused tests still run with each
@@ -27,7 +29,7 @@ The requirement classification and platform evidence boundary are maintained in
 
 ```bash
 set -euo pipefail
-EVIDENCE_ROOT="${PWD}/release-artifacts/v1.1.0/macos"
+EVIDENCE_ROOT="${PWD}/release-artifacts/v1.0.0/macos"
 mkdir -p "${EVIDENCE_ROOT}"
 git rev-parse HEAD | tee "${EVIDENCE_ROOT}/commit.txt"
 npm run check:update-channel 2>&1 | tee "${EVIDENCE_ROOT}/update-channel.log"
@@ -40,7 +42,7 @@ KAKEFLOW_SMOKE_ARTIFACT_DIR="${EVIDENCE_ROOT}" npm run test:dmg 2>&1 | tee "${EV
 APPLE_SIGNING_IDENTITY=- npm run desktop:build:mac 2>&1 | tee "${EVIDENCE_ROOT}/build-app.log"
 KAKEFLOW_SMOKE_ARTIFACT_DIR="${EVIDENCE_ROOT}" npm run test:packaged 2>&1 | tee "${EVIDENCE_ROOT}/packaged-smoke.log"
 codesign --verify --deep --strict --verbose=2 src-tauri/target/release/bundle/macos/KakeFlow.app 2>&1 | tee "${EVIDENCE_ROOT}/codesign.log"
-shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_1.1.0_aarch64.dmg | tee "${EVIDENCE_ROOT}/SHA256SUMS.txt"
+shasum -a 256 src-tauri/target/release/bundle/dmg/KakeFlow_1.0.0_aarch64.dmg | tee "${EVIDENCE_ROOT}/SHA256SUMS.txt"
 ```
 
 The generated OCR runtime is intentionally not stored in Git. A clean release
@@ -83,7 +85,9 @@ GitHub release and must remain visible in the release notes.
 ## Publish
 
 1. Commit and push the release version.
-2. Create an annotated `vVERSION` tag and push it.
+2. Create an annotated `vVERSION` tag and push it. If a withdrawn legacy tag
+   uses the same version, remove that local/remote tag only after the new
+   release commit is verified, then recreate it at the verified commit.
 3. Confirm the remote tag peels to the intended release commit.
 4. Create a non-draft, non-prerelease GitHub Release from that existing tag and upload only artifacts produced by the gates above.
 5. Include the SHA-256, supported architecture, signing/notarization status, and any intentionally missing platform artifact in the release notes.

@@ -15,6 +15,8 @@ const MAX_PDF_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_PDF_PAGES: usize = 2_000;
 const MAX_RENDER_EDGE: f32 = 1_600.0;
 const MAX_PDF_PASSWORD_BYTES: usize = 256;
+const MAX_UPLOADED_OCR_PAGES: usize = 32;
+const MAX_UPLOADED_OCR_PIXELS: u64 = 32_000_000;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum SourcePdfPreviewError {
@@ -72,6 +74,100 @@ pub struct SourcePdfPagePreviewDto {
 pub struct SourcePdfPagePreviewAttemptDto {
     pub status: &'static str,
     pub preview: Option<SourcePdfPagePreviewDto>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadedPdfRenderedPageDto {
+    pub page_number: u32,
+    pub page_count: u32,
+    pub page_width_points: f32,
+    pub page_height_points: f32,
+    pub width_pixels: u16,
+    pub height_pixels: u16,
+    pub media_type: &'static str,
+    pub data_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadedPdfRenderAttemptDto {
+    pub status: &'static str,
+    pub pages: Option<Vec<UploadedPdfRenderedPageDto>>,
+}
+
+/// Rasterizes an uploaded PDF into bounded, in-memory PNG pages. The frontend
+/// feeds these pages to the bundled PP-OCRv5 WASM engine; the password is used
+/// only for this call and is never persisted.
+pub fn attempt_uploaded_pdf_render(
+    bytes: &[u8],
+    media_type: &str,
+    password: Option<&str>,
+) -> UploadedPdfRenderAttemptDto {
+    if media_type != "application/pdf"
+        || bytes.is_empty()
+        || u64::try_from(bytes.len())
+            .ok()
+            .is_none_or(|size| size > MAX_PDF_BYTES)
+        || !bytes.starts_with(b"%PDF-")
+        || password.is_some_and(|value| value.len() > MAX_PDF_PASSWORD_BYTES)
+    {
+        return UploadedPdfRenderAttemptDto {
+            status: "FAILED",
+            pages: None,
+        };
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        render_pdf_pages(
+            bytes,
+            password,
+            MAX_UPLOADED_OCR_PAGES,
+            MAX_UPLOADED_OCR_PIXELS,
+        )
+    }));
+    match result {
+        Ok(Ok(pages)) => UploadedPdfRenderAttemptDto {
+            status: "SUCCESS",
+            pages: Some(
+                pages
+                    .into_iter()
+                    .map(|page| {
+                        let encoded = STANDARD.encode(page.png);
+                        UploadedPdfRenderedPageDto {
+                            page_number: page.page_number,
+                            page_count: page.page_count,
+                            page_width_points: page.page_width_points,
+                            page_height_points: page.page_height_points,
+                            width_pixels: page.width_pixels,
+                            height_pixels: page.height_pixels,
+                            media_type: "image/png",
+                            data_url: format!("data:image/png;base64,{encoded}"),
+                        }
+                    })
+                    .collect(),
+            ),
+        },
+        Ok(Err(SourcePdfPreviewError::PasswordRequired)) => UploadedPdfRenderAttemptDto {
+            status: "PASSWORD_REQUIRED",
+            pages: None,
+        },
+        Ok(Err(SourcePdfPreviewError::PasswordInvalid)) => UploadedPdfRenderAttemptDto {
+            status: "PASSWORD_INVALID",
+            pages: None,
+        },
+        Ok(Err(SourcePdfPreviewError::PasswordUnsupported)) => UploadedPdfRenderAttemptDto {
+            status: "PASSWORD_UNSUPPORTED",
+            pages: None,
+        },
+        Ok(Err(SourcePdfPreviewError::PageLimitExceeded)) => UploadedPdfRenderAttemptDto {
+            status: "LIMIT_EXCEEDED",
+            pages: None,
+        },
+        Ok(Err(_)) | Err(_) => UploadedPdfRenderAttemptDto {
+            status: "FAILED",
+            pages: None,
+        },
+    }
 }
 
 pub fn render_source_pdf_page(
@@ -427,6 +523,23 @@ mod tests {
             render_pdf_pages(&bytes, None, 1, 1),
             Err(SourcePdfPreviewError::PageLimitExceeded)
         ));
+    }
+
+    #[test]
+    fn renders_uploaded_pdf_pages_for_the_frontend_pp_ocr_engine() {
+        let bytes = text_pdf("KakeFlow 1200");
+        let attempt = attempt_uploaded_pdf_render(&bytes, "application/pdf", None);
+        assert_eq!(attempt.status, "SUCCESS");
+        let pages = attempt.pages.unwrap();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].page_number, 1);
+        assert_eq!(pages[0].page_count, 1);
+        assert_eq!(pages[0].media_type, "image/png");
+        assert!(pages[0].data_url.starts_with("data:image/png;base64,"));
+
+        let invalid = attempt_uploaded_pdf_render(b"not a pdf", "application/pdf", None);
+        assert_eq!(invalid.status, "FAILED");
+        assert!(invalid.pages.is_none());
     }
 
     #[test]

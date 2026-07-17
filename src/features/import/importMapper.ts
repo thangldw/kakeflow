@@ -253,7 +253,16 @@ async function mapPayPay(event: WalletEventCandidate, context: MappingContext): 
 }
 
 async function mapCardTransaction(transaction: CardTransactionCandidate, context: MappingContext): Promise<StartImportCandidate[]> {
-  const record = await sourceRecord(context, transaction.lineage)
+  const sourceFields = transaction.sourceFields ?? {
+    利用日: transaction.usageDate ?? '',
+    '利用店名・商品名': transaction.merchant,
+    利用者: transaction.userName,
+    支払方法: transaction.paymentMethod,
+    当月請求額: transaction.billingAmount == null ? '' : String(transaction.billingAmount),
+    '手数料/利息': transaction.feeOrInterest == null ? '' : String(transaction.feeOrInterest),
+    ...transaction.rawExtra,
+  }
+  const record = await sourceRecord(context, transaction.lineage, sourceFields)
   const date = isoDate(transaction.usageDate)
   const amount = positiveInteger(transaction.billingAmount)
   if (!date) issueInvalid(context, 'INVALID_DATE', 'Card transaction has no valid ISO usage date.', transaction.lineage.sourceRow)

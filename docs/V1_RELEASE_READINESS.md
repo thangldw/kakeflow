@@ -1,7 +1,7 @@
 # KakeFlow v1 release readiness
 
 This document records the locally verifiable product work and the provider,
-credential, platform, and distribution evidence used to bound `v1.1.0`.
+credential, platform, and distribution evidence used to bound `v1.0.0`.
 
 ## Locally verifiable product gates
 
@@ -14,8 +14,9 @@ The following must be complete on the v1 release commit:
   do not auto-post ledger transactions;
 - the strict personal-bank CSV contract and every released provider adapter
   retain immutable physical-row provenance and explicit account mapping;
-- macOS and Windows OCR resource manifests pin the runtime, language data, and
-  file hashes used by their corresponding packages;
+- macOS and Windows packages verify the checksum-pinned PaddleOCR PP-OCRv5
+  models and ONNX Runtime Web assets; legacy Tesseract runtime/language
+  manifests remain verified during the compatibility window;
 - the release version matches in `package.json`, Cargo, Tauri, release notes,
   website links, and artifact names; and
 - the [update channel contract](UPDATE_CHANNEL.md) remains explicitly disabled
@@ -80,7 +81,7 @@ or the current explicit family-delivery protocol.
 
 ## Release decision
 
-`v1.1.0` advertises only the macOS Apple Silicon artifact after its local gates
+`v1.0.0` advertises only the macOS Apple Silicon artifact after its local gates
 pass. External integrations that are not yet qualified remain feature-gated and
 explicitly disclosed; they are not evidence for a production-available
 connector. Windows remains unadvertised until its native platform gates pass.

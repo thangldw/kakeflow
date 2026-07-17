@@ -31,7 +31,7 @@ export const rakutenEnaviAdapter: ImportAdapter<CardStatementCandidate> = {
         continue
       }
       const billingAmount = parseJapaneseAmount(paymentHeader ? value[paymentHeader] : value['当月請求額']) ?? parseJapaneseAmount(value['支払総額']) ?? parseJapaneseAmount(value['利用金額'])
-      transactions.push({ kind: 'card-transaction', lineage: row, usageDate: date, merchant: normalizeJapaneseText(value['利用店名・商品名'] ?? ''), userName: value['利用者'] ?? '', paymentMethod: value['支払方法'] ?? '', billingAmount, feeOrInterest: parseJapaneseAmount(value['手数料/利息']), isRefund: (billingAmount ?? 0) < 0 || /返品|返金/.test(value['利用店名・商品名'] ?? ''), rawExtra: Object.fromEntries(headers.filter((header) => !BASE_HEADERS.includes(header)).map((header) => [header, value[header] ?? ''])) })
+      transactions.push({ kind: 'card-transaction', lineage: row, sourceFields: Object.fromEntries(headers.map((header) => [header, value[header] ?? ''])), usageDate: date, merchant: normalizeJapaneseText(value['利用店名・商品名'] ?? ''), userName: value['利用者'] ?? '', paymentMethod: value['支払方法'] ?? '', billingAmount, feeOrInterest: parseJapaneseAmount(value['手数料/利息']), isRefund: (billingAmount ?? 0) < 0 || /返品|返金/.test(value['利用店名・商品名'] ?? ''), rawExtra: Object.fromEntries(headers.filter((header) => !BASE_HEADERS.includes(header)).map((header) => [header, value[header] ?? ''])) })
     }
     const statementTotal = transactions.reduce((sum, tx) => sum + (tx.billingAmount ?? 0), 0)
     const monthMatch = paymentHeader?.match(/^(\d{1,2})月/)

@@ -2,8 +2,10 @@
 
 ## Tóm tắt điều hành
 
-KakeFlow hiện có phiên bản desktop `v1.0.0` đã phát hành và ứng viên local
-`v1.1.0` trên nhánh `codex/kakeflow-v2-hardening`. Sổ cái local-first, quy
+KakeFlow hiện có ứng viên local `v1.0.0` trên nhánh
+`codex/kakeflow-v2-hardening`. GitHub Release `v1.0.0` đã được xoá theo quyết
+định sản phẩm ngày 2026-07-17. Git tag `v1.0.0` cũ hiện vẫn trỏ tới commit cũ và
+phải được thay bằng tag của release commit đầy đủ khi publish. Sổ cái local-first, quy
 trình nhập và duyệt dữ liệu, dashboard, đối soát thẻ tín dụng, quản lý đầu tư,
 báo cáo, theo dõi thư mục và nền tảng chia sẻ dữ liệu gia đình đều đã được xây
 dựng.
@@ -24,15 +26,16 @@ native, phê duyệt từ nhà cung cấp và phát hành công khai được t�
 
 | Trạng thái | Phiên bản | Bằng chứng |
 | --- | --- | --- |
-| Bản ổn định công khai mới nhất | `v1.0.0` | Git tag và GitHub Release kèm DMG macOS Apple Silicon đã kiểm thử local |
-| Đã triển khai local, chưa phát hành | Ứng viên `v1.1.0` | Handoff v2, deduplication, migration và release hardening nằm trên nhánh checkpoint; metadata `1.1.0` đã đồng bộ |
-| Bản phát hành công khai tiếp theo | `v1.1.0` | Code/native/frontend/PDF QA đã đạt; đang tạo bằng chứng app/DMG trước khi có quyết định tag và phát hành GitHub thủ công |
+| Bản ổn định công khai mới nhất | Chưa có GitHub Release công khai | Release `v1.0.0` cũ đã xoá; remote tag cũ chưa được thay |
+| Đã triển khai local, chưa phát hành | Ứng viên `v1.0.0` | Handoff v2, deduplication, migration và release hardening nằm trên nhánh checkpoint; metadata `1.0.0` đã đồng bộ |
+| Bản phát hành công khai tiếp theo | `v1.0.0` | Code/native/frontend/PDF QA, packaged-app và DMG gate đã đạt; còn phải khóa release commit, tạo tag và phát hành GitHub thủ công |
 
 Chu kỳ phát hành đã được chuyển sang theo mốc lớn. Các tính năng nhỏ sẽ được
 chạy kiểm thử theo phạm vi, commit và push. Full audit, đóng gói, tạo tag và phát
-hành công khai chỉ thực hiện tại các phiên bản lớn như `v1.1` và `v1.2`.
+hành công khai chỉ thực hiện tại các phiên bản lớn, bắt đầu từ bản đầy đủ
+`v1.0.0` rồi đến các mốc tương lai như `v1.1` và `v1.2`.
 
-## Các phần đã hoàn thành và phát hành trong v1.0.0
+## Các phần đã hoàn thành trong phạm vi v1.0.0
 
 ### Nền tảng tài chính
 
@@ -77,7 +80,7 @@ hành công khai chỉ thực hiện tại các phiên bản lớn như `v1.1` v
   Liabilities, Card Reconciliation và Cash Flow.
 - Báo cáo tháng/năm, transaction ledger, investment performance và portfolio
   snapshot với drill-down theo phạm vi và trạng thái chất lượng dữ liệu.
-- Các nhóm export CSV/XLSX/PDF đã phát hành đến `v1.0.0`, font tiếng Nhật nhúng
+- Các nhóm export CSV/XLSX/PDF đã được đưa vào `v1.0.0`, font tiếng Nhật nhúng
   ổn định và công cụ visual QA từng trang PDF bằng Poppler.
 - Ứng dụng desktop Tauri, database/vault local, kiểm thử app đóng gói và DMG
   trên macOS, nền tảng đóng gói Windows, backup/restore và updater fail-closed
@@ -92,42 +95,51 @@ hành công khai chỉ thực hiện tại các phiên bản lớn như `v1.1` v
   mobile, hàng đợi capture bền vững, Capture Inbox và luồng promotion chỉ tạo dữ
   liệu chờ review.
 
-## Đã triển khai sau v1.0.0, đang chờ phát hành v1.1.0
+## Các hạng mục bổ sung đã hợp nhất vào bản đầy đủ v1.0.0
 
 | Tính năng | Trạng thái code | Trạng thái phát hành |
 | --- | --- | --- |
-| Áp dụng classification rule đã lưu trong Import Inbox và kiểm tra lại rule bị stale | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Confirm, ignore, restore recurring series và cập nhật forecast/fixed-cost | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Đồng bộ recurring preference qua schema-v5 package và family delivery | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Transaction Ledger PDF dùng cùng phạm vi dữ liệu với CSV/XLSX | Đã triển khai và chạy test phạm vi | Còn thiếu visual QA cho bộ năm báo cáo |
-| Sửa liên kết card payment đã confirm và lưu lịch sử audit | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Portfolio Snapshot CSV chi tiết cho đúng snapshot được chọn | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Investment Performance CSV theo năm và nguyên tệ | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Adapter Resona Web入出金明細PLUS 14 trường | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
-| Adapter Mizuho Business Web 13 trường | Đã triển khai và chạy test phạm vi | Chờ audit/package v1.1 |
+| Áp dụng classification rule đã lưu trong Import Inbox và kiểm tra lại rule bị stale | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Confirm, ignore, restore recurring series và cập nhật forecast/fixed-cost | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Đồng bộ recurring preference qua schema-v5 package và family delivery | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Transaction Ledger PDF dùng cùng phạm vi dữ liệu với CSV/XLSX | Đã triển khai và chạy test phạm vi | Visual QA năm báo cáo đã đạt |
+| Sửa liên kết card payment đã confirm và lưu lịch sử audit | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Portfolio Snapshot CSV chi tiết cho đúng snapshot được chọn | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Investment Performance CSV theo năm và nguyên tệ | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Adapter Resona Web入出金明細PLUS 14 trường | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
+| Adapter Mizuho Business Web 13 trường | Đã triển khai và chạy test phạm vi | Đã hợp nhất vào v1.0.0 |
 
-## Trạng thái kiểm chứng v1.1.0 hiện tại
+## Trạng thái kiểm chứng v1.0.0 hiện tại
 
-- Metadata `1.1.0` đã đồng bộ giữa npm, Cargo, Tauri, changelog, README, release
+- Metadata `1.0.0` đã đồng bộ giữa npm, Cargo, Tauri, changelog, README, release
   notes, CTA trên trang dự án và tên artifact.
 - `npm run check:versions` đạt.
 - `npm run check:update-channel` trả về đúng trạng thái
   `DISABLED_UNCONFIGURED`.
-- Bộ regression frontend đạt: **104 file test / 705 test**, không còn React
+- Bộ regression frontend đạt: **106 file test / 721 test**, không còn React
   `act(...)` warning; ESLint và TypeScript/Vite production build đều đạt.
-- Production bundle đã được chia theo vendor/workspace; chunk chính còn
-  **312.63 kB**, không còn cảnh báo chunk lớn hơn 500 kB.
+- Production bundle đã được chia theo vendor/workspace; chunk khởi động chính
+  còn **316.70 kB**. Chunk OCR lớn được tách riêng và chỉ tải khi người dùng yêu
+  cầu OCR, nên không làm chậm màn hình khởi động.
 - **33 test relay** và **7 test capture uploader** đều đạt.
-- Rust đạt `cargo fmt --check`, clippy `-D warnings`, **610 library test** và
+- Rust đạt `cargo fmt --check`, clippy `-D warnings`, **612 library test** và
   **30 native integration test**. Test tương thích schema v3 đã được sửa đúng
   phạm vi downgrade; migration 0066–0068 áp dụng và integrity check đạt.
 - Năm PDF fixture bắt buộc đã render thành **19 trang PNG**. Automated manifest
   đạt và checklist visual review từng trang được ký `PASS` ngày 2026-07-17.
-- OCR runtime Tesseract 5.5.2 với `eng+jpn` và 6 file manifest đã verify.
-- Packaged-app smoke, DMG smoke, kiểm tra codesign và SHA-256 đang là gate local
-  cuối cùng trước khi khóa evidence của ứng viên.
-- Chưa có commit release cuối cùng, tag `v1.1.0`, DMG hoặc GitHub Release
-  `v1.1.0`.
+- PP-OCRv5 đã thay luồng OCR chính cho ảnh, Capture Inbox và PDF scan; model
+  detection/recognition cùng ONNX Runtime WASM đều được pin checksum và verify.
+  Tesseract 5.5.2 `eng+jpn` còn được đóng gói tạm thời cho compatibility/rollback.
+- Packaged-app smoke đạt hai lần liên tiếp với **11 page / 12 interaction**, IPC
+  và schema v68; app bundle ad-hoc đã qua
+  `codesign --verify --deep --strict`. DMG `v1.0.0` mới có kích thước
+  70.610.621 byte, đã mount read-only, qua bundle-integrity smoke và có SHA-256
+  `f15a59c2a5dd7832729cab2c41542443bc2bf1fe3fe9ae678dfc774d3eede18c`.
+- Release evidence nằm tại
+  `release-artifacts/v1.0.0/macos-rc-20260717/`, gồm frontend/lint/build logs,
+  packaged-app và DMG smoke, codesign, checksum, DMG và bộ PDF QA 19 trang.
+- Release commit là commit chứa tài liệu trạng thái này. Chưa thay remote tag cũ
+  hoặc tạo GitHub Release `v1.0.0`; artifact chưa được phát hành công khai.
 
 ## Các phần chưa hoàn thành
 
@@ -165,15 +177,16 @@ phẩm. KakeFlow tiếp tục theo mô hình file-first, user-controlled và rev
 
 ## Trình tự công việc đề xuất tiếp theo
 
-1. Khóa checkpoint code, build app/DMG từ checkpoint và lưu packaged smoke,
-   persistence smoke, DMG/codesign cùng SHA-256 vào release evidence.
-2. Chỉ sau khi có quyết định phát hành: push commit, tạo tag annotated `v1.1.0`
-   và phát hành DMG đã xác minh theo cách thủ công, không sử dụng GitHub Actions.
+1. Xác nhận release commit chứa toàn bộ source/design `v1.0.0`, working tree
+   sạch và branch remote trỏ đúng commit đó.
+2. Chỉ sau khi có quyết định phát hành: thay remote tag `v1.0.0` cũ
+   bằng annotated tag trỏ đúng release commit, rồi phát hành DMG đã xác minh theo
+   cách thủ công, không sử dụng GitHub Actions.
 3. Chạy gate Windows trên Windows x64 trước khi quảng bá installer Windows.
 4. Hoàn tất Google provider qualification và packaged real-account validation
    trước khi mở connector ngoài nhóm test user.
 5. Tiếp tục các capability increment bằng kiểm thử theo phạm vi; không chạy full
-   audit hoặc release tiếp cho đến mốc lớn `v1.2.0`.
+   audit hoặc release tiếp cho đến mốc lớn tiếp theo như `v1.1.0`.
 
 ## Nguồn bằng chứng
 
@@ -181,5 +194,6 @@ phẩm. KakeFlow tiếp tục theo mô hình file-first, user-controlled và rev
 - [Changelog](../CHANGELOG.md)
 - [Điều kiện sẵn sàng phát hành v1](V1_RELEASE_READINESS.md)
 - [Quy trình phát hành GitHub thủ công](MANUAL_GITHUB_RELEASE.md)
+- [Handoff release candidate v1.0.0](RELEASE_CANDIDATE_1.0.0.md)
 - [Visual QA báo cáo PDF](PDF_REPORT_VISUAL_QA.md)
-- Lịch sử Git đến nhóm tính năng `09c0be5` và tag/release công khai `v1.0.0`
+- Lịch sử Git đến nhóm tính năng `09c0be5` và remote tag legacy `v1.0.0`

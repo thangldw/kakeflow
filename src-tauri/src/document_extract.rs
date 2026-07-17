@@ -7,6 +7,7 @@ const MAX_PDF_OBJECTS: usize = 100_000;
 const MAX_PDF_PAGES: usize = 2_000;
 const MAX_PDF_STREAM_MARKERS: usize = 20_000;
 const MAX_PDF_PASSWORD_BYTES: usize = 256;
+const MAX_RKSJ_TEXT_FRAGMENTS: usize = 50_000;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractError {
@@ -102,8 +103,41 @@ pub fn extract_document_with_password(
         return Err(ExtractError::Unsupported);
     }
     preflight_pdf(bytes)?;
-    let (extracted, page_count) = std::panic::catch_unwind(|| extract_text_capped(bytes, password))
-        .map_err(|_| ExtractError::Extraction)??;
+    let known_unsupported_cmap = bytes
+        .windows(b"/90ms-RKSJ-H".len())
+        .any(|window| window == b"/90ms-RKSJ-H");
+    if known_unsupported_cmap {
+        match extract_predefined_rksj_text(bytes, password) {
+            Ok(document) => return Ok(document),
+            Err(ExtractError::Extraction | ExtractError::OcrRequired) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let (extracted, page_count, embedded_text_unsupported) = if known_unsupported_cmap {
+        (
+            String::new(),
+            validated_pdf_page_count(bytes, password)?,
+            true,
+        )
+    } else {
+        let extraction = std::panic::catch_unwind(|| extract_text_capped(bytes, password));
+        match extraction {
+            Ok(Ok((text, page_count))) => (text, page_count, false),
+            Ok(Err(ExtractError::Extraction)) | Err(_) => {
+                // Some valid Japanese statements use predefined CMap encodings
+                // (for example 90ms-RKSJ-H) that pdf-extract cannot decode. The
+                // independent bounded renderer can still rasterize those pages,
+                // so route the document to the explicit offline OCR flow instead
+                // of reporting a corrupt PDF.
+                (
+                    String::new(),
+                    validated_pdf_page_count(bytes, password)?,
+                    true,
+                )
+            }
+            Ok(Err(error)) => return Err(error),
+        }
+    };
     let text = extracted.replace('\0', "").trim().to_owned();
     if text.len() > MAX_EXTRACTED_TEXT_BYTES {
         return Err(ExtractError::InvalidInput);
@@ -113,20 +147,25 @@ pub fn extract_document_with_password(
         .filter(|character| !character.is_whitespace())
         .count();
     if meaningful < 8 {
+        let issues = if embedded_text_unsupported {
+            vec!["OCR_REQUIRED", "EMBEDDED_TEXT_UNSUPPORTED"]
+        } else {
+            vec!["OCR_REQUIRED"]
+        };
         let pages = (1..=page_count)
             .map(|page_number| ExtractedPage {
                 page_number,
                 width_pixels: None,
                 height_pixels: None,
                 confidence_bps: 0,
-                issues: vec!["OCR_REQUIRED"],
+                issues: issues.clone(),
             })
             .collect();
         return Ok(ExtractedDocument {
             method: "EMBEDDED_TEXT",
             text,
             confidence_bps: 0,
-            issues: vec!["OCR_REQUIRED"],
+            issues,
             regions: Vec::new(),
             page_count,
             pages,
@@ -180,6 +219,221 @@ pub fn extract_document_with_password(
         page_count,
         pages,
     })
+}
+
+fn load_validated_pdf(
+    bytes: &[u8],
+    password: Option<&str>,
+) -> Result<pdf_extract::Document, ExtractError> {
+    let mut document =
+        pdf_extract::Document::load_mem(bytes).map_err(|_| ExtractError::Extraction)?;
+    if document.is_encrypted() {
+        document = pdf_extract::Document::load_mem_with_options(
+            bytes,
+            pdf_extract::LoadOptions::with_password(password.unwrap_or("")),
+        )
+        .map_err(|error| classify_decryption_error(error, password.is_some()))?;
+    }
+    let page_count = document.get_pages().len();
+    if document.objects.len() > MAX_PDF_OBJECTS || page_count == 0 || page_count > MAX_PDF_PAGES {
+        return Err(ExtractError::InvalidInput);
+    }
+    Ok(document)
+}
+
+/// Extracts text from Japanese PDFs that use the predefined Windows Shift-JIS
+/// CMap (`90ms-RKSJ-H`). `pdf-extract` deliberately rejects this encoding when
+/// the font has no ToUnicode map, even though the PDF string bytes are valid
+/// Shift-JIS. Keeping each positioned text fragment also preserves the table
+/// columns used by card statements instead of flattening them through OCR.
+fn extract_predefined_rksj_text(
+    bytes: &[u8],
+    password: Option<&str>,
+) -> Result<ExtractedDocument, ExtractError> {
+    let document = load_validated_pdf(bytes, password)?;
+    let page_entries = document.get_pages();
+    let page_count = u32::try_from(page_entries.len()).map_err(|_| ExtractError::InvalidInput)?;
+    let mut all_text = String::new();
+    let mut regions = Vec::new();
+    let mut pages = Vec::with_capacity(page_entries.len());
+    let mut fragment_count = 0_usize;
+    let mut decode_errors = 0_usize;
+    let mut extracted_text_bytes = 0_usize;
+
+    for (page_index, (_, page_id)) in page_entries.into_iter().enumerate() {
+        let content = document
+            .get_and_decode_page_content(page_id)
+            .map_err(|_| ExtractError::Extraction)?;
+        let mut position = (0_i32, 0_i32);
+        let mut rows = std::collections::BTreeMap::<i32, Vec<(i32, String)>>::new();
+        for operation in content.operations {
+            match operation.operator.as_str() {
+                "Td" | "TD" if operation.operands.len() >= 2 => {
+                    position = object_position(&operation.operands[0], &operation.operands[1])?;
+                }
+                "Tm" if operation.operands.len() >= 6 => {
+                    position = object_position(&operation.operands[4], &operation.operands[5])?;
+                }
+                "Tj" | "'" => {
+                    if let Some(object) = operation.operands.last() {
+                        push_rksj_fragment(
+                            object,
+                            position,
+                            &mut rows,
+                            &mut fragment_count,
+                            &mut decode_errors,
+                        )?;
+                    }
+                }
+                "\"" => {
+                    if let Some(object) = operation.operands.last() {
+                        push_rksj_fragment(
+                            object,
+                            position,
+                            &mut rows,
+                            &mut fragment_count,
+                            &mut decode_errors,
+                        )?;
+                    }
+                }
+                "TJ" => {
+                    if let Some(pdf_extract::Object::Array(items)) = operation.operands.first() {
+                        for object in items {
+                            push_rksj_fragment(
+                                object,
+                                position,
+                                &mut rows,
+                                &mut fragment_count,
+                                &mut decode_errors,
+                            )?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let page_number = u32::try_from(page_index + 1).map_err(|_| ExtractError::InvalidInput)?;
+        let mut page_lines = Vec::new();
+        for (_, mut fragments) in rows.into_iter().rev() {
+            fragments.sort_by_key(|fragment| fragment.0);
+            let line = fragments
+                .into_iter()
+                .map(|(_, value)| value.trim_matches('\0').to_owned())
+                .filter(|value| !value.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\t");
+            if line.trim().is_empty() {
+                continue;
+            }
+            extracted_text_bytes = extracted_text_bytes
+                .checked_add(line.len().saturating_add(1))
+                .ok_or(ExtractError::InvalidInput)?;
+            if extracted_text_bytes > MAX_EXTRACTED_TEXT_BYTES {
+                return Err(ExtractError::InvalidInput);
+            }
+            regions.push(ExtractedRegion {
+                page_number,
+                coordinate_space: "UNLOCATED".to_owned(),
+                bounding_box: None,
+                text: line.clone(),
+                confidence_bps: 9800,
+                provenance: "PDF_EMBEDDED_TEXT_RKSJ".to_owned(),
+            });
+            page_lines.push(line);
+        }
+        let page_text = page_lines.join("\n");
+        if !all_text.is_empty() {
+            all_text.push('\u{000c}');
+        }
+        all_text.push_str(&page_text);
+        let has_text = page_text
+            .chars()
+            .any(|character| !character.is_whitespace());
+        pages.push(ExtractedPage {
+            page_number,
+            width_pixels: None,
+            height_pixels: None,
+            confidence_bps: if has_text { 9800 } else { 0 },
+            issues: if has_text {
+                Vec::new()
+            } else {
+                vec!["OCR_REQUIRED"]
+            },
+        });
+    }
+
+    let meaningful = all_text
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .count();
+    if meaningful < 8 || decode_errors > fragment_count.saturating_div(5) {
+        return Err(ExtractError::OcrRequired);
+    }
+    let issues = if pages.iter().any(|page| !page.issues.is_empty()) {
+        vec!["OCR_REQUIRED"]
+    } else {
+        Vec::new()
+    };
+    Ok(ExtractedDocument {
+        method: "EMBEDDED_TEXT",
+        text: all_text,
+        confidence_bps: 9800,
+        issues,
+        regions,
+        page_count,
+        pages,
+    })
+}
+
+fn object_position(
+    x: &pdf_extract::Object,
+    y: &pdf_extract::Object,
+) -> Result<(i32, i32), ExtractError> {
+    let scaled = |value: &pdf_extract::Object| {
+        value
+            .as_float()
+            .ok()
+            .and_then(|value| {
+                let scaled = (value * 10.0).round();
+                (scaled.is_finite() && scaled >= i32::MIN as f32 && scaled <= i32::MAX as f32)
+                    .then_some(scaled as i32)
+            })
+            .ok_or(ExtractError::Extraction)
+    };
+    Ok((scaled(x)?, scaled(y)?))
+}
+
+fn push_rksj_fragment(
+    object: &pdf_extract::Object,
+    position: (i32, i32),
+    rows: &mut std::collections::BTreeMap<i32, Vec<(i32, String)>>,
+    fragment_count: &mut usize,
+    decode_errors: &mut usize,
+) -> Result<(), ExtractError> {
+    let pdf_extract::Object::String(bytes, _) = object else {
+        return Ok(());
+    };
+    *fragment_count = fragment_count.saturating_add(1);
+    if *fragment_count > MAX_RKSJ_TEXT_FRAGMENTS {
+        return Err(ExtractError::InvalidInput);
+    }
+    let (decoded, _, had_errors) = encoding_rs::SHIFT_JIS.decode(bytes);
+    if had_errors {
+        *decode_errors = decode_errors.saturating_add(1);
+    }
+    if !decoded.is_empty() {
+        rows.entry(position.1)
+            .or_default()
+            .push((position.0, decoded.into_owned()));
+    }
+    Ok(())
+}
+
+fn validated_pdf_page_count(bytes: &[u8], password: Option<&str>) -> Result<u32, ExtractError> {
+    let document = load_validated_pdf(bytes, password)?;
+    let page_count = document.get_pages().len();
+    u32::try_from(page_count).map_err(|_| ExtractError::InvalidInput)
 }
 
 pub fn attempt_document_extraction(
@@ -391,6 +645,39 @@ mod tests {
         pdf
     }
 
+    fn unsupported_cmap_pdf() -> Vec<u8> {
+        let stream = "BT /F1 12 Tf 72 720 Td <83588367815B8367838183938367> Tj ET BT /F1 12 Tf 180 720 Td (TOTAL 1200) Tj ET";
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>".to_owned(),
+            format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+            "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Gothic /Encoding /90ms-RKSJ-H /DescendantFonts [6 0 R] >>".to_owned(),
+            "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Gothic /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> >>".to_owned(),
+        ];
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n{}\nendobj\n", index + 1, object).as_bytes());
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        pdf
+    }
+
     fn password_protected_pdf() -> Vec<u8> {
         STANDARD
             .decode(include_str!("../testdata/password-protected-reportlab.pdf.b64").trim())
@@ -405,6 +692,17 @@ mod tests {
         assert!(result.issues.is_empty());
         assert_eq!(result.regions[0].page_number, 1);
         assert_eq!(result.regions[0].coordinate_space, "UNLOCATED");
+    }
+
+    #[test]
+    fn extracts_predefined_japanese_cmap_without_ocr() {
+        let result = extract_document(&unsupported_cmap_pdf(), "application/pdf").unwrap();
+        assert_eq!(result.page_count, 1);
+        assert_eq!(result.text, "ストートメント\tTOTAL 1200");
+        assert_eq!(result.confidence_bps, 9800);
+        assert!(result.issues.is_empty());
+        assert_eq!(result.regions[0].provenance, "PDF_EMBEDDED_TEXT_RKSJ");
+        assert!(result.pages[0].issues.is_empty());
     }
 
     #[test]

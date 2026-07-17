@@ -4,7 +4,7 @@ KakeFlow is a local-first household finance workspace for macOS and Windows. It 
 
 Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
 
-Version 1.1.0 is the current stable desktop milestone. It combines the
+Version 1.0.0 is the current stable desktop milestone. It combines the
 source-auditable household ledger, card reconciliation, investment workspace,
 native reports, durable file and test-user Google inboxes, and explicit family
 delivery review into one local-first desktop application. The public binary is
@@ -13,7 +13,7 @@ source-build target until native installer evidence exists. Google Drive and
 Gmail connectors remain limited to locally configured test users pending
 provider qualification, and no ingestion path posts automatically.
 
-Version `v1.1.0` adds
+Version `v1.0.0` adds
 [family delivery of recurring-series preferences](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md)
 and a source-backed [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md),
 plus a detailed [Portfolio Snapshot CSV](docs/PORTFOLIO_SNAPSHOT_CSV.md) for the
@@ -73,7 +73,7 @@ KakeFlow adds restart-safe [receipt item review and split posting](docs/RECEIPT_
 
 KakeFlow adds a strict [AEON finalized-statement import](docs/AEON_CARD_IMPORT.md). Detection uses an AEON content marker, named finalized fields, dated detail rows, and one exact statement total rather than a filename. Refunds retain their negative sign, while installment, revolving, bonus, partial, ambiguous, multi-section, malformed, and unfamiliar layouts fail closed. The checked-in fixture is screen-derived synthetic because AEON does not publish a literal consumer CSV schema.
 
-KakeFlow adds bounded [scanned and hybrid PDF OCR](docs/SCANNED_PDF_OCR.md). The complete PDF remains immutable evidence, page outcomes and OCR boxes stay aligned with the source viewer, and only pages that independently parse as receipts create review-required candidates. Statement and blank pages never become expenses; a source-only import preserves a multi-page document when no page is eligible. The macOS bundle stages a pinned static Tesseract 5.5.2 runtime with Japanese and English models and verifies it without relying on the host `PATH`.
+KakeFlow adds bounded [scanned and hybrid PDF OCR](docs/SCANNED_PDF_OCR.md). The complete PDF remains immutable evidence, page outcomes and OCR boxes stay aligned with the source viewer, and only pages that independently parse as receipts create review-required candidates. Statement and blank pages never become expenses; a source-only import preserves a multi-page document when no page is eligible. Image upload, Capture Inbox, and rendered PDF pages use checksum-pinned PaddleOCR PP-OCRv5 mobile detection/recognition models through ONNX Runtime Web. The engine runs locally and is loaded only when OCR is requested. The packaged Tesseract 5.5.2 runtime remains temporarily available for compatibility and rollback while the PP-OCRv5 migration is validated on every release platform.
 
 KakeFlow adds a dedicated [Monex U.S.-stock Trade History import](docs/MONEX_US_STOCK_IMPORT.md). It recognizes the complete screen-derived 16-field family without relying on a filename, supports explicit post-renewal U.S.-dollar spot buys and sells, preserves exported gross/settlement/fee values and physical-row evidence, and requires the user to choose an existing securities account. Yen settlement and non-spot activity remain blocking because the public documentation does not establish safe dual-currency or event-specific settlement semantics; the included fixture is explicitly synthetic rather than claimed as a Monex-issued sample.
 
@@ -211,7 +211,7 @@ src-tauri/         Tauri shell, SQLCipher ledger, encrypted vault, PDF/OCR, back
 
 KakeFlow never stores the database key in its database, logs, application bundle, or process environment. A portable v2 backup encrypts the ledger, source-document vault, and a cross-device key capsule with a user passphrase. Backup destinations are selected by the native backend; restore is authenticated, staged, semantically validated, confirmed in a native OS dialog, and activated through a restart-safe journal.
 
-Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from `PATH` and require the `jpn` and `eng` language models. Release bundles may instead provide `ocr/tesseract` (or `tesseract.exe`), both models, and `tessdata/configs/tsv` in the Tauri resource directory; if neither source is complete, the app reports OCR as unavailable and does not upload the document anywhere.
+Receipt and scanned-PDF OCR are offline. The primary engine is PaddleOCR PP-OCRv5 running in the application WebView with local ONNX models and ONNX Runtime WASM assets staged by `npm run paddleocr:stage`; release verification uses `npm run paddleocr:verify`. Tesseract resources are still packaged as a compatibility fallback during the migration window. Missing or invalid models fail closed and no image or document is uploaded to an OCR service.
 
 ## Data and release safety
 
@@ -352,7 +352,7 @@ Receipt and scanned-PDF OCR are offline. Development builds use `tesseract` from
 - Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
 - Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
 - Household-scoped classification rules with priority, enable/disable,
-  category, labels, and tags. Version `v1.1.0` also adds
+  category, labels, and tags. Version `v1.0.0` also adds
   [review-time import suggestions](docs/IMPORT_REVIEW_CLASSIFICATION_RULES.md)
   that require an explicit Apply, preserve field provenance, fail atomically
   when the candidate or exact rule revision is stale, and never approve or post

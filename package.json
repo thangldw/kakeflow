@@ -1,14 +1,15 @@
 {
   "name": "kakeflow",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.0.0",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+    "predev": "npm run paddleocr:stage",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run paddleocr:stage && tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -16,10 +17,10 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build --no-bundle",
-    "desktop:build:mac": "npm run ocr:verify && tauri build --bundles app",
-    "desktop:build:mac:dmg": "npm run ocr:verify && tauri build --bundles dmg",
+    "desktop:build:mac": "npm run ocr:verify && npm run paddleocr:verify && APPLE_SIGNING_IDENTITY=- tauri build --bundles app",
+    "desktop:build:mac:dmg": "npm run ocr:verify && npm run paddleocr:verify && APPLE_SIGNING_IDENTITY=- tauri build --bundles dmg",
     "desktop:build:mac:ci": "npm run desktop:build:mac:dmg && npm run desktop:build:mac",
-    "desktop:build:windows": "npm run ocr:verify && tauri build --bundles nsis",
+    "desktop:build:windows": "npm run ocr:verify && npm run paddleocr:verify && tauri build --bundles nsis",
     "desktop:release": "tauri build",
     "desktop:smoke": "node scripts/desktop-smoke.mjs",
     "test:packaged": "node scripts/packaged-app-smoke.mjs",
@@ -28,6 +29,8 @@
     "ocr:stage:mac": "bash scripts/stage-ocr-resources-macos.sh",
     "ocr:stage:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/stage-ocr-resources-windows.ps1",
     "ocr:verify": "node scripts/verify-ocr-resources.mjs",
+    "paddleocr:stage": "node scripts/stage-paddleocr-resources.mjs",
+    "paddleocr:verify": "node scripts/stage-paddleocr-resources.mjs --verify-only",
     "check:update-channel": "node scripts/check-update-channel.mjs",
     "check:versions": "node scripts/check-versions.mjs",
     "relay:start": "node relay-service/start.mjs",
@@ -36,6 +39,7 @@
     "capture:test": "node --test relay-service/reference-capture-uploader/*.test.mjs"
   },
   "dependencies": {
+    "@paddleocr/paddleocr-js": "^0.4.2",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "fflate": "^0.8.3",

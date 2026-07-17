@@ -4310,6 +4310,20 @@ fn document_pdf_ocr_attempt(
     ))
 }
 
+#[tauri::command]
+fn document_pdf_render_attempt(
+    file_bytes: Vec<u8>,
+    media_type: String,
+    password: Option<String>,
+) -> Result<source_pdf_preview::UploadedPdfRenderAttemptDto, String> {
+    let password = password.map(zeroize::Zeroizing::new);
+    Ok(source_pdf_preview::attempt_uploaded_pdf_render(
+        &file_bytes,
+        &media_type,
+        password.as_ref().map(|value| value.as_str()),
+    ))
+}
+
 fn run_local_ocr(
     paths: &OcrPaths,
     file_bytes: Vec<u8>,
@@ -4431,6 +4445,160 @@ fn mobile_capture_ocr(
     } else {
         run_local_ocr(&paths, bytes, media_type)?
     };
+    let (extraction_id, item) = mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::record_extraction(connection, &household_id, &artifact_id, &document)
+    })?;
+    Ok(mobile_capture_inbox::MobileCaptureOcrDto {
+        item,
+        extraction_id,
+        document,
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClientOcrPage {
+    page_number: u32,
+    width_pixels: Option<u16>,
+    height_pixels: Option<u16>,
+    confidence_bps: u16,
+    issues: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ClientOcrDocument {
+    method: String,
+    text: String,
+    confidence_bps: u16,
+    issues: Vec<String>,
+    regions: Vec<document_extract::ExtractedRegion>,
+    page_count: u32,
+    pages: Vec<ClientOcrPage>,
+}
+
+fn client_ocr_issue(value: &str) -> Option<&'static str> {
+    match value {
+        "LOW_OCR_CONFIDENCE" => Some("LOW_OCR_CONFIDENCE"),
+        "NO_TEXT" => Some("NO_TEXT"),
+        "PARTIAL_NO_TEXT" => Some("PARTIAL_NO_TEXT"),
+        _ => None,
+    }
+}
+
+fn validate_client_ocr_document(
+    input: ClientOcrDocument,
+) -> Result<document_extract::ExtractedDocument, String> {
+    const MAX_TEXT_BYTES: usize = 1024 * 1024;
+    const MAX_REGIONS: usize = 10_000;
+    if input.method != "OCR"
+        || input.text.is_empty()
+        || input.text.len() > MAX_TEXT_BYTES
+        || input.page_count == 0
+        || input.page_count > 32
+        || input.pages.len() != usize::try_from(input.page_count).unwrap_or(0)
+        || input.regions.len() > MAX_REGIONS
+    {
+        return Err("PP-OCRv5 capture result is invalid".to_owned());
+    }
+    let issues = input
+        .issues
+        .iter()
+        .map(|issue| {
+            client_ocr_issue(issue).ok_or_else(|| "PP-OCRv5 capture issue is invalid".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut pages = Vec::with_capacity(input.pages.len());
+    for (index, page) in input.pages.into_iter().enumerate() {
+        let expected_page =
+            u32::try_from(index + 1).map_err(|_| "PP-OCRv5 capture page is invalid")?;
+        let (Some(width), Some(height)) = (page.width_pixels, page.height_pixels) else {
+            return Err("PP-OCRv5 capture page dimensions are invalid".to_owned());
+        };
+        if page.page_number != expected_page
+            || width == 0
+            || height == 0
+            || width > 1_600
+            || height > 1_600
+        {
+            return Err("PP-OCRv5 capture page is invalid".to_owned());
+        }
+        let page_issues = page
+            .issues
+            .iter()
+            .map(|issue| {
+                client_ocr_issue(issue)
+                    .ok_or_else(|| "PP-OCRv5 capture page issue is invalid".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        pages.push(document_extract::ExtractedPage {
+            page_number: page.page_number,
+            width_pixels: Some(width),
+            height_pixels: Some(height),
+            confidence_bps: page.confidence_bps,
+            issues: page_issues,
+        });
+    }
+    let mut region_text_bytes = 0usize;
+    for region in &input.regions {
+        let page = pages
+            .get(usize::try_from(region.page_number.saturating_sub(1)).unwrap_or(usize::MAX))
+            .ok_or_else(|| "PP-OCRv5 capture region page is invalid".to_owned())?;
+        let Some(bounds) = &region.bounding_box else {
+            return Err("PP-OCRv5 capture region bounds are invalid".to_owned());
+        };
+        region_text_bytes = region_text_bytes
+            .checked_add(region.text.len())
+            .ok_or_else(|| "PP-OCRv5 capture text is too large".to_owned())?;
+        if region.coordinate_space != "PIXELS"
+            || region.provenance != "PADDLEOCR_V5_LINE"
+            || region.text.is_empty()
+            || region_text_bytes > MAX_TEXT_BYTES
+            || bounds.width == 0
+            || bounds.height == 0
+            || bounds
+                .left
+                .checked_add(bounds.width)
+                .is_none_or(|right| right > u32::from(page.width_pixels.unwrap_or(0)))
+            || bounds
+                .top
+                .checked_add(bounds.height)
+                .is_none_or(|bottom| bottom > u32::from(page.height_pixels.unwrap_or(0)))
+        {
+            return Err("PP-OCRv5 capture region is invalid".to_owned());
+        }
+    }
+    Ok(document_extract::ExtractedDocument {
+        method: "OCR",
+        text: input.text,
+        confidence_bps: input.confidence_bps,
+        issues,
+        regions: input.regions,
+        page_count: input.page_count,
+        pages,
+    })
+}
+
+#[tauri::command]
+fn mobile_capture_ocr_store(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    artifact_id: String,
+    document: ClientOcrDocument,
+) -> Result<mobile_capture_inbox::MobileCaptureOcrDto, String> {
+    if let Some((extraction_id, document)) = mobile_capture_result(&state, |connection| {
+        mobile_capture_inbox::latest_extraction(connection, &household_id, &artifact_id)
+    })? {
+        let item = mobile_capture_result(&state, |connection| {
+            mobile_capture_inbox::get(connection, &household_id, &artifact_id)
+        })?;
+        return Ok(mobile_capture_inbox::MobileCaptureOcrDto {
+            item,
+            extraction_id,
+            document,
+        });
+    }
+    let document = validate_client_ocr_document(document)?;
     let (extraction_id, item) = mobile_capture_result(&state, |connection| {
         mobile_capture_inbox::record_extraction(connection, &household_id, &artifact_id, &document)
     })?;
@@ -4671,6 +4839,7 @@ pub fn run() {
             mobile_capture_local_ingest,
             mobile_capture_image_preview,
             mobile_capture_ocr,
+            mobile_capture_ocr_store,
             mobile_capture_mark_ocr_review_required,
             mobile_capture_discard,
             mobile_capture_promote,
@@ -4858,6 +5027,7 @@ pub fn run() {
             document_extract,
             document_extract_attempt,
             document_ocr,
+            document_pdf_render_attempt,
             document_pdf_ocr_attempt
         ])
         .run(tauri::generate_context!())

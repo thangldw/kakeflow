@@ -1,6 +1,18 @@
 /* KakeFlow v2 handoff finishing layer. Loaded after the legacy stylesheet so
    the production UI can migrate without disturbing accounting workflows. */
 
+.brand .brand-mark {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: block;
+  object-fit: contain;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  transform: none;
+}
+
 html { color-scheme: light; }
 html[data-theme='dark'] { color-scheme: dark; }
 body { font-family: var(--font-ui); font-size: 12px; }
@@ -16,10 +28,15 @@ button { transition: background-color 120ms ease, border-color 120ms ease, color
 .card-detail-head b.candidate { color: var(--info); background: var(--info-bg); }
 .card-detail-head b.underpaid { color: var(--warn); background: var(--warn-bg); }
 .card-detail-head b.manual { color: var(--primary); background: var(--navsel); }
+.card-statement-identity { display: grid; gap: 3px; padding-bottom: 9px; border-bottom: 1px solid var(--hairline); }
+.card-statement-identity > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; }
+.card-statement-identity h2 { margin: 0; color: var(--text); font-size: 13px; line-height: 1.35; }
+.card-statement-identity code { color: var(--text2); font: 500 9.5px/1.35 var(--font-mono); }
+.card-statement-identity p { margin: 0; color: var(--text2); font-size: 9.5px; line-height: 1.45; }
 
 .topbar { flex-basis: 58px; height: 58px; min-height: 58px; }
 .main-shell > main { width: 100%; margin: 0; }
-.workspace-content { max-width: 1480px; }
+.workspace-content { min-width: 0; max-width: 1480px; }
 .page-header h1 { font-size: 15.5px; letter-spacing: 0; }
 .page-header p { color: var(--text2); font-size: 11px; }
 .panel { box-shadow: none; }
