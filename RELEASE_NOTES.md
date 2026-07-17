@@ -1,62 +1,36 @@
-# KakeFlow v1.0.0
+# KakeFlow 1.0.0 release notes
 
-KakeFlow v1.0.0 is the complete first stable release of the local-first
-household finance desktop workspace. It ships the complete KakeFlow v2 desktop
-handoff, local PP-OCRv5 document intake, duplicate review, stronger statement
-import and card reconciliation, recurring-series coordination, source-backed
-exports, and investment evidence without weakening the explicit review boundary.
+KakeFlow 1.0.0 is the first stable release of the local-first household finance desktop workspace. It combines an auditable double-entry ledger, review-first document intake, card reconciliation, household reporting, investment evidence, and explicit family delivery in one desktop application.
 
 ## Highlights
 
-- The production shell and all primary workspaces now use the KakeFlow v2
-  design, with compact navigation, responsive workspace sizing, accessible
-  popovers, semantic card identity, dashboard templates, and the new app icon.
-- CSV, statement PDF, scanned PDF, and receipt-image intake converge on the
-  review-first Import Inbox. Original provider fields, immutable evidence, and
-  explicit destination account/card mapping remain visible before posting.
-- Image and rendered-PDF OCR runs locally with checksum-pinned PaddleOCR
-  PP-OCRv5 models and ONNX Runtime assets. Tesseract remains packaged only as a
-  compatibility fallback during the migration window.
-- Exact and probable duplicates require an explicit link/keep/exclude decision;
-  the bulk approval checkbox selects only valid, fully resolved candidates.
-- Card reconciliation shows the card name and masked number on every statement,
-  supports explicit bank mapping, due-date correction and unlinking, and shows
-  projected settlement coverage without initiating a payment.
-- Import Inbox can suggest persisted classification rules, revalidate stale
-  suggestions, and apply them only after an explicit user action.
-- Recurring-series review is restart-safe, supports ignore and restore, and can
-  carry the complete confirmed/ignored preference set through schema-v5 change
-  packages and explicit family delivery.
-- Transaction Ledger PDF reuses the exact validated transaction scope shared by
-  CSV/XLSX; all five released PDF report families pass page-by-page visual QA.
-- Confirmed card-payment links can be corrected with auditable reconciliation
-  updates instead of destructive re-import.
-- Portfolio Snapshot CSV preserves the exact selected snapshot, while annual
-  Investment Performance CSV keeps FIFO allocations, exceptions, lineage, and
-  each native currency separate.
-- Strict Resona Web入出金明細PLUS and Mizuho Business Web adapters validate their
-  official record families, require explicit bank-account mapping, preserve
-  physical source rows, and fail closed on ambiguous corrections.
+- A complete KakeFlow v2 desktop interface with responsive workspaces, accessible controls, configurable dashboard layouts, and updated application identity.
+- One Import Inbox for CSV, statement PDF, scanned PDF, receipt image, watched-folder, Drive, and Gmail sources.
+- Local PP-OCRv5 processing for images and rendered PDF pages, with immutable original evidence and page-level outcomes.
+- Explicit exact/probable duplicate decisions and classification-rule suggestions before posting.
+- Card reconciliation with source-backed statement identity, settlement-bank mapping, due-date correction, coverage projection, and auditable link changes.
+- Source-backed CSV, XLSX, and PDF exports that reuse the selected screen scope instead of running a second query.
+- Portfolio snapshots and annual FIFO investment performance with native currencies, exceptions, and source lineage kept explicit.
+- Restart-safe recurring-series preferences and recipient-encrypted family artifacts that still require review and atomic apply.
+- Strict Japanese financial-source adapters that reject ambiguous or unsupported records instead of repairing them silently.
 
-## Distribution boundary
+## Safety boundaries
 
-- Candidate artifact: `KakeFlow_1.0.0_aarch64.dmg` for macOS Apple Silicon;
-  it is not public until the release commit and tag gates are complete.
-- Signing: ad-hoc signed. Not Apple-notarized.
-- Windows: source-build target only; no Windows installer is published because
-  native x64 OCR and installer evidence is not yet complete.
-- Automatic updates: disabled and unconfigured by design.
-- Gmail and Google Drive: limited to locally configured test users pending
-  Google provider qualification and packaged real-account validation.
-- No ingestion, classification, reconciliation, or family-delivery path
-  automatically posts or applies data.
+- No import, OCR, connector, classification, reconciliation, or family-delivery workflow posts or applies data automatically.
+- Missing account mappings, unsupported source semantics, ambiguous corrections, and unresolved duplicates block approval.
+- KakeFlow does not initiate bank transfers or card payments.
+- Cross-currency totals are not created without source-backed conversion data.
+- Gmail and Google Drive remain test-user integrations pending provider qualification.
+- Automatic updates are disabled.
 
-## macOS artifact
+## Distribution
 
-- File: `KakeFlow_1.0.0_aarch64.dmg`
-- Size: `70,610,621` bytes
-- SHA-256: `f15a59c2a5dd7832729cab2c41542443bc2bf1fe3fe9ae678dfc774d3eede18c`
+The verified release artifact is `KakeFlow_1.0.0_aarch64.dmg` for macOS Apple Silicon.
 
-This artifact is the locally verified release candidate. Publish it only after
-the release source is committed, the `v1.0.0` tag points to that exact commit,
-and the artifact has been rebuilt or reproduced from the clean tagged tree.
+- Size: `70,610,649` bytes
+- SHA-256: `cc553b8f15a5f8ae29cc66d7dcbd0e648aa3bebf65bc0a6c59f78fb1e563a6e8`
+- Signing: ad-hoc
+- Notarization: none
+- Windows: no public binary in this release
+
+Publish or mirror the artifact only when its checksum matches and the `v1.0.0` tag identifies the reviewed source. See [Manual GitHub release](docs/MANUAL_GITHUB_RELEASE.md) and [V1 release readiness](docs/V1_RELEASE_READINESS.md).

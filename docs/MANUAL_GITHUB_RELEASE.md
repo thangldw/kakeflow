@@ -54,8 +54,10 @@ cleaning the worktree; do not commit financial test data, credentials, generated
 binaries, or release evidence to the repository.
 
 The update-channel check must report `DISABLED_UNCONFIGURED`. GitHub Releases
-are the only supported distribution channel and users update manually; a normal
-GitHub Release and source archives are not automatic-updater evidence.
+in the public binary-only repository `thangldw/kakeflow-releases` are the only
+supported distribution channel and users update manually. Application source
+remains in the private `thangldw/kakeflow` repository; a normal GitHub Release
+and source archives are not automatic-updater evidence.
 
 For a Windows x64 release candidate, run these additional gates on native
 Windows rather than on the macOS release host:
@@ -84,20 +86,27 @@ GitHub release and must remain visible in the release notes.
 
 ## Publish
 
-1. Commit and push the release version.
-2. Create an annotated `vVERSION` tag and push it. If a withdrawn legacy tag
-   uses the same version, remove that local/remote tag only after the new
+1. Commit and push the release version to the private source repository.
+2. Create an annotated `vVERSION` source tag and push it. If a withdrawn legacy
+   tag uses the same version, remove that local/remote tag only after the new
    release commit is verified, then recreate it at the verified commit.
-3. Confirm the remote tag peels to the intended release commit.
-4. Create a non-draft, non-prerelease GitHub Release from that existing tag and upload only artifacts produced by the gates above.
-5. Include the SHA-256, supported architecture, signing/notarization status, and any intentionally missing platform artifact in the release notes.
-6. Read the release back with `gh release view` and confirm every asset reports `uploaded`.
+3. Confirm the private remote tag peels to the intended release commit.
+4. In the public `thangldw/kakeflow-releases` repository, commit only release
+   notes and checksums, create the matching annotated tag, and push it.
+5. Create a non-draft, non-prerelease GitHub Release in the public repository
+   from that existing metadata tag and upload only verified artifacts.
+6. Include the SHA-256, supported architecture, signing/notarization status, and
+   any intentionally missing platform artifact in the release notes.
+7. Read the public release back, confirm every asset reports `uploaded`, and
+   verify its direct download without GitHub authentication.
 
 Example:
 
 ```bash
 gh release create vVERSION \
   src-tauri/target/release/bundle/dmg/KakeFlow_VERSION_aarch64.dmg \
+  SHA256SUMS.txt \
+  --repo thangldw/kakeflow-releases \
   --verify-tag \
   --title "KakeFlow vVERSION" \
   --notes-file RELEASE_NOTES.md
