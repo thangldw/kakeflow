@@ -130,6 +130,8 @@ export interface WalletEventCandidate {
 export interface CardTransactionCandidate {
   kind: 'card-transaction'
   lineage: SourceLineage
+  /** Exact named columns captured from the immutable statement row. */
+  sourceFields?: Readonly<Record<string, string>>
   usageDate: string | null
   merchant: string
   userName: string

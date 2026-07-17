@@ -180,7 +180,9 @@ function CaptureImageDialog({ preview, busy, onClose, onProcess, onDiscard }: { 
   return <div className="capture-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }} onKeyDown={handleKeyDown}>
     <section className="capture-dialog" role="dialog" aria-modal="true" aria-labelledby="capture-dialog-title">
       <div className="capture-dialog-head"><div><p>受信した原本</p><h2 id="capture-dialog-title" ref={heading} tabIndex={-1}>{preview.image.filename}</h2></div><button className="icon-btn" aria-label="原本画像を閉じる" disabled={busy} onClick={onClose}><X size={18} /></button></div>
-      {preview.image.mediaType === 'application/pdf' ? <object className="capture-pdf-preview" data={preview.image.dataUrl} type="application/pdf" aria-label={`${preview.image.filename}のPDFプレビュー`}><p>PDFプレビューを表示できません。</p></object> : <img src={preview.image.dataUrl} alt={`${preview.item.senderMemberName ?? '家族メンバー'}さんが${dateTime(preview.item.capturedAt)}に撮影したレシート`} />}
+      <div className="capture-dialog-media">
+        {preview.image.mediaType === 'application/pdf' ? <object className="capture-pdf-preview" data={preview.image.dataUrl} type="application/pdf" aria-label={`${preview.image.filename}のPDFプレビュー`}><p>PDFプレビューを表示できません。</p></object> : <img src={preview.image.dataUrl} alt={`${preview.item.senderMemberName ?? '家族メンバー'}さんが${dateTime(preview.item.capturedAt)}に撮影したレシート`} />}
+      </div>
       <p className="capture-dialog-boundary">この画像をOCRしても台帳には反映されません。結果はImport Inboxの確認待ちに追加され、承認または既存取引への証憑紐付けが必要です。</p>
       <div className="capture-dialog-actions"><button className="text-btn capture-discard" disabled={busy} onClick={onDiscard}>破棄</button><button className="secondary-btn" disabled={busy} onClick={onClose}>閉じる</button><button className="primary-btn" disabled={busy} onClick={onProcess}><ScanLine size={16} />{busy ? '処理中…' : preview.item.state === 'OCR_READY' ? 'インポートへ昇格' : 'この画像をOCR'}</button></div>
     </section>

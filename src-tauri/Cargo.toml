@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "1.1.0"
+version = "1.0.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "MIT"
@@ -36,6 +36,7 @@ hkdf = "0.12"
 x25519-dalek = { version = "2.0", features = ["static_secrets", "zeroize"] }
 argon2 = { version = "0.5", features = ["zeroize"] }
 pdf-extract = "0.12"
+encoding_rs = "0.8"
 notify = "8.2.0"
 hayro = "0.7.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }

@@ -1,5 +1,21 @@
 # KakeFlow v2 — Design QA
 
+## 2026-07-17 focused correction pass
+
+- Scope: visible card identity, workspace horizontal clipping around a 1280px desktop window, and hidden native topbar controls entering the keyboard focus order.
+- Reference: `design_handoff_kakeflow_v2/screenshots/06-credit-cards.png`.
+- Implementation state: browser preview, light theme, July 2026, 1280 × 720 CSS pixels at DPR 2.
+- Card identity: every reconciliation card exposes a visible semantic heading plus masked identifier and statement period. The decorative card surface removed by the v2 handoff is no longer the only source of identity.
+- Responsive result: `main.clientWidth === main.scrollWidth === 1048`; `.workspace-content` measured 1004px wide with its right edge at 1258px inside the 1280px viewport.
+- Keyboard result: the native month/account/family fallback controls are `hidden`, `aria-hidden="true"`, and have no visible element with `tabIndex >= 0`. The visible popover and period controls remain operable.
+- Runtime result: both Rakuten Card / `•••• 8106` and PayPayカード / `•••• 2841` were visible; the Browser console contained only Vite/React development messages and no application error or warning.
+
+Focused evidence:
+
+- `tmp/design-qa-2026-07-17/01-home-responsive-fixed.png`
+- `tmp/design-qa-2026-07-17/03-card-reconciliation-fixed.png`
+- `tmp/design-qa-2026-07-17/card-comparison.png` — handoff and implementation in the same comparison frame.
+
 ## Visual truth
 
 - Source of truth: `design_handoff_kakeflow_v2/README.md`, `IA_MAPPING.md`, `P1_SPECS.md`, `VISUAL_QA.md` and all 33 handoff screenshots.
@@ -62,11 +78,13 @@ Implementation captures:
 ## Regression checks
 
 - `npm run lint`: passed.
-- `npm run build`: passed. Functional/vendor chunking reduced the main production chunk from about 1.07 MB to 312.63 kB; no chunk exceeds Vite's 500 kB warning threshold.
-- `npm test -- --run`: 104 files / 705 tests passed without React `act(...)` warnings.
+- `npm run build`: passed. Vite still reports the known large offline OCR/ONNX resource chunks; this pass did not add to those assets.
+- `npm test`: 106 files / 721 tests passed.
+- Focused application tests: 2 files / 117 tests passed.
+- Packaged macOS smoke: passed (11 visible pages, 12 interactions, IPC, schema v68); the rebuilt ad-hoc-signed app passed `codesign --verify --deep --strict` and launched from `/Applications/KakeFlow.app`.
 - `git diff --check`: passed.
 - Rust: `cargo fmt --all -- --check` passed; clippy passed with `-D warnings`; 610 library tests and 30 native integration tests passed, including migrations 0066–0068 and schema-v3 compatibility.
-- PDF release QA: all five v1.1.0 fixture families rendered to 19 PNG pages; every page was inspected and the review checklist was signed `PASS` on 2026-07-17.
+- PDF release QA: all five v1.0.0 fixture families rendered to 19 PNG pages; every page was inspected and the review checklist was signed `PASS` on 2026-07-17.
 
 Feature coverage and the bidirectional design/implementation inventory are tracked in `docs/UI_UX_GAP_ANALYSIS.md` and `design_handoff_kakeflow_v2/UI_UX_GAP_ANALYSIS.md`.
 

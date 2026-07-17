@@ -10,6 +10,19 @@ export type ProtectedPdfExtractionAttempt =
 export type ProtectedPdfOcrAttempt =
   | { readonly status: 'SUCCESS'; readonly document: ExtractedDocumentDto }
   | { readonly status: Exclude<PdfOcrStatus, 'SUCCESS'>; readonly document: null }
+export interface PdfRenderedPageDto {
+  readonly pageNumber: number
+  readonly pageCount: number
+  readonly pageWidthPoints: number
+  readonly pageHeightPoints: number
+  readonly widthPixels: number
+  readonly heightPixels: number
+  readonly mediaType: 'image/png'
+  readonly dataUrl: string
+}
+export type ProtectedPdfRenderAttempt =
+  | { readonly status: 'SUCCESS'; readonly pages: readonly PdfRenderedPageDto[] }
+  | { readonly status: 'PASSWORD_REQUIRED' | 'PASSWORD_INVALID' | 'PASSWORD_UNSUPPORTED' | 'LIMIT_EXCEEDED' | 'FAILED'; readonly pages: null }
 
 export type ProtectedPdfInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
@@ -21,7 +34,37 @@ export function createProtectedPdfPlatform(invoke: ProtectedPdfInvoke = tauriInv
     ocr: async (fileBytes: Uint8Array, password?: string): Promise<ProtectedPdfOcrAttempt> => parseOcrAttempt(await invoke('document_pdf_ocr_attempt', {
       fileBytes: Array.from(fileBytes), mediaType: 'application/pdf', password: password ?? null,
     })),
+    renderForOcr: async (fileBytes: Uint8Array, password?: string): Promise<ProtectedPdfRenderAttempt> => parseRenderAttempt(await invoke('document_pdf_render_attempt', {
+      fileBytes: Array.from(fileBytes), mediaType: 'application/pdf', password: password ?? null,
+    })),
   }
+}
+
+function parseRenderAttempt(value: unknown): ProtectedPdfRenderAttempt {
+  const item = requiredObject(value, 'protected PDF render attempt')
+  const failureStatuses = ['PASSWORD_REQUIRED', 'PASSWORD_INVALID', 'PASSWORD_UNSUPPORTED', 'LIMIT_EXCEEDED', 'FAILED'] as const
+  if (failureStatuses.includes(item.status as typeof failureStatuses[number])) {
+    if (item.pages !== null) throw new TypeError('protected PDF render attempt')
+    return { status: item.status as typeof failureStatuses[number], pages: null }
+  }
+  if (item.status !== 'SUCCESS' || !Array.isArray(item.pages) || item.pages.length === 0 || item.pages.length > 32) throw new TypeError('protected PDF render attempt')
+  const rawPages = item.pages
+  let encodedBytes = 0
+  const pages = rawPages.map((value, index): PdfRenderedPageDto => {
+    const page = requiredObject(value, 'rendered PDF page')
+    const pageNumber = boundedInteger(page.pageNumber, 32, 'page number')
+    const pageCount = boundedInteger(page.pageCount, 32, 'page count')
+    const widthPixels = boundedInteger(page.widthPixels, 1_600, 'page width')
+    const heightPixels = boundedInteger(page.heightPixels, 1_600, 'page height')
+    if (pageNumber !== index + 1 || pageCount !== rawPages.length || widthPixels === 0 || heightPixels === 0) throw new TypeError('rendered PDF page')
+    if (typeof page.pageWidthPoints !== 'number' || !Number.isFinite(page.pageWidthPoints) || page.pageWidthPoints <= 0
+      || typeof page.pageHeightPoints !== 'number' || !Number.isFinite(page.pageHeightPoints) || page.pageHeightPoints <= 0
+      || page.mediaType !== 'image/png' || typeof page.dataUrl !== 'string' || !page.dataUrl.startsWith('data:image/png;base64,')) throw new TypeError('rendered PDF page')
+    encodedBytes += page.dataUrl.length
+    if (page.dataUrl.length > 20_000_000 || encodedBytes > 150_000_000) throw new TypeError('rendered PDF pages')
+    return { pageNumber, pageCount, pageWidthPoints: page.pageWidthPoints, pageHeightPoints: page.pageHeightPoints, widthPixels, heightPixels, mediaType: 'image/png', dataUrl: page.dataUrl }
+  })
+  return { status: 'SUCCESS', pages }
 }
 
 function parseAttempt(value: unknown): ProtectedPdfExtractionAttempt {

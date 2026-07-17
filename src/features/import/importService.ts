@@ -34,6 +34,12 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 const MAX_BATCH_FILES = 20
 
+export function takeFileInputSelection(input: Pick<HTMLInputElement, 'files' | 'value'>): File[] {
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  return files
+}
+
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   if (!globalThis.crypto?.subtle) throw new Error('Secure file hashing is unavailable')
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes.slice().buffer)

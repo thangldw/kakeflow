@@ -64,7 +64,9 @@ describe('CaptureInboxPage', () => {
     render(<CaptureInboxPage householdId="household" items={[received]} loading={false} busyArtifactId={null} token="token" preview={{ item: received, image: { filename: 'receipt.png', mediaType: 'image/png', byteSize: 10, dataUrl: 'data:image/png;base64,AA==' } }} previewBusy={false} notice={null}
       onTokenChange={vi.fn()} onPreview={vi.fn()} onClosePreview={close} onRefresh={vi.fn()} onProcess={process} onOpenImport={vi.fn()} onRetry={vi.fn()} />)
     expect(screen.getByRole('dialog', { name: 'receipt.png' })).toBeInTheDocument()
-    expect(screen.getByRole('img')).toHaveAttribute('src', 'data:image/png;base64,AA==')
+    const image = screen.getByRole('img')
+    expect(image).toHaveAttribute('src', 'data:image/png;base64,AA==')
+    expect(image.parentElement).toHaveClass('capture-dialog-media')
     expect(screen.getByText(/OCRしても台帳には反映されません/)).toBeInTheDocument()
     const closeButton = screen.getByRole('button', { name: '原本画像を閉じる' })
     const processButton = screen.getByRole('button', { name: 'この画像をOCR' })

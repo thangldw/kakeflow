@@ -2,10 +2,10 @@
 
 ## Release acceptance scope
 
-KakeFlow v1.1.0 advertises five PDF exports: the source-backed Monthly Household
+KakeFlow v1.0.0 advertises five PDF exports: the source-backed Monthly Household
 Review, Annual Household Review, Investment Performance report, one explicit
 Portfolio Snapshot, and the exact scoped Transaction Ledger. Therefore the
-v1.1.0 PDF release gate requires exactly `monthly`, `annual`,
+v1.0.0 PDF release gate requires exactly `monthly`, `annual`,
 `investment-performance`, `portfolio-snapshot`, and `transaction-ledger`.
 
 Each PDF must be generated from the fixed synthetic household fixture used by
@@ -64,12 +64,12 @@ KAKEFLOW_TRANSACTION_LEDGER_PDF_FIXTURE="$PWD/tmp/pdfs/transaction-ledger.pdf" \
   --lib -- --exact
 ```
 
-Then render and validate the complete v1.1.0 set:
+Then render and validate the complete v1.0.0 set:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
   --require monthly,annual,investment-performance,portfolio-snapshot,transaction-ledger \
-  --output tmp/pdfs/v110-report-qa \
+  --output tmp/pdfs/v100-report-qa \
   monthly="$PWD/tmp/pdfs/monthly-review.pdf" \
   annual="$PWD/tmp/pdfs/annual-review.pdf" \
   investment-performance="$PWD/tmp/pdfs/investment-performance.pdf" \
@@ -82,12 +82,12 @@ The command requires Poppler's `pdfinfo` and `pdftoppm`. The Codex bundled PDF
 runtime provides both commands; local macOS environments can install Poppler
 with `brew install poppler`.
 
-The current v1.1.0 release command must state all five reports explicitly:
+The current v1.0.0 release command must state all five reports explicitly:
 
 ```sh
 node scripts/pdf-report-visual-qa.mjs \
   --require monthly,annual,investment-performance,portfolio-snapshot,transaction-ledger \
-  --output tmp/pdfs/v110-report-qa \
+  --output tmp/pdfs/v100-report-qa \
   monthly=/absolute/path/monthly-review.pdf \
   annual=/absolute/path/annual-review.pdf \
   investment-performance=/absolute/path/investment-performance.pdf \
@@ -96,7 +96,7 @@ node scripts/pdf-report-visual-qa.mjs \
 ```
 
 The names supplied to `--require` and the named PDF arguments must match
-exactly. A subset is useful for local diagnosis, but it is not complete v1.1.0
+exactly. A subset is useful for local diagnosis, but it is not complete v1.0.0
 release evidence.
 
 The workflow calls `pdfinfo -box` for structural evidence and renders every page
@@ -116,7 +116,7 @@ correct.
 All gates fail closed; failed runs remove their staging directory and never
 publish partial QA evidence.
 
-- The current required report set is present exactly once. For v1.1.0 that set
+- The current required report set is present exactly once. For v1.0.0 that set
   is exactly `monthly,annual,investment-performance,portfolio-snapshot,transaction-ledger`.
 - Every input is a regular, non-empty `%PDF-` file no larger than 32 MiB.
 - `pdfinfo` succeeds, reports PDF version, reports 1-40 pages, and reports a

@@ -6,6 +6,8 @@ import type { AccountDto, MobileCaptureBackgroundStatusDto, MobileCaptureImagePr
 import { CaptureInboxPage } from './CaptureInboxPage'
 import { downloadRemoteMobileCapture, listRemoteMobileCaptures, MobileCaptureHttpError } from './mobileCaptureHttp'
 import { showToast } from '../../toast'
+import { paddleOcrDocument, paddleOcrRenderedPdfPages } from '../import/paddleOcr'
+import { createProtectedPdfPlatform } from '../source-viewer/protectedPdfPlatform'
 
 interface Props {
   readonly householdId: string | null
@@ -16,6 +18,16 @@ interface Props {
 }
 
 type Notice = { readonly kind: 'status' | 'error'; readonly text: string } | null
+const protectedPdfPlatform = createProtectedPdfPlatform()
+
+function dataUrlBytes(dataUrl: string): Uint8Array {
+  const separator = dataUrl.indexOf(',')
+  if (separator < 0 || !dataUrl.slice(0, separator).endsWith(';base64')) throw new Error('capture source data URL')
+  const decoded = globalThis.atob(dataUrl.slice(separator + 1))
+  const bytes = new Uint8Array(decoded.length)
+  for (let index = 0; index < decoded.length; index += 1) bytes[index] = decoded.charCodeAt(index)
+  return bytes
+}
 
 function upsert(items: readonly MobileCaptureInboxItemDto[], next: MobileCaptureInboxItemDto): readonly MobileCaptureInboxItemDto[] {
   return [next, ...items.filter((item) => item.artifactId !== next.artifactId)]
@@ -162,9 +174,26 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
       return
     }
     const promoteOnly = item.state === 'OCR_READY'
-    setBusyArtifactId(item.artifactId); setOcrProgress((current) => ({ ...current, [item.artifactId]: promoteOnly ? 100 : 10 })); setNotice({ kind: 'status', text: promoteOnly ? 'OCR結果をImport Inboxの確認待ちへ昇格しています。' : 'この端末で原本をOCRしています。台帳にはまだ反映しません。' })
+    setBusyArtifactId(item.artifactId); setOcrProgress((current) => ({ ...current, [item.artifactId]: promoteOnly ? 100 : 10 })); setNotice({ kind: 'status', text: promoteOnly ? 'OCR結果をImport Inboxの確認待ちへ昇格しています。' : 'PP-OCRv5で原本を読み取っています。台帳にはまだ反映しません。' })
     try {
-      const result = await platformClient.ocrMobileCapture(householdId, item.artifactId)
+      const result = promoteOnly
+        ? await platformClient.ocrMobileCapture(householdId, item.artifactId)
+        : await (async () => {
+            const source = preview?.item.artifactId === item.artifactId
+              ? preview.image
+              : await platformClient.getMobileCaptureImagePreview(householdId, item.artifactId)
+            const bytes = dataUrlBytes(source.dataUrl)
+            setOcrProgress((current) => ({ ...current, [item.artifactId]: 35 }))
+            let document
+            if (item.mediaType === 'application/pdf') {
+              const rendered = await protectedPdfPlatform.renderForOcr(bytes)
+              if (rendered.status !== 'SUCCESS') throw new Error(`capture PDF render: ${rendered.status}`)
+              document = await paddleOcrRenderedPdfPages(rendered.pages)
+            } else {
+              document = await paddleOcrDocument(bytes, item.mediaType)
+            }
+            return platformClient.storeMobileCaptureOcr(householdId, item.artifactId, document)
+          })()
       setOcrProgress((current) => ({ ...current, [item.artifactId]: 75 }))
       setOcrConfidence((current) => ({ ...current, [item.artifactId]: result.document.confidenceBps }))
       setItems((current) => upsert(current, result.item))

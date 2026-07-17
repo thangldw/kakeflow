@@ -29,6 +29,19 @@ describe('protected PDF platform', () => {
     expect(result).toEqual({ status: 'SUCCESS', document: ocrDocument })
   })
 
+  it('accepts bounded rendered pages for PP-OCRv5 and keeps the password ephemeral', async () => {
+    const pages = [{ pageNumber: 1, pageCount: 1, pageWidthPoints: 612, pageHeightPoints: 792, widthPixels: 1224, heightPixels: 1584, mediaType: 'image/png', dataUrl: 'data:image/png;base64,AA==' }]
+    const invoke = vi.fn().mockResolvedValue({ status: 'SUCCESS', pages })
+
+    await expect(createProtectedPdfPlatform(invoke).renderForOcr(new Uint8Array([37, 80, 68, 70]), 'one-time')).resolves.toEqual({ status: 'SUCCESS', pages })
+    expect(invoke).toHaveBeenCalledWith('document_pdf_render_attempt', { fileBytes: [37, 80, 68, 70], mediaType: 'application/pdf', password: 'one-time' })
+  })
+
+  it('rejects malformed PP-OCRv5 page render attempts', async () => {
+    await expect(createProtectedPdfPlatform(vi.fn().mockResolvedValue({ status: 'SUCCESS', pages: [] })).renderForOcr(new Uint8Array([1]))).rejects.toThrow(TypeError)
+    await expect(createProtectedPdfPlatform(vi.fn().mockResolvedValue({ status: 'LIMIT_EXCEEDED', pages: null })).renderForOcr(new Uint8Array([1]))).resolves.toEqual({ status: 'LIMIT_EXCEEDED', pages: null })
+  })
+
   it.each([
     ['declared page count mismatch', { ...ocrDocument, pageCount: 2 }],
     ['empty pages', { ...ocrDocument, pageCount: 0, pages: [] }],

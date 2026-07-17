@@ -8,6 +8,29 @@ describe('receipt text normalization', () => {
     })
   })
 
+  it('pairs PP-OCRv5 labels and amounts detected as separate lines', () => {
+    expect(parseReceiptText([
+      'Receipt Letter',
+      '2015年11月22日',
+      '餃子/鍋',
+      '¥598',
+      '税金8.00%',
+      '¥218',
+      '合計',
+      '￥2,945',
+      '現金',
+      '￥3,000',
+      'お釣',
+      '￥55',
+    ].join('\n'))).toMatchObject({
+      occurredOn: '2015-11-22',
+      amountJpy: 2945,
+      taxes: [{ ratePercent: 8, taxAmountJpy: 218 }],
+      items: [{ description: '餃子/鍋', amountJpy: 598 }],
+      paymentMethod: '現金',
+    })
+  })
+
   it('refuses statement-like text instead of creating an aggregate expense', async () => {
     const extracted = { method: 'EMBEDDED_TEXT' as const, confidenceBps: 9000, issues: [], text: 'CARD\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000' }
     const result = await buildReceiptImport(extracted, {

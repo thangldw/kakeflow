@@ -121,7 +121,9 @@ describe('packaged OCR resource contract', () => {
     const root = path.resolve(import.meta.dirname, '..')
     const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
     expect(packageJson.scripts['ocr:stage:windows']).toContain('stage-ocr-resources-windows.ps1')
-    expect(packageJson.scripts['desktop:build:windows']).toBe('npm run ocr:verify && tauri build --bundles nsis')
+    expect(packageJson.scripts['desktop:build:windows']).toBe(
+      'npm run ocr:verify && npm run paddleocr:verify && tauri build --bundles nsis',
+    )
     const staging = readFileSync(path.join(root, 'scripts', 'stage-ocr-resources-windows.ps1'), 'utf8')
     expect(staging).toContain("$TesseractVersion = '5.5.2'")
     expect(staging).toContain("$Triplet = 'x64-windows-static-kakeflow'")

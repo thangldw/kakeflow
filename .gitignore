@@ -7,3 +7,5 @@ dist/
 release-artifacts/
 src-tauri/generated-resources/ocr/*
 !src-tauri/generated-resources/ocr/.gitkeep
+public/ocr/paddleocr/
+tmp/

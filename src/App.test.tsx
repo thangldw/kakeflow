@@ -10,9 +10,10 @@ async function renderApp() {
 
 describe('KakeFlow application shell', () => {
   it('renders the household overview with accounting KPIs', async () => {
-    await renderApp()
+    const { container } = await renderApp()
 
     expect(screen.getByRole('heading', { name: '田中家の家計' })).toBeInTheDocument()
+    expect(container.querySelector('.desktop-titlebar')).toBeInTheDocument()
     expect(screen.getByText('純資産')).toBeInTheDocument()
     expect(screen.getByText('¥51,240,000')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'カード支払い' })).toBeInTheDocument()
@@ -26,12 +27,13 @@ describe('KakeFlow application shell', () => {
 
   it('switches dashboard templates in browser preview without persisting them', async () => {
     await renderApp()
+    await screen.findByRole('heading', { name: '田中家の家計' })
 
     const cashFlowTemplate = screen.getByRole('button', { name: 'テンプレート: キャッシュフロー' })
-    expect(cashFlowTemplate).toBeEnabled()
+    await waitFor(() => expect(cashFlowTemplate).toBeEnabled())
     fireEvent.click(cashFlowTemplate)
 
-    expect(cashFlowTemplate).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(cashFlowTemplate).toHaveAttribute('aria-pressed', 'true'))
     expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CASH_FLOW')
     expect(screen.getByRole('heading', { name: '入出金の推移' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /資金移動を見る/ })).toBeInTheDocument()
@@ -86,9 +88,11 @@ describe('KakeFlow application shell', () => {
 
     expect(screen.getByRole('heading', { name: 'カード引落・支払余力' })).toBeInTheDocument()
     expect(screen.getByText(/明示した銀行口座で今後のカード引落を支払えるか確認/)).toBeInTheDocument()
-    expect(screen.getByText('Rakuten Card')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Rakuten Card' })).toBeVisible()
+    expect(screen.getByText('•••• 8106')).toBeVisible()
     expect(screen.getAllByText('¥204,987').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('PayPayカード')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'PayPayカード' })).toBeVisible()
+    expect(screen.getByText('•••• 2841')).toBeVisible()
   })
 
   it('shows the complete 20 million yen investment allocation in browser preview', async () => {

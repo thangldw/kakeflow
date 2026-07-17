@@ -985,6 +985,7 @@ export type AppCommand =
   | 'mobile_capture_local_ingest'
   | 'mobile_capture_image_preview'
   | 'mobile_capture_ocr'
+  | 'mobile_capture_ocr_store'
   | 'mobile_capture_mark_ocr_review_required'
   | 'mobile_capture_discard'
   | 'mobile_capture_promote'
@@ -1150,6 +1151,7 @@ export interface PlatformClient {
   ingestLocalCapture(input: LocalCaptureIngestInputDto): Promise<MobileCaptureInboxItemDto>
   getMobileCaptureImagePreview(householdId: string, artifactId: string): Promise<MobileCaptureImagePreviewDto>
   ocrMobileCapture(householdId: string, artifactId: string): Promise<MobileCaptureOcrResultDto>
+  storeMobileCaptureOcr(householdId: string, artifactId: string, document: ExtractedDocumentDto): Promise<MobileCaptureOcrResultDto>
   markMobileCaptureOcrReviewRequired(householdId: string, artifactId: string): Promise<MobileCaptureInboxItemDto>
   discardMobileCapture(householdId: string, artifactId: string): Promise<void>
   promoteMobileCapture(input: MobileCapturePromoteInputDto): Promise<MobileCapturePromoteResultDto>

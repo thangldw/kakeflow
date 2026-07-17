@@ -33,13 +33,16 @@ describe('mobile capture platform client', () => {
 
   it('parses OCR and promotion without treating either as a posted transaction', async () => {
     const promoted = { ...item, state: 'PROMOTED', latestExtractionId: 'extract-1', localRunId: 'run-1', localDocumentId: 'document-1' }
+    const document = { method: 'OCR' as const, text: '合計 100円', confidenceBps: 9000, issues: [], regions: [], pageCount: 1, pages: [{ pageNumber: 1, widthPixels: 100, heightPixels: 100, confidenceBps: 9000, issues: [] }] }
     const invoke = vi.fn()
-      .mockResolvedValueOnce({ item: { ...item, state: 'OCR_READY', latestExtractionId: 'extract-1' }, extractionId: 'extract-1', document: { method: 'OCR', text: '合計 100円', confidenceBps: 9000, issues: [] } })
+      .mockResolvedValueOnce({ item: { ...item, state: 'OCR_READY', latestExtractionId: 'extract-1' }, extractionId: 'extract-1', document })
+      .mockResolvedValueOnce({ item: { ...item, state: 'OCR_READY', latestExtractionId: 'extract-1' }, extractionId: 'extract-1', document })
       .mockResolvedValueOnce({ item: promoted, runId: 'run-1', documentId: 'document-1', reusedExisting: false })
     const client = createPlatformClient({ tauri: true, invoke })
     await expect(client.ocrMobileCapture('family', 'artifact-1')).resolves.toMatchObject({ extractionId: 'extract-1', item: { state: 'OCR_READY' } })
+    await expect(client.storeMobileCaptureOcr('family', 'artifact-1', document)).resolves.toMatchObject({ extractionId: 'extract-1', item: { state: 'OCR_READY' } })
     await expect(client.promoteMobileCapture({ householdId: 'family', artifactId: 'artifact-1', extractionId: 'extract-1', import: {} as never })).resolves.toMatchObject({ item: { state: 'PROMOTED' }, reusedExisting: false })
-    expect(invoke.mock.calls.map(([command]) => command)).toEqual(['mobile_capture_ocr', 'mobile_capture_promote'])
+    expect(invoke.mock.calls.map(([command]) => command)).toEqual(['mobile_capture_ocr', 'mobile_capture_ocr_store', 'mobile_capture_promote'])
   })
 
   it('uses strict native contracts for explicit background intake controls', async () => {

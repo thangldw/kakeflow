@@ -77,34 +77,47 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   const eraMatches = Array.from(normalizedText.matchAll(/(令和|平成)\s*(元|\d{1,2})年\s*(\d{1,2})月\s*(\d{1,2})日/g))
   const eraDate = eraMatches[0] ? isoDate(String((eraMatches[0][1] === '令和' ? 2018 : 1988) + (eraMatches[0][2] === '元' ? 1 : Number(eraMatches[0][2]))), eraMatches[0][3], eraMatches[0][4]) : null
   const occurredOn = dateMatches[0] ? isoDate(dateMatches[0][1], dateMatches[0][2], dateMatches[0][3]) : eraDate
-  const totalLines = lineTexts.filter((line) => /(?:合計|お買上|ご請求|お支払額|GRAND\s*TOTAL|TOTAL)/i.test(line))
-  const amounts = totalLines.flatMap((line) => Array.from(line.matchAll(/(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)/g), (match) => Number(match[1].replaceAll(',', '')))).filter((amount) => Number.isSafeInteger(amount) && amount > 0)
-  const amountJpy = amounts.length > 0 ? Math.max(...amounts) : null
-  const merchant = lineTexts.find((line) => !/(?:レシート|RECEIPT|合計|TOTAL)/i.test(line) && !/(20\d{2})[/.年-]/.test(line)) ?? null
-  const provenance = (lineNumber: number): ReceiptEvidenceProvenance => ({ lineNumber, regionIndexes: [], method: 'TEXT_PATTERN' })
   const parseLineAmount = (line: string): number | null => {
-    const matches = Array.from(line.matchAll(/[-−]?\s*(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?/g))
+    const matches = Array.from(line.matchAll(/[-−]?\s*(?:¥|￥)?\s*([0-9]{1,3}(?:[,.][0-9]{3})+|[0-9]+)(?:円)?/g))
     if (matches.length === 0) return null
     const last = matches[matches.length - 1]
-    const amount = Number(last[1].replaceAll(',', ''))
+    const amount = Number(last[1].replace(/[,.]/g, ''))
     return Number.isSafeInteger(amount) ? amount : null
   }
-  const taxes: ReceiptTaxEvidence[] = lines.flatMap(({ text: line, lineNumber }) => {
-    const rate = line.match(/(?:税|対象|税率)?\s*(8|10)\s*%|(?:8|10)\s*%(?:対象|税)/)
+  const amountAtOrAfter = (lineIndex: number): number | null => {
+    const withoutTaxRate = lineTexts[lineIndex].replace(/(?:8|10)(?:\.0+)?\s*%/g, '')
+    const inline = parseLineAmount(withoutTaxRate)
+    if (inline !== null) return inline
+    const next = lineTexts[lineIndex + 1]
+    return next && /^[-−]?\s*(?:¥|￥)?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(next) ? parseLineAmount(next) : null
+  }
+  const totalLineIndexes = lineTexts.flatMap((line, index) => /(?:合計|ご請求|お支払額|GRAND\s*TOTAL|TOTAL)/i.test(line) ? [index] : [])
+  const totalLines = totalLineIndexes.map((index) => lineTexts[index])
+  const amounts = totalLineIndexes.flatMap((index) => {
+    const amount = amountAtOrAfter(index)
+    return amount !== null && amount > 0 ? [amount] : []
+  })
+  const amountJpy = amounts.length > 0 ? Math.max(...amounts) : null
+  const firstDateLine = lineTexts.findIndex((line) => /(?:20\d{2})[/.年-]|(?:令和|平成)\s*(?:元|\d{1,2})年/.test(line))
+  const merchantHeader = firstDateLine >= 0 ? lineTexts.slice(0, firstDateLine) : lineTexts.slice(0, 6)
+  const merchant = merchantHeader.find((line) => !/(?:レシ[ー\s-]*ト|RECEIPT|領収証?|登録番号|合計|TOTAL|TEL|電話)/i.test(line) && !/(20\d{2})[/.年-]/.test(line) && line.length >= 3) ?? null
+  const provenance = (lineNumber: number): ReceiptEvidenceProvenance => ({ lineNumber, regionIndexes: [], method: 'TEXT_PATTERN' })
+  const taxes: ReceiptTaxEvidence[] = lines.flatMap(({ text: line, lineNumber }, lineIndex) => {
+    const rate = line.match(/(?:税|対象|税率)?\s*(8|10)(?:\.0+)?\s*%|(?:8|10)(?:\.0+)?\s*%(?:対象|税)/)
     if (!rate || !/(?:税|対象)/.test(line)) return []
     const ratePercent = Number(rate[1] ?? line.match(/(8|10)/)?.[1]) as 8 | 10
-    const amount = parseLineAmount(line)
+    const amount = amountAtOrAfter(lineIndex)
     return [{
       ratePercent,
-      taxAmountJpy: /(?:消費税|税額|内税|外税)/.test(line) ? amount : null,
+      taxAmountJpy: /(?:消費税|税額|税金)/.test(line) || (/(?:内税|外税)/.test(line) && !/(?:対象|課税)/.test(line)) ? amount : null,
       taxableAmountJpy: /(?:対象|課税)/.test(line) ? amount : null,
       confidenceBps: amount === null ? 6500 : 8500,
       provenance: provenance(lineNumber),
     }]
   })
-  const adjustmentEvidence = (pattern: RegExp): ReceiptAdjustmentEvidence[] => lines.flatMap(({ text: line, lineNumber }) => {
+  const adjustmentEvidence = (pattern: RegExp): ReceiptAdjustmentEvidence[] => lines.flatMap(({ text: line, lineNumber }, lineIndex) => {
     if (!pattern.test(line)) return []
-    const amountJpy = parseLineAmount(line)
+    const amountJpy = amountAtOrAfter(lineIndex)
     return [{ amountJpy, confidenceBps: amountJpy === null ? 5000 : 8500, provenance: provenance(lineNumber) }]
   })
   const adjustmentTotal = (evidence: readonly ReceiptAdjustmentEvidence[]) => {
@@ -119,9 +132,13 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   const pointsUsedJpy = adjustmentTotal(pointsUsedEvidence)
   const singleAdjustmentAmount = (pattern: RegExp) => adjustmentEvidence(pattern)[0]?.amountJpy ?? null
   const subtotalJpy = singleAdjustmentAmount(/(?:小計|税抜合計|SUBTOTAL)/i)
-  const changeJpy = singleAdjustmentAmount(/(?:お釣り|おつり|釣銭|CHANGE)/i)
-  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
-  const paymentMethod = paymentLine.match(/(PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金)/i)?.[1] ?? null
+  const changeJpy = singleAdjustmentAmount(/(?:お釣り?|おつり|釣銭|CHANGE)/i)
+  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|现金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
+  const paymentMethodPattern = /(PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金|现金)/i
+  const paymentMethodMatch = paymentLine.match(paymentMethodPattern)?.[1]
+    ?? lines.map(({ text: value }) => value.match(paymentMethodPattern)?.[1] ?? null).find((value) => value !== null)
+    ?? null
+  const paymentMethod = paymentMethodMatch === '现金' ? '現金' : paymentMethodMatch
   const hasIncludedTax = lines.some(({ text: value }) => /(?:内税|税込)/.test(value))
   const hasExcludedTax = lines.some(({ text: value }) => /(?:外税|税抜)/.test(value))
   const taxMode = hasIncludedTax && hasExcludedTax ? 'MIXED' : hasIncludedTax ? 'INCLUDED' : hasExcludedTax ? 'EXCLUDED' : null
@@ -130,8 +147,8 @@ export function parseReceiptText(text: string): ReceiptTextFields {
     const marker = line.match(/([*※◇◆])\s*(?:は|:|=)?\s*(?:(?:軽減税率|8\s*%)|10\s*%)/)
     if (marker) markerRates.set(marker[1], /10\s*%/.test(marker[0]) ? 10 : 8)
   }
-  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り|おつり|釣銭|CHANGE|現金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|交通系|領収|レシート|登録番号|TEL|電話)/i
-  const items: ReceiptItemEvidence[] = lines.flatMap(({ text: line, lineNumber }) => {
+  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り?|おつり|釣銭|CHANGE|支払|現金|现金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|交通系|領収|レシ[ー\s-]*ト|登録番号|TEL|電話)/i
+  const items: ReceiptItemEvidence[] = lines.flatMap(({ text: line, lineNumber }, lineIndex) => {
     if (nonItem.test(line) || /(20\d{2})[/.年-]/.test(line)) return []
     const explicitRate = line.match(/(?:^|\s|\()(8|10)\s*%(?:\)|\s|$)/)
     const mappedMarker = [...markerRates.entries()].find(([marker]) => line.includes(marker))?.[1] ?? null
@@ -142,9 +159,13 @@ export function parseReceiptText(text: string): ReceiptTextFields {
       .replace(/[＊*※◇◆]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-    const match = normalizedItemLine.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:円)?$/)
+    const inlineMatch = normalizedItemLine.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:[,.][0-9]{3})+|[0-9]+)(?:円)?$/)
+    const followingAmount = lineTexts[lineIndex + 1] && /^[-−]?\s*(?:¥|￥)?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(lineTexts[lineIndex + 1])
+      ? parseLineAmount(lineTexts[lineIndex + 1])
+      : null
+    const match = inlineMatch ?? (followingAmount !== null ? [normalizedItemLine, normalizedItemLine, String(followingAmount)] : null)
     if (!match) return []
-    const amount = Number(match[2].replaceAll(',', ''))
+    const amount = Number(match[2].replace(/[,.]/g, ''))
     if (!Number.isSafeInteger(amount) || amount <= 0) return []
     const quantity = match[1].match(/(?:(?:x|×)\s*(\d+)|(\d+)\s*(?:点|個|本))(?:\s*@\s*[0-9,]+)?$/i)
       ?? match[1].match(/@\s*[0-9,]+\s*(?:x|×)\s*(\d+)$/i)

@@ -23,6 +23,14 @@ export default defineConfig({
 
           if (!normalizedId.includes('/node_modules/')) return undefined
 
+          if (
+            normalizedId.includes('/node_modules/@paddleocr/')
+            || normalizedId.includes('/node_modules/@techstark/opencv-js/')
+            || normalizedId.includes('/node_modules/onnxruntime-')
+            || normalizedId.includes('/node_modules/clipper-lib/')
+            || normalizedId.includes('/node_modules/js-yaml/')
+          ) return 'vendor-ocr'
+
           if (/\/node_modules\/(react|react-dom|scheduler)\//.test(normalizedId)) return 'vendor-react'
           if (normalizedId.includes('/node_modules/lucide-react/')) return 'vendor-icons'
           if (normalizedId.includes('/node_modules/@tauri-apps/')) return 'vendor-tauri'

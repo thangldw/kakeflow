@@ -187,9 +187,13 @@ describe('import mapper', () => {
   })
 
   it('retains card statement total and candidate line grouping', async () => {
+    const sourceFields = {
+      利用日: '2026/06/10', '利用店名・商品名': 'STORE', 利用者: '本人', 支払方法: '一括', 利用金額: '5000',
+      '手数料/利息': '0', 支払総額: '5000', '7月支払金額': '5000', 当月請求額: '5000', '8月繰越残高': '0', 新規サイン: '*',
+    }
     const parsed: ParsedImport<unknown> = { adapterId: 'rakuten-enavi-v1', issues: [], metadata: {}, records: [{
       kind: 'card-statement', issuer: 'RAKUTEN_CARD', statementTotal: 4000, transactions: [
-        { kind: 'card-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['STORE', '5000'] }, usageDate: '2026-06-10', merchant: 'STORE', userName: '', paymentMethod: '一括', billingAmount: 5000, feeOrInterest: 0, isRefund: false, rawExtra: {} },
+        { kind: 'card-transaction', lineage: { sourceRow: 2, sourceRowEnd: 2, rawFields: ['STORE', '5000'] }, sourceFields, usageDate: '2026-06-10', merchant: 'STORE', userName: '', paymentMethod: '一括', billingAmount: 5000, feeOrInterest: 0, isRefund: false, rawExtra: {} },
         { kind: 'card-transaction', lineage: { sourceRow: 3, sourceRowEnd: 3, rawFields: ['REFUND', '-1000'] }, usageDate: '2026-06-20', merchant: 'REFUND', userName: '', paymentMethod: '一括', billingAmount: -1000, feeOrInterest: 0, isRefund: true, rawExtra: {} },
       ],
     }] }
@@ -201,6 +205,7 @@ describe('import mapper', () => {
       paymentDueOn: null,
       lines: [{ statementLineNumber: 1, billedAmountJpy: 5000 }, { statementLineNumber: 2, billedAmountJpy: -1000 }],
     })
+    expect(JSON.parse(result.request.records[0].payloadJson)).toMatchObject({ fields: sourceFields })
   })
 
   it('preserves the PayPay Card source payment date and issuer without inferring either value', async () => {

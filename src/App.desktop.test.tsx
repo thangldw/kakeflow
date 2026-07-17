@@ -74,6 +74,7 @@ const desktop = vi.hoisted(() => ({
   previewClassificationRules: vi.fn(),
   applyClassificationRule: vi.fn(),
   ocrDocument: vi.fn(),
+  paddleOcrRenderedPdfPages: vi.fn(),
   suggestReceiptMatches: vi.fn(),
   confirmReceiptMatch: vi.fn(),
   getDesktopRelayStatus: vi.fn(),
@@ -99,6 +100,7 @@ const accountGroupState = vi.hoisted(() => ({ groups: [] as Array<{ id: string; 
 
 vi.mock('@tauri-apps/plugin-dialog', () => dialog)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: nativeInvoke }))
+vi.mock('./features/import/paddleOcr', () => ({ paddleOcrDocument: desktop.ocrDocument, paddleOcrRenderedPdfPages: desktop.paddleOcrRenderedPdfPages }))
 
 vi.mock('./platform', async () => {
   const actual = await vi.importActual<typeof import('./platform')>('./platform')
@@ -338,7 +340,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.getTransactionDetail.mockReset().mockResolvedValue({ id: 'purchase', householdId: 'family', occurredOn: '2026-07-10', postedOn: null, transactionType: 'CARD_PURCHASE', payee: '生協', description: '食料品', calculationTarget: true, attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, status: 'POSTED', createdAt: '2026-07-10T00:00:00Z', updatedAt: '2026-07-10T00:00:00Z', editable: true, entries: [{ id: 'debit', accountId: 'family-other-expense', accountName: 'その他', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 120000, lineNumber: 1 }, { id: 'credit', accountId: 'family-card', accountName: 'カード', accountKind: 'LIABILITY', side: 'CREDIT', amountJpy: 120000, lineNumber: 2 }], sourceEvidence: [{ sourceRecordId: 'record', sourceDocumentId: 'document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }] })
     desktop.updateTransaction.mockReset().mockImplementation(async (input) => ({ ...(await desktop.getTransactionDetail()), ...input, id: input.transactionId }))
     desktop.bulkUpdateTransactionMetadata.mockReset().mockResolvedValue({ updatedCount: 1 })
-    desktop.listTransactionSourceRecords.mockReset().mockResolvedValue([{ id: 'record', sourceDocumentId: 'document', rowNumber: 2, recordHash: 'hash', payloadJson: '{"merchant":"生協","amount":120000}', createdAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }])
+    desktop.listTransactionSourceRecords.mockReset().mockResolvedValue([{ id: 'record', sourceDocumentId: 'document', rowNumber: 2, recordHash: 'hash', payloadJson: JSON.stringify({ merchant: '生協', amount: 120000, fields: { 利用日: '2026/06/29', '利用店名・商品名': '生協', 利用者: '本人', 支払方法: '1回払い', 利用金額: '120000', '手数料/利息': '0', 支払総額: '120000', '7月支払金額': '120000', 当月請求額: '120000', '8月繰越残高': '0', 新規サイン: '*' } }), createdAt: '2026-07-12T00:00:00Z', evidenceRole: 'PRIMARY' }])
     desktop.updateSourceDocumentAudience.mockReset().mockImplementation(async (input) => ({ id: input.sourceDocumentId, householdId: input.householdId, importRunId: 'run-1', sourceType: 'MANUAL_UPLOAD', originalFilename: 'card.csv', mediaType: 'text/csv', byteSize: 100, sha256: 'hash', sourceModifiedAt: null, importedAt: '2026-07-12T00:00:00Z', adapterId: 'card', adapterVersion: '1', recordCount: 1, audienceVisibility: input.audienceVisibility, audienceMemberId: input.audienceMemberId, audienceMemberName: input.audienceMemberId ? '太郎' : null }))
     desktop.listClassificationRules.mockReset().mockResolvedValue([])
     desktop.createClassificationRule.mockReset().mockImplementation(async (input) => ({ ...input, categoryName: 'その他', createdAt: '2026-07-13T00:00:00Z', updatedAt: '2026-07-13T00:00:00Z' }))
@@ -347,6 +349,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewClassificationRules.mockReset().mockResolvedValue({ winningRuleId: null, matches: [] })
     desktop.applyClassificationRule.mockReset()
     desktop.ocrDocument.mockReset().mockResolvedValue({ method: 'OCR', text: 'STORE\n2026/07/12\n合計 ¥1,200', confidenceBps: 9000, issues: [] })
+    desktop.paddleOcrRenderedPdfPages.mockReset().mockResolvedValue({ method: 'OCR', text: 'STORE\n2026/07/12\n合計 ¥1,200', confidenceBps: 9000, issues: [], pageCount: 1, pages: [{ pageNumber: 1, widthPixels: 1000, heightPixels: 1400, confidenceBps: 9000, issues: [] }], regions: [] })
     desktop.suggestReceiptMatches.mockReset().mockResolvedValue([{ candidateId: 'candidate-1', transactionId: 'purchase', occurredOn: '2026-07-12', payee: 'STORE', description: null, transactionType: 'EXPENSE', amountJpy: 1200, dayDifference: 0, merchantSimilarityBps: 10000, scoreBps: 10000, reasons: ['Exact receipt and posted-expense amount'] }])
     desktop.confirmReceiptMatch.mockReset().mockResolvedValue({ runId: 'run-1', candidateId: 'candidate-1', transactionId: 'purchase', resolutionStatus: 'LINKED', evidenceCount: 1, runStatus: 'POSTED' })
     desktop.listWatchedFolders.mockReset().mockResolvedValue([])
@@ -433,9 +436,11 @@ describe('KakeFlow desktop read models', () => {
   })
 
   it('renders SQLite-backed monthly totals and recent transactions', async () => {
-    render(<App />)
+    const { container } = render(<App />)
 
     expect(await screen.findByText('生協')).toBeInTheDocument()
+    expect(container.querySelector('.app-shell')).toHaveClass('app-shell--native')
+    expect(container.querySelector('.desktop-titlebar')).not.toBeInTheDocument()
     expect(screen.getAllByText('¥500,000').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('−¥120,000')).toBeInTheDocument()
     expect(screen.getAllByText('帰属: 世帯共通').length).toBeGreaterThanOrEqual(1)
@@ -1165,6 +1170,12 @@ describe('KakeFlow desktop read models', () => {
     expect(within(screen.getByLabelText('取引の家族内の帰属')).getByRole('option', { name: '次郎（アーカイブ済み）' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '個人・次郎（アーカイブ済み）' })).toBeInTheDocument()
     expect(screen.getByText(/行 2/)).toBeInTheDocument()
+    const statementFields = await screen.findByRole('region', { name: 'カード明細情報' })
+    expect(within(statementFields).getByText('原本の列名と値')).toBeInTheDocument()
+    expect(within(statementFields).getByText('7月支払金額')).toBeInTheDocument()
+    expect(within(statementFields).getByText('8月繰越残高')).toBeInTheDocument()
+    expect(within(statementFields).getByText('新規サイン')).toBeInTheDocument()
+    expect(within(statementFields).getByText('*')).toBeInTheDocument()
     const calculationTarget = screen.getByRole('checkbox', { name: /家計の集計に含める/ })
     expect(calculationTarget).toBeChecked()
     expect(screen.getByText(/台帳の仕訳は削除されず、口座・カード残高も変わりません/)).toBeInTheDocument()
@@ -1582,6 +1593,8 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: 'カード照合' }))
 
     expect(await screen.findByText('◐ 一部支払済み')).toBeInTheDocument()
+    const rakutenCard = screen.getByRole('heading', { name: 'Rakuten Card' }).closest('article')!
+    expect(within(rakutenCard).getByText('•••• 8106')).toBeVisible()
     expect(screen.getByText('✓ 全額照合')).toBeInTheDocument()
     expect(screen.getByText('⚠ 過払い')).toHaveClass('overpaid')
     expect(screen.getAllByText('¥100,000').length).toBeGreaterThan(0)
@@ -2018,6 +2031,22 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByLabelText('transfer-candidateの取引種別')).toHaveValue('TRANSFER')
     expect(screen.getByLabelText('card-payment-candidateの取引種別')).toHaveValue('CARD_PAYMENT')
+    const approveAll = screen.getByRole('checkbox', { name: 'すべての承認可能な候補を承認' })
+    const transferApproval = screen.getByRole('checkbox', { name: '口座振替を承認' })
+    const cardApproval = screen.getByRole('checkbox', { name: 'JCBカードを承認' })
+    const commit = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(approveAll).not.toBeChecked()
+    expect(screen.getByText('0/2件承認済み')).toBeInTheDocument()
+    fireEvent.click(approveAll)
+    expect(approveAll).toBeChecked()
+    expect(transferApproval).toBeChecked()
+    expect(cardApproval).toBeChecked()
+    expect(screen.getByText('2/2件承認済み')).toBeInTheDocument()
+    expect(commit).toBeEnabled()
+    fireEvent.click(approveAll)
+    expect(transferApproval).not.toBeChecked()
+    expect(cardApproval).not.toBeChecked()
+    expect(commit).toBeDisabled()
     expect(screen.queryByRole('button', { name: /分類ルール候補を適用/ })).not.toBeInTheDocument()
     expect(screen.queryByText('分類ルール候補')).not.toBeInTheDocument()
     expect(desktop.listClassificationRules).not.toHaveBeenCalled()
@@ -2553,6 +2582,26 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
   })
 
+  it('keeps a manual CSV and PDF selection after clearing the native file input', async () => {
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const input = screen.getByLabelText('CSV、TSV、Excel、PDF、レシート画像、ゆうちょ公式ZIP、EMLを選択') as HTMLInputElement
+    const csv = new File([
+      '日付,摘要,摘要内容,支払い金額,預かり金額,差引残高,メモ,未資金化区分,入払区分\n' +
+      '2026/07/27,ラクテンカードサービス,,204987,,100000,,,出',
+    ], 'manual-bank.csv', { type: 'text/csv' })
+    const pdf = new File(['%PDF-1.4'], 'manual-receipt.pdf', { type: 'application/pdf' })
+
+    fireEvent.change(input, { target: { files: [csv, pdf] } })
+
+    expect(await screen.findByText('2件のファイルを読み取りました。状態と次の操作を確認してください。')).toBeInTheDocument()
+    expect(screen.getAllByText('manual-bank.csv').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('manual-receipt.pdf').length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: 'PDFを解析' })).toBeInTheDocument()
+    expect(input).toHaveValue('')
+  })
+
   it('blocks custom staging when a preview has rejected error rows', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')
@@ -2610,9 +2659,13 @@ describe('KakeFlow desktop read models', () => {
           ],
         },
       }
-      if (command === 'document_pdf_ocr_attempt') return {
+      if (command === 'document_pdf_render_attempt') return {
         status: 'SUCCESS',
-        document: {
+        pages: [1, 2].map((pageNumber) => ({ pageNumber, pageCount: 2, pageWidthPoints: 500, pageHeightPoints: 700, widthPixels: 1000, heightPixels: 1400, mediaType: 'image/png', dataUrl: 'data:image/png;base64,AA==' })),
+      }
+      return fallback(command, args)
+    })
+    desktop.paddleOcrRenderedPdfPages.mockResolvedValueOnce({
           method: 'OCR', text: 'スーパー\n2026/07/12\n合計 1,200\nCARD STATEMENT\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000', confidenceBps: 8800, issues: [], pageCount: 2,
           pages: [
             { pageNumber: 1, widthPixels: 1000, heightPixels: 1400, confidenceBps: 9200, issues: [] },
@@ -2622,9 +2675,6 @@ describe('KakeFlow desktop read models', () => {
             ...['スーパー', '2026/07/12', '合計 1,200'].map((text) => line(1, text)),
             ...['CARD STATEMENT', '2026/07/01 A', '2026/07/02 B', '2026/07/03 C', '2026/07/04 D', 'TOTAL 20,000'].map((text) => line(2, text)),
           ],
-        },
-      }
-      return fallback(command, args)
     })
     const { container } = render(<App />)
     await screen.findByText('生協')
@@ -2643,15 +2693,96 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText(/独立したレシートとして読めた1ページだけを支出候補/)).toBeInTheDocument()
   })
 
+  it('extracts a Rakuten Shift-JIS PDF into reconciled card transactions before staging', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    const lines = [
+      'ご利用代金請求明細書', '山田 太郎\t様', '楽天カード株式会社',
+      '2025\t年\t09\t月ご請求金額',
+      '3,000\t円\t楽天\tカード\t(Visa) ****-****-****-9127',
+      'お支払日\t返済方法\t引落口座', '2025/09/29\t口座振替\tテスト銀行',
+      '利用日\t利用店名\t利用者\t支払方法\t利用金額\t手数料\t/\t利息\t支払総額\t当月請求額\t翌月繰越残高',
+      '2025/08/30\tSHOP A\t本人\t*\t1\t回払い\t1,200\t0\t1,200\t1,200\t0',
+      '2025/08/31\tSHOP B\t本人\t*\t1\t回払い\t1,800\t0\t1,800\t1,800\t0',
+    ]
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'document_extract_attempt') return {
+        status: 'SUCCESS',
+        document: {
+          method: 'EMBEDDED_TEXT', text: lines.join('\n'), confidenceBps: 9800, issues: [], pageCount: 1,
+          pages: [{ pageNumber: 1, widthPixels: null, heightPixels: null, confidenceBps: 9800, issues: [] }],
+          regions: lines.map((text) => ({ pageNumber: 1, coordinateSpace: 'UNLOCATED', boundingBox: null, text, confidenceBps: 9800, provenance: 'PDF_EMBEDDED_TEXT_RKSJ' })),
+        },
+      }
+      return fallback(command, args)
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File(['%PDF SVF'], 'statement_202509.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'PDFを解析' }))
+
+    expect(await screen.findByText(/2件を抽出し、請求額¥3,000と照合しました/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'スキャンPDF OCR' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('statement_202509.pdfの取込先カード口座'), { target: { value: 'family-card' } })
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'rakuten-enavi-v1', mediaType: 'application/pdf',
+      candidates: [
+        expect.objectContaining({ accountId: 'family-card', occurredOn: '2025-08-30', amountJpy: 1200, merchantRaw: 'SHOP A' }),
+        expect.objectContaining({ accountId: 'family-card', occurredOn: '2025-08-31', amountJpy: 1800, merchantRaw: 'SHOP B' }),
+      ],
+      cardStatements: [expect.objectContaining({ cardAccountId: 'family-card', issuer: 'RAKUTEN_CARD', paymentDueOn: '2025-09-29', statementAmountJpy: 3000 })],
+    }), expect.any(Uint8Array)))
+  })
+
+  it.each([
+    { filename: 'receipt.jpg', mediaType: 'image/jpeg', action: '画像OCR' },
+    { filename: 'receipt.pdf', mediaType: 'application/pdf', action: 'PDFを解析' },
+  ])('allows $action before accounts have been configured', async ({ filename, mediaType, action }) => {
+    desktop.listAccounts.mockResolvedValue([])
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File([mediaType === 'application/pdf' ? '%PDF receipt' : new Uint8Array([1, 2, 3])], filename, { type: mediaType })] },
+    })
+
+    const analyze = await screen.findByRole('button', { name: action })
+    expect(analyze).toBeEnabled()
+  })
+
+  it('offers offline OCR when embedded Japanese PDF text uses an unsupported CMap', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'document_extract_attempt') return {
+        status: 'SUCCESS',
+        document: {
+          method: 'EMBEDDED_TEXT', text: '', confidenceBps: 0, issues: ['OCR_REQUIRED', 'EMBEDDED_TEXT_UNSUPPORTED'], regions: [], pageCount: 3,
+          pages: [1, 2, 3].map((pageNumber) => ({ pageNumber, widthPixels: null, heightPixels: null, confidenceBps: 0, issues: ['OCR_REQUIRED', 'EMBEDDED_TEXT_UNSUPPORTED'] })),
+        },
+      }
+      return fallback(command, args)
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File(['%PDF SVF'], 'statement_202509.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'PDFを解析' }))
+
+    expect(await screen.findByText('このPDFの埋め込み文字コードには直接対応できません。3ページを端末内OCRで読み取ってください。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'スキャンPDF OCR' })).toBeInTheDocument()
+  })
+
   it('clears a stale PDF password prompt when OCR fails after password acceptance', async () => {
     const fallback = nativeInvoke.getMockImplementation()!
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
       if (command === 'document_extract_attempt') return {
         status: 'SUCCESS', document: { method: 'EMBEDDED_TEXT', text: '', confidenceBps: 0, issues: ['OCR_REQUIRED'], regions: [], pageCount: 1, pages: [{ pageNumber: 1, widthPixels: null, heightPixels: null, confidenceBps: 0, issues: ['OCR_REQUIRED'] }] },
       }
-      if (command === 'document_pdf_ocr_attempt') return args?.password === 'accepted-once'
-        ? { status: 'OCR_ENGINE_UNAVAILABLE', document: null }
-        : { status: 'PASSWORD_REQUIRED', document: null }
+      if (command === 'document_pdf_render_attempt') return args?.password === 'accepted-once'
+        ? { status: 'FAILED', pages: null }
+        : { status: 'PASSWORD_REQUIRED', pages: null }
       return fallback(command, args)
     })
     const { container } = render(<App />)
@@ -2663,7 +2794,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(await screen.findByLabelText('PDFパスワード'), { target: { value: 'accepted-once' } })
     fireEvent.click(screen.getByRole('button', { name: 'ロックを解除' }))
 
-    expect(await screen.findByText('端末内OCRエンジンを利用できません。Tesseractと日本語・英語モデルを確認してください。')).toBeInTheDocument()
+    expect(await screen.findByText('スキャンPDFを画像へ変換できませんでした。原本は台帳へ反映されていません。')).toBeInTheDocument()
     expect(screen.queryByLabelText('PDFパスワード')).not.toBeInTheDocument()
   })
 
