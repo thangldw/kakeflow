@@ -16,7 +16,7 @@ function fixture(overrides = {}) {
     cargoLock: `version = 4\n\n[[package]]\nname = "another"\nversion = "9.0.0"\n\n[[package]]\nname = "kakeflow"\nversion = "${version}"\n`,
     changelog: `# Changelog\n\n## ${version} — 2026-07-15\n\n- Current.\n\n## 1.2.2 — 2026-07-14\n`,
     readme: `# KakeFlow\n\nVersion ${version} is the current stable desktop milestone.\nVersion 0.90 adds historical behavior.\n`,
-    projectPage: `<a href="https://github.com/thangldw/kakeflow/releases/download/v${version}/KakeFlow_${version}_aarch64.dmg">macOS</a>\n<a href="https://github.com/thangldw/kakeflow/releases/tag/v${version}">v${version} release notes</a>\n<a href="https://github.com/thangldw/kakeflow/releases/download/v${version}/KakeFlow_${version}_aarch64.dmg">Try macOS</a>\n<p>Planned v2.0.0. Historical v0.90.0.</p>`,
+    projectPage: `<a href="https://github.com/thangldw/kakeflow-releases/releases/download/v${version}/KakeFlow_${version}_aarch64.dmg">macOS</a>\n<a href="https://github.com/thangldw/kakeflow-releases/releases/tag/v${version}">v${version} release notes</a>\n<a href="https://github.com/thangldw/kakeflow-releases/releases/download/v${version}/KakeFlow_${version}_aarch64.dmg">Try macOS</a>\n<p>Planned v2.0.0. Historical v0.90.0.</p>`,
     ...overrides,
   }
 }
@@ -63,27 +63,27 @@ describe('release version contract', () => {
   it('rejects one stale CTA even when another repeated CTA is current', () => {
     const current = fixture().projectPage
     expect(() => validateReleaseVersionContract(fixture({
-      projectPage: `${current}\n<a href='https://github.com/thangldw/kakeflow/releases/download/v1.2.2/KakeFlow_1.2.2_aarch64.dmg'>stale</a>`,
+      projectPage: `${current}\n<a href='https://github.com/thangldw/kakeflow-releases/releases/download/v1.2.2/KakeFlow_1.2.2_aarch64.dmg'>stale</a>`,
     }))).toThrow('Stale or malformed production artifact tag')
   })
 
   it('rejects a tag/artifact mismatch and unsupported artifact naming', () => {
     expect(() => validateReleaseVersionContract(fixture({
-      projectPage: '<a href="https://github.com/thangldw/kakeflow/releases/tag/v1.2.2">v1.2.2 notes</a><a href="https://github.com/thangldw/kakeflow/releases/download/v1.2.3/KakeFlow_1.2.3_aarch64.dmg">macOS</a>',
+      projectPage: '<a href="https://github.com/thangldw/kakeflow-releases/releases/tag/v1.2.2">v1.2.2 notes</a><a href="https://github.com/thangldw/kakeflow-releases/releases/download/v1.2.3/KakeFlow_1.2.3_aarch64.dmg">macOS</a>',
     }))).toThrow('release-note CTA')
     expect(() => validateReleaseVersionContract(fixture({
-      projectPage: '<a href="https://github.com/thangldw/kakeflow/releases/tag/v1.2.3">v1.2.3 notes</a><a href="https://github.com/thangldw/kakeflow/releases/download/v1.2.3/KakeFlow-latest.dmg">macOS</a>',
+      projectPage: '<a href="https://github.com/thangldw/kakeflow-releases/releases/tag/v1.2.3">v1.2.3 notes</a><a href="https://github.com/thangldw/kakeflow-releases/releases/download/v1.2.3/KakeFlow-latest.dmg">macOS</a>',
     }))).toThrow('Unexpected production artifact name')
     for (const unsupported of ['KakeFlow_1.2.3_x64.dmg', 'KakeFlow_1.2.3_arm64-setup.exe']) {
       expect(() => validateReleaseVersionContract(fixture({
-        projectPage: `<a href="https://github.com/thangldw/kakeflow/releases/tag/v1.2.3">v1.2.3 notes</a><a href="https://github.com/thangldw/kakeflow/releases/download/v1.2.3/${unsupported}">unsupported</a>`,
+        projectPage: `<a href="https://github.com/thangldw/kakeflow-releases/releases/tag/v1.2.3">v1.2.3 notes</a><a href="https://github.com/thangldw/kakeflow-releases/releases/download/v1.2.3/${unsupported}">unsupported</a>`,
       }))).toThrow('Unexpected production artifact name')
     }
   })
 
   it('rejects GitHub release CTAs outside exact version tags and artifact downloads', () => {
     expect(() => validateReleaseVersionContract(fixture({
-      projectPage: `${fixture().projectPage}<a href="https://github.com/thangldw/kakeflow/releases/latest">latest</a>`,
+      projectPage: `${fixture().projectPage}<a href="https://github.com/thangldw/kakeflow-releases/releases/latest">latest</a>`,
     }))).toThrow('unclassified production release CTA')
   })
 })

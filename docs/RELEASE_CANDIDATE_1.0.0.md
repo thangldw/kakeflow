@@ -1,6 +1,6 @@
 # KakeFlow v1.0.0 release candidate
 
-Ngày kiểm chứng: 2026-07-17
+Ngày kiểm chứng: 2026-07-18
 
 Nhánh: `codex/kakeflow-v2-hardening`
 
@@ -22,25 +22,28 @@ Nhánh: `codex/kakeflow-v2-hardening`
 
 - File: `KakeFlow_1.0.0_aarch64.dmg`
 - Kiến trúc: macOS Apple Silicon (`aarch64`)
-- Kích thước: 70.610.621 byte
-- SHA-256: `f15a59c2a5dd7832729cab2c41542443bc2bf1fe3fe9ae678dfc774d3eede18c`
+- Kích thước: 70.610.649 byte
+- SHA-256: `cc553b8f15a5f8ae29cc66d7dcbd0e648aa3bebf65bc0a6c59f78fb1e563a6e8`
 - Signing: ad-hoc; chưa Apple-notarized.
-- Evidence local: `release-artifacts/v1.0.0/macos-rc-20260717/`.
+- Evidence local: `release-artifacts/v1.0.0/public-release-20260718/`.
 
 ## Trạng thái GitHub
 
 - GitHub Release `v1.0.0` cũ đã được xoá ngày 2026-07-17.
 - Remote tag `v1.0.0` cũ vẫn trỏ tới commit legacy và chưa được thay.
-- Chưa có GitHub Release công khai.
+- Repository phân phối public dự kiến:
+  `https://github.com/thangldw/kakeflow-releases`.
 
 ## Điều kiện trước khi publish
 
 1. Xác nhận commit chứa tài liệu này là release commit và working tree sạch.
 2. Push release commit lên remote.
-3. Xoá tag `v1.0.0` legacy ở local/remote, sau đó tạo annotated tag cùng tên
+3. Xoá tag `v1.0.0` legacy ở private local/remote, sau đó tạo annotated tag cùng tên
    tại đúng release commit và xác nhận remote tag peel về commit đó.
-4. Tạo GitHub Release thủ công và upload duy nhất DMG đã kiểm chứng.
-5. Đọc lại release cùng asset metadata và kiểm tra checksum tải xuống.
+4. Tạo metadata tag `v1.0.0` trong public repository
+   `thangldw/kakeflow-releases`.
+5. Tạo GitHub Release thủ công và upload DMG cùng checksum đã kiểm chứng.
+6. Đọc lại release cùng asset metadata và kiểm tra checksum tải xuống ẩn danh.
 
 Windows chưa được quảng bá hoặc phát hành vì chưa có native Windows x64 OCR,
 installer, installed-app smoke và uninstall evidence. Automatic update vẫn tắt.

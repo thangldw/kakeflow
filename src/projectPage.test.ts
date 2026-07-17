@@ -24,8 +24,9 @@ describe('KakeFlow project page', () => {
     expect(html).toContain(`releases/tag/v${version}`)
     expect(html).toContain(`releases/download/v${version}/KakeFlow_${version}_aarch64.dmg`)
     expect(html).toContain(`AVAILABLE IN v${version}`)
-    expect(html).toContain('現在の公開バイナリは未署名の macOS ARM64 版です')
-    expect(html).toContain('Windows はソースからビルドできます')
+    expect(html).toContain('現在の公開バイナリはアドホック署名済み・未公証の macOS ARM64 版です')
+    expect(html).toContain('Windows バイナリは未公開です')
+    expect(html).not.toContain('github.com/thangldw/kakeflow/blob/')
   })
 
   it('ships every local page asset and every product screenshot it references', () => {

@@ -1,114 +1,34 @@
 # KakeFlow
 
-KakeFlow is a local-first household finance workspace for macOS and Windows. It turns bank, card, wallet, PDF, spreadsheet, receipt, and securities-asset sources into a reconciled household ledger and a separate investment portfolio.
+KakeFlow is a local-first household finance workspace for macOS and Windows. It turns user-provided bank, card, wallet, brokerage, PDF, spreadsheet, and receipt data into an auditable household ledger and a separate investment portfolio.
 
-Project page: [thangldw.github.io/kakeflow](https://thangldw.github.io/kakeflow/) · [Latest stable release](https://github.com/thangldw/kakeflow/releases/latest)
+[Project page](https://thangldw.github.io/kakeflow/) · [Latest release](https://github.com/thangldw/kakeflow-releases/releases/latest) · [Changelog](CHANGELOG.md)
 
-Version 1.0.0 is the current stable desktop milestone. It combines the
-source-auditable household ledger, card reconciliation, investment workspace,
-native reports, durable file and test-user Google inboxes, and explicit family
-delivery review into one local-first desktop application. The public binary is
-macOS Apple Silicon only, ad-hoc signed, and not notarized; Windows remains a
-source-build target until native installer evidence exists. Google Drive and
-Gmail connectors remain limited to locally configured test users pending
-provider qualification, and no ingestion path posts automatically.
+## Release status
 
-Version `v1.0.0` adds
-[family delivery of recurring-series preferences](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md)
-and a source-backed [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md),
-plus a detailed [Portfolio Snapshot CSV](docs/PORTFOLIO_SNAPSHOT_CSV.md) for the
-exact selected snapshot and a native-currency
-[Investment Performance CSV](docs/INVESTMENT_PERFORMANCE_CSV.md) for the exact
-selected annual FIFO report, plus a strict
-[Resona Web入出金明細PLUS CSV adapter](docs/RESONA_WEB_MEISAI_PLUS_IMPORT.md)
-based on the bank's published fourteen-column record format, and a strict
-[Mizuho Business Web CSV adapter](docs/MIZUHO_BUSINESS_WEB_IMPORT.md) based on
-its official thirteen-field Shift_JIS specification.
-Family schema v4 carries the complete explicit `CONFIRMED`/`IGNORED` household
-preference set as one `SHARED` aggregate inside `KFF4`; it never transports
-detected cadence, predicted amounts, local optimistic versions, or timestamps.
-Receiving remains an explicit review and atomic-Apply workflow, and V1–V3
-artifacts remain compatible. The ledger PDF reuses the exact validated
-transaction export table and selected date, accounting basis, account-group,
-and member-attribution scope already shared by CSV/XLSX; it does not run a
-second query or manufacture totals.
-The detailed portfolio CSV keeps summary, asset-class, position, and
-snapshot-local FX grains in one BOM-prefixed table with source document/row
-lineage and explicit null statuses; it remains separate from the existing
-date-range snapshot-summary CSV.
-The annual investment CSV keeps currency totals, FIFO realized allocations,
-corporate-action allocations, uncovered sales, skipped events, unallocated
-actions, lineage, and explicit disclosures in one BOM-prefixed table. It does
-not combine currencies or infer valuation, unrealized P&L, allocation,
-ROI/TWR/IRR, or forecast metrics.
-The Resona adapter validates one exact account, sequential source numbers,
-debit/credit direction, running-balance continuity, published blank fields,
-and physical-row provenance. Cancellation rows remain blocking because the
-public record format does not establish enough reversal linkage to post them
-safely.
-The Mizuho adapter accepts auditable positive normal entries, official
-transaction/check values, signed balances, date-scoped source numbers, and
-physical-row lineage. Negative corrections, `取消`, `欠番`, unknown values, and
-mixed-account sources remain blocking rather than being repaired implicitly.
+Version 1.0.0 is the current stable desktop milestone.
 
-KakeFlow completes the current source-backed PDF set with [Portfolio Snapshot PDF](docs/PORTFOLIO_SNAPSHOT_PDF.md). It renders the exact securities snapshot selected in the investment workspace—including source `asOf`, JPY summary, asset classes, native-currency positions, snapshot-local FX, nullable values, and Source Document/Row lineage—without falling back to the latest snapshot or inventing performance, live valuation, conversion, trend, ROI/TWR/IRR, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for all four released PDF report types.
+- macOS Apple Silicon is the supported public binary. It is ad-hoc signed and not notarized.
+- Windows is supported as a source-build target until native installer evidence is available.
+- Google Drive and Gmail connectors are limited to locally configured test users pending provider qualification.
+- Imports, OCR, connector discovery, and family delivery never post ledger entries automatically.
+- KakeFlow does not connect directly to banking, card, brokerage, or financial-aggregation APIs.
 
-KakeFlow adds a source-auditable Investment Performance PDF using the same annual period, optional securities-account scope, FIFO engine, native-currency totals, allocations, and exceptions as the screen and [investment workbook](docs/INVESTMENT_PERFORMANCE_XLSX.md). It keeps JPY, USD, and other currencies separate, carries available Source Document/Row lineage, and explicitly avoids invented FX totals, ROI/TWR/IRR, valuation, unrealized, allocation, return, or forecast metrics. The [visual QA workflow](docs/PDF_REPORT_VISUAL_QA.md) now requires page-by-page Poppler evidence for monthly, annual, and investment-performance PDFs before release.
+See [release notes](RELEASE_NOTES.md), [release readiness](docs/V1_RELEASE_READINESS.md), and [packaged-app testing](docs/PACKAGED_APP_TESTING.md) for the verified scope and known limits.
 
-KakeFlow added a source-backed Annual Household Review PDF using the exact validated year, account-group, member-attribution, and as-of scope shared by the screen and annual CSV/XLSX exports. Its Executive Summary combines comparable-period KPIs with a status-aware 12-month trend, then retains drivers, budget, goals, import health, card reconciliation, actions, and accounting caveats.
+## What KakeFlow does
 
-KakeFlow added the source-backed Monthly Household Review PDF using the same validated scope and DTO as the on-screen review and [monthly workbook](docs/MONTHLY_REVIEW_XLSX.md). The native four-page report embeds pinned Noto Sans JP, opens with an Executive Summary, KPI cards and exact-value comparison bars, and preserves budget, goals, import-health, card-reconciliation, action, and double-counting disclosures.
-
-KakeFlow adds [Portfolio Snapshot XLSX export](docs/PORTFOLIO_SNAPSHOT_XLSX.md). The native workbook exports the exact securities snapshot selected in the investment workspace, including its JPY summary, asset classes, positions, snapshot-local FX rates, nullable values, and source-row lineage. It never silently replaces the selection with the latest snapshot and does not mix event-based FIFO performance, live valuation, Money Forward aggregate history, or multi-snapshot trends into the snapshot grain.
-
-KakeFlow adds [Investment Performance XLSX export](docs/INVESTMENT_PERFORMANCE_XLSX.md). The native workbook reuses the exact annual FIFO performance request shown in the investment workspace, keeps every source currency separate, and exposes realized allocations, corporate actions, uncovered sales, skipped events, and source-row evidence where the validated report provides it. It intentionally excludes current holdings valuation, FX conversion, portfolio snapshots, aggregate asset history, and invented ROI/TWR/IRR metrics.
-
-KakeFlow adds [Monthly Household Review XLSX export](docs/MONTHLY_REVIEW_XLSX.md). The native four-sheet workbook preserves the selected calendar month, account group, and household/member attribution scope while clearly keeping goals and data quality household-wide. It includes current KPIs, prior-month and prior-year comparisons, bounded category and merchant drivers, budget, reconciliation, and import-health disclosures; `asOf` remains a data-quality reference date and workbook bytes never cross WebView IPC.
-
-KakeFlow adds a strict [PayPay Card finalized-statement import](docs/PAYPAY_CARD_IMPORT.md). PayPay Card officially supports per-billing-month CSV downloads only after finalization, but does not publish a literal consumer schema; KakeFlow therefore implements one exact ordered eleven-column community-derived synthetic contract. Only safe-integer JPY one-time rows with zero fees, carry-forward, and adjustments, equal usage/total/current billed amounts, and one consistent source payment date are accepted. Deferred, ambiguous, malformed, or unfamiliar layouts fail closed and every file requires explicit credit-card liability mapping and review.
-
-KakeFlow adds [Annual Household Review XLSX export](docs/ANNUAL_REVIEW_XLSX.md). The native workbook reuses the exact validated report, selected account group/member scope, year, and as-of date shown in KakeFlow. Its Summary, Monthly, Drivers, and Health sheets retain complete/partial/future month states, typed financial values, Japanese labels, reconciliation, and data-quality disclosures; workbook bytes never cross the WebView IPC boundary.
-
-KakeFlow adds restart-safe [receipt item review and split posting](docs/RECEIPT_ITEM_SPLIT.md). Import Inbox exposes a bounded projection of item, tax, coupon, point, payment, confidence, and source-line evidence before approval. An exact outgoing receipt can create one categorized expense debit per item while preserving the original payment credit; mismatched totals disclose their delta and require explicit manual allocation instead of guessing how tax, discounts, or points should be treated.
-
-KakeFlow adds a strict [AEON finalized-statement import](docs/AEON_CARD_IMPORT.md). Detection uses an AEON content marker, named finalized fields, dated detail rows, and one exact statement total rather than a filename. Refunds retain their negative sign, while installment, revolving, bonus, partial, ambiguous, multi-section, malformed, and unfamiliar layouts fail closed. The checked-in fixture is screen-derived synthetic because AEON does not publish a literal consumer CSV schema.
-
-KakeFlow adds bounded [scanned and hybrid PDF OCR](docs/SCANNED_PDF_OCR.md). The complete PDF remains immutable evidence, page outcomes and OCR boxes stay aligned with the source viewer, and only pages that independently parse as receipts create review-required candidates. Statement and blank pages never become expenses; a source-only import preserves a multi-page document when no page is eligible. Image upload, Capture Inbox, and rendered PDF pages use checksum-pinned PaddleOCR PP-OCRv5 mobile detection/recognition models through ONNX Runtime Web. The engine runs locally and is loaded only when OCR is requested. The packaged Tesseract 5.5.2 runtime remains temporarily available for compatibility and rollback while the PP-OCRv5 migration is validated on every release platform.
-
-KakeFlow adds a dedicated [Monex U.S.-stock Trade History import](docs/MONEX_US_STOCK_IMPORT.md). It recognizes the complete screen-derived 16-field family without relying on a filename, supports explicit post-renewal U.S.-dollar spot buys and sells, preserves exported gross/settlement/fee values and physical-row evidence, and requires the user to choose an existing securities account. Yen settlement and non-spot activity remain blocking because the public documentation does not establish safe dual-currency or event-specific settlement semantics; the included fixture is explicitly synthetic rather than claimed as a Monex-issued sample.
-
-KakeFlow makes encrypted family delivery recover correctly when relay membership keys change. KakeFlow first replays the exact persisted `KFE1` bytes, resets an envelope only after the relay returns the exact pre-storage `RECIPIENT_SET_CHANGED` rejection, and then reseals on the next explicit Send. Ambiguous failures retain their immutable retry bytes, mixed upload outcomes are reconciled independently, and interrupted sends recover after restart without automatic delivery or Apply. See [recipient-set recovery](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
-
-The opt-in [background family-delivery workflow](docs/BACKGROUND_FAMILY_DISCOVERY.md) keeps metadata-only discovery as its default. A separate switch can prepare at most one oldest encrypted `KFE1` publication for review per run, with exact size/SHA validation and the current member's OS-backed encryption identity. Plaintext artifacts, conflict decisions, and Apply remain manual.
-
-KakeFlow wraps unchanged family artifacts in the recipient-encrypted `KFE1` transport envelope. Each active destination membership receives its own X25519-wrapped payload key, the relay stores opaque XChaCha20-Poly1305 ciphertext, and exact encrypted bytes are retained for idempotent retry. Device private keys remain in native OS credential storage; inbound artifacts are decrypted natively and still require explicit review and Apply. This is relay-blind recipient encryption, not a sender-signature or automatic-sync claim.
-
-KakeFlow adds [audience-partitioned card and investment evidence delivery](docs/FAMILY_EVIDENCE_DELIVERY.md). Family schema v3 carries seven new card and investment aggregates inside a digest-bound `KFF3` envelope with their original document bytes and raw rows. Source IDs are qualified by the installation that created them, private evidence never widens into a shared partition, and staging remains non-mutating until one explicit atomic Apply.
-
-KakeFlow adds [audience-partitioned planning and configuration delivery](docs/FAMILY_PLANNING_CONFIG_DELIVERY.md). Family schema v2 carries complete monthly-budget, savings-goal, classification-rule, account-group, settlement-mapping, dashboard-layout, and parser-profile aggregates through the same explicit review/atomic-apply boundary as the core family graph. Least-widening account dependencies select `SHARED` or matching `PERSONAL(member)` delivery; mixed, other-member, unresolved, ownerless personal account groups, and evidence-dependent facts remain visibly withheld.
-
-![KakeFlow family schema v2 planning and configuration delivery](docs/assets/infographics/family-v2-planning.svg)
-
-KakeFlow adds a dedicated [mobile receipt-capture protocol and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md). A reference mobile-browser uploader sends one immutable JPEG/PNG capsule through a separate authenticated relay channel; the desktop stores and previews the original before local OCR, then creates only a normal `REVIEW_REQUIRED` receipt candidate. Receiving, OCR, matching, and promotion never post a transaction automatically.
-
-![KakeFlow mobile receipt capture](docs/assets/infographics/mobile-capture.svg)
-
-KakeFlow adds a strict, dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot stock purchases and sales. It preserves source settlement semantics and physical-row evidence, requires an explicit securities-account mapping, and rejects credit/margin, `現引`/`現渡`, and other unsupported rows instead of guessing their investment treatment.
-
-KakeFlow adds a strict, dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for supported domestic and foreign spot stock purchases and sales. It preserves the official export fields and physical-row evidence, requires an explicit securities-account mapping, and rejects margin and other unsupported transaction types instead of guessing their accounting treatment.
-
-KakeFlow carries the independent Home widget layouts for Financial Overview, Household Ledger, Assets & Liabilities, Card Reconciliation, and Cash Flow inside schema-v4 local change packages. Moving a household between desktops now preserves each view's order and visibility without weakening schema-v1 through schema-v3 compatibility. See [dashboard preferences](docs/DASHBOARD_PREFERENCES.md).
-
-KakeFlow made pending import review restart-safe. Import Inbox discovers every household-scoped manual or folder import still in `REVIEW_REQUIRED`, restores its existing immutable preview, deduplicates the two discovery paths, and still requires explicit approval before posting. See [pending import recovery](docs/PENDING_IMPORT_RECOVERY.md).
-
-KakeFlow added a household-persisted Home layout editor. Users can reorder eligible widgets by drag-and-drop or accessible move buttons, hide and restore panels, and reset the active template while KakeFlow preserves accounting basis, metric definitions, drill-downs, and the rule that at least one widget remains visible. See [dashboard preferences](docs/DASHBOARD_PREFERENCES.md).
-
-KakeFlow extended the [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) to full exports containing multiple `保有金融機関` values. Import Inbox renders one explicit Asset/Liability account mapping per normalized institution and keeps staging disabled until every mapping is complete. Candidate rows retain their own source institution, transfer/calculation-target semantics, categories, memo, stable external ID, and immutable evidence; KakeFlow never guesses or auto-creates the destination accounts.
+- Maintains a double-entry household ledger with immutable source evidence.
+- Separates credit-card purchases from later liability settlement, preventing double-counted spending.
+- Imports supported Japanese bank, card, wallet, brokerage, email, folder, and receipt sources through fail-closed adapters.
+- Requires explicit review before candidates become confirmed ledger entries.
+- Reconciles card statements, bank payments, and source coverage.
+- Produces monthly, annual, transaction-ledger, portfolio, and investment-performance reports.
+- Tracks portfolio snapshots and FIFO investment performance without inventing cross-currency totals.
+- Shares reviewed household data through audience-partitioned, encrypted family artifacts.
+- Stores the application database, evidence, credentials, and generated reports locally.
 
 ## Product tour
-
-The household overview combines net worth, monthly income and spending, trends,
-category composition, recent transactions, and card-settlement status.
 
 ![KakeFlow household overview](docs/assets/screenshots/kakeflow-overview.png)
 
@@ -116,284 +36,127 @@ category composition, recent transactions, and card-settlement status.
 | --- | --- |
 | ![KakeFlow transaction ledger](docs/assets/screenshots/kakeflow-transactions.png) | ![KakeFlow import inbox](docs/assets/screenshots/kakeflow-import-inbox.png) |
 
-## How KakeFlow works
+## Data flow
 
 ![KakeFlow local-first data pipeline](docs/assets/infographics/data-pipeline.svg)
 
-KakeFlow deliberately separates expense recognition from cash settlement. A
-credit-card purchase creates an expense and a card liability; the later bank
-debit settles that liability without counting the expense twice.
+```text
+User-controlled source
+  -> immutable source document
+  -> format detection and extraction
+  -> normalized review candidate
+  -> deduplication and reconciliation
+  -> explicit user approval
+  -> double-entry ledger
+  -> analytics and reports
+```
+
+KakeFlow treats source documents, extracted business events, and ledger entries as separate records. Every supported import preserves enough document and row lineage to explain a confirmed number later.
+
+Credit-card accounting follows the same rule:
 
 ![KakeFlow credit-card reconciliation](docs/assets/infographics/card-reconciliation.svg)
 
+A purchase records the expense and card liability. The later bank debit settles the liability and is not counted as a second expense.
+
 ## Run locally
 
-Use Node.js 20 LTS or 22 LTS.
+Requirements:
+
+- Node.js 20.19 or newer in the 20.x line, or Node.js 22.12+
+- Rust 1.97 for the desktop application
+- macOS or Windows for the supported desktop targets
+
+Install dependencies and start the web development server:
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-Production checks:
-
-```bash
-npm run lint
-npm run build
-npm test
-cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test
-```
-
-Desktop development also requires Rust 1.97. The desktop app creates a random database master key on first launch and stores it in macOS Keychain or Windows Credential Manager:
+Start the Tauri desktop application:
 
 ```bash
 npm run desktop:dev
 ```
 
-Build an unsigned local macOS/Windows artifact:
+On first desktop launch, KakeFlow creates a random database master key and stores it in macOS Keychain or Windows Credential Manager.
+
+## Quality checks
+
+Run the frontend gates:
+
+```bash
+npm run lint
+npm run build
+npm test
+```
+
+Run the native gates:
+
+```bash
+cd src-tauri
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+Build the unsigned desktop executable without an installer:
 
 ```bash
 npm run desktop:build
 ```
 
-Run the same non-destructive release-readiness smoke sequence as CI (version and
-fail-closed [update-channel](docs/UPDATE_CHANNEL.md) checks,
-frontend tests/lint/build, Rust format/Clippy/tests, and an unsigned
-`tauri build --no-bundle`):
+`npm run desktop:smoke` runs the release-readiness sequence without launching the application or opening a user database. Release-specific procedures are documented in [Manual GitHub release](docs/MANUAL_GITHUB_RELEASE.md), [macOS signing and notarization](docs/MACOS_SIGNING_NOTARIZATION.md), and [Update channel](docs/UPDATE_CHANNEL.md).
 
-```bash
-npm run desktop:smoke
-```
+## Repository map
 
-The smoke command compiles and verifies the native executable but never launches
-the app, opens a user database, or creates an installer. GitHub Actions runs it
-independently on macOS and Windows. KakeFlow deliberately distributes through
-GitHub Releases without paid platform signing or an automatic update channel.
+| Path | Purpose |
+| --- | --- |
+| `src/` | React UI, import adapters, review workflows, and typed IPC clients |
+| `src-tauri/` | Tauri shell, SQLCipher persistence, migrations, evidence vault, OCR, reports, backup, and restore |
+| `relay-service/` | Reference authenticated relay and mobile-capture uploader |
+| `scripts/` | Build, release, smoke-test, OCR, and demo-data utilities |
+| `docs/` | Product contracts, source-format specifications, operations, and audit records |
+| `design_handoff_kakeflow_v2/` | Versioned product-design handoff and visual reference set |
+| `packaging/` | Platform packaging and OCR dependency configuration |
 
-When GitHub-hosted runners are unavailable, follow the checked [manual GitHub
-release procedure](docs/MANUAL_GITHUB_RELEASE.md): run every local desktop gate,
-create the verified tag, and upload the locally built artifact with `gh release
-create`. The release workflow is dispatch-only so pushing a tag does not create a
-known-failing quota job.
+The React layer previews imports and presents application state. Rust owns encrypted persistence, filesystem access, native credentials, report generation, OCR orchestration, and the security-sensitive IPC boundary.
 
-## Product principles
+## Documentation guide
 
-- Source files are immutable evidence, not transactions by themselves.
-- Source rows, business events, and ledger entries are separate concepts.
-- Card purchases count as expenses; the later bank debit is a liability payment and must not double-count spending.
-- Dashboard metrics read confirmed ledger data, not raw extraction candidates.
-- Every displayed number should remain traceable to its original source.
-- KakeFlow does not connect directly to bank, credit-card, brokerage, or
-  financial-aggregation APIs. Financial data enters only through user-provided
-  files, user-controlled synced folders, or explicitly configured document
-  inboxes, preserving the legal, licensing, and review boundary.
+Start with these documents:
 
-## Intended architecture
+- [Metric contract](docs/METRICS.md): definitions and accounting boundaries.
+- [Calculation targets](docs/CALCULATION_TARGETS.md): expense, income, transfer, and exclusion semantics.
+- [Import classification rules](docs/IMPORT_REVIEW_CLASSIFICATION_RULES.md): review and posting behavior.
+- [Card reconciliation](docs/CARD_PAYMENT_RECONCILIATION.md): purchase and settlement matching.
+- [Investment performance](docs/INVESTMENT_PERFORMANCE.md): FIFO and currency rules.
+- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md): local artifact and replication model.
+- [Family Space](docs/FAMILY_SPACE.md): explicit family review and apply boundaries.
+- [Localization](docs/LOCALIZATION.md): English, Japanese, and Vietnamese UI support.
+- [V1 release readiness](docs/V1_RELEASE_READINESS.md): tested release boundary.
+- [KakeFlow v2 handoff](design_handoff_kakeflow_v2/README.md): information architecture and visual contract.
 
-```text
-Local/synced folder
-  -> source document store
-  -> adapter detection and extraction
-  -> normalized candidates
-  -> deduplication and reconciliation
-  -> user review
-  -> double-entry ledger
-  -> analytics views
-  -> desktop dashboard
-```
+Source-specific import contracts live under `docs/*_IMPORT.md`. Export specifications use `*_CSV.md`, `*_XLSX.md`, or `*_PDF.md`. Historical visual evidence is retained under `docs/audits/` and is not the current product specification.
 
-The React application is the presentation and import-preview layer. Tauri/Rust owns the encrypted database, migrations, OS paths, and IPC boundary:
+## Design principles
 
-```text
-src/               React UI, import adapters, review workflow, typed IPC client
-src-tauri/         Tauri shell, SQLCipher ledger, encrypted vault, PDF/OCR, backup/restore
-```
+1. Source data remains immutable evidence.
+2. No import becomes a transaction without explicit review.
+3. Confirmed ledger data, not raw extraction output, drives metrics.
+4. Transfers and liability settlements do not inflate income or spending.
+5. Missing, ambiguous, or unsupported source semantics fail closed.
+6. Currency-specific values remain separate unless a source-backed conversion exists.
+7. Every displayed or exported number should be traceable to its source and scope.
+8. Local-first behavior must remain understandable without a hosted KakeFlow account.
 
-KakeFlow never stores the database key in its database, logs, application bundle, or process environment. A portable v2 backup encrypts the ledger, source-document vault, and a cross-device key capsule with a user passphrase. Backup destinations are selected by the native backend; restore is authenticated, staged, semantically validated, confirmed in a native OS dialog, and activated through a restart-safe journal.
+## Distribution and security boundary
 
-Receipt and scanned-PDF OCR are offline. The primary engine is PaddleOCR PP-OCRv5 running in the application WebView with local ONNX models and ONNX Runtime WASM assets staged by `npm run paddleocr:stage`; release verification uses `npm run paddleocr:verify`. Tesseract resources are still packaged as a compatibility fallback during the migration window. Missing or invalid models fail closed and no image or document is uploaded to an OCR service.
+KakeFlow currently distributes through GitHub Releases. It does not claim notarized macOS distribution, a production Windows installer, a hosted identity service, automatic cloud synchronization, or production-qualified Google connectors.
 
-## Data and release safety
+The reference relay stores opaque immutable artifacts for testing personal and family delivery. It is not a hosted KakeFlow service. Deployments must provide TLS termination, request limits, durable storage, secret management, monitoring, backup, and their own operating controls. See [relay-service/README.md](relay-service/README.md).
 
-- SQLCipher encrypts the canonical ledger; XChaCha20-Poly1305 encrypts immutable source documents.
-- macOS Keychain or Windows Credential Manager stores the active master key.
-- Backup archives and restore work have aggregate byte, entry, and record budgets.
-- Imported candidates remain reviewable and rollbackable until they are posted atomically as balanced journal entries.
-- The checked-in desktop workflow produces an **ad-hoc-signed macOS DMG** and an
-  **unsigned Windows installer** for direct GitHub distribution. Release notes
-  must disclose the resulting Gatekeeper or SmartScreen warning; paid platform
-  signing and notarization are intentionally outside the project scope.
+## License
 
-## Current capabilities
-
-- Local [RFC 5322 email attachment import](docs/EMAIL_ATTACHMENT_IMPORT.md) that
-  stores the exact `.eml` as immutable evidence and qualifies rows from its one
-  selected CSV/TSV/XLSX attachment with `sourcePart`. Multiple importable
-  attachments, unsupported schemas, and ambiguous selection fail closed. The
-  durable Folder Inbox can discover locally saved `.eml` files from a selected
-  mail-drop folder, but this is not mailbox OAuth, mailbox API access, or remote
-  background email polling.
-- Tested [Gmail connector](docs/GMAIL_CONNECTOR.md) with dedicated read-only
-  OAuth, label/query binding, bounded raw-message/history APIs, exact raw-EML
-  vault hydration, durable Inbox review/rollback, manual synchronization, and
-  opt-in incremental polling while KakeFlow is open. Settings and Import Inbox
-  integration are included in `v1.0.0` for locally configured test users; the
-  release does not claim generally available Gmail access before Google
-  provider qualification and packaged real-account validation.
-- Dedicated [MUFG BizSTATION all-details import](docs/MUFG_BIZSTATION_IMPORT.md)
-  for the official Shift_JIS business-account record family, with exact
-  header/detail/footer/final validation, totals and running-balance
-  reconciliation in either source order, immutable row provenance, explicit
-  bank-account mapping, and no automatic posting. This does not claim support
-  for personal MUFG Direct exports.
-- Dedicated [MUFG BizSTATION deposit/withdrawal import](docs/MUFG_BIZSTATION_DEPOSIT_WITHDRAWAL_IMPORT.md)
-  for the official twenty-field business-account export, with fixed code,
-  padded amount, single-source-account, and bounded Japanese-calendar
-  validation. The source has no balance or durable transaction ID, and
-  era-ambiguous archival dates fail closed instead of being guessed.
-- Strict provider-neutral [personal Japanese bank ledger v2 import](docs/PERSONAL_JAPANESE_BANK_IMPORT.md)
-  for the exact nine-column account-history contract, with a bounded preamble,
-  positive safe-integer one-sided amounts, signed balances, complete physical
-  row provenance, duplicate/summary rejection, and chronology plus running-
-  balance proof in either source order. It is ranked ahead of generic v1 while
-  leaving v1 intact and cannot collide with BizSTATION or Yucho Direct.
-- Strict [PayPay transaction-history v2 import](docs/PAYPAY_HISTORY_IMPORT.md)
-  for the exact ordered seven-column contract, with bounded rows/events/legs,
-  safe-integer one-sided amounts, consistent Transaction ID grouping, complete
-  physical-row provenance, duplicate rejection, and exact split-funding
-  reconciliation. It is ranked ahead of legacy v1, remains separate from
-  PayPay Card billing, requires an explicit wallet account, and leaves unknown
-  transaction types as review data instead of inventing accounting semantics.
-- Reproducible [Windows x64 offline OCR packaging foundation](docs/PACKAGED_APP_TESTING.md)
-  with a pinned static vcpkg triplet, file-level manifest, PE dependency checks,
-  `eng`/`jpn` model loading, TSV execution, and installed-NSIS resource
-  verification. Native Windows staging and installer evidence remain mandatory
-  before a Windows artifact can be advertised or released.
-- Opt-in [background family-delivery discovery and preparation](docs/BACKGROUND_FAMILY_DISCOVERY.md) at a persisted 15, 30, or 60 minute interval while the desktop process is open. Metadata-only remains the default; a separate consent can download, verify, decrypt, and stage one encrypted item for manual review. Active review blocks further intake, plaintext stays manual, and conflict resolution/Apply are never automatic.
-- Dedicated [mobile receipt-capture capsules and desktop Capture Inbox](docs/MOBILE_RECEIPT_CAPTURE.md) with a separate authenticated relay cursor, immutable JPEG/PNG originals, encrypted local staging, uncropped preview, desktop-only OCR, duplicate reuse, preserved `SHARED`/`PERSONAL(member)` scope, and atomic promotion into the ordinary explicit `REVIEW_REQUIRED` workflow. The included uploader is a reference mobile-browser client, not a native or production-hosted mobile app.
-- [Audience-partitioned family schema v4](docs/FAMILY_RECURRING_PREFERENCES_DELIVERY.md) for the core graph, complete planning/configuration aggregates, seven evidence-backed card/investment aggregates, and the complete household recurring-series preference set. The binary KFF4 envelope carries the same origin-qualified immutable evidence as KFF3 plus one `SHARED` preference aggregate, preserves V1–V3 compatibility, and materializes accepted state only inside one explicit atomic apply.
-- Optional [authenticated personal desktop relay](docs/AUTHENTICATED_PERSONAL_RELAY.md) with server-derived Bearer-token principals, manual send/check/stage controls, immutable 64 MiB digest-verified artifacts, retry-safe outbox acknowledgement, and reuse of the existing schema-v5 conflict-review/atomic-apply boundary. This same-principal channel is separate from recipient-encrypted family delivery: it has no cross-member, recipient-encryption, auto-sync, auto-apply, source-evidence transport, or backup claim. The checked-in Node reference relay has an explicit WebView CORS allowlist, must run behind a TLS reverse proxy, and stores package bytes as received.
-- Dedicated [Rakuten Securities domestic trade-history import](docs/RAKUTEN_SECURITIES_IMPORT.md) for explicit spot and odd-lot purchases/sales, with source settlement checks, immutable row provenance, explicit securities-account selection, blocking credit/margin errors, and row-level rejection of `現引`/`現渡` or other unsupported activity; checked-in fixtures are synthetic and contain no customer data.
-- Dedicated [SBI Securities trade-history import](docs/SBI_SECURITIES_IMPORT.md) for the official domestic and foreign `約定履歴` CSV structures, limited to supported spot stock purchases and sales with explicit securities-account selection, immutable row provenance, auditable source-settlement adjustments, and rejection of margin, derivatives, and other unsupported rows; checked-in fixtures are synthetic and contain no customer data.
-- [Portable confirmed-evidence bundles](docs/PORTABLE_EVIDENCE_BUNDLES.md) with original CSV/PDF/image bytes, complete immutable raw rows, deterministic import-run/document/record aliases, evidence-first investment dependencies, idempotent content reuse, atomic database publication, and source-viewer hydration without change-package hash drift. Schema-v1 capsules remain compatible; pending Inbox candidates, watched-folder grants, and OCR caches are excluded.
-- [Local sync foundation](docs/LOCAL_SYNC_FOUNDATION.md) with stable device/principal records, deterministic immutable change envelopes, and transport-free outbox status; schema-v5 [local change packages](docs/LOCAL_CHANGE_PACKAGES.md) export one consistent 19-kind household snapshot spanning ledger, card reconciliation, confirmed investment facts, all five dashboard layouts, and the complete recurring-series preference set. Packages validate digests and lineage, require explicit conflict/delete choices, and apply atomically without echoing incoming changes into the local outbox. Schema-v1 through schema-v4 packages remain compatible and cannot clear the new aggregate. There is no server, login, automatic delivery, remote sync, or access-control claim.
-- [Home Action Center](docs/HOME_ACTION_CENTER.md) with deterministic priority/due ordering, bounded top-three presentation, exhaustive workspace routing, selected-month baseline, scope disclosure, and isolated retry/stale states.
-- [Explicit import account mapping](docs/EXPLICIT_IMPORT_ACCOUNT_MAPPING.md) for strict personal Japanese bank v2, legacy generic Japanese bank v1, strict/legacy PayPay history, Rakuten Card, Amazon Mastercard, JCB MyJCB, SMBC Vpass, the strict [AEON finalized-statement contract](docs/AEON_CARD_IMPORT.md), and the strict [PayPay Card community-derived finalized-statement contract](docs/PAYPAY_CARD_IMPORT.md), with adapter-compatible account filtering, per-preview selection, and no default or name-based inference. The AEON and PayPay Card fixtures are synthetic because official materials confirm the relevant export capability but do not publish the literal consumer schemas.
-- Source-backed [dashboard data quality and freshness](docs/DASHBOARD_DATA_QUALITY.md), with deterministic latest confirmed source, review/failure status, original-row coverage, Import Inbox drill-down, and a screenshot-grounded [dashboard UX audit](docs/audits/dashboard-data-quality/AUDIT.md).
-- User-confirmed [credit-card statement due dates](docs/CARD_DUE_DATES.md) with set/correct/clear controls, household-scoped validation, explicit no-inference labeling, and immediate coverage/forecast refresh without ledger mutation.
-- Bounded [Yucho bulk ZIP import](docs/YUCHO_BULK_ZIP_IMPORT.md) for manual upload and drop, with deterministic per-CSV previews, archive-entry provenance, atomic archive rejection, CRC verification, explicit review, and no automatic ledger posting.
-- Dedicated [Yucho Direct transaction import](docs/YUCHO_DIRECT_IMPORT.md) using the official seven-column personal-account CSV, explicit account mapping, physical-row provenance, running-balance validation, and conservative ATM/card semantics.
-- Persisted and schema-v4-portable [dashboard focus and appearance preferences](docs/DASHBOARD_PREFERENCES.md) with five truthful presets including dedicated Cash Flow, independent per-template widget layouts, system/light/dark themes, comfortable/compact density, household isolation, and no change to ledger data.
-- Durable [app-wide Folder Inbox](docs/DURABLE_FOLDER_INBOX.md) with SQLite-backed discovery state, idempotent event/poll/manual reconciliation, bounded leases and retries, restart-safe preview rehydration, explicit retry/ignore controls, and no automatic ledger posting.
-- Explicit [receipt-to-transaction evidence matching](docs/RECEIPT_EVIDENCE_MATCHING.md) for offline OCR candidates, with exact-amount and three-day date-window eligibility, explainable merchant-based ranking, and up to ten suggestions.
-- User-confirmed evidence linking that attaches the receipt's immutable source rows to an existing posted expense/card purchase as supporting evidence without creating a transaction, journal entry, balance movement, or duplicate expense.
-- Persisted workflow labels and free-form tags with [explicit bulk editing and exact filters](docs/TRANSACTION_LABELS_AND_TAGS.md), independent from categories and journals.
-- Dedicated [Money Forward ME household-ledger import](docs/MONEY_FORWARD_HOUSEHOLD_IMPORT.md) with strict official-column parsing, explicit institution-to-account selection, transfer-safe posting, named source provenance, and stable external-ID deduplication.
-- Calculation-target and transfer semantics carried through preview and posting; a Money Forward transfer can never silently become household income or expense.
-- Explicit [card settlement coverage](docs/CARD_SETTLEMENT_COVERAGE.md) with user-selected card-to-bank mappings, cumulative multi-card projections, covered/shortfall/overdue states, and Action Center warnings.
-- Cumulative [card-payment reconciliation](docs/CARD_PAYMENT_RECONCILIATION.md) with itemized confirmed debits, explicit candidate confirmation, and derived partial/full/overpaid totals.
-- Actual bank-balance semantics that include every posted journal entry even when a transaction is excluded from household analytics, while confirmed card payments are applied only when effective by the requested as-of date.
-- Honest disclosure of unmapped obligations and statements missing a due date; neither is silently assigned or folded into a misleading chronological forecast.
-- Per-transaction [calculation targets](docs/CALCULATION_TARGETS.md) with visible included/excluded state, combined ledger filters, card-safe flag-only editing, complete CSV retention, and an explicit analytics-versus-balance boundary.
-- [Annual Household Review](docs/ANNUAL_REVIEW.md) with twelve explicit month states, equal-window prior-year comparison, driver drill-down, account/member scopes, and deterministic UTF-8 BOM CSV export.
-- Deterministic [Monthly Household Review CSV](docs/MONTHLY_REVIEW_CSV.md) using the same validated month, account group, attribution scope, and resolved data-quality `asOf` date as the screen and monthly XLSX/PDF exports, with explicit prior-month/prior-year summary rows, prior-month-only driver semantics, native save cancellation, and bounded UTF-8 BOM/CRLF output.
-- [Money Forward aggregate asset history](docs/MONEY_FORWARD_ASSET_HISTORY.md) with official-column parsing, atomic multi-row persistence, overlapping-export reuse, provenance, date filters, trend/composition views, and a strict assets-only/no-ledger contract.
-- Reliable zero-transaction import finalization for portfolio, brokerage, and aggregate reporting data while candidate-bearing imports still require a complete review decision set.
-- Fixed-cost review for housing, insurance, utilities, connectivity, mobile, subscriptions, and other recurring costs with six complete monthly points and transaction drill-down.
-- Cadence-normalized annual estimates for weekly through annual payees, stale-series exclusion, category-first classification, confidence reasons, account/member scopes, and explicit [metric semantics](docs/FIXED_COST_REVIEW.md).
-- Truthful fixed-cost coverage and limitations: the app reports observed confirmed-ledger costs and never claims an external market-saving opportunity without market data.
-- Mixed cash/stock and cross-currency merger ingestion with explicit stock-basis allocation, consideration currencies, and source-to-output FX rates.
-- FIFO merger allocations that expose source acquisition evidence, source/output basis and currency, exact conversion rate, cash proceeds, and realized P&L.
-- Per-currency balanced merger legs and cash-flow totals; incomplete or unnecessary terms are rejected instead of inferred.
-- Persisted [custom CSV/TSV mappings](docs/CUSTOM_PARSER_PROFILES.md) with an inline unsupported-file rescue dialog, actual-header dropdowns, local sample/candidate preview, optimistic concurrency, UTF-8/CP932 decoding, explicit signed/debit-credit semantics, and JPY-only validation.
-- Per-file profile application with matched-header, candidate, excluded-row, and issue preview; error rows block staging and every valid candidate remains pending review.
-- Immutable custom source-row/raw-field provenance, external transaction ID propagation, and an explicit Asset/Liability target account.
-- Persisted whole-household, household-common, or member activity scope with archived-member historical reporting.
-- Consistent attribution filtering across transaction activity, calendar/reports, recurring and anomaly intelligence, forecast history, Action Center actuals, and transaction CSV export.
-- Truthful household-wide disclosure for net worth, account balances, investments, savings goals, import status, and unallocated household obligations.
-- Explicit household/member transaction attribution, independent shared/personal audience labels, and archived-member historical references.
-- Independent source-document audience editing that never changes linked transaction metadata.
-- Local Family Space with ordered member creation, editing, archive lifecycle, and truthful no-access-control disclosure.
-- Independent household/member account ownership and shared/personal classification, including atomic account creation and strict same-household active-owner validation.
-- Saved household/personal/daily-spending/custom account scopes across Overview, Transactions, Reports, intelligence, forecasts, Action Center items, and CSV export.
-- Canonical any-journal-entry group membership with no duplicate transaction counts, strict household validation, and legacy all-account behavior when no scope is selected.
-- Dedicated [Monex U.S. stock-history import](docs/MONEX_US_STOCK_IMPORT.md) for the complete screen-derived field family, with strict USD spot-trade semantics, explicit securities-account mapping, source-row provenance, and blocking disclosure for unverified or dual-currency cases.
-- Spin-off cost allocation, rights-subscription lots, and cash-in-lieu FIFO disposal from explicit source terms, with annual-report explanations and no guessed values.
-- Password-protected PDF extraction and evidence-page rendering with ephemeral credentials and semantic retry states.
-- Read-only DMG mount validation for bundle version, identifier, executable, resources, signature structure, and clean detach.
-- Dated market-price history, `assetbalance` price reuse, market value, unrealized P&L, and explicit missing-price disclosure by currency.
-- Annual realized P&L, dividend, fee, tax, and FIFO purchase-to-sale source-row reporting.
-- Locally rendered authenticated PDF pages underneath extraction bounding boxes.
-- Packaged-WebView onboarding plus ordered navigation evidence for all eleven top-level workspaces, with exact headings, active navigation, and database persistence verification.
-- Recursive native filesystem notifications with debouncing, duplicate suppression, and bounded polling fallback.
-- Split, reverse-split, and same-currency share-for-share merger events that preserve FIFO lot provenance and total cost.
-- JPY investment reporting from dated direct/inverse FX observations, including the exact selected rate and source provenance.
-- Authenticated local receipt-image preview with interactive OCR regions, zoom, confidence, and source-row drill-down.
-- Background folder discovery outside Import Inbox with debounced created/modified/removed events.
-- FIFO holdings, open lots, realized P&L, dividends, fees, and taxes with source-event lineage per currency.
-- Packaged application launch/navigation smoke using isolated temporary data, real WebView IPC, migration checks, and machine-readable evidence for every primary workspace shell.
-- Three-month cash/savings forecast with explicit historical assumptions, recurring costs, and known card payments.
-- Prioritized Action Center for imports, card reconciliation, budgets, goals, anomalies, and subscription price changes.
-- Brokerage buys, sells, dividends, fees, taxes, deposits, and withdrawals with balanced investment legs and currency summaries.
-- Page-aware PDF/OCR evidence plus receipt item, tax, coupon, point, confidence, and provenance views.
-- Financial calendar with accrual/cash views, no-spend days, card schedules, and drill-down.
-- Monthly/yearly reports with MoM/YoY comparisons, budget/goal progress, spending drivers, reconciliation, and data-quality status.
-- Explainable recurring/subscription and unusual-spending detection derived
-  locally from confirmed ledger history, with a local-only
-  [recurring-series review](docs/RECURRING_SERIES_REVIEW.md) that distinguishes
-  `AUTO_DETECTED`, `CONFIRMED`, and visible `IGNORED` series. Ignored payees are
-  excluded from forecast, recurring Action Center items, and fixed-cost review
-  without changing their ledger transactions; restore returns them to
-  detector-owned `AUTO_DETECTED` cadence and amounts. Schema-v5 local change
-  packages can carry the complete explicit household decision set without
-  transporting installation-local optimistic versions.
-- Reusable household/personal/investment/custom account groups and scoped transaction or portfolio CSV export, plus native [Transaction Ledger XLSX](docs/TRANSACTION_LEDGER_XLSX.md) and [Transaction Ledger PDF](docs/TRANSACTION_LEDGER_PDF.md) artifacts generated from the exact same validated transaction table with explicit date, accounting-basis, account-group, member-attribution, and calculation-target disclosure.
-- Automatic discovery with review-gated ingestion from registered local, iCloud Drive, OneDrive, or NAS folders, plus direct read-only Google Drive OAuth folder sync into the same canonical review workflow. Drive uses bounded incremental polling while KakeFlow is open and falls back to a fresh full reconciliation when its cursor or selected tree requires it. Both paths retain restart-safe queue state and never auto-post ledger transactions.
-- Durable mobile-browser receipt capture queue for protocol testing, with exact-byte IndexedDB persistence before upload, stable capture identity, restart recovery, bounded retry, and relay-acceptance verification.
-- Immutable CSV/Excel/OCR source-record drill-down from a posted transaction.
-- Household-scoped classification rules with priority, enable/disable,
-  category, labels, and tags. Version `v1.0.0` also adds
-  [review-time import suggestions](docs/IMPORT_REVIEW_CLASSIFICATION_RULES.md)
-  that require an explicit Apply, preserve field provenance, fail atomically
-  when the candidate or exact rule revision is stale, and never approve or post
-  an import automatically.
-- Securities asset snapshot ingestion and a dedicated investment dashboard.
-- Authenticated cross-principal family delivery for the confirmed household graph, with separate `SHARED` and `PERSONAL(member)` artifacts, server-derived recipients, recipient-encrypted `KFE1` relay transport, exact-byte retry and recipient-set-change recovery, durable review, hash-bound relocation-safe audience lineage, and partition-scoped omission handling. The relay sees ciphertext; sender signatures and automatic apply are intentionally outside this release.
-- Existing double-entry household ledger, budgets, goals, receipt/PDF extraction, and bank/card reconciliation.
-
-## Remaining product milestones
-
-The shipped v1 boundary is recorded in
-[KakeFlow v1 release readiness](docs/V1_RELEASE_READINESS.md). The tracks below
-require their own product, provider, platform, and release evidence before a
-later release can advertise them.
-
-1. Add more institution-specific brokerage and statement adapters, beginning with the highest-volume Japanese exports not yet covered by a dedicated parser.
-2. Qualify the implemented Gmail and Google Drive document connectors with
-   packaged real-account validation and the required Google provider review.
-   Other mailbox providers remain separate connector work. Native iCloud folder
-   selection remains available through the durable local inbox. Direct bank,
-   card, brokerage, and financial-aggregation APIs are permanently outside the
-   product scope for legal and licensing reasons.
-3. Extend the opt-in, one-publication-at-a-time encrypted family intake into
-   broader multi-device coordination only where explicit send, download,
-   review, audience, and evidence-provenance boundaries remain visible and
-   enforceable. Automatic Apply remains outside the product contract.
-4. Promote the reference mobile-browser queue into a native mobile capture client with platform-managed durable storage and background delivery only after its lifecycle can preserve the same review boundary.
-5. Complete native Windows x64 OCR, NSIS install/uninstall, and packaged-app
-   evidence before publishing the unsigned Windows installer beside the
-   ad-hoc-signed macOS Apple Silicon DMG on GitHub Releases. The
-   [update channel](docs/UPDATE_CHANNEL.md) remains disabled; users install new
-   versions manually. Paid signing, notarization, Store distribution, and
-   additional architectures are not roadmap commitments.
-
-## Family delivery boundary
-
-![Audience-partitioned family delivery](docs/assets/infographics/family-delivery.svg)
-
-KakeFlow keeps same-principal desktop relay and cross-principal family delivery
-as separate protocols. Family delivery publishes independent `SHARED` and
-`PERSONAL(member)` artifacts, derives recipients from active relay membership,
-and still requires local review before any ledger change. See the full
-[audience-partitioned family delivery contract](docs/AUDIENCE_PARTITIONED_FAMILY_DELIVERY.md)
-and its [recipient-set recovery contract](docs/FAMILY_RECIPIENT_SET_RECOVERY.md).
+See [LICENSE](LICENSE).

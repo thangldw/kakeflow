@@ -1,4 +1,4 @@
-# Báo cáo trạng thái dự án KakeFlow — cập nhật 2026-07-17
+# Báo cáo trạng thái dự án KakeFlow — cập nhật 2026-07-18
 
 ## Tóm tắt điều hành
 
@@ -133,10 +133,10 @@ hành công khai chỉ thực hiện tại các phiên bản lớn, bắt đầu
 - Packaged-app smoke đạt hai lần liên tiếp với **11 page / 12 interaction**, IPC
   và schema v68; app bundle ad-hoc đã qua
   `codesign --verify --deep --strict`. DMG `v1.0.0` mới có kích thước
-  70.610.621 byte, đã mount read-only, qua bundle-integrity smoke và có SHA-256
-  `f15a59c2a5dd7832729cab2c41542443bc2bf1fe3fe9ae678dfc774d3eede18c`.
+  70.610.649 byte, đã mount read-only, qua bundle-integrity smoke và có SHA-256
+  `cc553b8f15a5f8ae29cc66d7dcbd0e648aa3bebf65bc0a6c59f78fb1e563a6e8`.
 - Release evidence nằm tại
-  `release-artifacts/v1.0.0/macos-rc-20260717/`, gồm frontend/lint/build logs,
+  `release-artifacts/v1.0.0/public-release-20260718/`, gồm build logs,
   packaged-app và DMG smoke, codesign, checksum, DMG và bộ PDF QA 19 trang.
 - Release commit là commit chứa tài liệu trạng thái này. Chưa thay remote tag cũ
   hoặc tạo GitHub Release `v1.0.0`; artifact chưa được phát hành công khai.

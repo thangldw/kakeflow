@@ -3,7 +3,7 @@ const CARGO_PACKAGE_BLOCK = /^\[\[package\]\]\s*$([\s\S]*?)(?=^\[\[package\]\]\s
 const CARGO_FIELD = (name) => new RegExp(`^${name}\\s*=\\s*"([^"]+)"`, 'mu')
 const ANCHOR = /<a\b([^>]*)>([\s\S]*?)<\/a>/giu
 const HREF = /\bhref\s*=\s*(["'])(.*?)\1/iu
-const RELEASE_PREFIX = 'https://github.com/thangldw/kakeflow/releases/'
+const RELEASE_PREFIX = 'https://github.com/thangldw/kakeflow-releases/releases/'
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -67,7 +67,7 @@ export function validateProductionReleaseLinks(html, version) {
   assert(tags.length > 0, 'Project page has no production release-note CTA')
   assert(downloads.length > 0, 'Project page has no production artifact CTA')
 
-  const expectedTag = `https://github.com/thangldw/kakeflow/releases/tag/v${version}`
+  const expectedTag = `${RELEASE_PREFIX}tag/v${version}`
   for (const link of tags) {
     assert(link.href === expectedTag, `Stale or malformed production release-note CTA: ${link.href}`)
     assert(link.text.includes(`v${version}`), `Production release-note CTA text does not show v${version}`)
