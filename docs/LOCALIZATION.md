@@ -1,21 +1,22 @@
 # Localization
 
-KakeFlow supports Japanese (`ja`), English (`en`), and Vietnamese (`vi`) from the desktop top bar.
+KakeFlow supports Japanese (`ja`), English (`en`), and Vietnamese (`vi`). Japanese is the source language for domain copy.
 
-## Behavior
+## Runtime contract
 
-- Japanese is the first-run default and the fallback for untranslated domain-specific text.
-- The selected locale is stored locally under `kakeflow.locale` and restored on the next launch.
-- The root HTML `lang` attribute follows the active locale for assistive technology.
-- Dates shown by localized dashboard components use `ja-JP`, `en-US`, or `vi-VN`.
-- Financial values use tabular lining numerals so amounts remain aligned in every language.
+- `I18nProvider` owns the selected locale and updates the document language.
+- `text()` handles context-bound labels; `localize()` handles shared and static UI modules.
+- Dynamic Japanese messages use catalog-backed interpolation.
+- User data, imported source text, merchant names, account names, and evidence content are not translated.
 
-## Translation policy
+## Coverage
 
-The application shell, navigation, global filters, overview dashboard, data-quality summary, reconciliation summary, and primary transaction filters use the shared dictionary in `src/i18n.tsx`. Specialized import, accounting, investment, and recovery messages fall back to their original Japanese source string until a reviewed translation is available. This avoids silently changing financial meaning with an incomplete machine translation.
+Generated catalogs live in `src/locales/`. Manual entries in `src/i18n.tsx` override generated translations for accounting vocabulary and high-impact messages.
 
-New user-facing copy should be written once in Japanese and added to the English and Vietnamese dictionaries in the same change. Account names, merchant names, tags, filenames, and imported source text must never be translated.
+```bash
+npm run i18n:codemod
+npm run i18n:generate
+npm test -- --run scripts/i18n-catalog-contract.test.ts src/i18n.test.tsx
+```
 
-## Font stack
-
-The interface uses system-first sans-serif fonts with `Inter` when installed and Japanese fallbacks (`Noto Sans JP`, `Hiragino Sans`, `Yu Gothic UI`, and `Meiryo`). Monospace is reserved for source records, identifiers, and other technical evidence.
+The catalog contract fails when static Japanese UI text bypasses localization or when English or Vietnamese entries are missing.

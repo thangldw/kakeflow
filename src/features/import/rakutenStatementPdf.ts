@@ -133,8 +133,8 @@ export function parseRakutenStatementPdf(document: ExtractedDocumentDto): Rakute
   if (metadata.statementTotal != null && detailTotal !== metadata.statementTotal) {
     issues.push({
       code: 'RAKUTEN_PDF_TOTAL_MISMATCH',
-      message: `PDFのご請求金額（${metadata.statementTotal.toLocaleString('ja-JP')}円）と明細合計（${detailTotal.toLocaleString('ja-JP')}円）が一致しません。`,
-      severity: 'error',
+      message: `PDFのご請求金額（${metadata.statementTotal.toLocaleString('ja-JP')}円）と明細合計（${detailTotal.toLocaleString('ja-JP')}円）が一致しません。原本は変更せず、返金・調整行をレビューで修正してください。`,
+      severity: 'warning',
     })
   }
 
@@ -158,6 +158,7 @@ export function parseRakutenStatementPdf(document: ExtractedDocumentDto): Rakute
         sourceFormat: 'RAKUTEN_CARD_PDF_RKSJ',
         detailCount: transactions.length,
         detailTotal,
+        statementDifference: metadata.statementTotal == null ? null : metadata.statementTotal - detailTotal,
         pageCount: document.pageCount ?? 1,
       },
     },

@@ -11,6 +11,7 @@ import {
 import { familyDeliveryEventPlatform } from './familyDeliveryEventPlatform'
 import type { FamilyEncryptedArtifactUpload, FamilyRemoteMembership, FamilyRemoteState } from './familyDeliveryHttp'
 import './FamilyDeliveryPanel.css'
+import { localize } from '../../i18n'
 
 interface Props {
   readonly householdId: string | null
@@ -70,30 +71,30 @@ function displayScheduleTime(value: string | null): string {
 }
 
 function withheldLabel(reason: string): string {
-  return withheldLabels[reason] ?? `その他の保留理由（${reason}）`
+  return localize(`${localize(withheldLabels[reason] ?? 'その他の保留理由')}（${reason}）`)
 }
 
 function errorCopy(error: unknown): string {
-  if (!(error instanceof FamilyDeliveryHttpError)) return '操作を完了できませんでした。台帳は変更されていません。'
+  if (!(error instanceof FamilyDeliveryHttpError)) return localize("操作を完了できませんでした。台帳は変更されていません。")
   return {
-    AUTH_EXPIRED: '接続の有効期限が切れました。再接続してから送受信を再試行してください。',
-    NETWORK_RETRYABLE: '配信サービスに接続できません。台帳は変更されていません。',
-    INVITE_EXPIRED: 'この招待コードは期限切れです。招待した人に新しいコードを依頼してください。',
-    INVITE_USED: 'この招待はすでに使用されています。別のアカウントでは利用できません。',
-    INVITE_REVOKED: 'この招待は取り消されています。招待した人に新しいコードを依頼してください。',
-    INVITE_UNAVAILABLE: 'この招待コードは利用できません。招待した人に新しいコードを依頼してください。',
-    HOUSEHOLD_MISMATCH: 'この招待は別の家族スペース用です。現在の世帯には追加できません。',
-    MEMBER_ARCHIVED: '対象のメンバーはアーカイブ済みのため参加できません。',
-    PRINCIPAL_ALREADY_LINKED: 'このアカウントはすでに別のメンバーに対応付けられています。',
-    MEMBERSHIP_REVOKED: 'この家族スペースへの配信は停止されています。新しいデータは送受信できません。',
-    AUDIENCE_DENIED: 'このデータは現在のメンバーへの配信対象ではありません。台帳は変更されていません。',
-    INVALID_ARTIFACT: '内容を検証できないため受信しませんでした。台帳は変更されていません。',
-    RECIPIENT_UNAVAILABLE: '配信先が有効ではないため保留しました。家族スペースで対応付けを確認してください。',
-    RECIPIENT_SET_CHANGED: '配信先が変更されたため、この範囲の送信を保留しました。再送信すると現在の配信先に封印し直します。',
-    INVALID_ENDPOINT: 'HTTPSの配信サービスURLを確認してください。',
-    INVALID_RESPONSE: '配信サービスの応答を確認できませんでした。台帳は変更されていません。',
-    REJECTED: '配信サービスが操作を受け付けませんでした。接続と家族メンバーの状態を確認してください。',
-    OWNER_REQUIRED: 'この操作は家族スペースの管理者だけが行えます。',
+    AUTH_EXPIRED: localize("接続の有効期限が切れました。再接続してから送受信を再試行してください。"),
+    NETWORK_RETRYABLE: localize("配信サービスに接続できません。台帳は変更されていません。"),
+    INVITE_EXPIRED: localize("この招待コードは期限切れです。招待した人に新しいコードを依頼してください。"),
+    INVITE_USED: localize("この招待はすでに使用されています。別のアカウントでは利用できません。"),
+    INVITE_REVOKED: localize("この招待は取り消されています。招待した人に新しいコードを依頼してください。"),
+    INVITE_UNAVAILABLE: localize("この招待コードは利用できません。招待した人に新しいコードを依頼してください。"),
+    HOUSEHOLD_MISMATCH: localize("この招待は別の家族スペース用です。現在の世帯には追加できません。"),
+    MEMBER_ARCHIVED: localize("対象のメンバーはアーカイブ済みのため参加できません。"),
+    PRINCIPAL_ALREADY_LINKED: localize("このアカウントはすでに別のメンバーに対応付けられています。"),
+    MEMBERSHIP_REVOKED: localize("この家族スペースへの配信は停止されています。新しいデータは送受信できません。"),
+    AUDIENCE_DENIED: localize("このデータは現在のメンバーへの配信対象ではありません。台帳は変更されていません。"),
+    INVALID_ARTIFACT: localize("内容を検証できないため受信しませんでした。台帳は変更されていません。"),
+    RECIPIENT_UNAVAILABLE: localize("配信先が有効ではないため保留しました。家族スペースで対応付けを確認してください。"),
+    RECIPIENT_SET_CHANGED: localize("配信先が変更されたため、この範囲の送信を保留しました。再送信すると現在の配信先に封印し直します。"),
+    INVALID_ENDPOINT: localize("HTTPSの配信サービスURLを確認してください。"),
+    INVALID_RESPONSE: localize("配信サービスの応答を確認できませんでした。台帳は変更されていません。"),
+    REJECTED: localize("配信サービスが操作を受け付けませんでした。接続と家族メンバーの状態を確認してください。"),
+    OWNER_REQUIRED: localize("この操作は家族スペースの管理者だけが行えます。"),
   }[error.code]
 }
 
@@ -128,7 +129,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
           if (id === request.current) { setSchedule(background); setScheduleInterval(background.intervalMinutes as 15 | 30 | 60); setIntakeEnabled(background.intakeEnabled) }
         } catch { if (id === request.current) setSchedule(null) }
       } else setSchedule(null)
-    } catch { if (id === request.current) setNotice({ kind: 'error', text: '家族配信の状態を確認できませんでした。' }) }
+    } catch { if (id === request.current) setNotice({ kind: 'error', text: localize("家族配信の状態を確認できませんでした。") }) }
     finally { if (id === request.current) setBusy('') }
   }
   useEffect(() => { setStatus(null); setSchedule(null); setToken(''); setInviteCode(''); setDialog(null); pendingRecipientSetChanges.current = []; void load(); return () => { request.current += 1 } }, [householdId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -188,8 +189,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
     setStatus(next); return next
   }
   const connect = async () => {
-    if (!householdId || !endpoint.trim() || !token) { setNotice({ kind: 'error', text: '配信サービスURLと、この画面で使う接続トークンを入力してください。' }); return }
-    setBusy('CONNECT'); setNotice({ kind: 'status', text: '配信サービスのアカウントを確認しています…' })
+    if (!householdId || !endpoint.trim() || !token) { setNotice({ kind: 'error', text: localize("配信サービスURLと、この画面で使う接続トークンを入力してください。") }); return }
+    setBusy('CONNECT'); setNotice({ kind: 'status', text: localize("配信サービスのアカウントを確認しています…") })
     try {
       const normalized = new URL(endpoint.trim()).toString().replace(/\/$/, '')
       let remote = await getFamilyRemoteState(normalized, token, householdId)
@@ -205,26 +206,26 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
         localMemberId: localMember?.id ?? null, localMemberName: localMember?.displayName ?? null,
         memberships: localMemberships(remote),
       })
-      setStatus(next); setEndpoint(normalized); setNotice({ kind: 'status', text: `${localMember?.displayName ?? '家族メンバー'}として接続しました。データはまだ送信されていません。` })
+      setStatus(next); setEndpoint(normalized); setNotice({ kind: 'status', text: localize(`${localMember?.displayName ?? localize("家族メンバー")}として接続しました。データはまだ送信されていません。`) })
     } catch (error) { setNotice({ kind: 'error', text: errorCopy(error) }) }
     finally { setBusy('') }
   }
   const disconnect = async () => {
     if (!householdId) return
     setBusy('DISCONNECT')
-    try { setStatus(await platformClient.disconnectFamilyDelivery(householdId)); setSchedule(null); setToken(''); setNotice({ kind: 'status', text: '家族配信の接続を解除しました。未送信の変更はこの端末に残っています。' }) }
-    catch { setNotice({ kind: 'error', text: '家族配信の接続を解除できませんでした。' }) }
+    try { setStatus(await platformClient.disconnectFamilyDelivery(householdId)); setSchedule(null); setToken(''); setNotice({ kind: 'status', text: localize("家族配信の接続を解除しました。未送信の変更はこの端末に残っています。") }) }
+    catch { setNotice({ kind: 'error', text: localize("家族配信の接続を解除できませんでした。") }) }
     finally { setBusy('') }
   }
   const refresh = async () => {
-    if (!householdId || !status?.endpoint || !token) { setNotice({ kind: 'error', text: '受信確認には、この画面で使う接続トークンが必要です。' }); return }
-    setBusy('REFRESH'); setNotice({ kind: 'status', text: '家族からの新しいデータを確認しています…' })
+    if (!householdId || !status?.endpoint || !token) { setNotice({ kind: 'error', text: localize("受信確認には、この画面で使う接続トークンが必要です。") }); return }
+    setBusy('REFRESH'); setNotice({ kind: 'status', text: localize("家族からの新しいデータを確認しています…") })
     try {
       const remote = await ensureEncryptionIdentity(status.endpoint, await getFamilyRemoteState(status.endpoint, token, householdId))
       await registerRemote(remote)
       const page = await listFamilyArtifacts(status.endpoint, token, householdId, status.inboundCursor, status.localDeviceId); setRemoteArtifacts(page.artifacts)
       const next = await platformClient.registerFamilyDeliveryInbound({ householdId, artifacts: page.artifacts, nextCursor: page.nextCursor }); setStatus(next)
-      setNotice({ kind: 'status', text: `${page.artifacts.length}件を確認しました。台帳へは自動反映していません。` })
+      setNotice({ kind: 'status', text: localize(`${page.artifacts.length}件を確認しました。台帳へは自動反映していません。`) })
     } catch (error) { setNotice({ kind: 'error', text: errorCopy(error) }) }
     finally { setBusy('') }
   }
@@ -233,7 +234,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
     sendInFlight.current = true
     let prepared: Awaited<ReturnType<typeof platformClient.prepareFamilyDelivery>> = []
     let encrypted: readonly FamilyEncryptedArtifactUpload[] = []
-    setBusy('SEND'); setNotice({ kind: 'status', text: '選択した配信範囲を送信しています…' })
+    setBusy('SEND'); setNotice({ kind: 'status', text: localize("選択した配信範囲を送信しています…") })
     try {
       if (pendingRecipientSetChanges.current.length > 0) {
         const pending = pendingRecipientSetChanges.current
@@ -299,8 +300,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
       const rejected = uploads.find((result) => result.status === 'rejected')
       if (rejected?.status === 'rejected') throw rejected.reason
       if (invalidAcceptanceIds.length > 0) throw new FamilyDeliveryHttpError('INVALID_RESPONSE')
-      const sent = status.outbound.filter((part) => selected.includes(part.audienceKey)).map((part) => part.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${part.audienceMemberName}`).join('、')
-      setNotice({ kind: 'status', text: `${sent}をリレーが受理しました。受信・反映完了ではありません。` })
+      const sent = status.outbound.filter((part) => selected.includes(part.audienceKey)).map((part) => part.audienceVisibility === 'SHARED' ? localize("世帯共有") : localize(`個人・${part.audienceMemberName}`)).join('、')
+      setNotice({ kind: 'status', text: localize(`${sent}をリレーが受理しました。受信・反映完了ではありません。`) })
     } catch (error) {
       if (prepared.length > 0 && encrypted.length === 0) try { setStatus(await platformClient.failFamilyDelivery(householdId, prepared.map((item) => item.deliveryId))) } catch { /* preserve last status */ }
       setNotice({ kind: 'error', text: errorCopy(error) })
@@ -308,7 +309,7 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
   }
   const stage = async (artifactId: string) => {
     if (!householdId || !status?.endpoint || !token) return
-    setBusy(`STAGE:${artifactId}`); setNotice({ kind: 'status', text: '受信データの配信範囲と内容を検証しています…' })
+    setBusy(`STAGE:${artifactId}`); setNotice({ kind: 'status', text: localize("受信データの配信範囲と内容を検証しています…") })
     try {
       let artifact = remoteArtifacts.find((item) => item.artifactId === artifactId)
       if (!artifact) { const page = await listFamilyArtifacts(status.endpoint, token, householdId, 0, status.localDeviceId); setRemoteArtifacts(page.artifacts); artifact = page.artifacts.find((item) => item.artifactId === artifactId) }
@@ -324,19 +325,19 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
         setStatus(await platformClient.stageFamilyDeliveryInbound({ householdId, artifactId, packageBytes }))
       }
       onReviewStaged?.()
-      setNotice({ kind: 'status', text: '内容確認待ちに追加しました。最終確定までは台帳へ反映されません。' })
+      setNotice({ kind: 'status', text: localize("内容確認待ちに追加しました。最終確定までは台帳へ反映されません。") })
     } catch (error) { setNotice({ kind: 'error', text: errorCopy(error) }) }
     finally { setBusy('') }
   }
 
   const enableBackground = async () => {
-    if (!householdId || !token) { setNotice({ kind: 'error', text: '自動確認を有効化または更新するには、現在の接続トークンを入力してください。' }); return }
+    if (!householdId || !token) { setNotice({ kind: 'error', text: localize("自動確認を有効化または更新するには、現在の接続トークンを入力してください。") }); return }
     setBusy('BACKGROUND_ENABLE')
     try {
       const next = await platformClient.enableFamilyDeliveryBackground({ householdId, token, intervalMinutes: scheduleInterval, intakeEnabled })
       setSchedule(next)
-      setNotice({ kind: 'status', text: `自動受信チェックを${scheduleInterval}分間隔で有効にしました。${intakeEnabled ? '暗号化データは1件ずつ内容確認待ちまで準備します。' : '新着メタデータだけを確認します。'}` })
-    } catch { setNotice({ kind: 'error', text: '自動受信チェックを設定できませんでした。接続トークンを確認してください。' }) }
+      setNotice({ kind: 'status', text: localize(`自動受信チェックを${scheduleInterval}分間隔で有効にしました。${intakeEnabled ? localize("暗号化データは1件ずつ内容確認待ちまで準備します。") : localize("新着メタデータだけを確認します。")}`) })
+    } catch { setNotice({ kind: 'error', text: localize("自動受信チェックを設定できませんでした。接続トークンを確認してください。") }) }
     finally { setBusy('') }
   }
   const disableBackground = async () => {
@@ -344,8 +345,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
     setBusy('BACKGROUND_DISABLE')
     try {
       setSchedule(await platformClient.disableFamilyDeliveryBackground(householdId))
-      setNotice({ kind: 'status', text: '自動受信チェックを停止し、OSの資格情報に保存した接続トークンを削除しました。' })
-    } catch { setNotice({ kind: 'error', text: '自動受信チェックを停止できませんでした。' }) }
+      setNotice({ kind: 'status', text: localize("自動受信チェックを停止し、OSの資格情報に保存した接続トークンを削除しました。") })
+    } catch { setNotice({ kind: 'error', text: localize("自動受信チェックを停止できませんでした。") }) }
     finally { setBusy('') }
   }
   const runBackgroundNow = async () => {
@@ -355,8 +356,8 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
       const next = await platformClient.runFamilyDeliveryBackgroundNow(householdId)
       setSchedule(next)
       setStatus(await platformClient.getFamilyDeliveryStatus(householdId))
-      setNotice({ kind: 'status', text: next.lastDiscoveredCount > 0 ? `${next.lastDiscoveredCount}件の新着を受信可能として追加しました。内容の受信・確認・反映は手動です。` : '新しい家族データはありませんでした。' })
-    } catch { setNotice({ kind: 'error', text: '今すぐ受信確認を完了できませんでした。次回の自動確認で再試行します。' }) }
+      setNotice({ kind: 'status', text: next.lastDiscoveredCount > 0 ? localize(`${next.lastDiscoveredCount}件の新着を受信可能として追加しました。内容の受信・確認・反映は手動です。`) : localize("新しい家族データはありませんでした。") })
+    } catch { setNotice({ kind: 'error', text: localize("今すぐ受信確認を完了できませんでした。次回の自動確認で再試行します。") }) }
     finally { setBusy('') }
   }
 
@@ -370,12 +371,12 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
         setDialog({ kind: 'INVITE_CODE', memberName: dialog.member.memberName, code: result.inviteCode, expiresAt: result.expiresAt })
       } else if (dialog.kind === 'CANCEL_INVITE' && dialog.member.inviteId) {
         await cancelFamilyInvitation(status.endpoint, token, householdId, dialog.member.inviteId); await registerRemote(await getFamilyRemoteState(status.endpoint, token, householdId)); setDialog(null)
-        setNotice({ kind: 'status', text: `${dialog.member.memberName}さんへの招待を取り消しました。` })
+        setNotice({ kind: 'status', text: localize(`${dialog.member.memberName}さんへの招待を取り消しました。`) })
       } else if (dialog.kind === 'REVOKE') {
         if (dialog.member.remoteMembershipIds.length === 0) throw new FamilyDeliveryHttpError('MEMBERSHIP_REVOKED')
         await Promise.all(dialog.member.remoteMembershipIds.map((membershipId) => revokeFamilyMembership(status.endpoint!, token, householdId, membershipId)))
         await registerRemote(await getFamilyRemoteState(status.endpoint, token, householdId)); setDialog(null)
-        setNotice({ kind: 'status', text: `${dialog.member.memberName}さんへの今後の配信を停止しました。` })
+        setNotice({ kind: 'status', text: localize(`${dialog.member.memberName}さんへの今後の配信を停止しました。`) })
       } else if (dialog.kind === 'REDEEM') {
         const membership = await redeemFamilyInvitation(endpoint.trim(), token, inviteCode)
         if (membership.householdId !== householdId) throw new FamilyDeliveryHttpError('HOUSEHOLD_MISMATCH')
@@ -383,13 +384,13 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
         const member = members.find((item) => item.id === membership.domainMemberId)
         const next = await platformClient.saveFamilyDeliveryConnection({ householdId, endpoint: endpoint.trim().replace(/\/$/, ''), remotePrincipalId: remote.remotePrincipalId, localMemberId: member?.id ?? null, localMemberName: member?.displayName ?? null, memberships: localMemberships(remote) })
         setStatus(next); setDialog(null); setInviteCode('')
-        setNotice({ kind: 'status', text: `${member?.displayName ?? '家族メンバー'}として参加しました。データはまだ受信していません。` })
+        setNotice({ kind: 'status', text: localize(`${member?.displayName ?? localize("家族メンバー")}として参加しました。データはまだ受信していません。`) })
       }
     } catch (error) { setNotice({ kind: 'error', text: errorCopy(error) }); setDialog(null) }
     finally { setBusy('') }
   }
   const inspectInvite = async () => {
-    if (!householdId || !endpoint.trim() || !token || !inviteCode.trim()) { setNotice({ kind: 'error', text: '配信サービスURL、接続トークン、招待コードを入力してください。' }); return }
+    if (!householdId || !endpoint.trim() || !token || !inviteCode.trim()) { setNotice({ kind: 'error', text: localize("配信サービスURL、接続トークン、招待コードを入力してください。") }); return }
     setBusy('PREVIEW_INVITE')
     try {
       const preview = await previewFamilyInvitation(endpoint.trim(), token, inviteCode.trim())
@@ -405,54 +406,54 @@ export function FamilyDeliveryPanel({ householdId, members, onReviewStaged, view
   const connected = status && status.connectionState !== 'NOT_CONFIGURED'
   const displayMemberships = status?.memberships ?? members.map((member) => ({ memberId: member.id, memberName: member.displayName, state: member.status === 'ARCHIVED' ? 'ARCHIVED_BLOCKED' as const : 'UNLINKED' as const, remoteMembershipIds: [], inviteId: null, inviteExpiresAt: null, deviceCount: 0, lastDeliveryAt: null }))
   return <section className={`panel family-delivery family-delivery-${view.toLowerCase()}`} aria-busy={Boolean(busy)}>
-    <div className="panel-head"><div><h2>家族へのデータ配信</h2><p>本人確認された家族メンバーへ、世帯共有または指定メンバーの個人データを手動で届けます。</p></div><b className={`family-delivery-state state-${status?.connectionState ?? 'NOT_CONFIGURED'}`}>{connectionLabels[status?.connectionState ?? 'NOT_CONFIGURED']}</b></div>
-    <p className="family-delivery-boundary">送信・受信だけでは台帳を変更しません。個人データの配信先はメンバー対応付けから自動決定され、任意の相手へ広げることはできません。</p>
+    <div className="panel-head"><div><h2>{localize("家族へのデータ配信")}</h2><p>{localize("本人確認された家族メンバーへ、世帯共有または指定メンバーの個人データを手動で届けます。")}</p></div><b className={`family-delivery-state state-${status?.connectionState ?? 'NOT_CONFIGURED'}`}>{localize(connectionLabels[status?.connectionState ?? 'NOT_CONFIGURED'])}</b></div>
+    <p className="family-delivery-boundary">{localize("送信・受信だけでは台帳を変更しません。個人データの配信先はメンバー対応付けから自動決定され、任意の相手へ広げることはできません。")}</p>
     <div className="family-connection-form">
-      <label>配信サービスURL<input type="url" value={endpoint} disabled={Boolean(busy) || Boolean(connected)} placeholder="https://relay.example" onChange={(event) => setEndpoint(event.target.value)} /></label>
-      <label>接続トークン（この画面のみ）<input type="password" autoComplete="off" value={token} disabled={Boolean(busy)} onChange={(event) => setToken(event.target.value)} /></label>
-      {!connected && <label>このアカウントのメンバー<select value={ownerMemberId} disabled={Boolean(busy)} onChange={(event) => setOwnerMemberId(event.target.value)}>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select></label>}
-      {!connected ? <button className="primary-btn" disabled={Boolean(busy)} onClick={() => void connect()}>{busy === 'CONNECT' ? '確認中…' : '配信サービスに接続'}</button> : <button className="text-btn" disabled={Boolean(busy)} onClick={() => void disconnect()}><Link2Off size={16} /> 接続を解除</button>}
+      <label>{localize("配信サービスURL")}<input type="url" value={endpoint} disabled={Boolean(busy) || Boolean(connected)} placeholder="https://relay.example" onChange={(event) => setEndpoint(event.target.value)} /></label>
+      <label>{localize("接続トークン（この画面のみ）")}<input type="password" autoComplete="off" value={token} disabled={Boolean(busy)} onChange={(event) => setToken(event.target.value)} /></label>
+      {!connected && <label>{localize("このアカウントのメンバー")}<select value={ownerMemberId} disabled={Boolean(busy)} onChange={(event) => setOwnerMemberId(event.target.value)}>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select></label>}
+      {!connected ? <button className="primary-btn" disabled={Boolean(busy)} onClick={() => void connect()}>{busy === 'CONNECT' ? localize("確認中…") : localize("配信サービスに接続")}</button> : <button className="text-btn" disabled={Boolean(busy)} onClick={() => void disconnect()}><Link2Off size={16} /> {localize("接続を解除")}</button>}
     </div>
-    {!connected && <div className="family-join-row"><label>招待コード<input value={inviteCode} disabled={Boolean(busy)} onChange={(event) => setInviteCode(event.target.value)} /></label><button className="secondary-btn" disabled={Boolean(busy)} onClick={() => void inspectInvite()}><UserPlus size={16} /> 招待内容を確認</button></div>}
+    {!connected && <div className="family-join-row"><label>{localize("招待コード")}<input value={inviteCode} disabled={Boolean(busy)} onChange={(event) => setInviteCode(event.target.value)} /></label><button className="secondary-btn" disabled={Boolean(busy)} onClick={() => void inspectInvite()}><UserPlus size={16} /> {localize("招待内容を確認")}</button></div>}
     {connected && <>
-      <dl className="family-identity-summary"><div><dt>接続中のアカウント</dt><dd>確認済み</dd></div><div><dt>このアカウントのメンバー</dt><dd>{status.localMemberName ?? '未参加'}</dd></div></dl>
+      <dl className="family-identity-summary"><div><dt>{localize("接続中のアカウント")}</dt><dd>{localize("確認済み")}</dd></div><div><dt>{localize("このアカウントのメンバー")}</dt><dd>{status.localMemberName ?? localize("未参加")}</dd></div></dl>
       <section className="family-background-section" aria-labelledby="family-background-heading">
-        <div className="family-section-head"><div><h3 id="family-background-heading">自動受信チェック</h3><p>KakeFlowが開いている間だけ新着を確認します。既定ではメタデータだけを登録し、ファイルは受信しません。</p></div><b className={schedule?.enabled ? 'background-enabled' : 'background-disabled'}>{schedule?.enabled ? '有効' : 'オプトイン未設定'}</b></div>
-        <p className="family-background-credential">有効化した場合だけ接続トークンをOSの資格情報に保存し、自動チェック専用に使います。手動の送信・受信・内容確認には、引き続きこの画面へのトークン入力が必要です。停止時には保存したトークンを削除します。</p>
+        <div className="family-section-head"><div><h3 id="family-background-heading">{localize("自動受信チェック")}</h3><p>{localize("KakeFlowが開いている間だけ新着を確認します。既定ではメタデータだけを登録し、ファイルは受信しません。")}</p></div><b className={schedule?.enabled ? 'background-enabled' : 'background-disabled'}>{schedule?.enabled ? localize("有効") : localize("オプトイン未設定")}</b></div>
+        <p className="family-background-credential">{localize("有効化した場合だけ接続トークンをOSの資格情報に保存し、自動チェック専用に使います。手動の送信・受信・内容確認には、引き続きこの画面へのトークン入力が必要です。停止時には保存したトークンを削除します。")}</p>
         <div className="family-background-controls">
-          <label>確認間隔<select aria-label="自動受信チェックの間隔" value={scheduleInterval} disabled={Boolean(busy)} onChange={(event) => setScheduleInterval(Number(event.target.value) as 15 | 30 | 60)}><option value={15}>15分</option><option value={30}>30分</option><option value={60}>60分</option></select></label>
-          <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void enableBackground()}>{schedule?.enabled ? '間隔とトークンを更新' : '自動チェックを有効にする'}</button>
-          {schedule?.enabled && <button className="text-btn" disabled={Boolean(busy)} onClick={() => void disableBackground()}>自動チェックを停止</button>}
-          {schedule?.enabled && <button className="secondary-btn" disabled={Boolean(busy) || schedule.running || schedule.lastResult === 'TERMINAL_SUSPENDED'} onClick={() => void runBackgroundNow()}><RefreshCw size={16} /> {busy === 'BACKGROUND_NOW' ? '確認中…' : '今すぐ確認'}</button>}
+          <label>{localize("確認間隔")}<select aria-label={localize("自動受信チェックの間隔")} value={scheduleInterval} disabled={Boolean(busy)} onChange={(event) => setScheduleInterval(Number(event.target.value) as 15 | 30 | 60)}><option value={15}>{localize("15分")}</option><option value={30}>{localize("30分")}</option><option value={60}>{localize("60分")}</option></select></label>
+          <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void enableBackground()}>{schedule?.enabled ? localize("間隔とトークンを更新") : localize("自動チェックを有効にする")}</button>
+          {schedule?.enabled && <button className="text-btn" disabled={Boolean(busy)} onClick={() => void disableBackground()}>{localize("自動チェックを停止")}</button>}
+          {schedule?.enabled && <button className="secondary-btn" disabled={Boolean(busy) || schedule.running || schedule.lastResult === 'TERMINAL_SUSPENDED'} onClick={() => void runBackgroundNow()}><RefreshCw size={16} /> {busy === 'BACKGROUND_NOW' ? localize("確認中…") : localize("今すぐ確認")}</button>}
         </div>
-        <label className="family-background-credential"><input type="checkbox" checked={intakeEnabled} disabled={Boolean(busy)} onChange={(event) => setIntakeEnabled(event.target.checked)} /> 暗号化された新着を自動でダウンロード・復号し、1件ずつ「内容確認待ち」まで準備する</label>
-        <p className="family-background-credential">この追加オプトインを有効にしても、競合の選択や台帳への反映は自動実行しません。確認待ちがある間は次のファイルを受信せず、旧形式の暗号化されていないデータは手動のままです。</p>
-        {schedule && <dl className="family-background-status"><div><dt>前回の結果</dt><dd>{scheduleResultLabels[schedule.lastResult]}{schedule.lastResult === 'DISCOVERED' ? `（${schedule.lastDiscoveredCount}件）` : ''}</dd></div><div><dt>前回の確認</dt><dd>{displayScheduleTime(schedule.lastAttemptAt)}</dd></div><div><dt>次回予定</dt><dd>{displayScheduleTime(schedule.nextDueAt)}</dd></div><div><dt>連続失敗</dt><dd>{schedule.consecutiveFailures}回</dd></div></dl>}
-        {schedule?.intakeEnabled && <p className="family-delivery-notice" role="status">自動準備: {intakeResultLabels[schedule.lastIntakeResult]}{schedule.lastStagedCount ? `（${schedule.lastStagedCount}件）` : ''}</p>}
-        {schedule?.suspensionReason && <p className={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'family-delivery-error' : 'family-delivery-notice'} role={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'alert' : 'status'}>{scheduleSuspensionLabels[schedule.suspensionReason] ?? `自動チェックを一時停止しています（${schedule.suspensionReason}）。`}</p>}
+        <label className="family-background-credential"><input type="checkbox" checked={intakeEnabled} disabled={Boolean(busy)} onChange={(event) => setIntakeEnabled(event.target.checked)} /> {localize("暗号化された新着を自動でダウンロード・復号し、1件ずつ「内容確認待ち」まで準備する")}</label>
+        <p className="family-background-credential">{localize("この追加オプトインを有効にしても、競合の選択や台帳への反映は自動実行しません。確認待ちがある間は次のファイルを受信せず、旧形式の暗号化されていないデータは手動のままです。")}</p>
+        {schedule && <dl className="family-background-status"><div><dt>{localize("前回の結果")}</dt><dd>{localize(scheduleResultLabels[schedule.lastResult])}{schedule.lastResult === 'DISCOVERED' ? localize(`（${schedule.lastDiscoveredCount}件）`) : ''}</dd></div><div><dt>{localize("前回の確認")}</dt><dd>{displayScheduleTime(schedule.lastAttemptAt)}</dd></div><div><dt>{localize("次回予定")}</dt><dd>{displayScheduleTime(schedule.nextDueAt)}</dd></div><div><dt>{localize("連続失敗")}</dt><dd>{schedule.consecutiveFailures}{localize("回")}</dd></div></dl>}
+        {schedule?.intakeEnabled && <p className="family-delivery-notice" role="status">{localize("自動準備:")} {localize(intakeResultLabels[schedule.lastIntakeResult])}{schedule.lastStagedCount ? localize(`（${schedule.lastStagedCount}件）`) : ''}</p>}
+        {schedule?.suspensionReason && <p className={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'family-delivery-error' : 'family-delivery-notice'} role={schedule.lastResult === 'TERMINAL_SUSPENDED' ? 'alert' : 'status'}>{localize(scheduleSuspensionLabels[schedule.suspensionReason] ?? localize("自動チェックを一時停止しています")) + `（${schedule.suspensionReason}）。`}</p>}
       </section>
-      {status.connectionState === 'AUTH_EXPIRED' && <p className="family-delivery-error" role="alert">接続の有効期限が切れました。トークンを入力し直して再接続してください。</p>}
-      {status.connectionState === 'MEMBERSHIP_REVOKED' && <p className="family-delivery-error" role="alert">この家族スペースへの配信は停止されています。新しいデータは送受信できません。</p>}
-      <div className="family-membership-section"><h3>家族メンバーと配信先</h3>{displayMemberships.map((membership) => <article key={membership.memberId} className="family-delivery-member">
-        <div><strong>{membership.memberName}</strong><span className={`membership-${membership.state}`}>{membershipLabels[membership.state]}</span><small>{membership.state === 'UNLINKED' ? '表示名から自動で対応付けません。' : membership.state === 'INVITED' ? `有効期限 ${membership.inviteExpiresAt}` : membership.state === 'ACTIVE' ? `${membership.deviceCount}台・最終配信 ${membership.lastDeliveryAt ?? '—'}` : membership.state === 'REVOKED' ? '新しいデータは配信されません。過去のローカルデータは残ります。' : 'アーカイブ済みメンバーは招待できません。'}</small></div>
-        {membership.state === 'UNLINKED' && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'INVITE', member: membership })}>招待を作成</button>}
-        {membership.state === 'INVITED' && <button className="text-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'CANCEL_INVITE', member: membership })}>招待を取り消す</button>}
-        {membership.state === 'ACTIVE' && membership.memberId !== status.localMemberId && <button className="text-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'REVOKE', member: membership })}>配信を停止</button>}
-        {membership.state === 'REVOKED' && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'INVITE', member: membership })}>新しい招待を作成</button>}
+      {status.connectionState === 'AUTH_EXPIRED' && <p className="family-delivery-error" role="alert">{localize("接続の有効期限が切れました。トークンを入力し直して再接続してください。")}</p>}
+      {status.connectionState === 'MEMBERSHIP_REVOKED' && <p className="family-delivery-error" role="alert">{localize("この家族スペースへの配信は停止されています。新しいデータは送受信できません。")}</p>}
+      <div className="family-membership-section"><h3>{localize("家族メンバーと配信先")}</h3>{displayMemberships.map((membership) => <article key={membership.memberId} className="family-delivery-member">
+        <div><strong>{membership.memberName}</strong><span className={`membership-${membership.state}`}>{localize(membershipLabels[membership.state])}</span><small>{membership.state === 'UNLINKED' ? localize("表示名から自動で対応付けません。") : membership.state === 'INVITED' ? localize(`有効期限 ${membership.inviteExpiresAt}`) : membership.state === 'ACTIVE' ? localize(`${membership.deviceCount}台・最終配信 ${membership.lastDeliveryAt ?? '—'}`) : membership.state === 'REVOKED' ? localize("新しいデータは配信されません。過去のローカルデータは残ります。") : localize("アーカイブ済みメンバーは招待できません。")}</small></div>
+        {membership.state === 'UNLINKED' && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'INVITE', member: membership })}>{localize("招待を作成")}</button>}
+        {membership.state === 'INVITED' && <button className="text-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'CANCEL_INVITE', member: membership })}>{localize("招待を取り消す")}</button>}
+        {membership.state === 'ACTIVE' && membership.memberId !== status.localMemberId && <button className="text-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'REVOKE', member: membership })}>{localize("配信を停止")}</button>}
+        {membership.state === 'REVOKED' && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => setDialog({ kind: 'INVITE', member: membership })}>{localize("新しい招待を作成")}</button>}
       </article>)}</div>
-      <div className="family-outbound-section"><div className="family-section-head"><div><h3>家族へ送る変更</h3><p>配信先は家族メンバーの対応付けから自動決定されます。</p></div></div>
-        {status.outbound.length === 0 ? <p className="empty-state">送信できる変更はありません。</p> : status.outbound.map((part) => {
+      <div className="family-outbound-section"><div className="family-section-head"><div><h3>{localize("家族へ送る変更")}</h3><p>{localize("配信先は家族メンバーの対応付けから自動決定されます。")}</p></div></div>
+        {status.outbound.length === 0 ? <p className="empty-state">{localize("送信できる変更はありません。")}</p> : status.outbound.map((part) => {
           const enabled = part.pendingChangeCount > 0 && ['READY', 'FAILED_RETRYABLE'].includes(part.state)
-          const audience = part.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${part.audienceMemberName}`
+          const audience = part.audienceVisibility === 'SHARED' ? localize("世帯共有") : localize(`個人・${part.audienceMemberName}`)
           const includedDomains = Object.entries(part.domainCounts).filter(([, count]) => count > 0)
           const withheldDomains = Object.entries(part.withheldDomainCounts).filter(([, count]) => count > 0)
           const withheld = Object.entries(part.withheldCountsByReason).filter((entry) => entry[1] > 0)
-          return <label key={part.audienceKey} className={`family-partition ${enabled ? '' : 'blocked'}`}><input type="checkbox" checked={selected.includes(part.audienceKey)} disabled={!enabled || Boolean(busy)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, part.audienceKey] : current.filter((key) => key !== part.audienceKey))} /><span><span className="family-partition-title"><strong>{audience} → {part.recipientNames.length ? part.recipientNames.join('、') : '配信先未設定'}</strong><b className={`family-coverage-state coverage-${part.coverageState}`}>{part.coverageState === 'COMPLETE' ? '全範囲' : '一部保留'}</b></span><small>{part.pendingChangeCount}件 · 原本 {part.evidenceFileCount}ファイル / 証跡 {part.evidenceRecordCount}件</small>{includedDomains.length > 0 && <span className="family-domain-counts" aria-label="この配信で送る内容">{includedDomains.map(([domain, count]) => <span key={domain}>{domainLabels[domain as keyof typeof domainLabels]} {count}</span>)}</span>}{part.withheldReason && <small className="family-partition-blocked-reason">{part.withheldReason}</small>}{withheld.length > 0 && <span className="family-withheld-detail" role="status"><strong>この配信に含まれない内容</strong>{withheld.map(([reason, count]) => <span key={reason}>{withheldLabel(reason)} <b>{count}件</b></span>)}{withheldDomains.length > 0 && <span>{withheldDomains.map(([domain, count]) => `${domainLabels[domain as keyof typeof domainLabels]} ${count}件`).join(' · ')}</span>}</span>}</span></label>
+          return <label key={part.audienceKey} className={`family-partition ${enabled ? '' : 'blocked'}`}><input type="checkbox" checked={selected.includes(part.audienceKey)} disabled={!enabled || Boolean(busy)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, part.audienceKey] : current.filter((key) => key !== part.audienceKey))} /><span><span className="family-partition-title"><strong>{audience} → {part.recipientNames.length ? part.recipientNames.join('、') : localize("配信先未設定")}</strong><b className={`family-coverage-state coverage-${part.coverageState}`}>{part.coverageState === 'COMPLETE' ? localize("全範囲") : localize("一部保留")}</b></span><small>{part.pendingChangeCount}{localize("件 · 原本")} {part.evidenceFileCount}{localize("ファイル / 証跡")} {part.evidenceRecordCount}{localize("件")}</small>{includedDomains.length > 0 && <span className="family-domain-counts" aria-label={localize("この配信で送る内容")}>{includedDomains.map(([domain, count]) => <span key={domain}>{localize(domainLabels[domain as keyof typeof domainLabels])} {count}</span>)}</span>}{part.withheldReason && <small className="family-partition-blocked-reason">{part.withheldReason}</small>}{withheld.length > 0 && <span className="family-withheld-detail" role="status"><strong>{localize("この配信に含まれない内容")}</strong>{withheld.map(([reason, count]) => <span key={reason}>{withheldLabel(reason)} <b>{count}{localize("件")}</b></span>)}{withheldDomains.length > 0 && <span>{withheldDomains.map(([domain, count]) => localize(`${localize(domainLabels[domain as keyof typeof domainLabels])} ${count}件`)).join(' · ')}</span>}</span>}</span></label>
         })}
-        {status.withheldChangeCount > 0 && <p className="family-withheld" role="status">家族へ送らず、この端末に保留した変更が合計{status.withheldChangeCount}件あります。理由は各配信範囲に表示しています。</p>}
-        <div className="family-delivery-actions"><button className="primary-btn" disabled={Boolean(busy) || !token || selected.length === 0} onClick={() => void send()}><CloudUpload size={16} /> {busy === 'SEND' ? '送信中…' : '選択した範囲を送信'}</button><button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void refresh()}><RefreshCw size={16} /> {busy === 'REFRESH' ? '確認中…' : '家族からの受信を確認'}</button></div>
+        {status.withheldChangeCount > 0 && <p className="family-withheld" role="status">{localize("家族へ送らず、この端末に保留した変更が合計")}{status.withheldChangeCount}{localize("件あります。理由は各配信範囲に表示しています。")}</p>}
+        <div className="family-delivery-actions"><button className="primary-btn" disabled={Boolean(busy) || !token || selected.length === 0} onClick={() => void send()}><CloudUpload size={16} /> {busy === 'SEND' ? localize("送信中…") : localize("選択した範囲を送信")}</button><button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void refresh()}><RefreshCw size={16} /> {busy === 'REFRESH' ? localize("確認中…") : localize("家族からの受信を確認")}</button></div>
       </div>
-      <div className="family-inbound-section"><h3>家族から受け取ったデータ</h3>{status.inbound.length === 0 ? <p className="empty-state">受信した家族データはありません。</p> : status.inbound.map((item) => <article key={item.artifactId}><div><strong>{item.senderMemberName}さんから・{item.audienceVisibility === 'SHARED' ? '世帯共有' : `個人・${item.audienceMemberName}`}</strong><small>{item.itemCount > 0 ? `${item.itemCount}件` : '内容は受信時に確認'}・{item.createdAt}</small>{item.receivedBeforeRevocation && <span className="family-revocation-warning">受信後にメンバー配信が停止されました。停止前に受信済みです。</span>}</div><span className="family-inbound-state">{inboundLabels[item.state]}</span>{['AVAILABLE', 'FAILED_RETRYABLE'].includes(item.state) && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void stage(item.artifactId)}><CloudDownload size={16} /> {busy === `STAGE:${item.artifactId}` ? '検証中…' : '受信して内容を確認'}</button>}{['WAITING_FOR_REVIEW', 'READY_TO_APPLY'].includes(item.state) && <button className="secondary-btn" onClick={onReviewStaged}>確認内容を開く</button>}</article>)}</div>
+      <div className="family-inbound-section"><h3>{localize("家族から受け取ったデータ")}</h3>{status.inbound.length === 0 ? <p className="empty-state">{localize("受信した家族データはありません。")}</p> : status.inbound.map((item) => <article key={item.artifactId}><div><strong>{item.senderMemberName}{localize("さんから・")}{item.audienceVisibility === 'SHARED' ? localize("世帯共有") : localize(`個人・${item.audienceMemberName}`)}</strong><small>{item.itemCount > 0 ? localize(`${item.itemCount}件`) : localize("内容は受信時に確認")}・{item.createdAt}</small>{item.receivedBeforeRevocation && <span className="family-revocation-warning">{localize("受信後にメンバー配信が停止されました。停止前に受信済みです。")}</span>}</div><span className="family-inbound-state">{localize(inboundLabels[item.state])}</span>{['AVAILABLE', 'FAILED_RETRYABLE'].includes(item.state) && <button className="secondary-btn" disabled={Boolean(busy) || !token} onClick={() => void stage(item.artifactId)}><CloudDownload size={16} /> {busy === `STAGE:${item.artifactId}` ? localize("検証中…") : localize("受信して内容を確認")}</button>}{['WAITING_FOR_REVIEW', 'READY_TO_APPLY'].includes(item.state) && <button className="secondary-btn" onClick={onReviewStaged}>{localize("確認内容を開く")}</button>}</article>)}</div>
     </>}
     {notice && <p className={notice.kind === 'error' ? 'family-delivery-error' : 'family-delivery-notice'} role={notice.kind === 'error' ? 'alert' : 'status'} aria-live={notice.kind === 'error' ? 'assertive' : 'polite'}>{notice.text}</p>}
     {dialog && <FamilyDialog state={dialog} busy={Boolean(busy)} close={() => setDialog(null)} confirm={() => void membershipAction()} />}
@@ -463,14 +464,14 @@ function FamilyDialog({ state, busy, close, confirm }: { readonly state: NonNull
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { heading.current?.focus() }, [])
   const invite = state.kind === 'INVITE'; const revoke = state.kind === 'REVOKE'; const cancel = state.kind === 'CANCEL_INVITE'; const code = state.kind === 'INVITE_CODE'; const redeem = state.kind === 'REDEEM'
-  const title = invite ? `${state.member.memberName}さんを家族スペースに招待` : revoke ? `${state.member.memberName}さんへの配信を停止しますか？` : cancel ? `${state.member.memberName}さんへの招待を取り消しますか？` : code ? `${state.memberName}さんの招待コード` : `${state.memberName}さんとして参加しますか？`
+  const title = invite ? localize(`${state.member.memberName}さんを家族スペースに招待`) : revoke ? localize(`${state.member.memberName}さんへの配信を停止しますか？`) : cancel ? localize(`${state.member.memberName}さんへの招待を取り消しますか？`) : code ? localize(`${state.memberName}さんの招待コード`) : localize(`${state.memberName}さんとして参加しますか？`)
   return <div className="family-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) close() }} onKeyDown={(event) => { if (event.key === 'Escape' && !busy) close() }}><section role="dialog" aria-modal="true" aria-labelledby="family-dialog-title" className="family-dialog">
-    <div className="family-dialog-head"><h3 id="family-dialog-title" ref={heading} tabIndex={-1}>{title}</h3><button className="icon-btn" aria-label="ダイアログを閉じる" disabled={busy} onClick={close}><X size={18} /></button></div>
-    {invite && <p>招待を受けたアカウントは、世帯共有データと「個人・{state.member.memberName}」に指定したデータを受け取れます。他のメンバーの個人データは配信されません。</p>}
-    {revoke && <p>今後の送受信を停止します。すでにこの端末へ受信・反映されたデータは自動削除されません。未送信データはこの端末に残ります。</p>}
-    {cancel && <p>この招待コードは利用できなくなります。データはまだ配信されていません。</p>}
-    {code && <><p className="family-invite-code">{state.code}</p><p>有効期限 {state.expiresAt}。この画面を閉じる前に、安全な方法で本人へ渡してください。</p><button className="secondary-btn" onClick={() => void navigator.clipboard.writeText(state.code)}><Copy size={16} /> コードをコピー</button></>}
-    {redeem && <><p>この端末の同じ家族スペースに、{state.memberName}さんとして参加します。招待の有効期限は {state.expiresAt} です。</p><dl className="family-redeem-summary"><div><dt>配信される範囲</dt><dd>世帯共有 / 個人・{state.memberName}</dd></div><div><dt>配信されない範囲</dt><dd>他のメンバーの個人データ</dd></div></dl></>}
-    <div className="family-dialog-actions">{!code && <button className="secondary-btn" disabled={busy} onClick={close}>キャンセル</button>}{!code && <button className={revoke || cancel ? 'danger-btn' : 'primary-btn'} disabled={busy} onClick={confirm}>{busy ? '処理中…' : invite ? '招待コードを発行' : revoke ? '配信を停止' : cancel ? '招待を取り消す' : 'この内容で参加'}</button>}{code && <button className="primary-btn" onClick={close}>閉じる</button>}</div>
+    <div className="family-dialog-head"><h3 id="family-dialog-title" ref={heading} tabIndex={-1}>{title}</h3><button className="icon-btn" aria-label={localize("ダイアログを閉じる")} disabled={busy} onClick={close}><X size={18} /></button></div>
+    {invite && <p>{localize("招待を受けたアカウントは、世帯共有データと「個人・")}{state.member.memberName}{localize("」に指定したデータを受け取れます。他のメンバーの個人データは配信されません。")}</p>}
+    {revoke && <p>{localize("今後の送受信を停止します。すでにこの端末へ受信・反映されたデータは自動削除されません。未送信データはこの端末に残ります。")}</p>}
+    {cancel && <p>{localize("この招待コードは利用できなくなります。データはまだ配信されていません。")}</p>}
+    {code && <><p className="family-invite-code">{state.code}</p><p>{localize("有効期限")} {state.expiresAt}{localize("。この画面を閉じる前に、安全な方法で本人へ渡してください。")}</p><button className="secondary-btn" onClick={() => void navigator.clipboard.writeText(state.code)}><Copy size={16} /> {localize("コードをコピー")}</button></>}
+    {redeem && <><p>{localize("この端末の同じ家族スペースに、")}{state.memberName}{localize("さんとして参加します。招待の有効期限は")} {state.expiresAt} {localize("です。")}</p><dl className="family-redeem-summary"><div><dt>{localize("配信される範囲")}</dt><dd>{localize("世帯共有 / 個人・")}{state.memberName}</dd></div><div><dt>{localize("配信されない範囲")}</dt><dd>{localize("他のメンバーの個人データ")}</dd></div></dl></>}
+    <div className="family-dialog-actions">{!code && <button className="secondary-btn" disabled={busy} onClick={close}>{localize("キャンセル")}</button>}{!code && <button className={revoke || cancel ? 'danger-btn' : 'primary-btn'} disabled={busy} onClick={confirm}>{busy ? localize("処理中…") : invite ? localize("招待コードを発行") : revoke ? localize("配信を停止") : cancel ? localize("招待を取り消す") : localize("この内容で参加")}</button>}{code && <button className="primary-btn" onClick={close}>{localize("閉じる")}</button>}</div>
   </section></div>
 }

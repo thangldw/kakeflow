@@ -1,36 +1,29 @@
-# KakeFlow 1.0.0 release notes
+# KakeFlow 1.0.0
 
-KakeFlow 1.0.0 is the first stable release of the local-first household finance desktop workspace. It combines an auditable double-entry ledger, review-first document intake, card reconciliation, household reporting, investment evidence, and explicit family delivery in one desktop application.
+KakeFlow 1.0.0 is the first stable release of the local-first household finance desktop app.
 
 ## Highlights
 
-- A complete KakeFlow v2 desktop interface with responsive workspaces, accessible controls, configurable dashboard layouts, and updated application identity.
-- One Import Inbox for CSV, statement PDF, scanned PDF, receipt image, watched-folder, Drive, and Gmail sources.
-- Local PP-OCRv5 processing for images and rendered PDF pages, with immutable original evidence and page-level outcomes.
-- Explicit exact/probable duplicate decisions and classification-rule suggestions before posting.
-- Card reconciliation with source-backed statement identity, settlement-bank mapping, due-date correction, coverage projection, and auditable link changes.
-- Source-backed CSV, XLSX, and PDF exports that reuse the selected screen scope instead of running a second query.
-- Portfolio snapshots and annual FIFO investment performance with native currencies, exceptions, and source lineage kept explicit.
-- Restart-safe recurring-series preferences and recipient-encrypted family artifacts that still require review and atomic apply.
-- Strict Japanese financial-source adapters that reject ambiguous or unsupported records instead of repairing them silently.
-
-## Safety boundaries
-
-- No import, OCR, connector, classification, reconciliation, or family-delivery workflow posts or applies data automatically.
-- Missing account mappings, unsupported source semantics, ambiguous corrections, and unresolved duplicates block approval.
-- KakeFlow does not initiate bank transfers or card payments.
-- Cross-currency totals are not created without source-backed conversion data.
-- Gmail and Google Drive remain test-user integrations pending provider qualification.
-- Automatic updates are disabled.
+- One review inbox for financial files, PDFs, scans, receipts, email attachments, Drive, and watched folders.
+- Auditable double-entry accounting with immutable source documents and row lineage.
+- Card purchases and later bank settlements remain linked without double-counting expense.
+- Refund and adjustment differences in Rakuten Card PDFs can be reviewed and corrected manually.
+- Japanese brokerage transactions and `assetbalance(all)` snapshots import through strict adapters.
+- Expanded Japanese household categories and complete Japanese, English, and Vietnamese UI coverage.
+- Portfolio, monthly, annual, ledger, XLSX, CSV, and PDF reporting.
+- Encrypted family delivery that requires validation, review, and explicit apply.
 
 ## Distribution
 
-The verified release artifact is `KakeFlow_1.0.0_aarch64.dmg` for macOS Apple Silicon.
+Release artifacts and checksums are published at [thangldw/kakeflow-releases](https://github.com/thangldw/kakeflow-releases/releases/tag/v1.0.0). The source release is published at [thangldw/kakeflow](https://github.com/thangldw/kakeflow/releases/tag/v1.0.0).
 
-- Size: `70,610,649` bytes
-- SHA-256: `cc553b8f15a5f8ae29cc66d7dcbd0e648aa3bebf65bc0a6c59f78fb1e563a6e8`
-- Signing: ad-hoc
-- Notarization: none
-- Windows: no public binary in this release
+macOS builds are ad-hoc signed unless a release explicitly states otherwise. Verify the checksum attached to the release before installation. Windows availability is listed per artifact on the download release.
 
-Publish or mirror the artifact only when its checksum matches and the `v1.0.0` tag identifies the reviewed source. See [Manual GitHub release](docs/MANUAL_GITHUB_RELEASE.md) and [V1 release readiness](docs/V1_RELEASE_READINESS.md).
+## Known limits
+
+- Google Drive and Gmail are test-user integrations pending provider qualification.
+- Automatic updates are disabled unless a verified update channel is configured.
+- KakeFlow does not initiate bank transfers, card payments, or brokerage orders.
+- Unsupported or ambiguous source rows remain in review instead of being repaired silently.
+
+See [release operations](docs/RELEASE.md) and [security](docs/SECURITY.md).

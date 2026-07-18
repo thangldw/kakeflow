@@ -94,7 +94,7 @@ describe('FinancialCalendarView', () => {
 
     expect(container.querySelectorAll('tbody .calendar-day')).toHaveLength(42)
     expect(screen.getByRole('table', { name: '2026年7月の日別収支カレンダー' })).toBeInTheDocument()
-    expect(screen.getByText('No spend')).toBeInTheDocument()
+    expect(screen.getByText('支出なし')).toBeInTheDocument()
     expect(screen.getByText('楽天カード')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('1件が確認待ち')
     expect(screen.getAllByText('¥300,000')).toHaveLength(2)
