@@ -1,104 +1,23 @@
 # KakeFlow metric contract
 
-KakeFlow dashboards read confirmed, household-owned records. Raw documents and
-unposted candidates never contribute to financial totals.
+Metrics use posted, household-owned ledger facts. Raw sources and pending candidates never contribute.
 
-## Accounting bases
+| Metric | Definition |
+| --- | --- |
+| Accrual expense | Expense-account debits on posted expense-like transactions |
+| Accrual income | Income-account credits on posted transactions |
+| Cash flow | Posted movement into/out of selected asset accounts |
+| Savings | Accrual income minus accrual expense |
+| Net worth | Asset balances plus portfolio market value minus liabilities |
 
-| Metric | Definition | Exclusions |
-| --- | --- | --- |
-| Accrual expense | Debit entries to `EXPENSE` accounts on posted `EXPENSE`, `CARD_PURCHASE`, `FEE`, or `INTEREST` transactions | Card settlements, transfers, voided/draft transactions |
-| Accrual income | Credit entries to `INCOME` accounts on posted transactions | Transfers and balance adjustments without an income entry |
-| Cash inflow/outflow | Posted movement into/out of selected asset accounts on the transaction date | Movements outside the selected account scope |
-| Savings | Accrual income minus accrual expense for the selected period | Asset transfers and investment snapshot valuation changes |
-| Net worth | Asset account balances plus portfolio market value, less liability balances, as of the selected date | Income/expense totals counted a second time |
+Card purchase recognizes expense; later bank settlement changes cash/liability without duplicating expense.
 
-Credit-card purchases recognize expense when purchased. The later bank debit is
-cash outflow and liability settlement, not a second expense.
+Calendar daily values follow selected basis/scope. No-spend status requires complete coverage. Card due events resolve only through confirmed links. Import freshness comes from persisted sources and retains missing/stale caveats.
 
-## Calendar
+Monthly comparisons use complete Asia/Tokyo months. Drivers rank absolute change while retaining both values. Savings rate is undefined at zero income. Budget variance is actual accrual expense minus plan.
 
-- A daily amount is the sum of posted ledger activity on that calendar date in
-  the selected accounting basis and account scope.
-- A no-spend day has zero confirmed accrual expense. It is not shown as a
-  trustworthy no-spend day when source coverage is incomplete.
-- Card due events come from persisted statements. A due event is resolved only
-  by a matched payment, not merely by a same-amount bank transaction.
-- Import freshness is the latest successfully persisted source document per
-  account/provider; missing or stale inputs remain visible as a coverage caveat.
+Recurring/anomaly results use posted history, explainable cadence/tolerance/baselines, and no peer or opaque global model. Transfers, settlements, refunds, drafts, and sparse one-offs are excluded.
 
-## Monthly report
+Account groups use any-journal-entry membership and never widen on invalid scope. Attribution (`ALL`, `HOUSEHOLD_COMMON`, or `MEMBER`) combines with group scope for transaction facts. Ownership, audience, and attribution remain separate; household-wide balance facts are labeled rather than falsely allocated.
 
-- Period comparisons use complete calendar months in `Asia/Tokyo`.
-- Month-over-month compares the selected month with the immediately preceding
-  month. Year-over-year compares the same calendar month one year earlier.
-- Category and merchant drivers are ranked by absolute change in posted accrual
-  expense, with both current and comparison values retained.
-- Savings rate is `savings / income`; it is undefined when income is zero.
-- Budget variance is actual accrual expense minus the persisted monthly budget.
-
-## Recurring and anomaly analytics
-
-- Recurring candidates require repeated posted expense-like transactions with a
-  normalized payee, a stable cadence, and an explainable amount tolerance.
-- Transfers, card payments, refunds, draft/voided rows, and one-off sparse data
-  are excluded from recurring detection.
-- Expected next date and amount are estimates from the household's own history,
-  not payment instructions or financial advice.
-- Anomalies compare a transaction with the household's prior merchant/category
-  history. Every result includes the baseline, observed value, score, and reason.
-- No peer-household benchmark or opaque global model is used in this implementation.
-
-## Account groups
-
-Account groups are saved scopes, not new ledger accounts. A transaction is in a
-group when one of its journal accounts belongs to that group. Group-filtered
-cards, charts, reports, and exports must all use the same membership rule and
-must not change the underlying journal entries.
-
-KakeFlow validates the group against the active household before running a
-scoped query. Missing or foreign-household groups fail rather than widening to
-all accounts. A transaction that touches several member accounts is still
-included once. Import failures and savings-goal actions remain household-wide
-because their records do not identify an account; the UI keeps them visible
-instead of implying that an account filter can classify them.
-
-## Family organization
-
-Household members and account ownership are stable local organization metadata.
-`PERSONAL` does not hide an account, authenticate a person, or restrict another
-user of the same device. Account ownership is independent from sharing: a
-member-owned account may still be `SHARED`; a `PERSONAL` account must have one
-active owner in the same household.
-
-KakeFlow does not derive transaction or source-document visibility from account
-ownership. Transfers and split funding may touch accounts owned by different
-members, so doing so could expose or omit the wrong counterpart. A later member
-reporting/access-control layer must use explicit transaction and document
-audiences.
-
-Transactions store attribution and audience independently. Source documents
-store their own audience, which may intentionally differ from every linked
-transaction. the analytical scope is a tagged value: `ALL`,
-`HOUSEHOLD_COMMON`, or `MEMBER(memberId)`. It combines with account-group scope
-using logical AND and applies to posted transaction facts across the dashboard,
-ledger, calendar, reports, intelligence, forecast history, action actuals, and
-transaction export. Archived members remain valid historical scopes; foreign
-members are rejected rather than widening the query.
-
-Balance facts do not become member balances merely because their contributing
-activity is filtered. Net worth, opening cash, investment valuation, portfolio
-snapshots, goals, import status, and statement settlement amounts remain
-household-wide and are labeled as such. A linked card statement is relevant to a
-member scope when at least one linked transaction matches, but its full payment
-obligation is not allocated to that member without explicit allocation evidence.
-Audience remains a local organization label and is never used as an analytical
-scope or authorization decision.
-
-## Export
-
-Exports contain posted records only, use UTF-8 with BOM for Japanese Excel
-compatibility, preserve integer JPY amounts, identify the accounting basis,
-account-group scope, and attribution scope, and remain bounded by the requested
-date range and row limit. Attribution filters transaction exports only;
-portfolio snapshots remain account-scoped household balance facts.
+Exports contain posted records, integer JPY, basis/group/attribution metadata, bounded date/row scope, and UTF-8 BOM where applicable.

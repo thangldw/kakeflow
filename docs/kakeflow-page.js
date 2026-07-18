@@ -22,7 +22,7 @@
     overview: {
       src: 'assets/screenshots/kakeflow-overview.png',
       width: 1280,
-      height: 1073,
+      height: 720,
       title: '家計の概要',
       alt: 'KakeFlow 家計の概要画面',
       description: '発生ベースの支出、キャッシュフロー、カード負債の状態を一画面で把握します。',
@@ -38,7 +38,7 @@
     import: {
       src: 'assets/screenshots/kakeflow-import-inbox.png',
       width: 1280,
-      height: 770,
+      height: 720,
       title: 'Import Inbox',
       alt: 'KakeFlow の Import Inbox 画面',
       description: '取り込み候補、重複、振替、カード支払い、低 confidence の抽出結果を確認します。',

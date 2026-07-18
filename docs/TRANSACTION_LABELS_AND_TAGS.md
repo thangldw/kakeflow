@@ -1,34 +1,9 @@
 # Transaction labels and tags
 
-KakeFlow keeps accounting categories, workflow labels, and user tags separate.
-Changing labels or tags never changes a journal entry, account balance, budget
-category, card reconciliation, or calculation-target state.
+Accounting categories, controlled labels, and household tags are separate. Metadata changes never alter journals, balances, budgets, reconciliation, or calculation target.
 
-## Labels
+Controlled labels are `SUBSCRIPTION`, `RECURRING`, `TAX_DEDUCTIBLE`, `REIMBURSABLE`, `UNUSUAL`, `SHARED_EXPENSE`, and `PRIVATE_EXPENSE`.
 
-Labels are a controlled vocabulary for reliable filters and workflows:
+Tags are trimmed, validated, deduplicated household text for trips, children, projects, or events.
 
-- `SUBSCRIPTION`
-- `RECURRING`
-- `TAX_DEDUCTIBLE`
-- `REIMBURSABLE`
-- `UNUSUAL`
-- `SHARED_EXPENSE`
-- `PRIVATE_EXPENSE`
-
-## Tags
-
-Tags are household-defined text values for dimensions such as a trip, child,
-project, or event. KakeFlow trims and validates tags, removes duplicates, and
-keeps their assignment household-scoped.
-
-## Bulk changes
-
-The transaction ledger supports an explicit selection of posted transactions.
-A bulk operation states which labels and tags to add and which to remove. The
-native ledger revalidates every selected transaction against the household and
-applies the whole operation atomically. A stale, missing, cross-household, or
-oversized selection is rejected without partial changes.
-
-Bulk metadata changes are organizational only. They do not rewrite imported
-source evidence and do not invoke category rules automatically.
+Bulk operations explicitly add/remove labels and tags from selected posted transactions. Native code revalidates household ownership and size, then applies atomically. Stale, missing, cross-household, or oversized selection produces no partial changes. Source evidence and category rules are untouched.

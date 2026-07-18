@@ -1,63 +1,22 @@
 # Local email attachment import
 
-KakeFlow can import a locally saved RFC 5322 `.eml` message containing one
-supported tabular financial attachment. This is a local-first evidence path; it
-does not connect to, scan, or retain credentials for an email account.
-
-The desktop Folder Inbox can also watch a user-selected local folder for `.eml`
-files. This supports mail-client export folders and user-configured local mail
-rules: discovery is restart-safe, but it only observes files that already exist
-on the device. KakeFlow does not connect to the mailbox that produced them.
+KakeFlow can import one supported tabular attachment from a locally saved RFC 5322 `.eml` message. It does not connect to a mailbox or retain email credentials. Watched folders may discover `.eml` files already present on the device.
 
 ## Evidence model
 
-The complete `.eml` bytes are hashed, encrypted, and stored as the immutable
-source document. KakeFlow does not replace that source with the decoded
-attachment. Rows parsed from the attachment carry its decoded filename as
-`sourcePart`, so transaction drill-down retains this relationship:
+The complete message remains the encrypted immutable source. The decoded attachment is recorded as a source part:
 
 ```text
-statement.eml (immutable source document)
-└── bank.csv (sourcePart)
-    └── physical CSV row
-        └── review-required transaction candidate
+message.eml
+  -> attachment.csv
+  -> physical source row
+  -> review candidate
 ```
 
-The source filename and media type remain `statement.eml` and
-`message/rfc822`. Candidate approval, account selection, deduplication, posting,
-rollback, and evidence review use the same boundaries as a direct CSV/XLSX
-upload. Receiving or parsing an email never posts a transaction automatically.
+Approval, account mapping, deduplication, rollback, and evidence review match direct file imports. Parsing an email never posts a transaction.
 
-## Bounded MIME behavior
+## MIME limits
 
-KakeFlow uses the browser-compatible
-[PostalMime parser](https://postal-mime.postalsys.com/) with bounded header and
-nesting depth. The import boundary allows:
+PostalMime parsing is bounded to a 25 MiB message, 20 decoded attachments, 10 MiB per attachment, 25 MiB total decoded bytes, and one non-inline `.csv`, `.tsv`, or `.xlsx` attachment. Multiple tabular attachments, unsafe names, malformed MIME, excessive nesting/headers, or missing supported attachments fail closed.
 
-- one `.eml` source up to the ordinary 25 MiB file limit;
-- at most 20 decoded MIME attachments;
-- at most 10 MiB per decoded attachment and 25 MiB total;
-- inline presentation parts to remain non-importable; and
-- exactly one non-inline `.csv`, `.tsv`, or `.xlsx` attachment.
-
-If multiple tabular attachments are present, KakeFlow blocks the message rather
-than choosing a destination account implicitly. The user can save and import
-each attachment separately. Duplicate or unsafe non-inline filenames, malformed
-MIME, excessive nesting/headers, and missing supported attachments also fail
-closed with an explicit issue code.
-
-## Current boundary
-
-PDF and receipt-image attachments are not decoded into document-viewer or OCR
-sources in this version. They can still be saved and imported directly through
-the existing PDF/image workflow. Unsupported tabular schemas remain blocked;
-the email container does not bypass adapter validation.
-
-This document describes the provider-independent local `.eml` path. The direct
-read-only [Gmail connector](GMAIL_CONNECTOR.md) now reuses that exact parser and
-review boundary on `main`; its public availability remains gated by the next
-major release and Google provider qualification. Other mailbox APIs,
-server-side forwarding, and providers remain separate work. A locally exported
-message may still be selected, dropped, or discovered in a watched folder.
-Folder discovery can prepare a preview, but posting always requires the same
-explicit account selection and review approval as every other import.
+PDF and image parts are not promoted through this path; save and import them through the document/OCR workflow. The [Gmail connector](GMAIL_CONNECTOR.md) reuses the same parser and review boundary.

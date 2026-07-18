@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "updated": "2026-07-18",
+  "format": "editable-svg",
+  "visualSystem": {
+    "direction": "collaborative whiteboard",
+    "reference": "Miro-style workflow diagrams",
+    "traits": [
+      "off-white dotted canvas",
+      "pastel sticky-note cards",
+      "soft shadows",
+      "rounded hand-drawn connectors",
+      "direct labels",
+      "accessible semantic color"
+    ]
+  },
+  "contentPolicy": "All financial labels, amounts, sequence, states, and safety boundaries are deterministic SVG text and were not generated as raster content.",
+  "files": [
+    "data-pipeline.svg",
+    "card-reconciliation.svg",
+    "family-delivery.svg",
+    "family-v2-planning.svg",
+    "mobile-capture.svg"
+  ]
+}

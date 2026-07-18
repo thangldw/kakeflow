@@ -1,15 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="500" viewBox="0 0 1400 500" role="img" aria-labelledby="title desc">
-  <title id="title">Credit card reconciliation without double counting</title>
-  <desc id="desc">Card purchases create expenses and card liability; the later bank debit reduces the liability without recording another expense.</desc>
-  <defs><filter id="s" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#263329" flood-opacity=".08"/></filter><marker id="a" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0l12 6-12 6z" fill="#6c7a61"/></marker></defs>
-  <rect width="1400" height="500" rx="28" fill="#f7f8f3"/>
-  <text x="70" y="74" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="32" font-weight="700" fill="#243029">Credit-card reconciliation without double counting</text>
-  <text x="70" y="108" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="17" fill="#6f7972">Expense timing and bank cash flow are separate views of the same liability lifecycle.</text>
-  <g font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" filter="url(#s)">
-    <g transform="translate(70 160)"><rect width="330" height="210" rx="20" fill="#fff"/><text x="28" y="44" font-size="14" font-weight="700" fill="#a45c49">PURCHASES</text><text x="28" y="82" font-size="25" font-weight="700" fill="#243029">¥60,000 expense</text><text x="28" y="119" font-size="15" fill="#6f7972">Groceries  ¥30,000</text><text x="28" y="147" font-size="15" fill="#6f7972">Amazon  ¥20,000</text><text x="28" y="175" font-size="15" fill="#6f7972">Restaurant  ¥10,000</text></g>
-    <g transform="translate(535 160)"><rect width="330" height="210" rx="20" fill="#fff"/><text x="28" y="44" font-size="14" font-weight="700" fill="#6c7a61">CARD STATEMENT</text><text x="28" y="82" font-size="25" font-weight="700" fill="#243029">¥60,000 liability</text><text x="28" y="122" font-size="15" fill="#6f7972">Debit: household expenses</text><text x="28" y="151" font-size="15" fill="#6f7972">Credit: card payable</text><rect x="28" y="174" width="274" height="8" rx="4" fill="#e5e9e1"/><rect x="28" y="174" width="274" height="8" rx="4" fill="#718064"/></g>
-    <g transform="translate(1000 160)"><rect width="330" height="210" rx="20" fill="#5e6e52"/><text x="28" y="44" font-size="14" font-weight="700" fill="#dfe8d8">BANK SETTLEMENT</text><text x="28" y="82" font-size="25" font-weight="700" fill="#fff">−¥60,000 cash</text><text x="28" y="122" font-size="15" fill="#edf1e9">Debit: card payable</text><text x="28" y="151" font-size="15" fill="#edf1e9">Credit: bank account</text><text x="28" y="184" font-size="14" font-weight="700" fill="#dfe8d8">Expense impact: ¥0</text></g>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620" role="img" aria-labelledby="title desc">
+  <title id="title">Credit-card reconciliation without double counting</title>
+  <desc id="desc">Card purchases recognize expenses and liability. A later bank debit settles the liability and affects cash flow without recording expense again.</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#050038" flood-opacity=".12"/></filter>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto"><path d="M1 1l10 5-10 5" fill="none" stroke="#34324a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.3" fill="#c9c7d8" opacity=".55"/></pattern>
+    <style>
+      .ui{font-family:Inter,system-ui,-apple-system,"Segoe UI","Noto Sans JP",Arial,sans-serif}.title{font-size:34px;font-weight:800;fill:#050038}.subtitle{font-size:17px;fill:#68657a}.label{font-size:13px;font-weight:800;letter-spacing:.08em;fill:#68657a}.head{font-size:23px;font-weight:800;fill:#050038}.amount{font-size:27px;font-weight:850;fill:#050038}.copy{font-size:15px;fill:#34324a}.small{font-size:13px;fill:#68657a}.line{fill:none;stroke:#34324a;stroke-width:3;stroke-linecap:round;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1400" height="620" rx="30" fill="#f7f7fb"/><rect width="1400" height="620" rx="30" fill="url(#dots)"/>
+  <g class="ui">
+    <rect x="56" y="40" width="875" height="88" rx="18" fill="#fff" filter="url(#shadow)"/>
+    <text x="84" y="78" class="title">One purchase lifecycle. One expense.</text>
+    <text x="84" y="106" class="subtitle">Accrual recognition and bank cash movement are connected—but never counted twice.</text>
+
+    <path class="line" d="M394 325C438 292 462 292 505 325"/>
+    <path class="line" d="M895 325C939 358 962 358 1005 325"/>
+
+    <g transform="translate(75 185) rotate(-1 160 140)" filter="url(#shadow)">
+      <rect width="320" height="292" rx="12" fill="#fff3b8"/><path d="M296 0h24v24z" fill="#f4da62"/>
+      <text x="26" y="42" class="label">1 · PURCHASE</text>
+      <text x="26" y="82" class="head">Household buys</text>
+      <text x="26" y="122" class="amount">¥60,000 expense</text>
+      <rect x="26" y="147" width="268" height="1" fill="#d7bf54"/>
+      <text x="26" y="178" class="copy">Groceries</text><text x="294" y="178" text-anchor="end" class="copy">¥30,000</text>
+      <text x="26" y="207" class="copy">Online shopping</text><text x="294" y="207" text-anchor="end" class="copy">¥20,000</text>
+      <text x="26" y="236" class="copy">Restaurant</text><text x="294" y="236" text-anchor="end" class="copy">¥10,000</text>
+      <text x="26" y="270" class="small">Recognize expense on purchase date</text>
+    </g>
+
+    <g transform="translate(505 185) rotate(.8 195 140)" filter="url(#shadow)">
+      <rect width="390" height="292" rx="12" fill="#e5d7ff"/><path d="M366 0h24v24z" fill="#c3a8f5"/>
+      <text x="26" y="42" class="label">2 · CARD LIABILITY</text>
+      <text x="26" y="82" class="head">Statement is confirmed</text>
+      <text x="26" y="122" class="amount">¥60,000 payable</text>
+      <rect x="26" y="151" width="338" height="54" rx="10" fill="#fff" opacity=".7"/>
+      <text x="42" y="176" class="copy">Debit</text><text x="348" y="176" text-anchor="end" class="copy">Expense accounts</text>
+      <text x="42" y="197" class="copy">Credit</text><text x="348" y="197" text-anchor="end" class="copy">Card liability</text>
+      <text x="26" y="239" class="small">Statement lines reconcile to source rows</text>
+      <rect x="26" y="255" width="338" height="11" rx="6" fill="#fff" opacity=".65"/><rect x="26" y="255" width="338" height="11" rx="6" fill="#8b5cf6"/>
+    </g>
+
+    <g transform="translate(1005 185) rotate(-.8 160 140)" filter="url(#shadow)">
+      <rect width="320" height="292" rx="12" fill="#c9f3df"/><path d="M296 0h24v24z" fill="#98deb9"/>
+      <text x="26" y="42" class="label">3 · BANK SETTLEMENT</text>
+      <text x="26" y="82" class="head">Liability is paid</text>
+      <text x="26" y="122" class="amount">−¥60,000 cash</text>
+      <rect x="26" y="151" width="268" height="54" rx="10" fill="#fff" opacity=".72"/>
+      <text x="42" y="176" class="copy">Debit</text><text x="278" y="176" text-anchor="end" class="copy">Card liability</text>
+      <text x="42" y="197" class="copy">Credit</text><text x="278" y="197" text-anchor="end" class="copy">Bank account</text>
+      <rect x="26" y="230" width="268" height="40" rx="20" fill="#2ccf8e"/>
+      <text x="160" y="256" text-anchor="middle" font-size="16" font-weight="850" fill="#050038">Expense impact: ¥0</text>
+    </g>
+
+    <g transform="translate(365 520) rotate(-.7 0 0)" filter="url(#shadow)">
+      <rect width="670" height="58" rx="10" fill="#ffd6df"/>
+      <text x="335" y="25" text-anchor="middle" font-size="17" font-weight="850" fill="#050038">Accrual: purchase counts once · Cash flow: settlement moves cash once</text>
+      <text x="335" y="46" text-anchor="middle" class="small">Reconciliation links the events without rewriting either journal.</text>
+    </g>
   </g>
-  <g stroke="#6c7a61" stroke-width="4" fill="none" marker-end="url(#a)"><path d="M420 265h95"/><path d="M885 265h95"/></g>
-  <g font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif"><rect x="430" y="405" width="540" height="48" rx="24" fill="#e8eee3"/><text x="700" y="436" text-anchor="middle" font-size="16" font-weight="700" fill="#526149">One purchase lifecycle • one expense • accurate cash flow</text></g>
 </svg>
