@@ -1,13 +1,22 @@
 # Localization
 
-KakeFlow supports Japanese (`ja`), English (`en`), and Vietnamese (`vi`). Language selection lives in Settings and persists locally as `kakeflow.locale`.
+KakeFlow supports Japanese (`ja`), English (`en`), and Vietnamese (`vi`). Japanese is the source language for domain copy.
 
-- Japanese is the first-run default and fallback for untranslated domain text.
-- Root `lang` follows the active locale.
-- Dates use `ja-JP`, `en-US`, or `vi-VN`.
-- Financial values use tabular numerals.
-- Account, merchant, tag, filename, and imported source text are never translated.
+## Runtime contract
 
-Shell, navigation, global filters, dashboard, data quality, reconciliation, and primary transaction controls use the shared dictionary. Specialized financial text keeps reviewed source language until a safe translation exists.
+- `I18nProvider` owns the selected locale and updates the document language.
+- `text()` handles context-bound labels; `localize()` handles shared and static UI modules.
+- Dynamic Japanese messages use catalog-backed interpolation.
+- User data, imported source text, merchant names, account names, and evidence content are not translated.
 
-New product copy should add reviewed JA/EN/VI entries together. UI uses system-first Japanese-capable sans fonts; monospace is reserved for identifiers and evidence.
+## Coverage
+
+Generated catalogs live in `src/locales/`. Manual entries in `src/i18n.tsx` override generated translations for accounting vocabulary and high-impact messages.
+
+```bash
+npm run i18n:codemod
+npm run i18n:generate
+npm test -- --run scripts/i18n-catalog-contract.test.ts src/i18n.test.tsx
+```
+
+The catalog contract fails when static Japanese UI text bypasses localization or when English or Vietnamese entries are missing.

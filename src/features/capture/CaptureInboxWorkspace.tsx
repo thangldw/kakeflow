@@ -8,6 +8,7 @@ import { downloadRemoteMobileCapture, listRemoteMobileCaptures, MobileCaptureHtt
 import { showToast } from '../../toast'
 import { paddleOcrDocument, paddleOcrRenderedPdfPages } from '../import/paddleOcr'
 import { createProtectedPdfPlatform } from '../source-viewer/protectedPdfPlatform'
+import { localize } from '../../i18n'
 
 interface Props {
   readonly householdId: string | null
@@ -65,7 +66,7 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
       const folders = await platformClient.listWatchedFolders(householdId)
       if (current === request.current) setWatchedFolder(folders.find((folder) => folder.label === 'レシート Inbox') ?? null)
     } catch {
-      if (current === request.current) setNotice({ kind: 'error', text: '撮影 Inboxを読み込めませんでした。接続を確認してもう一度お試しください。' })
+      if (current === request.current) setNotice({ kind: 'error', text: localize("撮影 Inboxを読み込めませんでした。接続を確認してもう一度お試しください。") })
     } finally { if (current === request.current) setLoading(false) }
   }, [householdId])
 
@@ -91,8 +92,8 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
     try {
       const next = await platformClient.enableMobileCaptureBackground({ householdId, token, intervalMinutes: backgroundInterval })
       setBackground(next); setToken('')
-      setNotice({ kind: 'status', text: 'KakeFlowを開いている間の自動受信を有効にしました。画像の保存だけを行い、OCRや台帳反映は行いません。' })
-    } catch { setNotice({ kind: 'error', text: '自動受信を有効にできませんでした。接続トークンと家族スペースを確認してください。' }) }
+      setNotice({ kind: 'status', text: localize("KakeFlowを開いている間の自動受信を有効にしました。画像の保存だけを行い、OCRや台帳反映は行いません。") })
+    } catch { setNotice({ kind: 'error', text: localize("自動受信を有効にできませんでした。接続トークンと家族スペースを確認してください。") }) }
     finally { setBackgroundBusy(false) }
   }
 
@@ -101,19 +102,19 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
     setBackgroundBusy(true); setNotice(null)
     try {
       setBackground(await platformClient.disableMobileCaptureBackground(householdId))
-      setNotice({ kind: 'status', text: '自動受信を停止しました。受信済みの原本画像は削除していません。' })
-    } catch { setNotice({ kind: 'error', text: '自動受信を停止できませんでした。もう一度お試しください。' }) }
+      setNotice({ kind: 'status', text: localize("自動受信を停止しました。受信済みの原本画像は削除していません。") })
+    } catch { setNotice({ kind: 'error', text: localize("自動受信を停止できませんでした。もう一度お試しください。") }) }
     finally { setBackgroundBusy(false) }
   }
 
   const runBackgroundNow = async () => {
     if (!householdId || backgroundBusy) return
-    setBackgroundBusy(true); setNotice({ kind: 'status', text: '原本画像を確認しています。OCRと台帳反映は行いません。' })
+    setBackgroundBusy(true); setNotice({ kind: 'status', text: localize("原本画像を確認しています。OCRと台帳反映は行いません。") })
     try {
       const next = await platformClient.runMobileCaptureBackgroundNow(householdId)
       setBackground(next); await loadLocal()
-      setNotice({ kind: 'status', text: next.lastIngestedCount ? `${next.lastIngestedCount}件の原本画像を保存しました。OCRはまだ行っていません。` : '新しい原本画像はありません。' })
-    } catch { await loadBackground(); setNotice({ kind: 'error', text: '自動受信を完了できませんでした。状態を確認して再試行してください。' }) }
+      setNotice({ kind: 'status', text: next.lastIngestedCount ? localize(`${next.lastIngestedCount}件の原本画像を保存しました。OCRはまだ行っていません。`) : localize("新しい原本画像はありません。") })
+    } catch { await loadBackground(); setNotice({ kind: 'error', text: localize("自動受信を完了できませんでした。状態を確認して再試行してください。") }) }
     finally { setBackgroundBusy(false) }
   }
 
@@ -121,14 +122,14 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
     if (!householdId || previewBusy) return
     setPreviewBusy(true); setNotice(null)
     try { setPreview({ item, image: await platformClient.getMobileCaptureImagePreview(householdId, item.artifactId) }) }
-    catch { setNotice({ kind: 'error', text: '原本画像を表示できませんでした。画像は削除せず、この端末に保持しています。' }) }
+    catch { setNotice({ kind: 'error', text: localize("原本画像を表示できませんでした。画像は削除せず、この端末に保持しています。") }) }
     finally { setPreviewBusy(false) }
   }
 
   const receive = async () => {
     if (!householdId || !token || loading) return
     const current = ++request.current; setLoading(true)
-    setNotice({ kind: 'status', text: 'モバイルから届いた画像を確認しています。受信だけでは台帳を変更しません。' })
+    setNotice({ kind: 'status', text: localize("モバイルから届いた画像を確認しています。受信だけでは台帳を変更しません。") })
     try {
       const [family, captureStatus] = await Promise.all([platformClient.getFamilyDeliveryStatus(householdId), platformClient.getMobileCaptureStatus(householdId)])
       if (!captureStatus.endpoint || family.connectionState === 'NOT_CONFIGURED') throw new Error('NOT_CONFIGURED')
@@ -152,16 +153,16 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
       if (current === request.current) {
         const names = new Map(family.memberships.flatMap((membership) => membership.remoteMembershipIds.map((remoteId) => [remoteId, membership.memberName] as const)))
         setItems(updated.items.map((item) => ({ ...item, senderMemberName: item.senderMemberName ?? (item.senderMembershipId ? names.get(item.senderMembershipId) ?? null : null) })))
-        setNotice({ kind: 'status', text: page.captures.length === 0 ? '新しく届いた画像はありません。台帳は変更されていません。' : `${received}件をこの端末へ受信しました${duplicates ? `（${duplicates}件は受信済み）` : ''}。OCRと台帳への承認はまだ行っていません。` })
+        setNotice({ kind: 'status', text: page.captures.length === 0 ? localize("新しく届いた画像はありません。台帳は変更されていません。") : localize(`${received}件をこの端末へ受信しました${duplicates ? `（${duplicates}件は受信済み）` : ''}。OCRと台帳への承認はまだ行っていません。`) })
       }
     } catch (error) {
       if (current !== request.current) return
       const code = error instanceof MobileCaptureHttpError ? error.code : 'INVALID_RESPONSE'
-      const text = code === 'AUTH_EXPIRED' ? '接続トークンの有効期限が切れています。入力し直して再試行してください。'
-        : code === 'MEMBERSHIP_REVOKED' ? 'この家族スペースへの配信は停止されています。新しい画像は受信できません。すでに保存した画像と取引は自動削除されません。'
-        : code === 'AUDIENCE_DENIED' ? 'この画像は現在のメンバーの配信対象外です。台帳は変更されていません。'
-        : code === 'INVALID_CAPTURE' ? '画像の内容を検証できなかったため受信しませんでした。台帳と確認待ちは変更されていません。'
-        : 'モバイルからの受信を完了できませんでした。接続を確認して再試行してください。'
+      const text = code === 'AUTH_EXPIRED' ? localize("接続トークンの有効期限が切れています。入力し直して再試行してください。")
+        : code === 'MEMBERSHIP_REVOKED' ? localize("この家族スペースへの配信は停止されています。新しい画像は受信できません。すでに保存した画像と取引は自動削除されません。")
+        : code === 'AUDIENCE_DENIED' ? localize("この画像は現在のメンバーの配信対象外です。台帳は変更されていません。")
+        : code === 'INVALID_CAPTURE' ? localize("画像の内容を検証できなかったため受信しませんでした。台帳と確認待ちは変更されていません。")
+        : localize("モバイルからの受信を完了できませんでした。接続を確認して再試行してください。")
       setNotice({ kind: 'error', text })
       try { setItems(await platformClient.listMobileCaptureInbox(householdId)) } catch { /* keep the last valid local list */ }
     } finally { if (current === request.current) setLoading(false) }
@@ -170,11 +171,11 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
   const process = async (item: MobileCaptureInboxItemDto) => {
     if (!householdId || busyArtifactId) return
     if (!cashAccount) {
-      setNotice({ kind: 'error', text: 'OCR結果を取引候補にするには、設定で有効な現金口座を追加してください。画像はこの端末に残っています。' })
+      setNotice({ kind: 'error', text: localize("OCR結果を取引候補にするには、設定で有効な現金口座を追加してください。画像はこの端末に残っています。") })
       return
     }
     const promoteOnly = item.state === 'OCR_READY'
-    setBusyArtifactId(item.artifactId); setOcrProgress((current) => ({ ...current, [item.artifactId]: promoteOnly ? 100 : 10 })); setNotice({ kind: 'status', text: promoteOnly ? 'OCR結果をImport Inboxの確認待ちへ昇格しています。' : 'PP-OCRv5で原本を読み取っています。台帳にはまだ反映しません。' })
+    setBusyArtifactId(item.artifactId); setOcrProgress((current) => ({ ...current, [item.artifactId]: promoteOnly ? 100 : 10 })); setNotice({ kind: 'status', text: promoteOnly ? localize("OCR結果をImport Inboxの確認待ちへ昇格しています。") : localize("PP-OCRv5で原本を読み取っています。台帳にはまだ反映しません。") })
     try {
       const result = promoteOnly
         ? await platformClient.ocrMobileCapture(householdId, item.artifactId)
@@ -208,24 +209,24 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
         const marked = await platformClient.markMobileCaptureOcrReviewRequired(householdId, item.artifactId)
         setItems((current) => upsert(current, marked))
         setNotice({ kind: 'error', text: normalized.fields.issues.includes('STATEMENT_LIKELY')
-          ? '明細書の可能性があるため、1件の支出候補にはしませんでした。原本画像はこの端末に残っています。'
-          : '日付または合計金額を読み取れませんでした。原本画像はこの端末に残り、台帳は変更されていません。' })
+          ? localize("明細書の可能性があるため、1件の支出候補にはしませんでした。原本画像はこの端末に残っています。")
+          : localize("日付または合計金額を読み取れませんでした。原本画像はこの端末に残り、台帳は変更されていません。") })
         return
       }
       if (!promoteOnly) {
         setPreview(null)
         setNotice({ kind: result.document.confidenceBps < 7_500 ? 'error' : 'status', text: result.document.confidenceBps < 7_500
-          ? `OCRが完了しました（信頼度 ${Math.round(result.document.confidenceBps / 100)}%）。内容を確認してから昇格してください。`
-          : `OCRが完了しました（信頼度 ${Math.round(result.document.confidenceBps / 100)}%）。台帳には未反映です。` })
+          ? localize(`OCRが完了しました（信頼度 ${Math.round(result.document.confidenceBps / 100)}%）。内容を確認してから昇格してください。`)
+          : localize(`OCRが完了しました（信頼度 ${Math.round(result.document.confidenceBps / 100)}%）。台帳には未反映です。`) })
         return
       }
       const promoted = await platformClient.promoteMobileCapture({ householdId, artifactId: item.artifactId, extractionId: result.extractionId, import: normalized.request })
       setItems((current) => upsert(current, promoted.item)); setPreview(null); onChanged()
       setNotice({ kind: 'status', text: promoted.reusedExisting
-        ? '同じ画像の既存の確認待ちを表示できます。新しい支出候補は作成していません。'
-        : 'OCR結果をImport Inboxの確認待ちに追加しました。台帳へは自動反映していません。' })
+        ? localize("同じ画像の既存の確認待ちを表示できます。新しい支出候補は作成していません。")
+        : localize("OCR結果をImport Inboxの確認待ちに追加しました。台帳へは自動反映していません。") })
     } catch {
-      setNotice({ kind: 'error', text: '画像をOCRして確認待ちへ追加できませんでした。原本画像はこの端末に残り、台帳は変更されていません。' })
+      setNotice({ kind: 'error', text: localize("画像をOCRして確認待ちへ追加できませんでした。原本画像はこの端末に残り、台帳は変更されていません。") })
       await loadLocal()
     } finally { setBusyArtifactId(null); setOcrProgress((current) => { const next = { ...current }; delete next[item.artifactId]; return next }) }
   }
@@ -237,18 +238,18 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
       await platformClient.discardMobileCapture(householdId, item.artifactId)
       setItems((current) => current.filter((candidate) => candidate.artifactId !== item.artifactId))
       setPreview((current) => current?.item.artifactId === item.artifactId ? null : current)
-      setNotice({ kind: 'status', text: '撮影 Inboxから破棄しました。暗号化原本の監査記録は変更していません。' })
-      showToast('レシート原本を撮影 Inboxから破棄しました。')
-    } catch { setNotice({ kind: 'error', text: 'この原本を破棄できませんでした。状態を更新してもう一度お試しください。' }) }
+      setNotice({ kind: 'status', text: localize("撮影 Inboxから破棄しました。暗号化原本の監査記録は変更していません。") })
+      showToast(localize("レシート原本を撮影 Inboxから破棄しました。"))
+    } catch { setNotice({ kind: 'error', text: localize("この原本を破棄できませんでした。状態を更新してもう一度お試しください。") }) }
     finally { setBusyArtifactId(null) }
   }
 
   const ingestLocalFiles = async (files: readonly File[], sourceKind: 'LOCAL' | 'WATCHED_FOLDER' = 'LOCAL') => {
     if (!householdId || localBusy) return
     const supported = files.filter((file) => ['image/png', 'image/jpeg', 'application/pdf'].includes(file.type) || /\.(?:png|jpe?g|pdf)$/i.test(file.name))
-    if (supported.length === 0) { setNotice({ kind: 'error', text: 'JPEG、PNG、またはPDFのレシート原本を選択してください。' }); return }
+    if (supported.length === 0) { setNotice({ kind: 'error', text: localize("JPEG、PNG、またはPDFのレシート原本を選択してください。") }); return }
     setLocalPendingFiles((current) => [...current, ...supported.map((file) => file.name)])
-    setLocalBusy(true); setNotice({ kind: 'status', text: `${supported.length}件の原本をこの端末へ保存しています。台帳には反映しません。` })
+    setLocalBusy(true); setNotice({ kind: 'status', text: localize(`${supported.length}件の原本をこの端末へ保存しています。台帳には反映しません。`) })
     let stored = 0; let duplicates = 0; let failed = files.length - supported.length
     for (const file of supported) {
       if (file.size <= 0 || file.size > 25 * 1024 * 1024) { failed += 1; setLocalPendingFiles((current) => current.filter((name) => name !== file.name)); continue }
@@ -267,8 +268,8 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
       } catch { failed += 1 }
       finally { setLocalPendingFiles((current) => { const index = current.indexOf(file.name); return index < 0 ? current : [...current.slice(0, index), ...current.slice(index + 1)] }) }
     }
-    setNotice({ kind: failed > 0 ? 'error' : 'status', text: `${stored}件を撮影 Inboxへ保存しました${duplicates ? `（${duplicates}件は保存済み）` : ''}${failed ? `。${failed}件は形式またはサイズを確認してください` : '。OCRと台帳反映はまだ行っていません。'}` })
-    showToast(`${stored}件の原本画像を保存しました。`, failed ? 'info' : 'success')
+    setNotice({ kind: failed > 0 ? 'error' : 'status', text: localize(`${stored}件を撮影 Inboxへ保存しました${duplicates ? `（${duplicates}件は保存済み）` : ''}${failed ? `。${failed}件は形式またはサイズを確認してください` : localize("。OCRと台帳反映はまだ行っていません。")}`) })
+    showToast(localize(`${stored}件の原本画像を保存しました。`), failed ? 'info' : 'success')
     setLocalBusy(false)
   }
 
@@ -276,8 +277,8 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
     if (!householdId || localBusy) return
     setLocalBusy(true); setNotice(null)
     try {
-      const selected = await platformClient.selectWatchedFolder(householdId, 'レシート Inbox')
-      if (!selected) { setNotice({ kind: 'status', text: '監視フォルダの設定をキャンセルしました。' }); return }
+      const selected = await platformClient.selectWatchedFolder(householdId, localize("レシート Inbox"))
+      if (!selected) { setNotice({ kind: 'status', text: localize("監視フォルダの設定をキャンセルしました。") }); return }
       setWatchedFolder(selected)
       const scan = await platformClient.scanWatchedFolder(householdId, selected.id)
       const files: File[] = []
@@ -287,8 +288,8 @@ export function CaptureInboxWorkspace({ householdId, accounts, onOpenImport, onC
       }
       setLocalBusy(false)
       if (files.length > 0) await ingestLocalFiles(files, 'WATCHED_FOLDER')
-      else setNotice({ kind: 'status', text: `${selected.label} を監視対象に追加しました。新しいレシート原本は撮影 Inboxへ届きます。` })
-    } catch { setNotice({ kind: 'error', text: '監視フォルダを設定できませんでした。フォルダのアクセス権を確認してください。' }) }
+      else setNotice({ kind: 'status', text: localize(`${selected.label} を監視対象に追加しました。新しいレシート原本は撮影 Inboxへ届きます。`) })
+    } catch { setNotice({ kind: 'error', text: localize("監視フォルダを設定できませんでした。フォルダのアクセス権を確認してください。") }) }
     finally { setLocalBusy(false) }
   }
 

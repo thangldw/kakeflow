@@ -1,11 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import enGenerated from './locales/en.generated.json'
+import viGenerated from './locales/vi.generated.json'
 
 export type AppLocale = 'ja' | 'en' | 'vi'
 
 const STORAGE_KEY = 'kakeflow.locale'
 
 const en: Record<string, string> = {
+  ...enGenerated,
   'ホーム': 'Home', '取引': 'Transactions', 'インポート': 'Import', '撮影 Inbox': 'Capture Inbox',
   'カード照合': 'Card reconciliation', '資産・投資': 'Assets & investments',
   'カレンダー・レポート': 'Calendar & reports', '予算・目標': 'Budgets & goals',
@@ -85,6 +88,7 @@ const en: Record<string, string> = {
 }
 
 const vi: Record<string, string> = {
+  ...viGenerated,
   'ホーム': 'Trang chủ', '取引': 'Giao dịch', 'インポート': 'Nhập dữ liệu', '撮影 Inbox': 'Hộp thư ảnh',
   'カード照合': 'Đối soát thẻ', '資産・投資': 'Tài sản & đầu tư',
   'カレンダー・レポート': 'Lịch & báo cáo', '予算・目標': 'Ngân sách & mục tiêu',
@@ -178,6 +182,11 @@ const defaultValue: I18nValue = {
 }
 
 const I18nContext = createContext<I18nValue>(defaultValue)
+let activeLocale: AppLocale = 'ja'
+const interpolationEntries = {
+  en: Object.entries(en).sort(([left], [right]) => right.length - left.length),
+  vi: Object.entries(vi).sort(([left], [right]) => right.length - left.length),
+} as const
 
 // Exported beside the provider so catalog coverage tests use the exact runtime dictionaries.
 // eslint-disable-next-line react-refresh/only-export-components
@@ -187,7 +196,20 @@ export function hasTranslation(locale: Exclude<AppLocale, 'ja'>, source: string)
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function translateText(locale: AppLocale, source: string): string {
-  return locale === 'ja' ? source : (locale === 'vi' ? vi[source] : en[source]) ?? source
+  if (locale === 'ja') return source
+  const dictionary = locale === 'vi' ? vi : en
+  const exact = dictionary[source]
+  if (exact) return exact
+  if (!/[ぁ-んァ-ヶ一-龯]/.test(source)) return source
+  return interpolationEntries[locale]
+    .filter(([token]) => source.includes(token))
+    .reduce((translated, [token, replacement]) => translated.replaceAll(token, replacement), source)
+}
+
+// Static UI modules use this function; App consumes the context and rerenders the tree after a locale change.
+// eslint-disable-next-line react-refresh/only-export-components
+export function localize(source: string): string {
+  return translateText(activeLocale, source)
 }
 
 function savedLocale(): AppLocale {
@@ -197,11 +219,17 @@ function savedLocale(): AppLocale {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<AppLocale>(savedLocale)
+  activeLocale = locale
   const setLocale = useCallback((next: AppLocale) => {
     globalThis.localStorage?.setItem(STORAGE_KEY, next)
     setLocaleState(next)
   }, [])
-  useEffect(() => { document.documentElement.lang = locale === 'ja' ? 'ja' : locale === 'vi' ? 'vi' : 'en' }, [locale])
+  useEffect(() => {
+    document.documentElement.lang = locale === 'ja' ? 'ja' : locale === 'vi' ? 'vi' : 'en'
+    return () => {
+      activeLocale = 'ja'
+    }
+  }, [locale])
   const value = useMemo<I18nValue>(() => ({
     locale,
     localeCode: locale === 'ja' ? 'ja-JP' : locale === 'vi' ? 'vi-VN' : 'en-US',

@@ -1,6 +1,6 @@
 import type { AccountDto, PostingDecisionDto } from '../../platform'
 import { accountKindLabel, canonicalAccountName } from '../../displayLabels'
-import { useI18n } from '../../i18n'
+import { localize, useI18n } from '../../i18n'
 import { validatePostingDecision } from './receiptSplitPosting'
 
 const MAX_ENTRIES = 128
@@ -52,25 +52,25 @@ export function PostingEntryEditor({ candidateId, candidateAmountJpy, decision, 
     onChange({ ...decision, entries: decision.entries.filter((entry) => entry.id !== entryId) })
   }
 
-  return <section className="posting-entry-editor" aria-label={`${candidateId}の仕訳編集`}>
-    <header><strong>仕訳明細</strong><small>2〜128行・円単位</small></header>
+  return <section className="posting-entry-editor" aria-label={localize(`${candidateId}の仕訳編集`)}>
+    <header><strong>{localize("仕訳明細")}</strong><small>{localize("2〜128行・円単位")}</small></header>
     <div className="posting-entry-list">
       {decision.entries.map((entry, index) => <div className="posting-entry-row" key={entry.id}>
         <span>{index + 1}</span>
-        <select aria-label={`${candidateId}の${index + 1}行目の借貸`} value={entry.side} onChange={(event) => updateEntry(entry.id, { side: event.target.value as 'DEBIT' | 'CREDIT' })}>
-          <option value="DEBIT">借方</option><option value="CREDIT">貸方</option>
+        <select aria-label={localize(`${candidateId}の${index + 1}行目の借貸`)} value={entry.side} onChange={(event) => updateEntry(entry.id, { side: event.target.value as 'DEBIT' | 'CREDIT' })}>
+          <option value="DEBIT">{localize("借方")}</option><option value="CREDIT">{localize("貸方")}</option>
         </select>
-        <select aria-label={`${candidateId}の${index + 1}行目の口座`} value={entry.accountId} onChange={(event) => updateEntry(entry.id, { accountId: event.target.value })}>
+        <select aria-label={localize(`${candidateId}の${index + 1}行目の口座`)} value={entry.accountId} onChange={(event) => updateEntry(entry.id, { accountId: event.target.value })}>
           <option value="">{text('口座を選択')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{canonicalAccountName(account, text)}（{accountKindLabel(account.accountKind, text)}）</option>)}
         </select>
-        <input aria-label={`${candidateId}の${index + 1}行目の金額`} type="number" min="1" step="1" inputMode="numeric" value={entry.amountJpy || ''} onChange={(event) => updateEntry(entry.id, { amountJpy: event.target.value === '' ? 0 : Number(event.target.value) })} />
-        <button type="button" className="mini-btn" aria-label={`${candidateId}の${index + 1}行目を削除`} disabled={decision.entries.length <= 2} onClick={() => removeEntry(entry.id)}>削除</button>
+        <input aria-label={localize(`${candidateId}の${index + 1}行目の金額`)} type="number" min="1" step="1" inputMode="numeric" value={entry.amountJpy || ''} onChange={(event) => updateEntry(entry.id, { amountJpy: event.target.value === '' ? 0 : Number(event.target.value) })} />
+        <button type="button" className="mini-btn" aria-label={localize(`${candidateId}の${index + 1}行目を削除`)} disabled={decision.entries.length <= 2} onClick={() => removeEntry(entry.id)}>{localize("削除")}</button>
       </div>)}
     </div>
     <div className="posting-entry-footer">
-      <button type="button" className="mini-btn" disabled={decision.entries.length >= MAX_ENTRIES} onClick={addEntry}>仕訳行を追加</button>
-      <div aria-label={`${candidateId}の仕訳合計`}><span>候補 {yen(candidateAmountJpy)}</span><span>借方 {yen(debitTotal)}</span><span>貸方 {yen(creditTotal)}</span></div>
+      <button type="button" className="mini-btn" disabled={decision.entries.length >= MAX_ENTRIES} onClick={addEntry}>{localize("仕訳行を追加")}</button>
+      <div aria-label={localize(`${candidateId}の仕訳合計`)}><span>{localize("候補")} {yen(candidateAmountJpy)}</span><span>{localize("借方")} {yen(debitTotal)}</span><span>{localize("貸方")} {yen(creditTotal)}</span></div>
     </div>
-    {!validation.valid && <p className="posting-entry-error" role="alert">{[...new Set(validation.codes.map((code) => validationMessages[code]))].join(' ')}</p>}
+    {!validation.valid && <p className="posting-entry-error" role="alert">{[...new Set(validation.codes.map((code) => localize(validationMessages[code])))].join(' ')}</p>}
   </section>
 }
