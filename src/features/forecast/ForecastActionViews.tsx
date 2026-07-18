@@ -43,7 +43,7 @@ export function ActionCenter({ actions, totalCount = actions.length, onAction }:
 export function CashSavingsForecast({ data }: { readonly data: ForecastActionDto }) {
   const maxCash = Math.max(1, ...data.months.map((month) => Math.abs(month.closingCashJpy)))
   return <section className="forecast-panel cash-forecast" aria-labelledby="cash-forecast-title">
-    <header><div><p>3-month forecast</p><h2 id="cash-forecast-title">現金・貯蓄予測</h2></div><span>{data.forecastFrom} — {data.forecastThrough}</span></header>
+    <header><div><p>3か月予測</p><h2 id="cash-forecast-title">現金・貯蓄予測</h2></div><span>{data.forecastFrom} — {data.forecastThrough}</span></header>
     <div className="forecast-opening"><span>開始時点の現預金</span><strong>{yen(data.openingCashJpy)}</strong><small>{data.asOf} 現在</small></div>
     <div className="forecast-months">
       {data.months.map((month) => <article key={month.month}>

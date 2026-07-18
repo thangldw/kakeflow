@@ -63,6 +63,13 @@ const en: Record<string, string> = {
   '銀行': 'Bank', '現金': 'Cash', 'ウォレット': 'Wallet', 'クレジットカード': 'Credit card', '証券': 'Securities',
   '未収金': 'Receivable', '振替': 'Transfer', 'カード利用': 'Card purchase',
   'カード支払': 'Card payment', '返金': 'Refund', '手数料': 'Fee', '利息': 'Interest', '調整': 'Adjustment', '口座を選択': 'Select an account',
+  '楽天カード': 'Rakuten Card', 'Amazon Mastercard': 'Amazon Mastercard',
+  'ローカルフォルダー': 'Local folder', 'iCloud Drive': 'iCloud Drive', 'Google Drive': 'Google Drive', 'Gmail': 'Gmail',
+  '手動アップロード': 'Manual upload', 'カメラ撮影': 'Camera capture', '主要証跡': 'Primary evidence',
+  '資金側証跡': 'Funding evidence', 'ポイント側証跡': 'Reward evidence', '継続行': 'Continuation row', '補助証跡': 'Supporting evidence',
+  '買付': 'Buy', '売却': 'Sell', '配当': 'Dividend', '税金': 'Tax', '株式分割': 'Stock split', '株式併合': 'Reverse split',
+  '合併': 'Merger', 'スピンオフ': 'Spin-off', '新株予約権行使': 'Rights subscription', '端株現金交付': 'Cash in lieu',
+  '所有者': 'Owner', 'メンバー': 'Member',
   '店舗、カテゴリー、口座を検索': 'Search merchants, categories, or accounts',
   '計算対象フィルター': 'Inclusion filter', 'すべて': 'All', '計上基準': 'Accounting basis',
   '条件に一致する取引はありません。': 'No transactions match these filters.',
@@ -135,6 +142,13 @@ const vi: Record<string, string> = {
   '銀行': 'Ngân hàng', '現金': 'Tiền mặt', 'ウォレット': 'Ví điện tử', 'クレジットカード': 'Thẻ tín dụng', '証券': 'Chứng khoán',
   '未収金': 'Khoản phải thu', '振替': 'Chuyển khoản', 'カード利用': 'Chi tiêu thẻ',
   'カード支払': 'Thanh toán thẻ', '返金': 'Hoàn tiền', '手数料': 'Phí', '利息': 'Lãi', '調整': 'Điều chỉnh', '口座を選択': 'Chọn tài khoản',
+  '楽天カード': 'Thẻ Rakuten', 'Amazon Mastercard': 'Amazon Mastercard',
+  'ローカルフォルダー': 'Thư mục cục bộ', 'iCloud Drive': 'iCloud Drive', 'Google Drive': 'Google Drive', 'Gmail': 'Gmail',
+  '手動アップロード': 'Tải lên thủ công', 'カメラ撮影': 'Chụp bằng camera', '主要証跡': 'Chứng từ chính',
+  '資金側証跡': 'Chứng từ nguồn tiền', 'ポイント側証跡': 'Chứng từ điểm thưởng', '継続行': 'Dòng tiếp theo', '補助証跡': 'Chứng từ bổ trợ',
+  '買付': 'Mua', '売却': 'Bán', '配当': 'Cổ tức', '税金': 'Thuế', '株式分割': 'Chia tách cổ phiếu', '株式併合': 'Gộp cổ phiếu',
+  '合併': 'Sáp nhập', 'スピンオフ': 'Tách công ty', '新株予約権行使': 'Thực hiện quyền mua', '端株現金交付': 'Thanh toán tiền cho cổ phiếu lẻ',
+  '所有者': 'Chủ sở hữu', 'メンバー': 'Thành viên',
   '店舗、カテゴリー、口座を検索': 'Tìm cửa hàng, danh mục hoặc tài khoản',
   '計算対象フィルター': 'Bộ lọc tính toán', 'すべて': 'Tất cả', '計上基準': 'Cơ sở kế toán',
   '条件に一致する取引はありません。': 'Không có giao dịch phù hợp với bộ lọc.',
@@ -165,6 +179,17 @@ const defaultValue: I18nValue = {
 
 const I18nContext = createContext<I18nValue>(defaultValue)
 
+// Exported beside the provider so catalog coverage tests use the exact runtime dictionaries.
+// eslint-disable-next-line react-refresh/only-export-components
+export function hasTranslation(locale: Exclude<AppLocale, 'ja'>, source: string): boolean {
+  return Object.hasOwn(locale === 'vi' ? vi : en, source)
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function translateText(locale: AppLocale, source: string): string {
+  return locale === 'ja' ? source : (locale === 'vi' ? vi[source] : en[source]) ?? source
+}
+
 function savedLocale(): AppLocale {
   const value = globalThis.localStorage?.getItem(STORAGE_KEY)
   return value === 'en' || value === 'vi' ? value : 'ja'
@@ -181,7 +206,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     locale,
     localeCode: locale === 'ja' ? 'ja-JP' : locale === 'vi' ? 'vi-VN' : 'en-US',
     setLocale,
-    text: (source) => locale === 'ja' ? source : (locale === 'vi' ? vi[source] : en[source]) ?? source,
+    text: (source) => translateText(locale, source),
   }), [locale, setLocale])
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }

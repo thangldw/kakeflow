@@ -71,7 +71,7 @@ export function LocalSyncFoundationPanel({ householdId, members = [], allowBindi
           </div>}
           {allowBinding && currentMember?.status === 'ARCHIVED' && <p className="account-visibility-note" role="alert">現在の利用者はアーカイブ済みです。有効なメンバーへ変更するか、未設定にしてください。</p>}
           {allowBinding && <p className="account-visibility-note">この対応付けは将来の同期準備用です。現在はログイン、閲覧制限、アクセス制御を行いません。</p>}
-          <details className="sync-technical-details"><summary>技術情報</summary><dl><div><dt>ローカル主体</dt><dd>{status.principal.displayName}・{shortId(status.principal.id)}</dd></div><div><dt>復元方式</dt><dd>schema / relation validation</dd></div></dl></details>
+          <details className="sync-technical-details"><summary>技術情報</summary><dl><div><dt>ローカル主体</dt><dd>{status.principal.displayName}・{shortId(status.principal.id)}</dd></div><div><dt>復元方式</dt><dd>スキーマ・関連整合性検証</dd></div></dl></details>
         </> : <div><p className="empty-state">{notice || '状態を確認できませんでした。'}</p><button className="secondary-btn" disabled={loading} onClick={() => void load()}>再試行</button></div>}
     {status && notice && <p role="status">{notice}</p>}
   </section>

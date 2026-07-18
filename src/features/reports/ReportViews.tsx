@@ -197,13 +197,13 @@ export function FinancialCalendarView({ data, basis = 'ACCRUAL', onBasisChange, 
   const noSpendDays = data.days.filter((day) => day.noSpendDay).length
 
   return <div className="report-view financial-calendar-view">
-    <header className="report-view-head"><div><p>Financial Calendar</p><h2>{monthLabel(data.month)}</h2><span>{data.asOf} 現在・計算対象の確定取引のみ（集計対象外を除く）。資金移動レポートも同条件ですが、口座残高は集計対象外を含みます。</span></div><div className="report-segmented" aria-label="カレンダーの計上基準"><button type="button" aria-pressed={basis === 'ACCRUAL'} onClick={() => onBasisChange?.('ACCRUAL')}>発生ベース</button><button type="button" aria-pressed={basis === 'CASH'} onClick={() => onBasisChange?.('CASH')}>資金移動</button></div></header>
+    <header className="report-view-head"><div><p>家計カレンダー</p><h2>{monthLabel(data.month)}</h2><span>{data.asOf} 現在・計算対象の確定取引のみ（集計対象外を除く）。資金移動レポートも同条件ですが、口座残高は集計対象外を含みます。</span></div><div className="report-segmented" aria-label="カレンダーの計上基準"><button type="button" aria-pressed={basis === 'ACCRUAL'} onClick={() => onBasisChange?.('ACCRUAL')}>発生ベース</button><button type="button" aria-pressed={basis === 'CASH'} onClick={() => onBasisChange?.('CASH')}>資金移動</button></div></header>
     <DataQualityWarning quality={data.dataQuality} onOpenImports={onOpenImports} />
     <section className="report-summary-grid" aria-label="月間サマリー">
       <SummaryCard label={basis === 'ACCRUAL' ? '収入' : '入金'} value={yen(monthIncome)} detail={`${data.days.reduce((sum, day) => sum + day.postedTransactionCount, 0)}件の計算対象の確定取引`} />
       <SummaryCard label={basis === 'ACCRUAL' ? '支出' : '出金'} value={yen(monthExpense)} detail={`差引 ${signedYen(monthIncome - monthExpense)}`} />
       <SummaryCard label="予算" value={yen(data.budget.remainingJpy)} detail={`${data.budget.categoryCount}カテゴリー・超過 ${data.budget.overBudgetCount}件`} progress={data.budget.utilizationBps ?? undefined} warning={data.budget.overBudgetCount > 0} />
-      <SummaryCard label="No-spend days" value={`${noSpendDays}日`} detail={`貯蓄目標 ${data.goals.activeCount}件`} />
+      <SummaryCard label="無支出日" value={`${noSpendDays}日`} detail={`貯蓄目標 ${data.goals.activeCount}件`} />
     </section>
     <div className="calendar-table-wrap">
       <table className="financial-calendar-table">
@@ -216,14 +216,14 @@ export function FinancialCalendarView({ data, basis = 'ACCRUAL', onBasisChange, 
           const expense = day ? (basis === 'ACCRUAL' ? day.accrualExpenseJpy : day.cashOutflowJpy) : 0
           const date = cell.key
           return <td className={`calendar-day${day?.noSpendDay ? ' calendar-day--no-spend' : ''}`} key={cell.key}>
-            <button type="button" className="calendar-date" aria-label={`${date}の取引を表示`} onClick={() => onSelectDate?.(date)}><b>{cell.dayOfMonth}</b>{day?.noSpendDay && <span>No spend</span>}</button>
+            <button type="button" className="calendar-date" aria-label={`${date}の取引を表示`} onClick={() => onSelectDate?.(date)}><b>{cell.dayOfMonth}</b>{day?.noSpendDay && <span>支出なし</span>}</button>
             <div className="calendar-day-totals">{income > 0 && <span className="calendar-income">+{yen(income)}</span>}{expense > 0 && <span className="calendar-expense">−{yen(expense)}</span>}{day && day.postedTransactionCount > 0 && <small>{day.postedTransactionCount}件</small>}</div>
             {day && day.events.length > 0 && <div className="calendar-events">{day.events.map((event) => <CalendarEvent key={`${event.kind}-${event.id}`} date={date} event={event} onSelect={onSelectEvent} />)}</div>}
           </td>
         })}</tr>)}</tbody>
       </table>
     </div>
-    <footer className="calendar-legend" aria-label="カレンダー凡例"><span><i className="legend-income" />入金</span><span><i className="legend-expense" />支出・出金</span><span><i className="legend-card" />カード予定</span><span><i className="legend-no-spend" />No-spend day</span></footer>
+    <footer className="calendar-legend" aria-label="カレンダー凡例"><span><i className="legend-income" />入金</span><span><i className="legend-expense" />支出・出金</span><span><i className="legend-card" />カード予定</span><span><i className="legend-no-spend" />無支出日</span></footer>
   </div>
 }
 
@@ -247,7 +247,7 @@ export function MonthlyReportView({ data, comparison = 'PRIOR_MONTH', savingCsv 
   const savingExport = savingCsv || savingXlsx || savingPdf
 
   return <div className="report-view monthly-report-view">
-    <header className="report-view-head"><div><p>Monthly Review</p><h2>{monthLabel(data.period)}</h2><span>{data.current.postedTransactionCount}件の計算対象の確定取引（集計対象外を除く）・データ品質基準日 {data.asOf}</span></div><div className="monthly-review-head-actions"><div className="report-segmented" aria-label="レポートの比較期間"><button type="button" aria-pressed={comparison === 'PRIOR_MONTH'} onClick={() => onComparisonChange?.('PRIOR_MONTH')}>前月比</button><button type="button" aria-pressed={comparison === 'PRIOR_YEAR'} onClick={() => onComparisonChange?.('PRIOR_YEAR')}>前年同月比</button></div><div className="monthly-review-export-actions">{onSaveCsv && <button type="button" className="secondary-btn" disabled={savingExport} onClick={onSaveCsv}>{savingCsv ? 'CSVを作成中…' : '月次CSVを保存'}</button>}{onSaveXlsx && <button type="button" className="primary-btn" disabled={savingExport} onClick={onSaveXlsx}>{savingXlsx ? 'Excelを作成中…' : '月次Excelを保存'}</button>}{onSavePdf && <button type="button" className="secondary-btn" disabled={savingExport} onClick={onSavePdf}>{savingPdf ? 'PDFを作成中…' : '月次PDFを保存'}</button>}</div></div></header>
+    <header className="report-view-head"><div><p>月次家計レビュー</p><h2>{monthLabel(data.period)}</h2><span>{data.current.postedTransactionCount}件の計算対象の確定取引（集計対象外を除く）・データ品質基準日 {data.asOf}</span></div><div className="monthly-review-head-actions"><div className="report-segmented" aria-label="レポートの比較期間"><button type="button" aria-pressed={comparison === 'PRIOR_MONTH'} onClick={() => onComparisonChange?.('PRIOR_MONTH')}>前月比</button><button type="button" aria-pressed={comparison === 'PRIOR_YEAR'} onClick={() => onComparisonChange?.('PRIOR_YEAR')}>前年同月比</button></div><div className="monthly-review-export-actions">{onSaveCsv && <button type="button" className="secondary-btn" disabled={savingExport} onClick={onSaveCsv}>{savingCsv ? 'CSVを作成中…' : '月次CSVを保存'}</button>}{onSaveXlsx && <button type="button" className="primary-btn" disabled={savingExport} onClick={onSaveXlsx}>{savingXlsx ? 'Excelを作成中…' : '月次Excelを保存'}</button>}{onSavePdf && <button type="button" className="secondary-btn" disabled={savingExport} onClick={onSavePdf}>{savingPdf ? 'PDFを作成中…' : '月次PDFを保存'}</button>}</div></div></header>
     <DataQualityWarning quality={data.dataQuality} onOpenImports={onOpenImports} />
     <section className="report-kpi-grid" aria-label="月次KPI">
       <article><span>収入</span><strong>{yen(data.current.incomeJpy)}</strong><Delta delta={delta.income} /></article>

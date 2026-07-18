@@ -20,7 +20,7 @@ export function AggregateAssetHistoryView({ snapshots, initialDateFrom = '', ini
 
   return <section className="panel aggregate-asset-history" aria-label="総資産履歴（Money Forward）">
     <div className="panel-head"><div><h2>総資産履歴（Money Forward）</h2><p>Money Forward MEの資産推移CSVを、口座横断の参照履歴として表示</p></div><strong>{snapshots.length}時点</strong></div>
-    <aside className="aggregate-asset-disclosure"><strong>資産のみ・純資産ではありません</strong><span>負債を含まないため net worth ではありません。台帳、収支、口座残高、現在の純資産には加算しません。</span></aside>
+    <aside className="aggregate-asset-disclosure"><strong>資産のみ・純資産ではありません</strong><span>負債を含まないため 純資産 ではありません。台帳、収支、口座残高、現在の純資産には加算しません。</span></aside>
     <form className="aggregate-asset-range" onSubmit={(event) => { event.preventDefault(); onApplyRange?.(from || null, to || null) }}>
       <label><span>開始日</span><input aria-label="総資産履歴の開始日" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
       <label><span>終了日</span><input aria-label="総資産履歴の終了日" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></label>

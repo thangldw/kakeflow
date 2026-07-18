@@ -67,7 +67,7 @@ export function ReceiptReviewPanel({ candidate, decision, accounts, onDecisionCh
       {review.pointsUsedEvidence.map((evidence, index) => <span key={`points:${index}`}>ポイント根拠: 原本 {evidence.provenance.lineNumber}行目 ・ {evidence.amountJpy == null ? '金額読取不可' : yen(evidence.amountJpy)} ・ 信頼度 {Math.round(evidence.confidenceBps / 100)}%</span>)}
     </div>}
     {(reconciliation.status === 'DELTA' || (reconciliation.status === 'EXACT' && !sourceReconciliationIsExact)) && <p className="receipt-split-notice">品目合計と候補金額に差があるため自動配分しません。クーポン・ポイント・読取漏れを確認し、下の仕訳明細で手動分割してください。</p>}
-    {reconciliation.status === 'EXACT' && !canSplitShape && <p className="receipt-split-notice">品目分割は支出方向の EXPENSE / CARD_PURCHASE だけで利用できます。仕訳明細は手動で編集できます。</p>}
+    {reconciliation.status === 'EXACT' && !canSplitShape && <p className="receipt-split-notice">品目分割は支出方向の 「支出」「カード利用」 だけで利用できます。仕訳明細は手動で編集できます。</p>}
     <button type="button" className="secondary-btn" disabled={!canAutoSplit} onClick={applySplit}>品目から分割</button>
   </section>
 }

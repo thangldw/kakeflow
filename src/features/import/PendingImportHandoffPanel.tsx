@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileInput, Laptop, Link2 } from 'lucide-react'
 import { platformClient } from '../../platform'
+import { accountKindLabel, accountSubtypeLabel, memberRoleLabel } from '../../displayLabels'
+import { useI18n } from '../../i18n'
 import type {
   AccountDto,
   HouseholdMemberDto,
@@ -47,6 +49,7 @@ function formatCount(value: number, unit: string): string {
 }
 
 export function PendingImportHandoffPanel({ householdId, accounts, members, pendingRuns, onApplied }: PendingImportHandoffPanelProps) {
+  const { text } = useI18n()
   const [busy, setBusy] = useState<BusyAction>(null)
   const [exportPassphrase, setExportPassphrase] = useState('')
   const [exportConfirmation, setExportConfirmation] = useState('')
@@ -252,9 +255,9 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
       {!staged.alreadyApplied && <div className="pending-import-mapping-grid">
         {staged.accountDependencies.map((dependency) => {
           const options = compatibleAccounts(accounts, dependency)
-          return <label key={dependency.portableAccountId}><span><strong>{dependency.name}</strong><small>{dependency.accountKind} / {dependency.accountSubtype ?? 'すべて'} / {dependency.currency}{dependency.institutionName ? ` ・ ${dependency.institutionName}` : ''}{dependency.maskedIdentifier ? ` ・ ${dependency.maskedIdentifier}` : ''}</small></span><select aria-label={`${dependency.name}の対応先口座`} value={accountMappings[dependency.portableAccountId] ?? ''} disabled={options.length === 0} onChange={(event) => setAccountMappings((current) => ({ ...current, [dependency.portableAccountId]: event.target.value }))}><option value="">口座を選択</option>{options.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{options.length === 0 && <small role="status">条件に一致する口座がありません。設定で先に追加してください。</small>}</label>
+          return <label key={dependency.portableAccountId}><span><strong>{dependency.name}</strong><small>{accountKindLabel(dependency.accountKind, text)} / {dependency.accountSubtype ? accountSubtypeLabel(dependency.accountSubtype, text) : text('すべて')} / {dependency.currency}{dependency.institutionName ? ` ・ ${dependency.institutionName}` : ''}{dependency.maskedIdentifier ? ` ・ ${dependency.maskedIdentifier}` : ''}</small></span><select aria-label={`${dependency.name}の対応先口座`} value={accountMappings[dependency.portableAccountId] ?? ''} disabled={options.length === 0} onChange={(event) => setAccountMappings((current) => ({ ...current, [dependency.portableAccountId]: event.target.value }))}><option value="">口座を選択</option>{options.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{options.length === 0 && <small role="status">条件に一致する口座がありません。設定で先に追加してください。</small>}</label>
         })}
-        {staged.memberDependencies.map((dependency) => <label key={dependency.portableMemberId}><span><strong>{dependency.displayName}</strong><small>受け渡し元の役割: {dependency.role}</small></span><select aria-label={`${dependency.displayName}の対応先メンバー`} value={memberMappings[dependency.portableMemberId] ?? ''} disabled={activeMembers.length === 0} onChange={(event) => setMemberMappings((current) => ({ ...current, [dependency.portableMemberId]: event.target.value }))}><option value="">メンバーを選択</option>{activeMembers.map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select>{activeMembers.length === 0 && <small role="status">有効なメンバーがいません。家族ページで先に追加してください。</small>}</label>)}
+        {staged.memberDependencies.map((dependency) => <label key={dependency.portableMemberId}><span><strong>{dependency.displayName}</strong><small>受け渡し元の役割: {memberRoleLabel(dependency.role, text)}</small></span><select aria-label={`${dependency.displayName}の対応先メンバー`} value={memberMappings[dependency.portableMemberId] ?? ''} disabled={activeMembers.length === 0} onChange={(event) => setMemberMappings((current) => ({ ...current, [dependency.portableMemberId]: event.target.value }))}><option value="">メンバーを選択</option>{activeMembers.map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select>{activeMembers.length === 0 && <small role="status">有効なメンバーがいません。家族ページで先に追加してください。</small>}</label>)}
       </div>}
       <div className="pending-import-actions"><button className="text-btn" disabled={busy != null} onClick={() => void discardStaged()}>{busy === 'DISCARD' ? '破棄中…' : '一時データを破棄'}</button><button className="primary-btn" disabled={busy != null || !mappingsComplete} onClick={() => void applyStaged()}>{busy === 'APPLY' ? '追加中…' : 'Import Inboxの確認待ちに追加'}</button></div>
     </section>}

@@ -115,7 +115,7 @@ export function LocalChangePackagePanel({ householdId }: Props) {
           <div><span>追加</span><strong>{review.createCount}</strong></div><div><span>更新</span><strong>{review.updateCount}</strong></div>
           <div><span>削除</span><strong>{review.deleteCount}</strong></div><div><span>要確認</span><strong>{review.conflictCount}</strong></div>
         </div>
-        <p className="change-package-meta">作成元 revision #{review.sourceRevision}・全 {review.recordCount} 件</p>
+        <p className="change-package-meta">作成元リビジョン #{review.sourceRevision}・全 {review.recordCount} 件</p>
         {pending.length > 0 && <div className="change-package-conflicts">
           <h3 tabIndex={-1}>反映前の確認</h3><p>共通の変更元を証明できない項目、または削除項目があります。各項目で残す内容を選択してください。</p>
           {pending.map((record) => {
