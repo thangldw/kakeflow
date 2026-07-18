@@ -1,33 +1,28 @@
 # Changelog
 
-Notable user-facing changes are recorded here. The project follows semantic versioning for stable releases.
+All notable user-facing changes are recorded here. KakeFlow follows semantic versioning.
 
-## 1.0.0 — 2026-07-17
-
-KakeFlow 1.0.0 is the first stable local-first desktop release.
+## 1.0.0 — 2026-07-18
 
 ### Added
 
-- KakeFlow v2 application shell and primary workspaces, including responsive navigation, accessible popovers, dashboard templates, and updated application identity.
-- Review-first ingestion for CSV, statement PDF, scanned PDF, receipt image, watched-folder, Google Drive, and Gmail sources.
-- Local PaddleOCR PP-OCRv5 processing with checksum-pinned models; packaged Tesseract remains a compatibility fallback.
-- Exact and probable duplicate resolution, classification-rule suggestions, and restart-safe pending-import recovery.
-- Card statement reconciliation with masked card identity, due-date correction, settlement-bank mapping, coverage projection, unlinking, and auditable link corrections.
-- Restart-safe recurring-series review and explicit replication of confirmed or ignored preferences.
-- Source-backed PDF, CSV, and XLSX exports for household reviews, transaction ledgers, portfolio snapshots, and investment performance.
-- Strict adapters for supported Japanese banks, cards, wallets, and brokerages, with explicit account mapping and immutable row provenance.
-- Audience-partitioned, recipient-encrypted family delivery with explicit review and atomic apply.
-- Fail-closed update-channel contract and release-readiness smoke testing.
+- Local-first encrypted household ledger with immutable source evidence.
+- Review-first imports for Japanese bank, card, wallet, brokerage, spreadsheet, PDF, image, ZIP, EML, Gmail, Drive, and watched-folder sources.
+- Credit-card statement reconciliation and settlement coverage.
+- Portfolio snapshots, native-currency valuation, and FIFO investment performance.
+- Monthly, annual, ledger, and portfolio exports with source-backed scope.
+- Audience-partitioned family delivery with explicit conflict review.
+- Complete Japanese, English, and Vietnamese UI catalogs with automated coverage tests.
 
-### Changed
+### Improved
 
-- Dashboard, budget, goal, report, card, and investment metrics now consistently read the confirmed double-entry ledger.
-- Import, OCR, classification, reconciliation, connector, and family-delivery paths preserve an explicit user approval boundary.
-- Desktop keyboard navigation and transaction/report accessibility were aligned with the v2 interaction contract.
+- Rakuten Card PDF differences can proceed to review so refund or adjustment rows can be corrected manually; the original PDF remains unchanged.
+- Securities asset snapshots recognize the Shift-JIS `assetbalance(all)` position-table format.
+- Japanese household expense categories now cover common Money Forward, Moneytree, and 家計簿 workflows.
+- Repository documentation and diagrams are consolidated around the current product behavior.
 
-### Distribution
+### Safety
 
-- Published target: macOS Apple Silicon DMG, ad-hoc signed and not notarized.
-- Windows remains a source-build target until native installer and packaged-app evidence is complete.
-- Automatic updates remain disabled.
-- Google connectors remain limited to locally configured test users pending provider qualification.
+- Imports, OCR, connectors, categorization, reconciliation, and family delivery do not post automatically.
+- Ambiguous account mappings, duplicates, unsupported rows, and missing evidence fail closed.
+- Cross-currency totals require source-backed conversion data.

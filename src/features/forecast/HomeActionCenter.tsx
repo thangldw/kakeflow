@@ -4,6 +4,7 @@ import { ActionCenter } from './ForecastActionViews'
 import { createForecastActionPlatform } from './forecastActionPlatform'
 import type { ActionItemDto, ForecastActionRequestDto, ForecastActionDto } from './forecastActionPlatform'
 import { homeActionSlice } from './actionCenterModel'
+import { localize } from '../../i18n'
 
 const platform = createForecastActionPlatform()
 const previewActions: readonly ActionItemDto[] = [
@@ -43,14 +44,14 @@ export function HomeActionCenter({ householdId, accountGroupId, attributionScope
   const actions = snapshot?.key === requestScope ? snapshot.actions : null
 
   if (!desktop) return <div className="home-action-center home-action-center--preview"><ActionCenter actions={previewActions} totalCount={previewActions.length} onAction={onAction} /></div>
-  if (actions === null && !unavailable) return <section className="home-action-status" aria-labelledby="home-action-title" aria-busy="true"><div><p>対応項目</p><h2 id="home-action-title">対応項目を確認中</h2></div></section>
-  if (actions === null) return <section className="home-action-status home-action-status--error" aria-labelledby="home-action-title"><div><p>対応項目</p><h2 id="home-action-title">対応項目を読み込めません</h2><span role="status">ダッシュボードの集計値はそのまま確認できます。</span></div><button type="button" className="secondary-btn" onClick={() => setRetry((value) => value + 1)}>再試行</button></section>
+  if (actions === null && !unavailable) return <section className="home-action-status" aria-labelledby="home-action-title" aria-busy="true"><div><p>{localize("対応項目")}</p><h2 id="home-action-title">{localize("対応項目を確認中")}</h2></div></section>
+  if (actions === null) return <section className="home-action-status home-action-status--error" aria-labelledby="home-action-title"><div><p>{localize("対応項目")}</p><h2 id="home-action-title">{localize("対応項目を読み込めません")}</h2><span role="status">{localize("ダッシュボードの集計値はそのまま確認できます。")}</span></div><button type="button" className="secondary-btn" onClick={() => setRetry((value) => value + 1)}>{localize("再試行")}</button></section>
 
   const slice = homeActionSlice(actions)
   return <div className="home-action-center">
-    {unavailable && <p className="home-action-stale" role="status">最新状態を取得できないため、直前に確認した対応項目を表示しています。</p>}
-    <p className="home-action-context">基準日 <time dateTime={asOf}>{asOf}</time>{(accountGroupId || attributionScope.kind !== 'ALL') && ' ・ 取込確認は選択中の口座・家族スコープにかかわらず世帯全体を対象にします。'}</p>
+    {unavailable && <p className="home-action-stale" role="status">{localize("最新状態を取得できないため、直前に確認した対応項目を表示しています。")}</p>}
+    <p className="home-action-context">{localize("基準日")} <time dateTime={asOf}>{asOf}</time>{(accountGroupId || attributionScope.kind !== 'ALL') && localize(" ・ 取込確認は選択中の口座・家族スコープにかかわらず世帯全体を対象にします。")}</p>
     <ActionCenter actions={slice.visible} totalCount={slice.total} onAction={onAction} />
-    {slice.total > slice.visible.length && <button type="button" className="home-action-all" onClick={onViewAll}>{slice.total}件すべて見る</button>}
+    {slice.total > slice.visible.length && <button type="button" className="home-action-all" onClick={onViewAll}>{slice.total}{localize("件すべて見る")}</button>}
   </div>
 }
