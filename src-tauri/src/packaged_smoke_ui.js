@@ -1,4 +1,9 @@
 (async () => {
+  if (window.localStorage.getItem('kakeflow.locale') !== 'ja') {
+    window.localStorage.setItem('kakeflow.locale', 'ja')
+    window.location.reload()
+    return
+  }
   const invoke = window.__TAURI_INTERNALS__.invoke
   const waitFor = (read, description, timeoutMs = 8000) => new Promise((resolve, reject) => {
     const initial = read()
