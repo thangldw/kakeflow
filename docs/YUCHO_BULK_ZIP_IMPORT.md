@@ -1,43 +1,24 @@
 # Yucho Direct bulk ZIP import
 
-KakeFlow can open a ZIP produced by Yucho Direct's bulk CSV download as a manual import. The archive is a transport container only: each CSV becomes an independent child preview and is parsed by the normal adapter pipeline.
+KakeFlow can expand a manually selected Yucho Direct bulk-download ZIP. The archive is a transport container; each CSV becomes an independent child preview and still uses the normal adapter, account mapping, review, and posting workflow.
 
-Official references:
-
-- [Yucho Direct transaction inquiry and CSV structure](https://www.jp-bank.japanpost.jp/direct/pc/guide/dr_pc_gd_meisai.html)
-- [Japan Post Bank CSV download and size guidance](https://faq.jp-bank.japanpost.jp/faq_detail.html?id=134)
-
-## Review workflow
+## Workflow
 
 ```text
-Select or drop archive.zip
-  -> validate the complete archive
-  -> expand distinct CSV payloads in deterministic filename order
-  -> preview archive.zip › entry.csv
-  -> select the destination account when required
-  -> review every candidate
-  -> post explicitly through the existing import workflow
+archive selection
+  -> complete ZIP validation
+  -> deterministic CSV expansion
+  -> child preview and account mapping
+  -> candidate review
+  -> explicit posting
 ```
 
-The child source document retains both the archive filename and entry name in its displayed provenance. Its extracted bytes are hashed, stored, staged, deduplicated, and reviewed like an ordinary CSV. Byte-identical CSV entries collapse to the first deterministic filename and produce a visible `duplicate → canonical` warning, matching the content-addressed source store instead of silently losing a second preview. A ZIP never bypasses adapter detection or creates a ledger transaction by itself.
+Child provenance retains the archive and entry names. Exact duplicate payloads collapse to the first deterministic filename with a visible warning. The source store hashes and encrypts extracted bytes like direct CSV uploads.
 
-This capability is intentionally limited to manual file selection and drag-and-drop. Registered folder watchers continue to accept their existing standalone file formats and do not claim ZIP support.
+## Security limits
 
-## Atomic validation
+Validation is atomic and rejects malformed structures, trailing data, split/multidisk, ZIP64, encryption, unsupported compression, nested/traversal/control-character names, normalized-name collisions, ambiguous legacy filenames, archives over 25 MiB, more than 20 entries, entries over 10 MiB, or more than 50 MiB declared expansion.
 
-KakeFlow validates the complete central directory before decompressing any entry. If one entry is unsafe or inconsistent, the entire archive produces one error preview and no safe-looking siblings are retained.
+Only stored/deflated CSV entries are eligible. Non-CSV entries are disclosed after successful validation; an archive with no CSV is rejected. Folder watchers do not claim ZIP support.
 
-The importer rejects:
-
-- malformed end records, central directories, local headers, names, boundaries, CRCs, or trailing data;
-- split/multidisk and ZIP64 archives;
-- encrypted entries, strong-encryption flags, and compression other than stored or deflated;
-- directories, nested paths, drive-qualified paths, traversal names, control characters, and names that collide after Unicode/case normalization;
-- non-ASCII entry names whose ZIP metadata does not explicitly declare UTF-8, because ambiguous CP932/legacy names cannot be decoded consistently across ZIP readers;
-- archives over 25 MB, more than 20 entries, entries over 10 MB, or more than 50 MB declared expanded data.
-
-Expanded CSV entries count toward the existing 20-preview limit for the whole selected batch. Non-CSV entries are ignored only after validation succeeds and are disclosed once to the user. An archive with no CSV is rejected.
-
-## Accounting boundary
-
-ZIP expansion changes only source ingestion. The Yucho CSV adapter still applies its seven-column validation, requires an explicit bank-account selection for every distinct child, preserves immutable raw-row evidence, and uses the same pending-review workflow described in [Yucho Direct transaction import](YUCHO_DIRECT_IMPORT.md). No archive or child file is posted automatically.
+ZIP handling never creates a transaction. Each child remains subject to [Yucho Direct import](YUCHO_DIRECT_IMPORT.md) and explicit review.

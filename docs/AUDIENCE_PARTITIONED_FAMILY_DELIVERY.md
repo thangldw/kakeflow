@@ -1,89 +1,22 @@
 # Audience-partitioned family delivery
 
-KakeFlow introduced a family-delivery protocol that is deliberately
-separate from the schema-v4 personal change package. Personal relay packages
-remain suitable only for devices authenticated as the same remote principal.
-They must never be filtered and sent to another household member.
+Family delivery is distinct from same-principal local change packages. The relay derives recipients from authenticated household membership; clients never submit recipient principal IDs.
 
-KakeFlow adds schema-v2 planning/configuration aggregates without
-widening that trust boundary. See the dedicated
-[planning and configuration contract](FAMILY_PLANNING_CONFIG_DELIVERY.md).
+- `SHARED` reaches other active household memberships.
+- `PERSONAL(member)` reaches only active memberships mapped to that member.
+- Revocation blocks future list/download for that membership generation but cannot erase downloaded copies.
 
-KakeFlow adds exact-byte retry and recipient-set-change recovery without
-changing the artifact or review contracts. See the dedicated
-[recipient-set recovery contract](FAMILY_RECIPIENT_SET_RECOVERY.md).
+## Snapshot schemas
 
-## Trust and routing boundary
+`KAKEFLOW_FAMILY_SNAPSHOT_SET` is an immutable current-state collection of audience partitions.
 
-The reference relay authenticates every request and owns the authoritative
-mapping between a remote principal, a household membership, and a KakeFlow
-member ID. Clients never submit recipient principal IDs. The relay derives the
-audience for list and download requests each time:
+- V1: household/member directory, accounts, and transactions whose complete journal dependency graph resolves to one audience.
+- V2: budgets, goals, rules, groups, settlement mappings, dashboard layouts, and parser profiles.
+- V3: evidence-backed card and investment aggregates with origin-scoped source identity.
+- V4: one complete shared recurring-preference aggregate containing only normalized payee and `CONFIRMED`/`IGNORED`.
 
-- `SHARED` is available to every active membership in the household.
-- `PERSONAL(member)` is available only to an active membership mapped to that
-  member.
-- revocation prevents future list and direct-download access for that
-  membership generation; it cannot erase a copy that was already downloaded.
+Mixed-member or incomplete dependency graphs are withheld rather than widened. Hashes bind identity, revision, counts, exclusions, records, and audience. Older schemas remain readable but have no authority over newer aggregates they cannot represent.
 
-Rows inside a delivered household snapshot are data. They do not create or
-alter relay membership.
+Receiving bytes only stages a review. Shared dependencies apply before matching personal partitions, and every conflict/omission requires explicit resolution before atomic Apply. Omission can delete only a locally unchanged entity with an accepted source/audience head.
 
-## Family snapshot format
-
-Family delivery uses the versioned `KAKEFLOW_FAMILY_SNAPSHOT_SET` format. New
-exports use schema 4 while schemas 1, 2, and 3 remain readable. A snapshot set is
-an immutable, current-state collection of audience partitions. Its identity,
-source revision, hashes, record counts, excluded counts, and partition audience
-are covered by deterministic hashes. Recipient principal IDs are never part of
-the package.
-
-Schema v1 supports the intentionally narrow core graph:
-
-- household and member directory records are `SHARED`;
-- an account follows its explicit `SHARED` or `PERSONAL(member)` scope;
-- a transaction is deliverable only when its own audience and every journal
-  account dependency resolve to one audience;
-- a dependency graph involving two different personal members is withheld;
-- source links and evidence bytes are not included in this implementation.
-
-Schema v2 additionally carries atomic budgets, goals, rules, account groups,
-settlement mappings, dashboard layouts, and parser profiles. Account-dependent
-aggregates use the same least-widening audience meet. A hash-bound
-entity-audience relocation lineage prevents a later omission artifact from deleting an aggregate that moved
-between `SHARED` and `PERSONAL(member)`.
-
-Schema v3 adds card and investment aggregates only when their source-origin-
-scoped immutable evidence, complete raw rows, and dependency graph fit the same
-audience partition. Missing, mismatched, or oversized evidence is disclosed and
-withheld rather than silently omitted or widened. See the full
-[family evidence delivery contract](FAMILY_EVIDENCE_DELIVERY.md).
-
-Schema v4 retains that evidence graph and adds exactly one complete
-`RECURRING_SERIES_PREFERENCES` aggregate to `SHARED`. The aggregate carries only
-ordered normalized payees and explicit `CONFIRMED`/`IGNORED` decisions; an empty
-list is authoritative, while schemas 1–3 have no authority over this state.
-See the [family recurring-preference contract](FAMILY_RECURRING_PREFERENCES_DELIVERY.md).
-
-## Review and apply
-
-Receiving bytes never changes the ledger. The desktop app validates and stages
-the complete set, shows separate shared and personal partitions, and requires
-an explicit review and apply action. Shared dependencies are applied before the
-matching personal partition.
-
-Lineage is keyed by source installation, household, and exact audience tuple.
-An omission can remove an entity only when an accepted replica head exists from
-the same source and same partition and the local payload still matches that
-head. A record in another partition, a locally created record, or a record with
-no accepted head is never an omission-delete candidate.
-
-## Explicit non-claims
-
-KakeFlow adds relay-blind recipient encryption through the `KFE1`
-transport envelope. The relay stores ciphertext and derives recipients from
-active membership, while device private keys remain native. `KFE1` does not
-add sender signatures, realtime/background synchronization, remote ledger
-posting, remote deletion, or erasure of downloaded copies. The bundled relay
-is a reference transport that must be operated separately from the desktop
-app.
+`KFE1` adds recipient encryption but not sender signatures, realtime sync, automatic apply, remote deletion, or erasure. The bundled relay remains an operator-run reference service.

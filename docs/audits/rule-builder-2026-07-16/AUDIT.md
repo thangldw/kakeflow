@@ -1,26 +1,7 @@
-# Classification Rules visual rollback audit — 2026-07-16
+# Classification Rules visual audit — 2026-07-16
 
-Scope: desktop browser preview at 1280 × 720, Japanese locale, Classification Rules screen.
+This audit corrected the rule builder from an interaction-blue-heavy presentation to the v2 warm-paper/olive system while retaining cobalt for focus and active controls.
 
-## 1. Before — editorial cobalt mix
+The final surface preserves deterministic conditions, priority, category, labels/tags, enabled state, and “why matched” explanation. Color is not used as the only status signal.
 
-![Before: cobalt rule builder](./01-before-cobalt.png)
-
-Finding: the cobalt edge, English monospace kicker, and blue-outlined language control introduced a second visual language that competed with KakeFlow's quiet paper-and-olive system. The form structure was improved, but the accents felt detached from the rest of the product.
-
-## 2. After — warm paper and olive
-
-![After: warm paper rule builder](./02-after-olive.png)
-
-Result: removed the cobalt/orange tokens, English kicker, colored edge, blue focus treatment, and alternating orange chips. Kept the labeled field groups, responsive grid, clear hierarchy, and visible language selector. Focus and action states now use the existing olive tokens.
-
-## Runtime checks
-
-- Classification Rules navigation opened successfully.
-- Japanese labels and accessible control names remained present.
-- Browser console returned no errors.
-- Screenshot review found no clipping, overflow, or alignment regression at the audited viewport.
-
-Screenshot evidence cannot validate keyboard focus order, screen-reader announcements, or every responsive breakpoint; those remain covered by code review and automated tests where available.
-
-final result: passed
+Before/after screenshots remain historical evidence. Current design tokens live in the [v2 handoff](../../../design_handoff_kakeflow_v2/README.md).

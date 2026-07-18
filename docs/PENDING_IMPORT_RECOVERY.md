@@ -1,35 +1,23 @@
 # Pending import recovery
 
-KakeFlow makes the review boundary durable. A manual upload, receipt extraction, or watched-folder file already staged as `REVIEW_REQUIRED` remains available in Import Inbox after the application or workspace restarts.
+Manual, receipt, connector, and folder imports already staged as `REVIEW_REQUIRED` remain available after application or workspace restart.
 
-## Native discovery contract
+## Discovery
 
-`pending_review_list` is scoped to one existing household and returns only `REVIEW_REQUIRED` runs. Each run contains its run/document identifiers, adapter/version, start timestamp, safe source type/name/media metadata, optional source modification time, record/candidate counts, and a completion state.
+`pending_review_list` is household-scoped and returns safe run/document IDs, adapter/version, timestamps, source metadata, counts, and completion state. It excludes posted, failed, and rolled-back runs; returns an error above 200 items; and never exposes vault paths, source payloads, SHA-256, or audience data.
 
-The query:
+Completion states:
 
-- sorts by start time descending and run ID ascending;
-- requires exactly one source document for every recoverable run;
-- never returns SHA-256 values, vault/storage paths, raw source payloads, or audience data;
-- returns an error above 200 pending runs rather than silently truncating the Inbox;
-- excludes posted, failed, and rolled-back runs.
+- `CANDIDATE_REVIEW`: candidates still need decisions.
+- `SOURCE_READY`: domain facts exist and the zero-candidate run can be finalized.
+- `SOURCE_RESUME_REQUIRED`: specialized facts were not saved; roll back and re-import.
 
-Completion states distinguish ordinary candidate review from zero-candidate source workflows:
+The UI reloads the existing native preview and never reparses bytes during recovery.
 
-- `CANDIDATE_REVIEW`: each ledger candidate still requires an explicit decision;
-- `SOURCE_READY`: the source has no ledger candidates and any adapter-specific investment facts are already present, so the user may explicitly finalize it;
-- `SOURCE_RESUME_REQUIRED`: a portfolio, brokerage, or aggregate-asset import stopped before its domain facts were saved. KakeFlow does not mark it complete; the user can safely roll it back and re-import the original file.
+## Behavior
 
-The UI then obtains each existing preview through the same native preview command used immediately after staging. It does not parse or recreate source data during recovery.
+Recovered items are labeled `RECOVERED` and retain normal mapping, evidence, approval, commit, and rollback. Recovery selects, classifies, reconciles, and posts nothing automatically.
 
-## Review behavior
+Views deduplicate by `runId`, so manual and folder discovery cannot show the same run twice. Partial preview failures are disclosed without hiding successful recoveries. Household changes cancel stale async results and clear prior-household state.
 
-Recovered reviews are marked `RECOVERED` and disclose that they were restored after restart. They retain the same candidate, account, evidence, and explicit approval workflow as a newly staged import. No candidate is selected, approved, classified, reconciled, or posted merely because it was recovered.
-
-Manual and watched-folder discovery can point to the same canonical run. Import Inbox keys deduplication by `runId`, so that review appears once. A successful commit or rollback removes it locally and refreshes native discovery. Receipt evidence linked to an existing transaction refreshes or removes the review without creating a duplicate expense.
-
-If discovery fails, the current same-household recovered list remains visible and an explicit retry is shown. If one preview fails, other successful previews are still restored and the partial failure is disclosed. Household changes cancel stale asynchronous results and clear the previous household's review state.
-
-## Boundary
-
-Recovery itself remains a same-device operation. KakeFlow adds a separate, versioned [pending-import handoff format](PENDING_IMPORT_HANDOFF.md) for explicitly copying one candidate-bearing review through a passphrase-protected local file. Confirmed evidence capsules and local change packages continue to contain confirmed facts, not mutable Inbox decisions.
+Cross-device movement uses [Pending import handoff](PENDING_IMPORT_HANDOFF.md); recovery itself is same-device only.
