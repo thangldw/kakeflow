@@ -2736,6 +2736,41 @@ describe('KakeFlow desktop read models', () => {
     }), expect.any(Uint8Array)))
   })
 
+  it('keeps a Rakuten statement-total mismatch reviewable and allows staging', async () => {
+    const fallback = nativeInvoke.getMockImplementation()!
+    const lines = [
+      'ご利用代金請求明細書', '山田 太郎\t様', '楽天カード株式会社',
+      '2025\t年\t09\t月ご請求金額',
+      '2,500\t円\t楽天\tカード\t(Visa) ****-****-****-9127',
+      'お支払日\t返済方法\t引落口座', '2025/09/29\t口座振替\tテスト銀行',
+      '利用日\t利用店名\t利用者\t支払方法\t利用金額\t手数料\t/\t利息\t支払総額\t当月請求額\t翌月繰越残高',
+      '2025/08/30\tSHOP A\t本人\t*\t1\t回払い\t3,000\t0\t3,000\t3,000\t0',
+    ]
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'document_extract_attempt') return {
+        status: 'SUCCESS',
+        document: {
+          method: 'EMBEDDED_TEXT', text: lines.join('\n'), confidenceBps: 9800, issues: [], pageCount: 1,
+          pages: [{ pageNumber: 1, widthPixels: null, heightPixels: null, confidenceBps: 9800, issues: [] }],
+          regions: lines.map((text) => ({ pageNumber: 1, coordinateSpace: 'UNLOCATED', boundingBox: null, text, confidenceBps: 9800, provenance: 'PDF_EMBEDDED_TEXT_RKSJ' })),
+        },
+      }
+      return fallback(command, args)
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, { target: { files: [new File(['%PDF SVF'], 'statement_mismatch.pdf', { type: 'application/pdf' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'PDFを解析' }))
+
+    expect(await screen.findByText(/原本PDFは変更しません/)).toBeInTheDocument()
+    expect(screen.getByText('要確認・取込可能')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('statement_mismatch.pdfの取込先カード口座'), { target: { value: 'family-card' } })
+    fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
+
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalled())
+  })
+
   it.each([
     { filename: 'receipt.jpg', mediaType: 'image/jpeg', action: '画像OCR' },
     { filename: 'receipt.pdf', mediaType: 'application/pdf', action: 'PDFを解析' },

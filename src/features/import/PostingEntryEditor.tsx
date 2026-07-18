@@ -1,4 +1,6 @@
 import type { AccountDto, PostingDecisionDto } from '../../platform'
+import { accountKindLabel, canonicalAccountName } from '../../displayLabels'
+import { useI18n } from '../../i18n'
 import { validatePostingDecision } from './receiptSplitPosting'
 
 const MAX_ENTRIES = 128
@@ -29,6 +31,7 @@ export interface PostingEntryEditorProps {
 }
 
 export function PostingEntryEditor({ candidateId, candidateAmountJpy, decision, accounts, onChange }: PostingEntryEditorProps) {
+  const { text } = useI18n()
   const validation = validatePostingDecision(decision, {
     candidateAmountJpy,
     accountIds: new Set(accounts.map((account) => account.id)),
@@ -58,7 +61,7 @@ export function PostingEntryEditor({ candidateId, candidateAmountJpy, decision, 
           <option value="DEBIT">借方</option><option value="CREDIT">貸方</option>
         </select>
         <select aria-label={`${candidateId}の${index + 1}行目の口座`} value={entry.accountId} onChange={(event) => updateEntry(entry.id, { accountId: event.target.value })}>
-          <option value="">口座を選択</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}（{account.accountKind}）</option>)}
+          <option value="">{text('口座を選択')}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{canonicalAccountName(account, text)}（{accountKindLabel(account.accountKind, text)}）</option>)}
         </select>
         <input aria-label={`${candidateId}の${index + 1}行目の金額`} type="number" min="1" step="1" inputMode="numeric" value={entry.amountJpy || ''} onChange={(event) => updateEntry(entry.id, { amountJpy: event.target.value === '' ? 0 : Number(event.target.value) })} />
         <button type="button" className="mini-btn" aria-label={`${candidateId}の${index + 1}行目を削除`} disabled={decision.entries.length <= 2} onClick={() => removeEntry(entry.id)}>削除</button>
