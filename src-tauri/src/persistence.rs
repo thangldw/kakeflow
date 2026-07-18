@@ -169,6 +169,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0068_mobile_capture_discards.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0069_japanese_expense_categories.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -1771,6 +1774,40 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_69_backfills_japanese_expense_categories_without_overwriting_accounts() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('legacy','Legacy')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('legacy-household-goods','legacy','日用品（カスタム）','EXPENSE','OTHER')",
+                    [],
+                )?;
+                connection.execute_batch(include_str!(
+                    "../migrations/0069_japanese_expense_categories.sql"
+                ))?;
+                let count: i64 = connection.query_row(
+                    "SELECT count(*) FROM accounts WHERE household_id='legacy' AND account_kind='EXPENSE'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let preserved: String = connection.query_row(
+                    "SELECT name FROM accounts WHERE id='legacy-household-goods'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(count, 9);
+                assert_eq!(preserved, "日用品（カスタム）");
+                Ok(())
+            })
+            .expect("category backfill should be idempotent");
     }
 
     #[test]

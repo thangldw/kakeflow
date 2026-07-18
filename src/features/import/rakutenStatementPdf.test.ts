@@ -44,12 +44,16 @@ describe('parseRakutenStatementPdf', () => {
     })
   })
 
-  it('refuses to silently import when the statement and detail totals differ', () => {
+  it('keeps mismatched statement lines reviewable without treating the source PDF as editable', () => {
     const result = parseRakutenStatementPdf(extracted([
       ...header,
       '2025/08/30\tSHOP A\t本人\t*\t1\t回払い\t1,200\t0\t1,200\t1,200\t0',
     ]))
-    expect(result?.parsed.issues).toContainEqual(expect.objectContaining({ code: 'RAKUTEN_PDF_TOTAL_MISMATCH', severity: 'error' }))
+    expect(result?.parsed.issues).toContainEqual(expect.objectContaining({
+      code: 'RAKUTEN_PDF_TOTAL_MISMATCH', severity: 'warning', message: expect.stringContaining('レビューで修正'),
+    }))
+    expect(result?.parsed.metadata).toMatchObject({ detailTotal: 1200, statementDifference: 1800 })
+    expect(result?.parsed.records[0]).toMatchObject({ statementTotal: 3000, transactions: [expect.objectContaining({ billingAmount: 1200 })] })
   })
 
   it('leaves unrelated PDFs to the receipt/source-only flow', () => {
