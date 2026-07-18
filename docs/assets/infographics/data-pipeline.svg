@@ -1,21 +1,98 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="560" viewBox="0 0 1400 560" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="620" viewBox="0 0 1400 620" role="img" aria-labelledby="title desc">
   <title id="title">KakeFlow local-first data pipeline</title>
-  <desc id="desc">Files move through encrypted evidence storage, extraction, review, a double-entry ledger, and household dashboards.</desc>
+  <desc id="desc">User-controlled sources pass through immutable evidence, extraction, explicit review, the double-entry ledger, and source-backed insights.</desc>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f7f8f3"/><stop offset="1" stop-color="#eef2e8"/></linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#263329" flood-opacity=".09"/></filter>
-    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0l12 6-12 6z" fill="#6d7c61"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#050038" flood-opacity=".12"/></filter>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="9" markerHeight="9" orient="auto"><path d="M1 1l10 5-10 5" fill="none" stroke="#34324a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.3" fill="#c9c7d8" opacity=".55"/></pattern>
+    <style>
+      .ui{font-family:Inter,system-ui,-apple-system,"Segoe UI","Noto Sans JP",Arial,sans-serif}
+      .title{font-size:34px;font-weight:800;fill:#050038}
+      .subtitle{font-size:17px;fill:#68657a}
+      .step{font-size:13px;font-weight:800;letter-spacing:.08em;fill:#68657a}
+      .head{font-size:21px;font-weight:800;fill:#050038}
+      .copy{font-size:15px;fill:#34324a}
+      .small{font-size:13px;fill:#68657a}
+      .connector{fill:none;stroke:#34324a;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;marker-end:url(#arrow)}
+    </style>
   </defs>
-  <rect width="1400" height="560" rx="28" fill="url(#bg)"/>
-  <text x="70" y="78" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="34" font-weight="700" fill="#243029">From documents to financial clarity</text>
-  <text x="70" y="112" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="17" fill="#6f7972">Every number remains linked to encrypted source evidence.</text>
-  <g font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" filter="url(#shadow)">
-    <g transform="translate(60 175)"><rect width="210" height="245" rx="20" fill="#fff"/><circle cx="48" cy="48" r="25" fill="#e7eddf"/><text x="39" y="56" font-size="24">↓</text><text x="26" y="102" font-size="20" font-weight="700" fill="#243029">Inputs</text><text x="26" y="137" font-size="15" fill="#68736b">CSV / Excel</text><text x="26" y="165" font-size="15" fill="#68736b">PDF / Receipts</text><text x="26" y="193" font-size="15" fill="#68736b">Drive-synced folders</text><text x="26" y="221" font-size="15" fill="#68736b">Manual entry</text></g>
-    <g transform="translate(335 175)"><rect width="210" height="245" rx="20" fill="#fff"/><circle cx="48" cy="48" r="25" fill="#e2ece9"/><text x="37" y="56" font-size="22">◇</text><text x="26" y="102" font-size="20" font-weight="700" fill="#243029">Evidence vault</text><text x="26" y="137" font-size="15" fill="#68736b">Immutable originals</text><text x="26" y="165" font-size="15" fill="#68736b">XChaCha20-Poly1305</text><text x="26" y="193" font-size="15" fill="#68736b">Hash + provenance</text><text x="26" y="221" font-size="15" fill="#68736b">Local-only storage</text></g>
-    <g transform="translate(610 175)"><rect width="210" height="245" rx="20" fill="#fff"/><circle cx="48" cy="48" r="25" fill="#f4e7df"/><text x="37" y="56" font-size="22">⌁</text><text x="26" y="102" font-size="20" font-weight="700" fill="#243029">Normalize</text><text x="26" y="137" font-size="15" fill="#68736b">Adapters + OCR</text><text x="26" y="165" font-size="15" fill="#68736b">Deduplication</text><text x="26" y="193" font-size="15" fill="#68736b">Category suggestions</text><text x="26" y="221" font-size="15" fill="#68736b">Human review</text></g>
-    <g transform="translate(885 175)"><rect width="210" height="245" rx="20" fill="#fff"/><circle cx="48" cy="48" r="25" fill="#eee7d8"/><text x="38" y="56" font-size="22">≡</text><text x="26" y="102" font-size="20" font-weight="700" fill="#243029">Ledger</text><text x="26" y="137" font-size="15" fill="#68736b">Balanced journals</text><text x="26" y="165" font-size="15" fill="#68736b">SQLCipher</text><text x="26" y="193" font-size="15" fill="#68736b">Card reconciliation</text><text x="26" y="221" font-size="15" fill="#68736b">Audit lineage</text></g>
-    <g transform="translate(1160 175)"><rect width="180" height="245" rx="20" fill="#5e6e52"/><circle cx="48" cy="48" r="25" fill="#75836b"/><text x="36" y="56" font-size="22" fill="#fff">↗</text><text x="26" y="102" font-size="20" font-weight="700" fill="#fff">Insights</text><text x="26" y="137" font-size="15" fill="#edf1e9">Cash flow</text><text x="26" y="165" font-size="15" fill="#edf1e9">Net worth</text><text x="26" y="193" font-size="15" fill="#edf1e9">Budgets</text><text x="26" y="221" font-size="15" fill="#edf1e9">Savings goals</text></g>
+  <rect width="1400" height="620" rx="30" fill="#f7f7fb"/>
+  <rect width="1400" height="620" rx="30" fill="url(#dots)"/>
+  <g class="ui">
+    <rect x="56" y="40" width="770" height="88" rx="18" fill="#fff" filter="url(#shadow)"/>
+    <text x="84" y="78" class="title">From source documents to financial clarity</text>
+    <text x="84" y="106" class="subtitle">Every confirmed number remains linked to immutable local evidence.</text>
+
+    <path class="connector" d="M270 333C300 333 303 333 330 333"/>
+    <path class="connector" d="M535 333C565 333 568 333 595 333"/>
+    <path class="connector" d="M800 333C830 333 833 333 860 333"/>
+    <path class="connector" d="M1065 333C1095 333 1098 333 1125 333"/>
+
+    <g transform="translate(65 205) rotate(-1 100 130)" filter="url(#shadow)">
+      <rect width="205" height="262" rx="12" fill="#fff3b8"/>
+      <path d="M181 0h24v24z" fill="#f4da62"/>
+      <circle cx="30" cy="32" r="17" fill="#ffd02f"/><text x="30" y="38" text-anchor="middle" class="head" font-size="16">1</text>
+      <text x="24" y="75" class="step">USER INPUT</text>
+      <text x="24" y="108" class="head">Sources</text>
+      <text x="24" y="143" class="copy">CSV · XLSX · PDF</text>
+      <text x="24" y="170" class="copy">Receipts · email</text>
+      <text x="24" y="197" class="copy">Folders · connectors</text>
+      <text x="24" y="230" class="small">No direct bank scraping</text>
+    </g>
+
+    <g transform="translate(330 205) rotate(1 100 130)" filter="url(#shadow)">
+      <rect width="205" height="262" rx="12" fill="#cde7ff"/>
+      <path d="M181 0h24v24z" fill="#9fcef7"/>
+      <circle cx="30" cy="32" r="17" fill="#4262ff"/><text x="30" y="38" text-anchor="middle" fill="#fff" font-weight="800" font-size="16">2</text>
+      <text x="24" y="75" class="step">LOCAL VAULT</text>
+      <text x="24" y="108" class="head">Evidence</text>
+      <text x="24" y="143" class="copy">Immutable originals</text>
+      <text x="24" y="170" class="copy">SHA-256 provenance</text>
+      <text x="24" y="197" class="copy">Encrypted storage</text>
+      <text x="24" y="230" class="small">Bytes stay on device</text>
+    </g>
+
+    <g transform="translate(595 205) rotate(-.8 100 130)" filter="url(#shadow)">
+      <rect width="205" height="262" rx="12" fill="#e5d7ff"/>
+      <path d="M181 0h24v24z" fill="#c3a8f5"/>
+      <circle cx="30" cy="32" r="17" fill="#8b5cf6"/><text x="30" y="38" text-anchor="middle" fill="#fff" font-weight="800" font-size="16">3</text>
+      <text x="24" y="75" class="step">EXTRACT</text>
+      <text x="24" y="108" class="head">Normalize</text>
+      <text x="24" y="143" class="copy">Adapters + local OCR</text>
+      <text x="24" y="170" class="copy">Row-level lineage</text>
+      <text x="24" y="197" class="copy">Duplicate signals</text>
+      <text x="24" y="230" class="small">Ambiguity fails closed</text>
+    </g>
+
+    <g transform="translate(860 205) rotate(.8 100 130)" filter="url(#shadow)">
+      <rect width="205" height="262" rx="12" fill="#ffd6df"/>
+      <path d="M181 0h24v24z" fill="#f4aabe"/>
+      <circle cx="30" cy="32" r="17" fill="#f2476a"/><text x="30" y="38" text-anchor="middle" fill="#fff" font-weight="800" font-size="16">4</text>
+      <text x="24" y="75" class="step">HUMAN GATE</text>
+      <text x="24" y="108" class="head">Review</text>
+      <text x="24" y="143" class="copy">Account mapping</text>
+      <text x="24" y="170" class="copy">Resolve duplicates</text>
+      <text x="24" y="197" class="copy">Approve balanced draft</text>
+      <text x="24" y="230" class="small">Nothing auto-posts</text>
+    </g>
+
+    <g transform="translate(1125 205) rotate(-.5 100 130)" filter="url(#shadow)">
+      <rect width="205" height="262" rx="12" fill="#c9f3df"/>
+      <path d="M181 0h24v24z" fill="#98deb9"/>
+      <circle cx="30" cy="32" r="17" fill="#2ccf8e"/><text x="30" y="38" text-anchor="middle" fill="#050038" font-weight="800" font-size="16">5</text>
+      <text x="24" y="75" class="step">CONFIRMED</text>
+      <text x="24" y="108" class="head">Ledger</text>
+      <text x="24" y="143" class="copy">Balanced journals</text>
+      <text x="24" y="170" class="copy">Cards + investments</text>
+      <text x="24" y="197" class="copy">Reports + actions</text>
+      <text x="24" y="230" class="small">Source-backed insights</text>
+    </g>
+
+    <g transform="translate(330 515) rotate(-1 0 0)" filter="url(#shadow)">
+      <rect width="740" height="62" rx="10" fill="#fff"/>
+      <rect width="12" height="62" rx="6" fill="#4262ff"/>
+      <text x="35" y="27" class="head" font-size="17">The review boundary is the control point</text>
+      <text x="35" y="48" class="small">Extraction prepares evidence; only explicit approval creates confirmed ledger facts.</text>
+    </g>
   </g>
-  <g stroke="#6d7c61" stroke-width="4" fill="none" marker-end="url(#arrow)"><path d="M280 298h38"/><path d="M555 298h38"/><path d="M830 298h38"/><path d="M1105 298h38"/></g>
-  <rect x="60" y="468" width="1280" height="46" rx="23" fill="#fff" opacity=".8"/><text x="700" y="498" text-anchor="middle" font-family="Inter,system-ui,-apple-system,'Segoe UI','Noto Sans JP',Arial,sans-serif" font-size="16" font-weight="600" fill="#53624d">Native desktop boundary • no bank scraping • no cloud upload required</text>
 </svg>

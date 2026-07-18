@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Download, FileInput, Laptop, Link2 } from 'lucide-react'
 import { platformClient } from '../../platform'
+import { accountKindLabel, accountSubtypeLabel, memberRoleLabel } from '../../displayLabels'
+import { localize, useI18n } from '../../i18n'
 import type {
   AccountDto,
   HouseholdMemberDto,
@@ -47,6 +49,7 @@ function formatCount(value: number, unit: string): string {
 }
 
 export function PendingImportHandoffPanel({ householdId, accounts, members, pendingRuns, onApplied }: PendingImportHandoffPanelProps) {
+  const { text } = useI18n()
   const [busy, setBusy] = useState<BusyAction>(null)
   const [exportPassphrase, setExportPassphrase] = useState('')
   const [exportConfirmation, setExportConfirmation] = useState('')
@@ -90,11 +93,11 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
   const exportRun = async (run: PendingReviewRunDto) => {
     if (!householdId) return
     if (exportPassphrase.length < 12) {
-      setNotice('保存用パスフレーズは12文字以上で入力してください。')
+      setNotice(localize("保存用パスフレーズは12文字以上で入力してください。"))
       return
     }
     if (exportPassphrase !== exportConfirmation) {
-      setNotice('保存用パスフレーズが一致しません。')
+      setNotice(localize("保存用パスフレーズが一致しません。"))
       return
     }
     setBusy(`EXPORT:${run.runId}`)
@@ -104,14 +107,14 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
       const summary = await platformClient.exportPendingImport({ householdId, runId: run.runId }, exportPassphrase)
       if (requestId !== requestIdRef.current) return
       if (!summary) {
-        setNotice('受け渡しファイルの保存をキャンセルしました。')
+        setNotice(localize("受け渡しファイルの保存をキャンセルしました。"))
         return
       }
       setExportPassphrase('')
       setExportConfirmation('')
-      setNotice(`${formatCount(summary.candidateCount, '候補')}をローカルの受け渡しファイルに保存しました。元の確認待ちはこの端末に残っています。`)
+      setNotice(localize(`${formatCount(summary.candidateCount, localize("候補"))}をローカルの受け渡しファイルに保存しました。元の確認待ちはこの端末に残っています。`))
     } catch {
-      if (requestId === requestIdRef.current) setNotice('受け渡しファイルを保存できませんでした。パスフレーズと保存先を確認してください。')
+      if (requestId === requestIdRef.current) setNotice(localize("受け渡しファイルを保存できませんでした。パスフレーズと保存先を確認してください。"))
     } finally {
       if (requestId === requestIdRef.current) setBusy(null)
     }
@@ -120,7 +123,7 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
   const stageFile = async () => {
     if (!householdId) return
     if (importPassphrase.length < 12) {
-      setNotice('受け取り用パスフレーズは12文字以上で入力してください。')
+      setNotice(localize("受け取り用パスフレーズは12文字以上で入力してください。"))
       return
     }
     setBusy('STAGE')
@@ -142,7 +145,7 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
         return
       }
       if (!next) {
-        setNotice('受け渡しファイルの選択をキャンセルしました。')
+        setNotice(localize("受け渡しファイルの選択をキャンセルしました。"))
         return
       }
       stagedRef.current = next
@@ -151,10 +154,10 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
       setMemberMappings({})
       setImportPassphrase('')
       setNotice(next.alreadyApplied
-        ? 'この受け渡しファイルは以前追加されています。既存の確認待ちを開けます。'
-        : '受け渡しファイルを検証しました。口座とメンバーを明示的に対応付けてください。')
+        ? localize("この受け渡しファイルは以前追加されています。既存の確認待ちを開けます。")
+        : localize("受け渡しファイルを検証しました。口座とメンバーを明示的に対応付けてください。"))
     } catch {
-      if (requestId === requestIdRef.current) setNotice('受け渡しファイルを開けませんでした。ファイルとパスフレーズを確認してください。')
+      if (requestId === requestIdRef.current) setNotice(localize("受け渡しファイルを開けませんでした。ファイルとパスフレーズを確認してください。"))
     } finally {
       if (requestId === requestIdRef.current) setBusy(null)
     }
@@ -184,10 +187,10 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
       setMemberMappings({})
       onApplied()
       setNotice(result.reusedExisting
-        ? '既存の確認待ちをImport Inboxに表示しました。承認は引き継がず、台帳へは自動反映していません。'
-        : `${formatCount(result.candidateCount, '候補')}をImport Inboxの確認待ちに追加しました。台帳へは自動反映していません。`)
+        ? localize("既存の確認待ちをImport Inboxに表示しました。承認は引き継がず、台帳へは自動反映していません。")
+        : localize(`${formatCount(result.candidateCount, localize("候補"))}をImport Inboxの確認待ちに追加しました。台帳へは自動反映していません。`))
     } catch {
-      if (requestId === requestIdRef.current) setNotice('確認待ちへ追加できませんでした。対応付けを確認して再試行してください。')
+      if (requestId === requestIdRef.current) setNotice(localize("確認待ちへ追加できませんでした。対応付けを確認して再試行してください。"))
     } finally {
       if (requestId === requestIdRef.current) setBusy(null)
     }
@@ -205,9 +208,9 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
       setStaged(null)
       setAccountMappings({})
       setMemberMappings({})
-      setNotice('選択した受け渡しファイルの一時データを破棄しました。')
+      setNotice(localize("選択した受け渡しファイルの一時データを破棄しました。"))
     } catch {
-      if (requestId === requestIdRef.current) setNotice('一時データを破棄できませんでした。')
+      if (requestId === requestIdRef.current) setNotice(localize("一時データを破棄できませんでした。"))
     } finally {
       if (requestId === requestIdRef.current) setBusy(null)
     }
@@ -217,46 +220,46 @@ export function PendingImportHandoffPanel({ householdId, accounts, members, pend
 
   return <section className="panel pending-import-handoff" aria-busy={busy != null}>
     <div className="panel-head">
-      <div><h2>確認待ちの受け渡し</h2><p>別のKakeFlow端末へ、未確定の取引候補をローカルファイルで渡します。</p></div>
-      <b><Laptop size={13} /> ローカルファイル</b>
+      <div><h2>{localize("確認待ちの受け渡し")}</h2><p>{localize("別のKakeFlow端末へ、未確定の取引候補をローカルファイルで渡します。")}</p></div>
+      <b><Laptop size={13} /> {localize("ローカルファイル")}</b>
     </div>
-    <p className="pending-import-scope"><Link2 size={15} /><span>ネットワーク送受信やクラウド同期は行いません。保存・選択・追加だけでは台帳へ反映されず、受け取り側のImport Inboxで改めて確認と承認が必要です。</span></p>
+    <p className="pending-import-scope"><Link2 size={15} /><span>{localize("ネットワーク送受信やクラウド同期は行いません。保存・選択・追加だけでは台帳へ反映されず、受け取り側のImport Inboxで改めて確認と承認が必要です。")}</span></p>
     <div className="pending-import-columns">
       <section aria-labelledby="pending-import-export-title">
-        <div className="pending-import-step-head"><span>1</span><div><h3 id="pending-import-export-title">この端末から保存</h3><p>取引候補の確認待ちを1件選んで保存します。</p></div></div>
+        <div className="pending-import-step-head"><span>1</span><div><h3 id="pending-import-export-title">{localize("この端末から保存")}</h3><p>{localize("取引候補の確認待ちを1件選んで保存します。")}</p></div></div>
         <div className="pending-import-form">
-          <label>保存用パスフレーズ<input aria-label="保存用パスフレーズ" type="password" autoComplete="new-password" placeholder="12文字以上" value={exportPassphrase} onChange={(event) => setExportPassphrase(event.target.value)} /></label>
-          <label>保存用パスフレーズを確認<input aria-label="保存用パスフレーズを確認" type="password" autoComplete="new-password" value={exportConfirmation} onChange={(event) => setExportConfirmation(event.target.value)} /></label>
+          <label>{localize("保存用パスフレーズ")}<input aria-label={localize("保存用パスフレーズ")} type="password" autoComplete="new-password" placeholder={localize("12文字以上")} value={exportPassphrase} onChange={(event) => setExportPassphrase(event.target.value)} /></label>
+          <label>{localize("保存用パスフレーズを確認")}<input aria-label={localize("保存用パスフレーズを確認")} type="password" autoComplete="new-password" value={exportConfirmation} onChange={(event) => setExportConfirmation(event.target.value)} /></label>
         </div>
         <div className="pending-import-run-list">
-          {runs.length === 0 ? <p className="empty-state">受け渡せる取引候補の確認待ちはありません。投資・レシートの専用処理は対象外です。</p> : runs.map((run) => <article key={run.runId}>
-            <span><strong>{run.originalFilename}</strong><small>{formatCount(run.candidateCount, '候補')} ・ {formatCount(run.recordCount, '行')} ・ {run.adapterId ?? '汎用取込'}</small></span>
-            <button className="secondary-btn" aria-label={`${run.originalFilename}を受け渡しファイルに保存`} disabled={busy != null} onClick={() => void exportRun(run)}><Download size={14} /> {busy === `EXPORT:${run.runId}` ? '保存中…' : '保存'}</button>
+          {runs.length === 0 ? <p className="empty-state">{localize("受け渡せる取引候補の確認待ちはありません。投資・レシートの専用処理は対象外です。")}</p> : runs.map((run) => <article key={run.runId}>
+            <span><strong>{run.originalFilename}</strong><small>{formatCount(run.candidateCount, localize("候補"))} ・ {formatCount(run.recordCount, localize("行"))} ・ {run.adapterId ?? localize("汎用取込")}</small></span>
+            <button className="secondary-btn" aria-label={localize(`${run.originalFilename}を受け渡しファイルに保存`)} disabled={busy != null} onClick={() => void exportRun(run)}><Download size={14} /> {busy === `EXPORT:${run.runId}` ? localize("保存中…") : localize("保存")}</button>
           </article>)}
         </div>
       </section>
       <section aria-labelledby="pending-import-stage-title">
-        <div className="pending-import-step-head"><span>2</span><div><h3 id="pending-import-stage-title">この端末で受け取る</h3><p>ファイルを検証してから、対応先を選びます。</p></div></div>
+        <div className="pending-import-step-head"><span>2</span><div><h3 id="pending-import-stage-title">{localize("この端末で受け取る")}</h3><p>{localize("ファイルを検証してから、対応先を選びます。")}</p></div></div>
         <div className="pending-import-stage-action">
-          <label>受け取り用パスフレーズ<input aria-label="受け取り用パスフレーズ" type="password" autoComplete="off" placeholder="保存時の12文字以上" value={importPassphrase} onChange={(event) => setImportPassphrase(event.target.value)} /></label>
-          <button className="secondary-btn" disabled={busy != null || !householdId} onClick={() => void stageFile()}><FileInput size={14} /> {busy === 'STAGE' ? '検証中…' : '確認待ちファイルを開く'}</button>
+          <label>{localize("受け取り用パスフレーズ")}<input aria-label={localize("受け取り用パスフレーズ")} type="password" autoComplete="off" placeholder={localize("保存時の12文字以上")} value={importPassphrase} onChange={(event) => setImportPassphrase(event.target.value)} /></label>
+          <button className="secondary-btn" disabled={busy != null || !householdId} onClick={() => void stageFile()}><FileInput size={14} /> {busy === 'STAGE' ? localize("検証中…") : localize("確認待ちファイルを開く")}</button>
         </div>
       </section>
     </div>
     {staged && <section className="pending-import-mapping" aria-labelledby="pending-import-mapping-title">
       <div className="pending-import-mapping-summary">
-        <div><span>3</span><div><h3 id="pending-import-mapping-title">対応先を確認</h3><p>{staged.sourceFilename} ・ {formatCount(staged.candidateCount, '候補')} ・ {formatCount(staged.recordCount, '行')}</p></div></div>
-        {staged.alreadyApplied && <b>追加済み{staged.existingLocalRunId ? ` ・ ${staged.existingLocalRunId}` : ''}</b>}
+        <div><span>3</span><div><h3 id="pending-import-mapping-title">{localize("対応先を確認")}</h3><p>{staged.sourceFilename} ・ {formatCount(staged.candidateCount, localize("候補"))} ・ {formatCount(staged.recordCount, localize("行"))}</p></div></div>
+        {staged.alreadyApplied && <b>{localize("追加済み")}{staged.existingLocalRunId ? ` ・ ${staged.existingLocalRunId}` : ''}</b>}
       </div>
-      {staged.alreadyApplied ? <p className="pending-import-mapping-note">この端末に追加したときの対応付けを再利用します。承認状態は引き継ぎません。</p> : (staged.accountDependencies.length > 0 || staged.memberDependencies.length > 0) && <p className="pending-import-mapping-note">候補から推測せず、すべての対応先を選択してください。選択肢がない場合は、設定で口座または家族メンバーを先に追加します。</p>}
+      {staged.alreadyApplied ? <p className="pending-import-mapping-note">{localize("この端末に追加したときの対応付けを再利用します。承認状態は引き継ぎません。")}</p> : (staged.accountDependencies.length > 0 || staged.memberDependencies.length > 0) && <p className="pending-import-mapping-note">{localize("候補から推測せず、すべての対応先を選択してください。選択肢がない場合は、設定で口座または家族メンバーを先に追加します。")}</p>}
       {!staged.alreadyApplied && <div className="pending-import-mapping-grid">
         {staged.accountDependencies.map((dependency) => {
           const options = compatibleAccounts(accounts, dependency)
-          return <label key={dependency.portableAccountId}><span><strong>{dependency.name}</strong><small>{dependency.accountKind} / {dependency.accountSubtype ?? 'すべて'} / {dependency.currency}{dependency.institutionName ? ` ・ ${dependency.institutionName}` : ''}{dependency.maskedIdentifier ? ` ・ ${dependency.maskedIdentifier}` : ''}</small></span><select aria-label={`${dependency.name}の対応先口座`} value={accountMappings[dependency.portableAccountId] ?? ''} disabled={options.length === 0} onChange={(event) => setAccountMappings((current) => ({ ...current, [dependency.portableAccountId]: event.target.value }))}><option value="">口座を選択</option>{options.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{options.length === 0 && <small role="status">条件に一致する口座がありません。設定で先に追加してください。</small>}</label>
+          return <label key={dependency.portableAccountId}><span><strong>{dependency.name}</strong><small>{accountKindLabel(dependency.accountKind, text)} / {dependency.accountSubtype ? accountSubtypeLabel(dependency.accountSubtype, text) : text('すべて')} / {dependency.currency}{dependency.institutionName ? ` ・ ${dependency.institutionName}` : ''}{dependency.maskedIdentifier ? ` ・ ${dependency.maskedIdentifier}` : ''}</small></span><select aria-label={localize(`${dependency.name}の対応先口座`)} value={accountMappings[dependency.portableAccountId] ?? ''} disabled={options.length === 0} onChange={(event) => setAccountMappings((current) => ({ ...current, [dependency.portableAccountId]: event.target.value }))}><option value="">{localize("口座を選択")}</option>{options.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select>{options.length === 0 && <small role="status">{localize("条件に一致する口座がありません。設定で先に追加してください。")}</small>}</label>
         })}
-        {staged.memberDependencies.map((dependency) => <label key={dependency.portableMemberId}><span><strong>{dependency.displayName}</strong><small>受け渡し元の役割: {dependency.role}</small></span><select aria-label={`${dependency.displayName}の対応先メンバー`} value={memberMappings[dependency.portableMemberId] ?? ''} disabled={activeMembers.length === 0} onChange={(event) => setMemberMappings((current) => ({ ...current, [dependency.portableMemberId]: event.target.value }))}><option value="">メンバーを選択</option>{activeMembers.map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select>{activeMembers.length === 0 && <small role="status">有効なメンバーがいません。家族ページで先に追加してください。</small>}</label>)}
+        {staged.memberDependencies.map((dependency) => <label key={dependency.portableMemberId}><span><strong>{dependency.displayName}</strong><small>{localize("受け渡し元の役割:")} {memberRoleLabel(dependency.role, text)}</small></span><select aria-label={localize(`${dependency.displayName}の対応先メンバー`)} value={memberMappings[dependency.portableMemberId] ?? ''} disabled={activeMembers.length === 0} onChange={(event) => setMemberMappings((current) => ({ ...current, [dependency.portableMemberId]: event.target.value }))}><option value="">{localize("メンバーを選択")}</option>{activeMembers.map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select>{activeMembers.length === 0 && <small role="status">{localize("有効なメンバーがいません。家族ページで先に追加してください。")}</small>}</label>)}
       </div>}
-      <div className="pending-import-actions"><button className="text-btn" disabled={busy != null} onClick={() => void discardStaged()}>{busy === 'DISCARD' ? '破棄中…' : '一時データを破棄'}</button><button className="primary-btn" disabled={busy != null || !mappingsComplete} onClick={() => void applyStaged()}>{busy === 'APPLY' ? '追加中…' : 'Import Inboxの確認待ちに追加'}</button></div>
+      <div className="pending-import-actions"><button className="text-btn" disabled={busy != null} onClick={() => void discardStaged()}>{busy === 'DISCARD' ? localize("破棄中…") : localize("一時データを破棄")}</button><button className="primary-btn" disabled={busy != null || !mappingsComplete} onClick={() => void applyStaged()}>{busy === 'APPLY' ? localize("追加中…") : localize("Import Inboxの確認待ちに追加")}</button></div>
     </section>}
     {notice && <p className="pending-import-notice" role="status" aria-live="polite">{notice}</p>}
   </section>

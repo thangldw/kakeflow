@@ -22,10 +22,10 @@ const MAX_RULE_VALUES: usize = 32;
 const MAX_RULE_TEXT_LEN: usize = 200;
 const MAX_PLANNING_JPY: i64 = 9_000_000_000_000_000;
 const CANONICAL_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
-    ("bank", "Bank", "ASSET", "BANK"),
-    ("cash", "Cash", "ASSET", "CASH"),
-    ("wallet", "Wallet", "ASSET", "WALLET"),
-    ("card", "Credit Card", "LIABILITY", "CREDIT_CARD"),
+    ("bank", "銀行", "ASSET", "BANK"),
+    ("cash", "現金", "ASSET", "CASH"),
+    ("wallet", "ウォレット", "ASSET", "WALLET"),
+    ("card", "クレジットカード", "LIABILITY", "CREDIT_CARD"),
     ("rakuten-card", "Rakuten Card", "LIABILITY", "CREDIT_CARD"),
     (
         "amazon-card",
@@ -33,14 +33,23 @@ const CANONICAL_ACCOUNTS: &[(&str, &str, &str, &str)] = &[
         "LIABILITY",
         "CREDIT_CARD",
     ),
-    ("income", "Income", "INCOME", "OTHER"),
-    ("groceries", "Groceries", "EXPENSE", "OTHER"),
-    ("housing", "Housing", "EXPENSE", "OTHER"),
-    ("utilities", "Utilities", "EXPENSE", "OTHER"),
-    ("transport", "Transport", "EXPENSE", "OTHER"),
-    ("healthcare", "Healthcare", "EXPENSE", "OTHER"),
-    ("entertainment", "Entertainment", "EXPENSE", "OTHER"),
-    ("other-expense", "Other Expense", "EXPENSE", "OTHER"),
+    ("income", "収入", "INCOME", "OTHER"),
+    ("groceries", "食費", "EXPENSE", "OTHER"),
+    ("household-goods", "日用品", "EXPENSE", "OTHER"),
+    ("entertainment", "趣味・娯楽", "EXPENSE", "OTHER"),
+    ("transport", "交通費", "EXPENSE", "OTHER"),
+    ("clothing-beauty", "衣服・美容", "EXPENSE", "OTHER"),
+    ("special-expense", "特別な支出", "EXPENSE", "OTHER"),
+    ("social", "交際費", "EXPENSE", "OTHER"),
+    ("housing", "住宅", "EXPENSE", "OTHER"),
+    ("utilities", "水道・光熱費", "EXPENSE", "OTHER"),
+    ("automobile", "自動車", "EXPENSE", "OTHER"),
+    ("insurance", "保険", "EXPENSE", "OTHER"),
+    ("taxes-social-security", "税・社会保障", "EXPENSE", "OTHER"),
+    ("education", "教養・教育", "EXPENSE", "OTHER"),
+    ("communication", "通信費", "EXPENSE", "OTHER"),
+    ("healthcare", "健康・医療", "EXPENSE", "OTHER"),
+    ("other-expense", "その他", "EXPENSE", "OTHER"),
 ];
 
 #[derive(Debug)]
@@ -4457,7 +4466,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 14);
+        assert_eq!(count, 23);
         let members = list_household_members(&connection, "family").unwrap();
         assert_eq!(members.len(), 1);
         assert_eq!(members[0].id, "family-member-primary");
@@ -5233,7 +5242,7 @@ mod tests {
                 accounting_basis: AccountingBasis::Accrual,
                 from_date: None,
                 to_date: None,
-                search: Some("Groceries".into()),
+                search: Some("食費".into()),
                 calculation_target_filter: None,
                 label: None,
                 tag: None,
@@ -5245,11 +5254,11 @@ mod tests {
         assert_eq!(searched.total_items, 3);
         let row = &searched.items[0];
         assert_eq!(row.debit_account_id.as_deref(), Some("family-groceries"));
-        assert_eq!(row.debit_account_name.as_deref(), Some("Groceries"));
+        assert_eq!(row.debit_account_name.as_deref(), Some("食費"));
         assert_eq!(row.credit_account_id.as_deref(), Some("family-bank"));
-        assert_eq!(row.credit_account_name.as_deref(), Some("Bank"));
+        assert_eq!(row.credit_account_name.as_deref(), Some("銀行"));
         assert_eq!(row.category_account_id.as_deref(), Some("family-groceries"));
-        assert_eq!(row.category_name.as_deref(), Some("Groceries"));
+        assert_eq!(row.category_name.as_deref(), Some("食費"));
 
         let literal_wildcard = list_transactions(
             &connection,
@@ -5646,7 +5655,7 @@ mod tests {
         assert!(detail.editable);
         assert_eq!(detail.entries.len(), 2);
         assert_eq!(detail.entries[0].side, "DEBIT");
-        assert_eq!(detail.entries[0].account_name, "Groceries");
+        assert_eq!(detail.entries[0].account_name, "食費");
         assert_eq!(detail.entries[1].line_number, 2);
         assert!(detail.source_evidence.is_empty());
         assert!(matches!(

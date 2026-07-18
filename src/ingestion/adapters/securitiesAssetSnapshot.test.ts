@@ -81,6 +81,33 @@ describe('securities asset snapshot adapter', () => {
     ]))
   })
 
+  it('parses the current assetbalance all header and headerless reference FX rows', () => {
+    const current = [
+      '■資産合計欄',
+      '資産合計,"1,500,000",0',
+      '預り金合計,"100,000",0',
+      '■ 保有商品詳細 (すべて）',
+      '種別,銘柄コード・ティッカー,銘柄,口座,保有数量,［単位］,平均取得価額,［単位］,現在値,［単位］,現在値(更新日),(参考為替),前日比,［単位］,時価評価額[円],時価評価額[外貨],評価損益[円],評価損益[％]',
+      '国内株式,7203,トヨタ自動車,特定,100,株,2500,円,3000,円,,,10,円,"300,000",-,"50,000",20',
+      '米国株式,AAPL,Apple Inc.,NISA,10,株,180,USD,200,USD,,,1,USD,"300,000","2,000 USD","30,000",10',
+      '■参考為替レート',
+      '米ドル,150.25,円/USD,(07/17 02:50)',
+      'イギリスポンド,200.5,円/GBP,(07/17 02:50)',
+    ].join('\n')
+    const result = securitiesAssetSnapshotAdapter.parse({ text: current, filename: 'assetbalance(all)_20260717_025335.csv' })
+
+    expect(result.issues).not.toContainEqual(expect.objectContaining({ code: 'ASSET_POSITION_HEADER_MISSING' }))
+    expect(result.metadata).toMatchObject({ positionCount: 2, fxRateCount: 2 })
+    expect(result.records[0].positions).toEqual([
+      expect.objectContaining({ productType: '国内株式', accountType: '特定', instrumentCode: '7203', instrumentName: 'トヨタ自動車', averageCost: 2500, marketValueJpy: 300000, currency: 'JPY' }),
+      expect.objectContaining({ productType: '米国株式', accountType: 'NISA', instrumentCode: 'AAPL', instrumentName: 'Apple Inc.', averageCost: 180, marketValueJpy: 300000, currency: 'USD' }),
+    ])
+    expect(result.records[0].fxRates).toEqual([
+      expect.objectContaining({ baseCurrency: 'USD', rate: 150.25 }),
+      expect.objectContaining({ baseCurrency: 'GBP', rate: 200.5 }),
+    ])
+  })
+
   it('rejects unrelated CSV data as a snapshot', () => {
     const result = securitiesAssetSnapshotAdapter.parse({ text: '日付,摘要,金額\n2026/07/01,給与,100000' })
     expect(result.records).toHaveLength(0)

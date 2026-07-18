@@ -19,15 +19,15 @@ const SECTION_MARKERS: Readonly<Record<SectionName, RegExp>> = {
 }
 
 const POSITION_ALIASES = {
-  productType: ['商品区分', '商品種別', '商品'],
-  accountType: ['預り区分', '口座区分', '預かり区分'],
-  instrumentCode: ['銘柄コード', 'コード', 'ティッカー', 'シンボル'],
-  instrumentName: ['銘柄名', '商品名', 'ファンド名'],
+  productType: ['商品区分', '商品種別', '商品', '種別'],
+  accountType: ['預り区分', '口座区分', '預かり区分', '口座'],
+  instrumentCode: ['銘柄コード', '銘柄コード・ティッカー', 'コード', 'ティッカー', 'シンボル'],
+  instrumentName: ['銘柄名', '銘柄', '商品名', 'ファンド名'],
   quantity: ['保有数量', '数量', '保有数', '口数'],
-  averageCost: ['平均取得単価', '取得単価', '平均単価', '取得価額'],
+  averageCost: ['平均取得単価', '平均取得価額', '取得単価', '平均単価', '取得価額'],
   marketPrice: ['現在値', '現在価格', '基準価額', '時価単価'],
-  marketValue: ['評価額', '時価評価額', '評価金額', '時価'],
-  unrealizedPnl: ['評価損益', '含み損益', '評価損益額'],
+  marketValue: ['評価額', '時価評価額', '時価評価額[円]', '評価金額', '時価'],
+  unrealizedPnl: ['評価損益', '評価損益[円]', '含み損益', '評価損益額'],
   realizedPnl: ['実現損益', '売買損益', '確定損益'],
   currency: ['通貨', '通貨コード'],
 } as const
@@ -59,10 +59,14 @@ function numeric(value: string | undefined): number | null {
   return amount == null || !Number.isFinite(amount) ? null : amount
 }
 
-function currencyFrom(value: string | undefined, productType: string): string {
+function currencyFrom(value: string | undefined, productType: string, sourceFields: readonly string[] = []): string {
   const normalized = normalizeJapaneseText(value ?? '').toUpperCase()
   const explicit = normalized.match(/\b[A-Z]{3}\b/)?.[0]
   if (explicit) return explicit
+  const sourceCurrency = sourceFields
+    .map((field) => normalizeJapaneseText(field).toUpperCase().match(/(?:^|[ /])([A-Z]{3})(?:$|[ /])/)?.[1])
+    .find(Boolean)
+  if (sourceCurrency) return sourceCurrency
   const productCurrency = normalizeJapaneseText(productType).toUpperCase().match(/\b[A-Z]{3}\b/)?.[0]
   return productCurrency ?? 'JPY'
 }
@@ -117,7 +121,7 @@ function parsePositions(rows: readonly CsvRow[], issues: ParseIssue[]): Position
       marketValueJpy,
       unrealizedPnlJpy: numeric(values[key(POSITION_ALIASES.unrealizedPnl) ?? '']),
       realizedPnlJpy: numeric(values[key(POSITION_ALIASES.realizedPnl) ?? '']),
-      currency: currencyFrom(values[key(POSITION_ALIASES.currency) ?? ''], productType),
+      currency: currencyFrom(values[key(POSITION_ALIASES.currency) ?? ''], productType, row.fields),
     })
   }
   return positions
@@ -127,7 +131,24 @@ function parseFxRates(rows: readonly CsvRow[], issues: ParseIssue[]): FxRateSnap
   const currencyAliases = ['通貨', '通貨コード', '通貨名']
   const rateAliases = ['為替レート', '参考レート', '円換算レート', 'レート']
   const headerIndex = findHeader(rows, [currencyAliases, rateAliases])
-  if (headerIndex < 0) return []
+  if (headerIndex < 0) {
+    const currencyNames: Readonly<Record<string, string>> = {
+      米ドル: 'USD', ユーロ: 'EUR', イギリスポンド: 'GBP', 英ポンド: 'GBP', オーストラリアドル: 'AUD', 豪ドル: 'AUD',
+      ニュージーランドドル: 'NZD', カナダドル: 'CAD', トルコリラ: 'TRY', 中国元: 'CNY', 南アフリカランド: 'ZAR', メキシコペソ: 'MXN',
+    }
+    return rows.flatMap((row) => {
+      const currencyText = normalizeJapaneseText(row.fields[0] ?? '').toUpperCase()
+      const unitCurrency = normalizeJapaneseText(row.fields[2] ?? '').toUpperCase().match(/\/([A-Z]{3})\b/)?.[1]
+      const currency = currencyText.match(/\b[A-Z]{3}\b/)?.[0] ?? unitCurrency ?? currencyNames[currencyText]
+      const rate = numeric(row.fields[1])
+      if (!currency || currency === 'JPY') return []
+      if (rate == null || rate <= 0) {
+        issues.push({ code: 'ASSET_FX_RATE_INVALID', message: `Invalid FX rate for ${currency}.`, severity: 'warning', row: row.sourceRow })
+        return []
+      }
+      return [{ kind: 'fx-rate-snapshot' as const, lineage: row, baseCurrency: currency, quoteCurrency: 'JPY' as const, rate }]
+    })
+  }
   const headers = rows[headerIndex].fields.map(normalizeHeader)
   const currencyHeader = aliasesFor(headers, currencyAliases)!
   const rateHeader = aliasesFor(headers, rateAliases)!

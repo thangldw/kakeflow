@@ -1,11 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import enGenerated from './locales/en.generated.json'
+import viGenerated from './locales/vi.generated.json'
 
 export type AppLocale = 'ja' | 'en' | 'vi'
 
 const STORAGE_KEY = 'kakeflow.locale'
 
 const en: Record<string, string> = {
+  ...enGenerated,
   'ホーム': 'Home', '取引': 'Transactions', 'インポート': 'Import', '撮影 Inbox': 'Capture Inbox',
   'カード照合': 'Card reconciliation', '資産・投資': 'Assets & investments',
   'カレンダー・レポート': 'Calendar & reports', '予算・目標': 'Budgets & goals',
@@ -56,7 +59,20 @@ const en: Record<string, string> = {
   '原本とソース行': 'Sources and rows', '確認待ち候補': 'Pending candidates', '失敗した取込': 'Failed imports',
   'インポート Inboxを確認': 'Review Import Inbox', '計算対象': 'Included', '集計対象外': 'Excluded',
   '食費': 'Food', '住居・光熱': 'Housing & utilities', '交通': 'Transport', '日用品': 'Household goods',
-  'その他': 'Other', '娯楽': 'Entertainment', '要確認': 'Needs review',
+  '交通費': 'Transport', '趣味・娯楽': 'Hobbies & entertainment', '衣服・美容': 'Clothing & personal care',
+  '特別な支出': 'Special expenses', '交際費': 'Social expenses', '住宅': 'Housing', '水道・光熱費': 'Utilities',
+  '自動車': 'Car', '保険': 'Insurance', '税・社会保障': 'Taxes & social security', '教養・教育': 'Education',
+  '通信費': 'Communications', '健康・医療': 'Health & medical', 'その他': 'Other', '娯楽': 'Entertainment', '要確認': 'Needs review',
+  '銀行': 'Bank', '現金': 'Cash', 'ウォレット': 'Wallet', 'クレジットカード': 'Credit card', '証券': 'Securities',
+  '未収金': 'Receivable', '振替': 'Transfer', 'カード利用': 'Card purchase',
+  'カード支払': 'Card payment', '返金': 'Refund', '手数料': 'Fee', '利息': 'Interest', '調整': 'Adjustment', '口座を選択': 'Select an account',
+  '楽天カード': 'Rakuten Card', 'Amazon Mastercard': 'Amazon Mastercard',
+  'ローカルフォルダー': 'Local folder', 'iCloud Drive': 'iCloud Drive', 'Google Drive': 'Google Drive', 'Gmail': 'Gmail',
+  '手動アップロード': 'Manual upload', 'カメラ撮影': 'Camera capture', '主要証跡': 'Primary evidence',
+  '資金側証跡': 'Funding evidence', 'ポイント側証跡': 'Reward evidence', '継続行': 'Continuation row', '補助証跡': 'Supporting evidence',
+  '買付': 'Buy', '売却': 'Sell', '配当': 'Dividend', '税金': 'Tax', '株式分割': 'Stock split', '株式併合': 'Reverse split',
+  '合併': 'Merger', 'スピンオフ': 'Spin-off', '新株予約権行使': 'Rights subscription', '端株現金交付': 'Cash in lieu',
+  '所有者': 'Owner', 'メンバー': 'Member',
   '店舗、カテゴリー、口座を検索': 'Search merchants, categories, or accounts',
   '計算対象フィルター': 'Inclusion filter', 'すべて': 'All', '計上基準': 'Accounting basis',
   '条件に一致する取引はありません。': 'No transactions match these filters.',
@@ -72,6 +88,7 @@ const en: Record<string, string> = {
 }
 
 const vi: Record<string, string> = {
+  ...viGenerated,
   'ホーム': 'Trang chủ', '取引': 'Giao dịch', 'インポート': 'Nhập dữ liệu', '撮影 Inbox': 'Hộp thư ảnh',
   'カード照合': 'Đối soát thẻ', '資産・投資': 'Tài sản & đầu tư',
   'カレンダー・レポート': 'Lịch & báo cáo', '予算・目標': 'Ngân sách & mục tiêu',
@@ -121,8 +138,21 @@ const vi: Record<string, string> = {
   'ブラウザプレビュー用のサンプル状態': 'Trạng thái mẫu cho bản xem trước',
   '原本とソース行': 'Nguồn và dòng dữ liệu', '確認待ち候補': 'Ứng viên chờ duyệt', '失敗した取込': 'Lần nhập thất bại',
   'インポート Inboxを確認': 'Kiểm tra hộp thư nhập', '計算対象': 'Được tính', '集計対象外': 'Không tổng hợp',
-  '食費': 'Ăn uống', '住居・光熱': 'Nhà ở & tiện ích', '交通': 'Đi lại', '日用品': 'Đồ gia dụng',
-  'その他': 'Khác', '娯楽': 'Giải trí', '要確認': 'Cần kiểm tra',
+  '食費': 'Ăn uống', '住居・光熱': 'Nhà ở & tiện ích', '交通': 'Đi lại', '日用品': 'Đồ dùng hằng ngày',
+  '交通費': 'Đi lại', '趣味・娯楽': 'Sở thích & giải trí', '衣服・美容': 'Quần áo & làm đẹp',
+  '特別な支出': 'Chi tiêu đặc biệt', '交際費': 'Giao lưu & quà tặng', '住宅': 'Nhà ở', '水道・光熱費': 'Điện nước & tiện ích',
+  '自動車': 'Ô tô', '保険': 'Bảo hiểm', '税・社会保障': 'Thuế & an sinh xã hội', '教養・教育': 'Giáo dục',
+  '通信費': 'Viễn thông', '健康・医療': 'Sức khỏe & y tế', 'その他': 'Khác', '娯楽': 'Giải trí', '要確認': 'Cần kiểm tra',
+  '銀行': 'Ngân hàng', '現金': 'Tiền mặt', 'ウォレット': 'Ví điện tử', 'クレジットカード': 'Thẻ tín dụng', '証券': 'Chứng khoán',
+  '未収金': 'Khoản phải thu', '振替': 'Chuyển khoản', 'カード利用': 'Chi tiêu thẻ',
+  'カード支払': 'Thanh toán thẻ', '返金': 'Hoàn tiền', '手数料': 'Phí', '利息': 'Lãi', '調整': 'Điều chỉnh', '口座を選択': 'Chọn tài khoản',
+  '楽天カード': 'Thẻ Rakuten', 'Amazon Mastercard': 'Amazon Mastercard',
+  'ローカルフォルダー': 'Thư mục cục bộ', 'iCloud Drive': 'iCloud Drive', 'Google Drive': 'Google Drive', 'Gmail': 'Gmail',
+  '手動アップロード': 'Tải lên thủ công', 'カメラ撮影': 'Chụp bằng camera', '主要証跡': 'Chứng từ chính',
+  '資金側証跡': 'Chứng từ nguồn tiền', 'ポイント側証跡': 'Chứng từ điểm thưởng', '継続行': 'Dòng tiếp theo', '補助証跡': 'Chứng từ bổ trợ',
+  '買付': 'Mua', '売却': 'Bán', '配当': 'Cổ tức', '税金': 'Thuế', '株式分割': 'Chia tách cổ phiếu', '株式併合': 'Gộp cổ phiếu',
+  '合併': 'Sáp nhập', 'スピンオフ': 'Tách công ty', '新株予約権行使': 'Thực hiện quyền mua', '端株現金交付': 'Thanh toán tiền cho cổ phiếu lẻ',
+  '所有者': 'Chủ sở hữu', 'メンバー': 'Thành viên',
   '店舗、カテゴリー、口座を検索': 'Tìm cửa hàng, danh mục hoặc tài khoản',
   '計算対象フィルター': 'Bộ lọc tính toán', 'すべて': 'Tất cả', '計上基準': 'Cơ sở kế toán',
   '条件に一致する取引はありません。': 'Không có giao dịch phù hợp với bộ lọc.',
@@ -152,6 +182,35 @@ const defaultValue: I18nValue = {
 }
 
 const I18nContext = createContext<I18nValue>(defaultValue)
+let activeLocale: AppLocale = 'ja'
+const interpolationEntries = {
+  en: Object.entries(en).sort(([left], [right]) => right.length - left.length),
+  vi: Object.entries(vi).sort(([left], [right]) => right.length - left.length),
+} as const
+
+// Exported beside the provider so catalog coverage tests use the exact runtime dictionaries.
+// eslint-disable-next-line react-refresh/only-export-components
+export function hasTranslation(locale: Exclude<AppLocale, 'ja'>, source: string): boolean {
+  return Object.hasOwn(locale === 'vi' ? vi : en, source)
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function translateText(locale: AppLocale, source: string): string {
+  if (locale === 'ja') return source
+  const dictionary = locale === 'vi' ? vi : en
+  const exact = dictionary[source]
+  if (exact) return exact
+  if (!/[ぁ-んァ-ヶ一-龯]/.test(source)) return source
+  return interpolationEntries[locale]
+    .filter(([token]) => source.includes(token))
+    .reduce((translated, [token, replacement]) => translated.replaceAll(token, replacement), source)
+}
+
+// Static UI modules use this function; App consumes the context and rerenders the tree after a locale change.
+// eslint-disable-next-line react-refresh/only-export-components
+export function localize(source: string): string {
+  return translateText(activeLocale, source)
+}
 
 function savedLocale(): AppLocale {
   const value = globalThis.localStorage?.getItem(STORAGE_KEY)
@@ -160,16 +219,22 @@ function savedLocale(): AppLocale {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<AppLocale>(savedLocale)
+  activeLocale = locale
   const setLocale = useCallback((next: AppLocale) => {
     globalThis.localStorage?.setItem(STORAGE_KEY, next)
     setLocaleState(next)
   }, [])
-  useEffect(() => { document.documentElement.lang = locale === 'ja' ? 'ja' : locale === 'vi' ? 'vi' : 'en' }, [locale])
+  useEffect(() => {
+    document.documentElement.lang = locale === 'ja' ? 'ja' : locale === 'vi' ? 'vi' : 'en'
+    return () => {
+      activeLocale = 'ja'
+    }
+  }, [locale])
   const value = useMemo<I18nValue>(() => ({
     locale,
     localeCode: locale === 'ja' ? 'ja-JP' : locale === 'vi' ? 'vi-VN' : 'en-US',
     setLocale,
-    text: (source) => locale === 'ja' ? source : (locale === 'vi' ? vi[source] : en[source]) ?? source,
+    text: (source) => translateText(locale, source),
   }), [locale, setLocale])
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
