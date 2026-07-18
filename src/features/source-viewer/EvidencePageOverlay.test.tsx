@@ -9,7 +9,7 @@ describe('EvidencePageOverlay', () => {
   it('renders positioned accessible regions and routes selection', () => {
     const select = vi.fn()
     render(<EvidencePageOverlay pageNumber={1} regions={regions} image={{ src: 'data:image/png;base64,AA==', width: 1000, height: 1500, alt: 'receipt' }} onSelectRegion={select} />)
-    const region = screen.getByRole('button', { name: /Region 1/ })
+    const region = screen.getByRole('button', { name: /領域 1/ })
     expect(region).toHaveStyle({ left: '10%', top: `${200 / 1500 * 100}%`, width: '30%' })
     fireEvent.click(region)
     expect(select).toHaveBeenCalledWith(regions[0], 0)
@@ -25,7 +25,7 @@ describe('EvidencePageOverlay', () => {
   it('uses persisted page dimensions when the original preview is unavailable', () => {
     render(<EvidencePageOverlay pageNumber={1} regions={regions} widthPixels={1000} heightPixels={2000} />)
 
-    expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({
+    expect(screen.getByRole('button', { name: /領域 1/ })).toHaveStyle({
       left: '10%',
       top: '10%',
       width: '30%',
@@ -37,6 +37,6 @@ describe('EvidencePageOverlay', () => {
     const pdfRegions = [{ ...regions[0], coordinateSpace: 'PDF_POINTS' as const, boundingBox: { left: 306, top: 396, width: 61, height: 79 } }]
     render(<EvidencePageOverlay pageNumber={1} regions={pdfRegions} image={{ src: 'data:image/png;base64,AA==', width: 1224, height: 1584, pageWidthPoints: 612, pageHeightPoints: 792, alt: 'statement' }} />)
 
-    expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({ left: '50%', top: '50%' })
+    expect(screen.getByRole('button', { name: /領域 1/ })).toHaveStyle({ left: '50%', top: '50%' })
   })
 })

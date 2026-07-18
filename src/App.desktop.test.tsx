@@ -475,7 +475,7 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    await screen.findByText('Financial Calendar')
+    await screen.findByText('家計カレンダー')
 
     const calendar = screen.getByRole('tab', { name: 'カレンダー' })
     const monthly = screen.getByRole('tab', { name: '月次・年次レビュー' })
@@ -691,13 +691,13 @@ describe('KakeFlow desktop read models', () => {
     expect(JSON.parse(localStorage.getItem('kakeflow.attributionScopes') ?? '{}')).toEqual({ family: memberScope })
 
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    await screen.findByText('Financial Calendar')
+    await screen.findByText('家計カレンダー')
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', { request: expect.objectContaining({ attributionScope: memberScope }) }))
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
     expect(nativeInvoke).toHaveBeenCalledWith('forecast_action_query', { request: expect.objectContaining({ attributionScope: memberScope }) })
 
     fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
-    await screen.findByText('Monthly Review')
+    await screen.findByText('月次家計レビュー')
     fireEvent.click(screen.getByRole('button', { name: '前年同月比' }))
     fireEvent.click(screen.getByRole('button', { name: '月次CSVを保存' }))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('monthly_household_review_csv_save', { request: {
@@ -792,7 +792,7 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByLabelText('家族集計範囲')).toHaveValue('MEMBER:taro')
 
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
-    await screen.findByText('Financial Calendar')
+    await screen.findByText('家計カレンダー')
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', { request: expect.objectContaining({ accountGroupId: 'daily' }) }))
     fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
     fireEvent.click(await screen.findByRole('button', { name: '月次Excelを保存' }))
@@ -816,12 +816,12 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'カレンダー・レポート' }))
 
-    expect(await screen.findByText('Financial Calendar')).toBeInTheDocument()
-    expect(screen.getByText('No-spend days')).toBeInTheDocument()
+    expect(await screen.findByText('家計カレンダー')).toBeInTheDocument()
+    expect(screen.getAllByText('無支出日')).toHaveLength(2)
     expect(nativeInvoke).toHaveBeenCalledWith('financial_calendar_query', expect.any(Object))
 
     fireEvent.click(screen.getByRole('tab', { name: /月次・年次レビュー/ }))
-    expect(await screen.findByText('Monthly Review')).toBeInTheDocument()
+    expect(await screen.findByText('月次家計レビュー')).toBeInTheDocument()
     expect(screen.getByText('食費')).toBeInTheDocument()
     expect(nativeInvoke).toHaveBeenCalledWith('financial_report_monthly_query', expect.any(Object))
 
@@ -950,7 +950,7 @@ describe('KakeFlow desktop read models', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '月次CSVを保存' }))
     expect(await screen.findByText('月次CSVを書き出せませんでした。対象月とスコープを確認してください。')).toBeInTheDocument()
-    expect(screen.getByText('Monthly Review')).toBeInTheDocument()
+    expect(screen.getByText('月次家計レビュー')).toBeInTheDocument()
 
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'monthly_household_review_xlsx_save' ? null : fallback(command, args))
     fireEvent.click(await screen.findByRole('button', { name: '月次Excelを保存' }))
@@ -962,7 +962,7 @@ describe('KakeFlow desktop read models', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '月次Excelを保存' }))
     expect(await screen.findByText('月次Excelを書き出せませんでした。対象月とスコープを確認してください。')).toBeInTheDocument()
-    expect(screen.getByText('Monthly Review')).toBeInTheDocument()
+    expect(screen.getByText('月次家計レビュー')).toBeInTheDocument()
 
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'monthly_household_review_pdf_save' ? null : fallback(command, args))
     fireEvent.click(screen.getByRole('button', { name: '月次PDFを保存' }))
@@ -974,7 +974,7 @@ describe('KakeFlow desktop read models', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '月次PDFを保存' }))
     expect(await screen.findByText('月次PDFを書き出せませんでした。対象月とスコープを確認してください。')).toBeInTheDocument()
-    expect(screen.getByText('Monthly Review')).toBeInTheDocument()
+    expect(screen.getByText('月次家計レビュー')).toBeInTheDocument()
   })
 
   it('reports canceled and failed annual PDF saves without changing the review', async () => {
@@ -987,7 +987,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(await screen.findByRole('tab', { name: /^年次レビュー$/ }))
     fireEvent.click(await screen.findByRole('button', { name: '年次PDFを保存' }))
     expect(await screen.findByText('PDFエクスポートをキャンセルしました。')).toBeInTheDocument()
-    expect(screen.getByText('Annual Household Review')).toBeInTheDocument()
+    expect(screen.getByText('年次家計レビュー')).toBeInTheDocument()
 
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
       if (command === 'annual_household_review_pdf_save') throw new Error('save failed')
@@ -995,7 +995,7 @@ describe('KakeFlow desktop read models', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: '年次PDFを保存' }))
     expect(await screen.findByText('年次PDFを書き出せませんでした。対象年とスコープを確認してください。')).toBeInTheDocument()
-    expect(screen.getByText('Annual Household Review')).toBeInTheDocument()
+    expect(screen.getByText('年次家計レビュー')).toBeInTheDocument()
   })
 
   it('re-queries the ledger when switching to cash basis', async () => {
@@ -1341,7 +1341,7 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
 
-    expect(await screen.findByText('RECOVERED')).toBeInTheDocument()
+    expect(await screen.findByText('復元済み')).toBeInTheDocument()
     expect(screen.getByText(/再起動後に復元/)).toBeInTheDocument()
     expect(desktop.previewImport).toHaveBeenCalledWith('run-1')
     expect(desktop.commitImport).not.toHaveBeenCalled()
@@ -1351,7 +1351,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(commitButton)
 
     await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledTimes(1))
-    await waitFor(() => expect(screen.queryByText('RECOVERED')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('復元済み')).not.toBeInTheDocument())
     expect(await screen.findByText('1件の取引を台帳へ反映しました。')).toBeInTheDocument()
   })
 
@@ -1490,12 +1490,12 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
-    expect(await screen.findByText('RECOVERED')).toBeInTheDocument()
+    expect(await screen.findByText('復元済み')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '取り消す' }))
 
     await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('run-1'))
     expect(desktop.commitImport).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.queryByText('RECOVERED')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('復元済み')).not.toBeInTheDocument())
   })
 
   it('keeps a recovered review on list failure and retries without a false empty state', async () => {
@@ -1504,11 +1504,11 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
-    expect(await screen.findByText('RECOVERED')).toBeInTheDocument()
+    expect(await screen.findByText('復元済み')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '確認待ちを更新' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('確認待ちのインポートを復元できませんでした')
-    expect(screen.getByText('RECOVERED')).toBeInTheDocument()
+    expect(screen.getByText('復元済み')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '再試行' }))
     await waitFor(() => expect(desktop.listPendingReviews).toHaveBeenCalledTimes(3))
   })
@@ -2530,7 +2530,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '適用してプレビュー' }))
 
     expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
-    expect(screen.getByText('DATE: Date → Date')).toBeInTheDocument()
+    expect(screen.getByText('取引日: Date → Date')).toBeInTheDocument()
     expect(screen.getByLabelText('local-bank.csvの取込先口座')).toHaveValue('family-bank')
 
     fireEvent.change(profile, { target: { value: 'custom-bank-2' } })

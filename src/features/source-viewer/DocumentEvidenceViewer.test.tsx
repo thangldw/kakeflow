@@ -29,10 +29,10 @@ describe('DocumentEvidenceViewer', () => {
     expect(screen.getByText('品目合計一致')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: '税率' })).toBeInTheDocument()
     expect(screen.getByRole('cell', { name: '8%' })).toBeInTheDocument()
-    expect(screen.getByText('line 4 · 85%')).toBeInTheDocument()
+    expect(screen.getByText('行 4 · 85%')).toBeInTheDocument()
     expect(screen.getByText('px: x 20, y 30, w 80, h 14')).toBeInTheDocument()
     expect(screen.getByText('TESSERACT_WORD')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Region 1/ })).toHaveStyle({
+    expect(screen.getByRole('button', { name: /^領域 1:/ })).toHaveStyle({
       left: `${20 / 1224 * 100}%`,
       top: `${30 / 1584 * 100}%`,
     })
@@ -41,7 +41,7 @@ describe('DocumentEvidenceViewer', () => {
   it('routes region selection with page and provenance', () => {
     const onSelectRegion = vi.fn()
     render(<DocumentEvidenceViewer evidence={evidence} onSelectRegion={onSelectRegion} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Page 1 region 1を表示' }))
+    fireEvent.click(screen.getByRole('button', { name: 'ページ 1 の領域 1 を表示' }))
     expect(onSelectRegion).toHaveBeenCalledWith(1, evidence.pages[0].regions[0], 0)
   })
 

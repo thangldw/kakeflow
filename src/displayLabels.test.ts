@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { accountKindLabel, accountSubtypeLabel, canonicalAccountName, transactionTypeLabel } from './displayLabels'
+import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, memberRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
 
 const text = (source: string) => `translated:${source}`
 
@@ -13,5 +13,10 @@ describe('localized display labels', () => {
     expect(accountKindLabel('EXPENSE', text)).toBe('translated:支出')
     expect(accountSubtypeLabel('SECURITIES', text)).toBe('translated:証券')
     expect(transactionTypeLabel('ADJUSTMENT', text)).toBe('translated:調整')
+    expect(directionLabel('OUT', text)).toBe('translated:出金')
+    expect(sourceTypeLabel('MANUAL_UPLOAD', text)).toBe('translated:手動アップロード')
+    expect(evidenceRoleLabel('PRIMARY', text)).toBe('translated:主要証跡')
+    expect(brokerageEventTypeLabel('REVERSE_SPLIT', text)).toBe('translated:株式併合')
+    expect(memberRoleLabel('OWNER', text)).toBe('translated:所有者')
   })
 })
