@@ -1,29 +1,29 @@
-# Architecture
+# KakeFlow architecture / Kiến trúc / アーキテクチャ
 
-KakeFlow separates evidence, extracted business events, review state, ledger postings, and analytical read models. A successful extraction is never equivalent to a confirmed transaction.
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"background":"#FFFFFF","fontFamily":"Arial, sans-serif","lineColor":"#667085","primaryTextColor":"#172B4D"}}}%%
+flowchart LR
+    I["Imports & OCR<br/>Nhập / 取込"]:::yellow
+    E["Immutable evidence<br/>Bằng chứng / 証拠"]:::blue
+    Q["Review queue<br/>Duyệt / 確認"]:::pink
+    L["Encrypted ledger<br/>Sổ cái / 台帳"]:::purple
+    R["Reports & family<br/>Báo cáo / 共有"]:::green
+    I --> E --> Q --> L --> R
+    classDef yellow fill:#FFF4A3,stroke:#C9A227,stroke-width:2px,color:#172B4D
+    classDef blue fill:#D9EAFD,stroke:#4C78A8,stroke-width:2px,color:#172B4D
+    classDef pink fill:#FFE1E6,stroke:#C96A7B,stroke-width:2px,color:#172B4D
+    classDef purple fill:#E9DDF7,stroke:#8064A2,stroke-width:2px,color:#172B4D
+    classDef green fill:#DDF5E3,stroke:#4F9D69,stroke-width:2px,color:#172B4D
+```
 
-![Local-first processing pipeline](assets/infographics/data-pipeline.svg)
+## English
 
-## Components
+The React/TypeScript frontend runs inside Tauri 2. Rust commands own local encrypted persistence, import parsing, evidence lineage and accounting boundaries. Extracted candidates enter a review queue; only confirmed records reach the double-entry ledger. Connectors and OCR fail closed on incomplete semantics.
 
-| Component | Responsibility |
-| --- | --- |
-| React application | Review workflows, navigation, local presentation state, typed IPC clients |
-| Tauri/Rust core | SQLCipher persistence, filesystem access, credentials, OCR orchestration, exports, backup and restore |
-| Import adapters | Strict format detection, decoding, validation, normalization and source-row lineage |
-| Evidence vault | Encrypted originals, digests, page/row references and derived previews |
-| Read models | Monthly totals, cards, investments, reports and action-center projections |
-| Reference relay | Authenticated transport for opaque personal or family artifacts |
+## Tiếng Việt
 
-## Data ownership
+Frontend React/TypeScript chạy trong Tauri 2. Rust command quản lý lưu trữ mã hóa local, parser import, evidence lineage và ranh giới kế toán. Candidate trích xuất vào hàng đợi duyệt; chỉ record đã xác nhận mới vào sổ kép. Connector/OCR fail-closed khi semantics chưa đủ.
 
-The desktop database and evidence vault are authoritative. Browser preview data is fictional. Relays are transport, not accounting systems, and do not interpret or mutate ledger data.
+## 日本語
 
-## Invariants
-
-1. Preserve the source document and its digest.
-2. Fail closed when the format or accounting meaning is ambiguous.
-3. Require explicit approval before posting or applying received data.
-4. Keep transfers and liability settlements out of expense and income totals.
-5. Keep native currencies separate unless a source-backed FX rate exists.
-6. Make displayed and exported numbers traceable to scope and source.
+React/TypeScript frontend は Tauri 2 内で動作します。Rust command がローカル暗号化保存、取込解析、証拠来歴、会計境界を担当します。抽出候補は確認キューに入り、承認済み記録だけが複式簿記台帳へ反映されます。意味が不完全な connector／OCR は fail-closed です。

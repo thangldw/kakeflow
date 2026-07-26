@@ -1,64 +1,53 @@
 # KakeFlow
 
-KakeFlow is a local-first household finance desktop app for Japan. It imports user-provided bank, card, wallet, brokerage, PDF, spreadsheet, email, and receipt data into an auditable double-entry ledger—only after review.
+[English](#english) · [Tiếng Việt](#tiếng-việt) · [日本語](#日本語)
 
-[Product page](https://thangldw.github.io/apps/kakeflow/) · [Downloads](https://github.com/thangldw/kakeflow-releases/releases/latest) · [Release notes](RELEASE_NOTES.md) · [Documentation](docs/README.md)
+Local-first household finance desktop application for Japan.
 
 Version 1.0.0 is the current stable desktop milestone.
 
-![KakeFlow local-first pipeline](docs/assets/infographics/data-pipeline.svg)
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"background":"#FFFFFF","fontFamily":"Arial, sans-serif","lineColor":"#667085","primaryTextColor":"#172B4D"}}}%%
+flowchart LR
+    I["User imports<br/>Nhập liệu / 取込"]:::yellow
+    E["Evidence & lineage<br/>Bằng chứng / 来歴"]:::blue
+    V["Review<br/>Duyệt / 確認"]:::pink
+    L["Double-entry ledger<br/>Sổ kép / 複式簿記"]:::purple
+    R["Reports & export<br/>Báo cáo / レポート"]:::green
+    I --> E --> V --> L --> R
+    classDef yellow fill:#FFF4A3,stroke:#C9A227,stroke-width:2px,color:#172B4D
+    classDef blue fill:#D9EAFD,stroke:#4C78A8,stroke-width:2px,color:#172B4D
+    classDef pink fill:#FFE1E6,stroke:#C96A7B,stroke-width:2px,color:#172B4D
+    classDef purple fill:#E9DDF7,stroke:#8064A2,stroke-width:2px,color:#172B4D
+    classDef green fill:#DDF5E3,stroke:#4F9D69,stroke-width:2px,color:#172B4D
+```
 
-## Why KakeFlow
+## English
 
-- Local encrypted storage for the ledger, evidence, credentials, and reports.
-- Immutable source evidence and row-level lineage for every confirmed import.
-- Review-first posting: OCR, connectors, rules, and family delivery never write automatically.
-- Correct card accounting: purchases create expenses; later bank debits settle liabilities.
-- Japanese financial-source adapters that fail closed on ambiguous records.
-- Portfolio snapshots and FIFO investment performance without invented FX totals.
-- Japanese, English, and Vietnamese UI catalogs with automated coverage checks.
+KakeFlow imports user-provided bank, card, wallet, brokerage, spreadsheet, PDF, email and receipt data into an auditable double-entry ledger only after review. It keeps source evidence and row-level lineage, handles card settlement and investment snapshots, and provides Japanese, English and Vietnamese UI catalogs.
 
-## Supported workflows
-
-| Area | Current scope |
-| --- | --- |
-| Import | CSV, TSV, Excel, statement PDF, scanned PDF, receipt image, ZIP, EML, Gmail, Google Drive, watched folders |
-| Review | Account mapping, duplicates, category rules, split postings, refunds and manual corrections |
-| Cards | Statement identity, settlement account, due date, bank-payment matching, coverage |
-| Investments | Brokerage trades, asset snapshots, native-currency positions, FIFO realized performance |
-| Reports | Monthly and annual review, ledger export, portfolio export, PDF visual QA |
-| Family | Audience-partitioned encrypted artifacts, conflict review, atomic apply |
-
-## Run locally
-
-Requirements: Node.js 20.19+ or 22.12+, Rust 1.97, and the platform dependencies required by Tauri 2.
+Requirements: Node.js 20.19+ or 22.12+, Rust 1.97 and Tauri 2 platform dependencies.
 
 ```bash
 npm ci
-npm run dev
-```
-
-For the desktop app:
-
-```bash
-npm run desktop:dev
-```
-
-## Verify a change
-
-```bash
 npm run lint
 npm test -- --run
 npm run build
 cd src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-See [development](docs/DEVELOPMENT.md) for repository structure and [release](docs/RELEASE.md) for packaging and publication.
+KakeFlow does not initiate payments or treat extracted records as confirmed accounting. Ambiguous or unsupported data remains blocked for human review. Verified downloads are published at [kakeflow-releases](https://github.com/thangldw/kakeflow-releases/releases/tag/v1.0.0).
 
-## Safety boundary
+## Tiếng Việt
 
-KakeFlow does not initiate payments, connect directly to financial-account APIs, or treat extracted data as confirmed accounting. Unsupported or incomplete source semantics remain blocked for review. Google connectors are local test-user integrations until provider qualification is complete.
+KakeFlow nhập dữ liệu ngân hàng, thẻ, ví, chứng khoán, bảng tính, PDF, email và hóa đơn do người dùng cung cấp vào sổ kép có thể kiểm toán, nhưng chỉ sau bước duyệt. Hệ thống giữ bằng chứng nguồn và lineage theo từng dòng, hỗ trợ đối soát thẻ, snapshot đầu tư và giao diện Nhật–Anh–Việt.
 
-## License
+Ứng dụng không thực hiện thanh toán và không coi dữ liệu trích xuất là bút toán đã xác nhận. Dữ liệu mơ hồ hoặc chưa hỗ trợ luôn bị khóa để người dùng duyệt. Dùng các lệnh ở phần English để kiểm thử và build.
 
-See [LICENSE](LICENSE).
+## 日本語
+
+KakeFlow は、ユーザーが提供した銀行、カード、ウォレット、証券、表計算、PDF、メール、レシートのデータを、確認後にのみ監査可能な複式簿記台帳へ取り込みます。ソース証拠と行単位の来歴を保持し、カード決済照合、投資スナップショット、日本語・英語・ベトナム語 UI を提供します。
+
+支払いを開始せず、抽出結果を確定仕訳として扱いません。曖昧または未対応のデータは人による確認までブロックされます。テストとビルドには English セクションのコマンドを使用してください。
+
+Released under the [project license](LICENSE).
