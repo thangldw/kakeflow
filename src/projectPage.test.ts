@@ -40,9 +40,9 @@ describe('KakeFlow project page', () => {
     expect(localImages.every(localAssetExists)).toBe(true)
 
     for (const source of [
-      'assets/screenshots/kakeflow-overview.png',
-      'assets/screenshots/kakeflow-transactions.png',
-      'assets/screenshots/kakeflow-import-inbox.png',
+      'assets/infographics/data-pipeline.svg',
+      'assets/infographics/card-reconciliation.svg',
+      'assets/infographics/mobile-capture.svg',
     ]) {
       expect(script).toContain(source)
       expect(localAssetExists(source)).toBe(true)
@@ -102,7 +102,7 @@ describe('KakeFlow project page', () => {
     const transactionsTab = document.querySelector<HTMLButtonElement>('[data-screen="transactions"]')
     transactionsTab?.click()
     expect(transactionsTab?.getAttribute('aria-selected')).toBe('true')
-    expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('kakeflow-transactions.png')
+    expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('card-reconciliation.svg')
     expect(document.querySelector('#screen-caption')).toHaveTextContent('カテゴリ、ラベル、タグ')
   })
 })

@@ -20,7 +20,7 @@
 
   const screenData = {
     overview: {
-      src: 'assets/screenshots/kakeflow-overview.png',
+      src: 'assets/infographics/data-pipeline.svg',
       width: 1280,
       height: 720,
       title: '家計の概要',
@@ -28,7 +28,7 @@
       description: '発生ベースの支出、キャッシュフロー、カード負債の状態を一画面で把握します。',
     },
     transactions: {
-      src: 'assets/screenshots/kakeflow-transactions.png',
+      src: 'assets/infographics/card-reconciliation.svg',
       width: 1280,
       height: 720,
       title: '取引台帳',
@@ -36,7 +36,7 @@
       description: 'カテゴリ、ラベル、タグ、計算対象を編集し、元のファイルやレシートへ戻れます。',
     },
     import: {
-      src: 'assets/screenshots/kakeflow-import-inbox.png',
+      src: 'assets/infographics/mobile-capture.svg',
       width: 1280,
       height: 720,
       title: 'Import Inbox',

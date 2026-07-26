@@ -1,20 +1,5 @@
-# Security
+# KakeFlow security / Bảo mật / セキュリティ
 
-## Local data
-
-- The desktop database uses SQLCipher.
-- A random database key is stored in macOS Keychain or Windows Credential Manager.
-- Original evidence and generated reports remain local unless the user exports or sends them.
-- Backup and restore require explicit user action and validation.
-
-## Import boundary
-
-File type, size, encoding, archive paths, row counts, page counts, required fields and account roles are bounded. Unsupported semantics fail closed. Source bytes are not rewritten to make a parser succeed.
-
-## Connectors and relays
-
-Connector credentials belong in native credential storage, not the database, repository, screenshots, or logs. Relays authenticate requests but store opaque encrypted artifacts. Clients validate digest, schema, audience and membership before review.
-
-## Reporting issues
-
-Do not include real statements, account identifiers, credentials, evidence files, database copies, or recovery phrases in a public issue. Share a minimized fictional fixture and the exact version instead.
+- **English:** Never commit financial records, credentials, OAuth tokens, encryption keys or local databases. Report vulnerabilities privately through GitHub Security Advisories.
+- **Tiếng Việt:** Không commit dữ liệu tài chính, credential, OAuth token, khóa mã hóa hoặc database local. Báo lỗ hổng riêng tư qua GitHub Security Advisories.
+- **日本語:** 金融記録、認証情報、OAuth token、暗号鍵、ローカル DB を commit しないでください。脆弱性は GitHub Security Advisories で非公開報告してください。

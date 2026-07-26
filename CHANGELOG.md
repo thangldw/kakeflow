@@ -1,28 +1,21 @@
-# Changelog
+# KakeFlow changelog / Lịch sử thay đổi / 変更履歴
 
-All notable user-facing changes are recorded here. KakeFlow follows semantic versioning.
+## 1.0.0 — 2026-07-26
 
-## 1.0.0 — 2026-07-18
+### English
 
-### Added
+- Consolidated all merged import, evidence, review, double-entry ledger, card settlement, investment, report and family-delivery features.
+- Preserved fail-closed accounting, source lineage and local encrypted storage.
+- Removed hosted CI and release workflows; release verification now runs locally.
 
-- Local-first encrypted household ledger with immutable source evidence.
-- Review-first imports for Japanese bank, card, wallet, brokerage, spreadsheet, PDF, image, ZIP, EML, Gmail, Drive, and watched-folder sources.
-- Credit-card statement reconciliation and settlement coverage.
-- Portfolio snapshots, native-currency valuation, and FIFO investment performance.
-- Monthly, annual, ledger, and portfolio exports with source-backed scope.
-- Audience-partitioned family delivery with explicit conflict review.
-- Complete Japanese, English, and Vietnamese UI catalogs with automated coverage tests.
+### Tiếng Việt
 
-### Improved
+- Hợp nhất toàn bộ tính năng import, bằng chứng, duyệt, sổ kép, đối soát thẻ, đầu tư, báo cáo và chia sẻ gia đình đã merge.
+- Giữ kế toán fail-closed, lineage nguồn và lưu trữ mã hóa local.
+- Xóa CI/release workflow hosted; kiểm tra release được chạy local.
 
-- Rakuten Card PDF differences can proceed to review so refund or adjustment rows can be corrected manually; the original PDF remains unchanged.
-- Securities asset snapshots recognize the Shift-JIS `assetbalance(all)` position-table format.
-- Japanese household expense categories now cover common Money Forward, Moneytree, and 家計簿 workflows.
-- Repository documentation and diagrams are consolidated around the current product behavior.
+### 日本語
 
-### Safety
-
-- Imports, OCR, connectors, categorization, reconciliation, and family delivery do not post automatically.
-- Ambiguous account mappings, duplicates, unsupported rows, and missing evidence fail closed.
-- Cross-currency totals require source-backed conversion data.
+- マージ済みの取込、証拠、確認、複式簿記、カード決済照合、投資、レポート、家族共有を統合しました。
+- fail-closed 会計、ソース来歴、ローカル暗号化保存を維持しました。
+- hosted CI と release workflow を削除し、リリース検証をローカル実行へ統一しました。
