@@ -1,5 +1,28 @@
 # KakeFlow changelog / Lịch sử thay đổi / 変更履歴
 
+## 1.2.0 — 2026-08-04
+
+### English
+
+- Added signed Tauri auto-update checks after startup plus manual update controls in Settings.
+- Added anonymized synthetic PP-OCRv5 receipt fixtures, parser contracts and an in-browser model regression gate for dates, totals, taxes and item prices.
+- Rebuilt the public landing page in Japanese, English and Vietnamese with a real product GIF covering OCR, budgets and investments.
+- Added an optional Support my work dialog with GitHub Sponsors and MB Bank VietQR.
+
+### Tiếng Việt
+
+- Bổ sung auto-update Tauri có chữ ký, tự kiểm tra sau khi mở app và có nút kiểm tra thủ công trong Cài đặt.
+- Bổ sung fixture biên lai PP-OCRv5 tổng hợp đã ẩn danh, test parser và trang regression model cho ngày, tổng tiền, thuế và giá từng món.
+- Làm lại landing page Nhật–Anh–Việt với GIF màn hình thật giới thiệu OCR, ngân sách và đầu tư.
+- Thêm modal Support my work tùy chọn qua GitHub Sponsors và MB Bank VietQR.
+
+### 日本語
+
+- 署名済み Tauri auto-update を追加し、起動後の自動確認と設定画面からの手動確認に対応しました。
+- 匿名の合成 PP-OCRv5 レシート fixture、parser contract、日付・合計・税・品目価格を確認する browser model regression gate を追加しました。
+- OCR・予算・投資の実画面 GIF を使い、公開 landing page を日本語・英語・ベトナム語対応へ刷新しました。
+- GitHub Sponsors と MB Bank VietQR に対応する任意の Support my work dialog を追加しました。
+
 ## 1.1.1 — 2026-08-04
 
 ### English

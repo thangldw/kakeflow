@@ -292,6 +292,45 @@ button { transition: background-color 120ms ease, border-color 120ms ease, color
 html[data-density='compact'] .transaction-ledger-row { min-height: 35px; padding-block: 3px; }
 html[data-density='compact'] .panel { padding-top: 10px; padding-bottom: 10px; }
 
+.app-update-banner { position: fixed; right: 18px; bottom: 18px; z-index: 76; width: min(430px,calc(100vw - 36px)); display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 10px; padding: 11px 12px; color: var(--text); background: var(--surface); border: 1px solid color-mix(in oklch,var(--primary),var(--hairline) 55%); border-radius: 10px; box-shadow: 0 14px 38px rgba(28,35,30,.16); }
+.app-update-banner > svg { color: var(--primary); }
+.app-update-banner > span { min-width: 0; display: grid; gap: 2px; }
+.app-update-banner strong { font-size: 10.5px; }
+.app-update-banner small { overflow: hidden; color: var(--text2); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.app-update-banner .secondary-btn { min-height: 30px; white-space: nowrap; }
+.app-update-backdrop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; padding: 24px; background: rgba(28,35,30,.42); }
+.app-update-dialog { position: relative; width: min(720px,calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; }
+.app-update-close { position: absolute; top: 10px; right: 10px; z-index: 1; }
+.app-update-panel { grid-template-columns: minmax(0,1.1fr) minmax(270px,.9fr); align-items: center; gap: 22px; }
+.app-update-dialog .app-update-panel { margin: 0; padding-top: 28px; }
+.update-security-mark { width: fit-content; display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px; padding: 4px 7px; color: var(--ok); background: var(--ok-bg); border-radius: 999px; font-size: 9px; font-weight: 700; }
+.app-update-panel h2 { margin: 0 0 5px; }
+.app-update-panel p { line-height: 1.55; }
+.app-update-actions { display: grid; gap: 10px; }
+.update-release-summary { padding: 10px; background: var(--surface2); border: 1px solid var(--hairline); border-radius: 7px; }
+.update-release-summary strong { color: var(--primary); font-family: var(--font-mono); }
+.update-release-summary p { max-height: 90px; overflow: auto; margin: 5px 0 0; color: var(--text2); font-size: 9.5px; white-space: pre-wrap; }
+.update-progress { display: grid; gap: 7px; }
+.update-progress > span { display: flex; justify-content: space-between; gap: 10px; }
+.update-progress progress { width: 100%; accent-color: var(--primary); }
+.update-state { display: flex; align-items: center; gap: 6px; margin: 0; padding: 9px 10px; background: var(--surface2); border-radius: 7px; font-size: 9.5px; }
+.update-state.success { color: var(--ok); background: var(--ok-bg); }
+.update-state.error { color: var(--warn); background: var(--warn-bg); }
+.update-buttons { display: flex; justify-content: flex-end; }
+.update-buttons button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; }
+.is-spinning { animation: kakeflow-spin .8s linear infinite; }
+@keyframes kakeflow-spin { to { transform: rotate(360deg); } }
+
+.sidebar > nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; scrollbar-width: thin; }
+.sidebar-foot { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  .app-update-banner { grid-template-columns: auto minmax(0,1fr) auto; }
+  .app-update-banner .secondary-btn { grid-column: 2; justify-self: start; }
+  .app-update-banner > .icon-btn { grid-column: 3; grid-row: 1; }
+  .app-update-panel { grid-template-columns: minmax(0,1fr); }
+}
+
 /* The settings account editor needs more horizontal room than the summary
    panel. Stack the panels before either one can paint over its neighbour. */
 @media (max-width: 1320px) {
