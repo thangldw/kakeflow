@@ -85,6 +85,15 @@ const en: Record<string, string> = {
   '原本未登録': 'No source registered', '原本': 'sources', '行': 'rows', '種類': 'types', '件': 'items',
   '確定するまでダッシュボード集計外': 'Excluded from dashboards until confirmed',
   '再実行または原本確認が必要': 'Retry or inspect the source document',
+  '確定済み履歴から提案': 'Suggested from confirmed history', 'ローカルキーワードから提案': 'Suggested from local keywords',
+  '端末内だけで判定': 'Evaluated only on this device', 'ローカルカテゴリー候補を適用': 'Apply local category suggestion', '選択済み': 'Selected',
+  'ローカル候補を適用しました。承認はまだ行われていません。': 'Applied the local suggestion. It has not been approved yet.',
+  'ローカルカテゴリー候補': 'Local category suggestions',
+  '保存済みルール、確定済み履歴、端末内キーワードの順で提案します。承認や台帳反映は自動で行いません。': 'Suggestions use saved rules, confirmed history, then on-device keywords. Nothing is approved or posted automatically.',
+  '保存済みルールを読み込めませんでした。履歴とキーワードによる候補は引き続き利用できます。': 'Saved rules could not be loaded. History and keyword suggestions remain available.',
+  '取引履歴を読み込めませんでした。保存済みルールとキーワードで提案します。': 'Transaction history could not be loaded. Suggestions will use saved rules and keywords.',
+  '件にカテゴリー候補を適用しました。承認はまだ行われていません。': ' category suggestions applied. Nothing has been approved yet.',
+  '高信頼度の未編集候補に一括適用（': 'Apply high-confidence untouched suggestions (',
 }
 
 const vi: Record<string, string> = {
@@ -92,6 +101,7 @@ const vi: Record<string, string> = {
   'ホーム': 'Trang chủ', '取引': 'Giao dịch', 'インポート': 'Nhập dữ liệu', '撮影 Inbox': 'Hộp thư ảnh',
   'カード照合': 'Đối soát thẻ', '資産・投資': 'Tài sản & đầu tư',
   'カレンダー・レポート': 'Lịch & báo cáo', '予算・目標': 'Ngân sách & mục tiêu',
+  '定期取引・固定費': 'Định kỳ & chi phí cố định', '監査・証跡': 'Kiểm toán & chứng từ',
   '分類ルール': 'Quy tắc phân loại', '家族スペース': 'Không gian gia đình', '設定': 'Cài đặt',
   'メニュー': 'Menu', 'メニューを閉じる': 'Đóng menu', 'メニューを開く': 'Mở menu',
   'メインナビゲーション': 'Điều hướng chính', '世帯を切り替える': 'Chuyển hộ gia đình',
@@ -102,6 +112,13 @@ const vi: Record<string, string> = {
   '世帯共通': 'Dùng chung gia đình', '対象月': 'Tháng', '言語': 'Ngôn ngữ',
   'テーマ切替': 'Đổi giao diện', 'メイン': 'Chính', '取り込み': 'Tiếp nhận', '照合・資産': 'Đối soát & tài sản',
   '計画・分析': 'Kế hoạch & phân tích', '世帯': 'Gia đình',
+  'サブスクリプションと固定費の変化': 'Theo dõi đăng ký và biến động chi phí cố định',
+  '原本、レビュー、確定台帳の来歴': 'Truy vết chứng từ gốc, bước kiểm tra và sổ cái đã xác nhận',
+  '口座グループ': 'Nhóm tài khoản', '帰属': 'Phân bổ',
+  'スナップショット': 'Ảnh chụp tài sản', '実現損益（FIFO）': 'Lãi/lỗ đã thực hiện (FIFO)',
+  '推移・評価': 'Diễn biến & định giá', '投資表示': 'Chế độ xem đầu tư',
+  '表示するスナップショット': 'Ảnh chụp tài sản đang hiển thị',
+  '最新への自動切替は行いません。評価日を明示して表示します。': 'Không tự chuyển sang bản mới nhất; ngày định giá luôn được hiển thị rõ ràng.',
   '世帯の状況・重要アクション・データ品質': 'Tình hình gia đình, tác vụ quan trọng và chất lượng dữ liệu',
   '確定済み元帳 — 検索・証跡・ドリルダウン': 'Sổ cái đã xác nhận — tìm kiếm, chứng từ và truy vết',
   'ファイル検出 → レビュー → 転記': 'Phát hiện tệp → kiểm tra → ghi sổ',
@@ -161,10 +178,19 @@ const vi: Record<string, string> = {
   '表示設定の保存はデスクトップ版で利用できます。': 'Có thể lưu thiết lập hiển thị trong ứng dụng desktop.',
   '資産・投資を見る': 'Xem tài sản & đầu tư', 'カード照合を開く': 'Mở đối soát thẻ',
   '資金移動を見る': 'Xem dòng tiền', 'ファイルを取り込む': 'Nhập tệp',
-  '帰属': 'Quy thuộc', '表示': 'Hiển thị', 'まだありません': 'Chưa có',
+  '表示': 'Hiển thị', 'まだありません': 'Chưa có',
   '原本未登録': 'Chưa đăng ký nguồn', '原本': 'nguồn', '行': 'dòng', '種類': 'loại', '件': 'mục',
   '確定するまでダッシュボード集計外': 'Không tính vào dashboard cho đến khi xác nhận',
   '再実行または原本確認が必要': 'Cần chạy lại hoặc kiểm tra dữ liệu nguồn',
+  '確定済み履歴から提案': 'Đề xuất từ lịch sử đã xác nhận', 'ローカルキーワードから提案': 'Đề xuất từ từ khóa local',
+  '端末内だけで判定': 'Chỉ phân tích trên thiết bị này', 'ローカルカテゴリー候補を適用': 'Áp dụng danh mục local được đề xuất', '選択済み': 'Đã chọn',
+  'ローカル候補を適用しました。承認はまだ行われていません。': 'Đã áp dụng đề xuất local nhưng chưa xác nhận giao dịch.',
+  'ローカルカテゴリー候補': 'Đề xuất danh mục local',
+  '保存済みルール、確定済み履歴、端末内キーワードの順で提案します。承認や台帳反映は自動で行いません。': 'Ưu tiên quy tắc đã lưu, lịch sử đã xác nhận rồi đến từ khóa trên thiết bị. Không tự xác nhận hoặc ghi sổ.',
+  '保存済みルールを読み込めませんでした。履歴とキーワードによる候補は引き続き利用できます。': 'Không tải được quy tắc đã lưu; vẫn có thể đề xuất từ lịch sử và từ khóa.',
+  '取引履歴を読み込めませんでした。保存済みルールとキーワードで提案します。': 'Không tải được lịch sử giao dịch; sẽ đề xuất bằng quy tắc đã lưu và từ khóa.',
+  '件にカテゴリー候補を適用しました。承認はまだ行われていません。': ' đề xuất danh mục đã được áp dụng nhưng chưa xác nhận.',
+  '高信頼度の未編集候補に一括適用（': 'Áp dụng hàng loạt đề xuất chưa sửa có độ tin cậy cao (',
 }
 
 type I18nValue = {
@@ -226,9 +252,6 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [])
   useEffect(() => {
     document.documentElement.lang = locale === 'ja' ? 'ja' : locale === 'vi' ? 'vi' : 'en'
-    return () => {
-      activeLocale = 'ja'
-    }
   }, [locale])
   const value = useMemo<I18nValue>(() => ({
     locale,

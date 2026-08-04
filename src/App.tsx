@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
-import kakeflowLogo from './assets/kakeflow-logo.png'
 import {
   ArrowDownLeft,
   ArrowRight,
   ArrowUpRight,
   CircleDollarSign,
   CalendarDays,
+  Clock3,
   Check,
   Camera,
   Bell,
@@ -28,8 +28,10 @@ import {
   CircleDotDashed,
   Minus,
   MoreHorizontal,
+  Plus,
   Search,
   Settings,
+  ShieldCheck,
   Sparkles,
   Repeat2,
   TrainFront,
@@ -108,6 +110,8 @@ import { gmailSyncEventPlatform } from './features/import/gmailSyncEventPlatform
 import { PostingEntryEditor } from './features/import/PostingEntryEditor'
 import { ReceiptReviewPanel } from './features/import/ReceiptReviewPanel'
 import { validatePostingDecision } from './features/import/receiptSplitPosting'
+import { HIGH_CONFIDENCE_CATEGORY_BPS, suggestLocalCategory } from './features/classification/localCategorySuggestion'
+import type { LocalCategorySuggestion } from './features/classification/localCategorySuggestion'
 import { CaptureInboxWorkspace } from './features/capture/CaptureInboxWorkspace'
 import { MobileCaptureConnectorPanel } from './features/capture/MobileCaptureConnectorPanel'
 import { delimitedParserProfilePlatform } from './features/parser-profiles/delimitedParserProfilePlatform'
@@ -121,6 +125,7 @@ import type { NavigationItem, PageId, Transaction } from './types'
 import { localize, useI18n } from './i18n'
 import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
+import { AuditReadinessPage, GlobalLedgerSearch, MonthlyContextNotes, PlanningTools, SecondaryCurrencySummary } from './features/gemini/GeminiFeatureSuite'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const hasRakutenStatementMismatch = (item: Pick<ImportPreview, 'issues'>) => item.issues.some((issue) => issue.code === 'RAKUTEN_PDF_TOTAL_MISMATCH')
@@ -312,16 +317,18 @@ const navigation: NavigationItem[] = [
   { id: 'investments', label: '資産・投資', icon: TrendingUp },
   { id: 'reports', label: 'カレンダー・レポート', icon: CalendarDays },
   { id: 'budgets', label: '予算・目標', icon: Goal },
+  { id: 'recurring', label: '定期取引・固定費', icon: Clock3 },
   { id: 'rules', label: '分類ルール', icon: Sparkles },
   { id: 'family', label: '家族スペース', icon: Users },
+  { id: 'audit', label: '監査・証跡', icon: ShieldCheck },
 ]
 
 const navigationSections: readonly { label: string; pages: readonly PageId[] }[] = [
   { label: 'メイン', pages: ['overview', 'transactions'] },
   { label: '取り込み', pages: ['import', 'capture'] },
   { label: '照合・資産', pages: ['cards', 'investments'] },
-  { label: '計画・分析', pages: ['reports', 'budgets', 'rules'] },
-  { label: '世帯', pages: ['family'] },
+  { label: '計画・分析', pages: ['reports', 'budgets', 'recurring', 'rules'] },
+  { label: '世帯', pages: ['family', 'audit'] },
 ]
 
 const pageMeta: Readonly<Record<PageId, { title: string; description: string }>> = {
@@ -333,14 +340,16 @@ const pageMeta: Readonly<Record<PageId, { title: string; description: string }>>
   investments: { title: '資産・投資', description: 'スナップショット・保有・実現損益' },
   reports: { title: 'カレンダー・レポート', description: '月次・年次・予測・固定費' },
   budgets: { title: '予算・目標', description: '計画値と確定台帳の比較' },
+  recurring: { title: '定期取引・固定費', description: 'サブスクリプションと固定費の変化' },
   rules: { title: '分類ルール', description: '決定的で説明可能な分類ルール' },
   family: { title: '家族スペース', description: '世帯メンバー・帰属・共有レビュー' },
+  audit: { title: '監査・証跡', description: '原本、レビュー、確定台帳の来歴' },
   settings: { title: '設定', description: '口座・ローカルデータ・バックアップ' },
 }
 
 function householdInitials(name: string): string { return name.trim().slice(0, 2) || localize("家計") }
 
-function Sidebar({ page, setPage, open, close, bootstrap, households, activeHouseholdId, selectHousehold, createHousehold, importActionableCount, capturePendingCount }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; createHousehold: () => void; importActionableCount: number; capturePendingCount: number }) {
+function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, bootstrap, households, activeHouseholdId, selectHousehold, createHousehold, importActionableCount, capturePendingCount }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; collapsed: boolean; toggleCollapsed: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; createHousehold: () => void; importActionableCount: number; capturePendingCount: number }) {
   const { locale, text } = useI18n()
   const [householdOpen, setHouseholdOpen] = useState(false)
   const householdRef = useRef<HTMLDivElement>(null)
@@ -355,11 +364,12 @@ function Sidebar({ page, setPage, open, close, bootstrap, households, activeHous
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label={text('メニューを閉じる')} onClick={close} />}
-      <aside className={`sidebar ${open ? 'sidebar--open' : ''}`} aria-label={text('メインナビゲーション')}>
+      <aside className={`sidebar ${open ? 'sidebar--open' : ''}${collapsed ? ' sidebar--collapsed' : ''}`} aria-label={text('メインナビゲーション')}>
         <div className="brand">
-          <img className="brand-mark" src={kakeflowLogo} alt="" aria-hidden="true" />
-          <span>kakeflow</span>
-          <small className="brand-version">1.0.0</small>
+          <span className="brand-mark gemini-brand-mark" aria-hidden="true"><Sparkles size={21} /></span>
+          <span>KakeFlow</span>
+          <small className="brand-version">1.1.0</small>
+          <button className="icon-btn sidebar-collapse" aria-label={collapsed ? text('サイドバーを展開') : text('サイドバーを折りたたむ')} onClick={toggleCollapsed}>{collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}</button>
           <button className="icon-btn mobile-close" aria-label={text('メニューを閉じる')} onClick={close}><X size={19} /></button>
         </div>
 
@@ -415,15 +425,21 @@ function DesktopTitleBar({ householdName }: { householdName: string }) {
   </div>
 }
 
-function Topbar({ page, openMenu, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, attributionScope, setAttributionScope, members, showAccountScope, showBasis, basis, setBasis }: { page: PageId; openMenu: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; attributionScope: AttributionScopeDto; setAttributionScope: (scope: AttributionScopeDto) => void; members: readonly HouseholdMemberDto[]; showAccountScope: boolean; showBasis: boolean; basis: WorkspaceBasis; setBasis: (basis: WorkspaceBasis) => void }) {
-  const { text } = useI18n()
+function Topbar({ page, openMenu, onGlobalSearch, onManualEntry, onImport, month, setMonth, accountGroups, accountGroupId, setAccountGroupId, attributionScope, setAttributionScope, members, showAccountScope, showBasis, basis, setBasis }: { page: PageId; openMenu: () => void; onGlobalSearch: (query: string) => void; onManualEntry: () => void; onImport: () => void; month: string; setMonth: (month: string) => void; accountGroups: readonly AccountGroupDto[]; accountGroupId: string | null; setAccountGroupId: (groupId: string | null) => void; attributionScope: AttributionScopeDto; setAttributionScope: (scope: AttributionScopeDto) => void; members: readonly HouseholdMemberDto[]; showAccountScope: boolean; showBasis: boolean; basis: WorkspaceBasis; setBasis: (basis: WorkspaceBasis) => void }) {
+  const { locale, localeCode, text } = useI18n()
   const meta = pageMeta[page]
   const [openPopover, setOpenPopover] = useState<'scope' | 'period' | null>(null)
   const [pickerYear, setPickerYear] = useState(() => Number(month.slice(0, 4)))
   const controlsRef = useRef<HTMLDivElement>(null)
   const selectedScopeLabel = accountGroups.find((group) => group.id === accountGroupId)?.name ?? text('すべての口座')
   const currentMonth = currentTokyoPeriod().month
-  const monthLabel = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long' }).format(new Date(`${month}-01T12:00:00`))
+  const monthLabel = new Intl.DateTimeFormat(localeCode, { year: 'numeric', month: 'long' }).format(new Date(`${month}-01T12:00:00`))
+  const pickerYearLabel = new Intl.DateTimeFormat(localeCode, { year: 'numeric' }).format(new Date(`${pickerYear}-01-01T12:00:00`))
+  const pickerMonthLabel = (index: number) => new Intl.DateTimeFormat(localeCode, { month: 'short' }).format(new Date(`${pickerYear}-${String(index + 1).padStart(2, '0')}-01T12:00:00`))
+  const accountCount = accountGroups.reduce((sum, group) => sum + group.accountIds.length, 0)
+  const accountCountLabel = locale === 'ja'
+    ? `${accountCount || localize("全")}${localize("口座")}`
+    : accountCount > 0 ? `${accountCount} ${text("口座")}` : text("すべての口座")
   useEffect(() => {
     const close = (event: MouseEvent) => { if (!controlsRef.current?.contains(event.target as Node)) setOpenPopover(null) }
     const closeOnEscape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setOpenPopover(null) }
@@ -436,9 +452,11 @@ function Topbar({ page, openMenu, month, setMonth, accountGroups, accountGroupId
     <header className={`topbar topbar--${page}`}>
       <button className="icon-btn menu-btn" aria-label={text('メニューを開く')} onClick={openMenu}><Menu size={21} /></button>
       <div className="topbar-context"><strong>{text(meta.title)}</strong><span>{text(meta.description)}</span></div>
+      <GlobalLedgerSearch onSearch={onGlobalSearch} />
+      <div className="gemini-quick-actions"><button className="primary-btn" onClick={onManualEntry}><Plus size={14} /> {localize('手入力取引')}</button><button className="secondary-btn" onClick={onImport}><Import size={14} /> {localize('ファイル取り込み')}</button></div>
       <div className="top-actions" ref={controlsRef}>
-        {showAccountScope && <div className="workspace-popover-control"><button className="scope-trigger" aria-haspopup="dialog" aria-expanded={openPopover === 'scope'} onClick={() => setOpenPopover((value) => value === 'scope' ? null : 'scope')}>{localize("範囲:")} <strong>{selectedScopeLabel}</strong><ChevronDown size={13} /></button>{openPopover === 'scope' && <div className="scope-popover" role="dialog" aria-label={localize("集計範囲")}><section><p>{localize("口座グループ")}</p><button className={accountGroupId === null ? 'selected' : ''} onClick={() => { setAccountGroupId(null); setOpenPopover(null) }}><span>{accountGroupId === null && <Check size={13} />}{localize("すべての口座")}</span><small>{accountGroups.reduce((sum, group) => sum + group.accountIds.length, 0) || localize("全")}{localize("口座")}</small></button>{accountGroups.map((group) => <button key={group.id} className={accountGroupId === group.id ? 'selected' : ''} onClick={() => { setAccountGroupId(group.id); setOpenPopover(null) }}><span>{accountGroupId === group.id && <Check size={13} />}{group.name}</span><small>{group.accountIds.length}{localize("口座")}</small></button>)}</section><section><p>{localize("帰属")}</p><button className={attributionScope.kind === 'ALL' ? 'selected' : ''} onClick={() => { setAttributionScope(ALL_ATTRIBUTION_SCOPE); setOpenPopover(null) }}><span>{attributionScope.kind === 'ALL' && <Check size={13} />}{localize("世帯全体")}</span></button>{members.filter((member) => member.status === 'ACTIVE').map((member) => <button key={member.id} className={attributionScope.kind === 'MEMBER' && attributionScope.memberId === member.id ? 'selected' : ''} onClick={() => { setAttributionScope({ kind: 'MEMBER', memberId: member.id }); setOpenPopover(null) }}><span>{attributionScope.kind === 'MEMBER' && attributionScope.memberId === member.id && <Check size={13} />}{member.displayName}{localize("のみ")}</span></button>)}</section></div>}</div>}
-        <div className="period-stepper"><button aria-label={localize("前月")} onClick={() => selectPeriod(shiftMonth(month, -1))}><ChevronLeft size={14} /></button><button aria-haspopup="dialog" aria-expanded={openPopover === 'period'} onClick={() => { setPickerYear(Number(month.slice(0, 4))); setOpenPopover((value) => value === 'period' ? null : 'period') }}>{monthLabel}</button><button aria-label={localize("翌月")} disabled={month >= currentMonth} onClick={() => selectPeriod(shiftMonth(month, 1))}><ChevronRight size={14} /></button>{openPopover === 'period' && <div className="period-popover" role="dialog" aria-label={localize("対象月を選択")}><header><button aria-label={localize("前年")} onClick={() => setPickerYear((year) => year - 1)}><ChevronLeft size={14} /></button><strong>{pickerYear}{localize("年")}</strong><button aria-label={localize("翌年")} disabled={pickerYear >= Number(currentMonth.slice(0, 4))} onClick={() => setPickerYear((year) => year + 1)}><ChevronRight size={14} /></button></header><div className="month-grid">{Array.from({ length: 12 }, (_, index) => { const value = `${pickerYear}-${String(index + 1).padStart(2, '0')}`; const future = value > currentMonth; const partial = value === month || value === currentMonth; return <button key={value} disabled={future} className={value === month ? 'selected' : ''} onClick={() => selectPeriod(value)}><span>{index + 1}{localize("月")}</span>{future ? <Minus size={11} /> : partial ? <CircleDotDashed size={11} /> : <Check size={11} />}</button> })}</div><footer><span><Check size={11} /> {localize("完全")}</span><span><CircleDotDashed size={11} /> {localize("一部")}</span><span><Minus size={11} /> {localize("なし")}</span><button onClick={() => selectPeriod(currentMonth)}>{localize("今月")}</button></footer></div>}</div>
+        {showAccountScope && <div className="workspace-popover-control"><button className="scope-trigger" aria-haspopup="dialog" aria-expanded={openPopover === 'scope'} onClick={() => setOpenPopover((value) => value === 'scope' ? null : 'scope')}>{localize("範囲:")} <strong>{selectedScopeLabel}</strong><ChevronDown size={13} /></button>{openPopover === 'scope' && <div className="scope-popover" role="dialog" aria-label={localize("集計範囲")}><section><p>{localize("口座グループ")}</p><button className={accountGroupId === null ? 'selected' : ''} onClick={() => { setAccountGroupId(null); setOpenPopover(null) }}><span>{accountGroupId === null && <Check size={13} />}{localize("すべての口座")}</span><small>{accountCountLabel}</small></button>{accountGroups.map((group) => <button key={group.id} className={accountGroupId === group.id ? 'selected' : ''} onClick={() => { setAccountGroupId(group.id); setOpenPopover(null) }}><span>{accountGroupId === group.id && <Check size={13} />}{group.name}</span><small>{locale === 'ja' ? `${group.accountIds.length}${localize("口座")}` : `${group.accountIds.length} ${text("口座")}`}</small></button>)}</section><section><p>{localize("帰属")}</p><button className={attributionScope.kind === 'ALL' ? 'selected' : ''} onClick={() => { setAttributionScope(ALL_ATTRIBUTION_SCOPE); setOpenPopover(null) }}><span>{attributionScope.kind === 'ALL' && <Check size={13} />}{localize("世帯全体")}</span></button>{members.filter((member) => member.status === 'ACTIVE').map((member) => <button key={member.id} className={attributionScope.kind === 'MEMBER' && attributionScope.memberId === member.id ? 'selected' : ''} onClick={() => { setAttributionScope({ kind: 'MEMBER', memberId: member.id }); setOpenPopover(null) }}><span>{attributionScope.kind === 'MEMBER' && attributionScope.memberId === member.id && <Check size={13} />}{member.displayName}{localize("のみ")}</span></button>)}</section></div>}</div>}
+        <div className="period-stepper"><button aria-label={localize("前月")} onClick={() => selectPeriod(shiftMonth(month, -1))}><ChevronLeft size={14} /></button><button aria-haspopup="dialog" aria-expanded={openPopover === 'period'} onClick={() => { setPickerYear(Number(month.slice(0, 4))); setOpenPopover((value) => value === 'period' ? null : 'period') }}>{monthLabel}</button><button aria-label={localize("翌月")} disabled={month >= currentMonth} onClick={() => selectPeriod(shiftMonth(month, 1))}><ChevronRight size={14} /></button>{openPopover === 'period' && <div className="period-popover" role="dialog" aria-label={localize("対象月を選択")}><header><button aria-label={localize("前年")} onClick={() => setPickerYear((year) => year - 1)}><ChevronLeft size={14} /></button><strong>{pickerYearLabel}</strong><button aria-label={localize("翌年")} disabled={pickerYear >= Number(currentMonth.slice(0, 4))} onClick={() => setPickerYear((year) => year + 1)}><ChevronRight size={14} /></button></header><div className="month-grid">{Array.from({ length: 12 }, (_, index) => { const value = `${pickerYear}-${String(index + 1).padStart(2, '0')}`; const future = value > currentMonth; const partial = value === month || value === currentMonth; return <button key={value} disabled={future} className={value === month ? 'selected' : ''} onClick={() => selectPeriod(value)}><span>{pickerMonthLabel(index)}</span>{future ? <Minus size={11} /> : partial ? <CircleDotDashed size={11} /> : <Check size={11} />}</button> })}</div><footer><span><Check size={11} /> {localize("完全")}</span><span><CircleDotDashed size={11} /> {localize("一部")}</span><span><Minus size={11} /> {localize("なし")}</span><button onClick={() => selectPeriod(currentMonth)}>{localize("今月")}</button></footer></div>}</div>
         {showBasis && <div className="workspace-basis" role="group" aria-label={localize("計上基準")}>{([['ACCRUAL', localize("発生")], ['CASH', localize("資金移動")], ['BALANCE', localize("残高")]] as const).map(([value, label]) => <button key={value} className={basis === value ? 'active' : ''} aria-pressed={basis === value} disabled={value === 'BALANCE'} title={value === 'BALANCE' ? localize("残高ベースは読み取りモデル対応後に有効になります") : undefined} onClick={() => setBasis(value)}>{localize(label)}</button>)}</div>}
       </div>
       <div className="topbar-native-fallback" hidden aria-hidden="true"><label>{localize("対象月")}<input tabIndex={-1} type="month" value={month} onChange={(event) => selectPeriod(event.target.value)} /></label>{showAccountScope && <><label>{localize("口座スコープ")}<select tabIndex={-1} value={accountGroupId ?? ''} onChange={(event) => setAccountGroupId(event.target.value || null)}><option value="">{localize("すべての口座")}</option>{accountGroups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select></label><label>{localize("家族集計範囲")}<select tabIndex={-1} value={attributionScope.kind === 'MEMBER' ? `MEMBER:${attributionScope.memberId}` : attributionScope.kind} onChange={(event) => { const value = event.target.value; setAttributionScope(value === 'HOUSEHOLD_COMMON' ? { kind: 'HOUSEHOLD_COMMON' } : value.startsWith('MEMBER:') ? { kind: 'MEMBER', memberId: value.slice(7) } : ALL_ATTRIBUTION_SCOPE) }}><option value="ALL">{localize("世帯全体")}</option><option value="HOUSEHOLD_COMMON">{localize("世帯共通")}</option>{members.map((member) => <option key={member.id} value={`MEMBER:${member.id}`}>{member.displayName}</option>)}</select></label></>}</div>
@@ -487,15 +505,17 @@ function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: str
 }
 
 function TrendChart({ data = spendingTrend.slice(-6).map((point) => ({ month: point.month, income: point.income * 1000, expense: point.expense * 1000 })), incomeLabel = localize("収入"), expenseLabel = localize("支出") }: { data?: readonly { month: string; income: number; expense: number }[]; incomeLabel?: string; expenseLabel?: string }) {
-  const { locale, text } = useI18n()
+  const { locale, localeCode, text } = useI18n()
   if (data.length === 0) return <p className="empty-state">{localize("トレンドを表示する取引はまだありません。")}</p>
   const max = Math.max(1, ...data.flatMap((point) => [point.income, point.expense]))
-  const periodLabel = locale === 'ja' ? localize(`直近${data.length}か月`) : `${data.length} months`
+  const periodLabel = locale === 'ja' ? localize(`直近${data.length}か月`) : locale === 'vi' ? `${data.length} tháng` : `${data.length} months`
+  const chartLabel = locale === 'ja' ? `${periodLabel}の${text(incomeLabel)}と${text(expenseLabel)}` : locale === 'vi' ? `${periodLabel}: ${text(incomeLabel)} và ${text(expenseLabel)}` : `${periodLabel}: ${text(incomeLabel)} and ${text(expenseLabel)}`
+  const displayMonth = (value: string) => value.includes('-') ? new Intl.DateTimeFormat(localeCode, { month: 'short' }).format(new Date(`${value}-01T12:00:00`)) : value
   return (
-    <div className="chart-wrap chart-bars" role="img" aria-label={localize(`${periodLabel}の${text(incomeLabel)}と${text(expenseLabel)}`)}>
+    <div className="chart-wrap chart-bars" role="img" aria-label={chartLabel}>
       <div className="bar-grid" aria-hidden="true">{[1, .75, .5, .25].map((line) => <i key={line} style={{ bottom: `${line * 100}%` }} />)}</div>
-      <div className="bar-columns">{data.map((point) => <div className="bar-month" key={point.month} aria-label={`${point.month}: ${text(incomeLabel)} ${yen(point.income)}、${text(expenseLabel)} ${yen(point.expense)}`}><div className="bar-pair"><span className="bar-income" style={{ height: `${Math.max(3, point.income / max * 100)}%` }} /><span className="bar-expense" style={{ height: `${Math.max(3, point.expense / max * 100)}%` }} /></div><small>{point.month.includes('-') ? localize(`${Number(point.month.slice(5))}月`) : point.month}</small></div>)}</div>
-      <table className="visually-hidden"><caption>{periodLabel}{localize("の")}{text(incomeLabel)}{localize("と")}{text(expenseLabel)}</caption><thead><tr><th>{locale === 'ja' ? localize("月") : text('対象月')}</th><th>{text(incomeLabel)}</th><th>{text(expenseLabel)}</th></tr></thead><tbody>{data.map((point) => <tr key={`table-${point.month}`}><th>{point.month}</th><td>{point.income}{locale === 'ja' ? localize("円") : ' JPY'}</td><td>{point.expense}{locale === 'ja' ? localize("円") : ' JPY'}</td></tr>)}</tbody></table>
+      <div className="bar-columns">{data.map((point) => <div className="bar-month" key={point.month} aria-label={`${point.month}: ${text(incomeLabel)} ${yen(point.income)}, ${text(expenseLabel)} ${yen(point.expense)}`}><div className="bar-pair"><span className="bar-income" style={{ height: `${Math.max(3, point.income / max * 100)}%` }} /><span className="bar-expense" style={{ height: `${Math.max(3, point.expense / max * 100)}%` }} /></div><small>{displayMonth(point.month)}</small></div>)}</div>
+      <table className="visually-hidden"><caption>{chartLabel}</caption><thead><tr><th>{locale === 'ja' ? localize("月") : text('対象月')}</th><th>{text(incomeLabel)}</th><th>{text(expenseLabel)}</th></tr></thead><tbody>{data.map((point) => <tr key={`table-${point.month}`}><th>{point.month}</th><td>{point.income}{locale === 'ja' ? localize("円") : ' JPY'}</td><td>{point.expense}{locale === 'ja' ? localize("円") : ' JPY'}</td></tr>)}</tbody></table>
     </div>
   )
 }
@@ -740,6 +760,7 @@ function Overview({ setPage, openAllActions, householdId, accountGroupId, attrib
       {preferences.template === 'ASSETS_LIABILITIES' ? <button className="primary-btn" onClick={() => setPage('investments')}><TrendingUp size={17} /> {text('資産・投資を見る')}</button> : preferences.template === 'CARD_RECONCILIATION' ? <button className="primary-btn" onClick={() => setPage('cards')}><CreditCard size={17} /> {text('カード照合を開く')}</button> : cashFlow ? <button className="primary-btn" onClick={() => setPage('transactions')}><WalletCards size={17} /> {text('資金移動を見る')}</button> : <button className="primary-btn" onClick={() => setPage('import')}><Import size={17} /> {text('ファイルを取り込む')}</button>}
     </PageHeader>
     <section className="kpi-grid">{kpis}</section>
+    <SecondaryCurrencySummary netWorth={netWorth} income={income} expense={expense} />
     <HomeActionCenter householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} asOf={periodFromMonth(month).toDate} revision={revision} desktop={desktop} onAction={(action) => setPage(pageForAction(action))} onViewAll={openAllActions} />
     <section className="dashboard-grid">{panelOrder}</section>
     <DashboardDataQuality counts={importCounts} desktop={desktop} onOpenImport={() => setPage('import')} />
@@ -965,6 +986,7 @@ function updateInputFromDetail(detail: TransactionDetailDto, change: { readonly 
 function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccountGroupChange, attributionScope, revision, month, basis, onBasisChange, accounts, members, onChanged }: { householdId: string | null; accountGroupId: string | null; accountGroups: readonly AccountGroupDto[]; onAccountGroupChange: (groupId: string | null) => void; attributionScope: AttributionScopeDto; revision: number; month: string; basis: 'ACCRUAL' | 'CASH'; onBasisChange: (basis: 'ACCRUAL' | 'CASH') => void; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; onChanged: () => void }) {
   const { text } = useI18n()
   const [query, setQuery] = useState('')
+  const [globalAmountRange, setGlobalAmountRange] = useState<{ min: number | null; max: number | null }>({ min: null, max: null })
   const [transactionTypeFilter, setTransactionTypeFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE' | 'TRANSFER_PAYMENT' | 'REFUND'>('ALL')
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
@@ -1005,6 +1027,24 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
   const desktop = platformClient.runtime === 'tauri'
 
   useEffect(() => {
+    const receiveGlobalSearch = (event: Event) => {
+      const detail = (event as CustomEvent<{ query?: unknown }>).detail
+      if (typeof detail?.query !== 'string' || !detail.query.trim()) return
+      const raw = detail.query.trim()
+      const amountPattern = /(?:¥|￥)?([\d,]+)\s*円?\s*(以上|超|以下|未満|over|under)/i
+      const amount = raw.match(amountPattern)
+      const value = amount ? Number(amount[1].replaceAll(',', '')) : null
+      const direction = amount?.[2]?.toLowerCase()
+      setGlobalAmountRange({ min: value !== null && ['以上', '超', 'over'].includes(direction ?? '') ? value : null, max: value !== null && ['以下', '未満', 'under'].includes(direction ?? '') ? value : null })
+      setQuery(raw.replace(amountPattern, '').replace(/\s+/g, ' ').trim())
+    }
+    globalThis.addEventListener('kakeflow:global-search', receiveGlobalSearch)
+    const receiveManualEntry = () => setShowManual(true)
+    globalThis.addEventListener('kakeflow:manual-entry', receiveManualEntry)
+    return () => { globalThis.removeEventListener('kakeflow:global-search', receiveGlobalSearch); globalThis.removeEventListener('kakeflow:manual-entry', receiveManualEntry) }
+  }, [])
+
+  useEffect(() => {
     if (!desktop || !householdId) return
     let active = true
     const period = periodFromMonth(month)
@@ -1026,7 +1066,10 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
 
   const basisTransactions = transactions.filter((transaction) => basis === 'ACCRUAL' ? transaction.accountingEffect !== 'CASH_ONLY' : transaction.accountingEffect !== 'ACCRUAL_ONLY')
   const displayRows = desktop ? liveRows.map(toTransactionViewModel) : basisTransactions
-  const searchedRows = desktop ? displayRows : displayRows.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))
+  const searchedRows = (desktop ? displayRows : displayRows.filter((t) => `${t.merchant}${t.category}${t.account}`.toLowerCase().includes(query.toLowerCase()))).filter((transaction) => {
+    const amount = Math.abs(transaction.amount)
+    return (globalAmountRange.min === null || amount >= globalAmountRange.min) && (globalAmountRange.max === null || amount <= globalAmountRange.max)
+  })
   const visible = searchedRows.filter((transaction) => {
     const type = transaction.transactionType ?? (transaction.amount >= 0 ? 'INCOME' : 'EXPENSE')
     if (transactionTypeFilter === 'ALL') return true
@@ -1259,10 +1302,35 @@ function applyClassificationRuleToDecision(decision: PostingDecisionDto, rule: C
   }
 }
 
+function applyLocalCategorySuggestionToDecision(decision: PostingDecisionDto, suggestion: LocalCategorySuggestion, accounts: readonly AccountDto[]): PostingDecisionDto | null {
+  if (!eligibleClassificationDecision(decision, accounts) || !accounts.some((account) => account.id === suggestion.categoryAccountId && account.accountKind === 'EXPENSE')) return null
+  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
+  if (expenseEntries.length !== 1) return null
+  return clearClassificationProvenance({
+    ...decision,
+    entries: decision.entries.map((entry) => entry.id === expenseEntries[0].id ? { ...entry, accountId: suggestion.categoryAccountId } : entry),
+  })
+}
+
 function clearClassificationProvenance(decision: PostingDecisionDto): PostingDecisionDto {
   const { classificationRuleId: _ruleId, expectedClassificationRuleUpdatedAt: _updatedAt, ...manualDecision } = decision
   void _ruleId; void _updatedAt
   return manualDecision
+}
+
+function decisionUsesCategory(decision: PostingDecisionDto, categoryAccountId: string, accounts: readonly AccountDto[]): boolean {
+  const expectedSide = decision.transactionType === 'REFUND' ? 'CREDIT' : 'DEBIT'
+  return decision.entries.some((entry) => entry.side === expectedSide && entry.accountId === categoryAccountId && accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
+}
+
+function LocalCategorySuggestionView({ suggestion, merchantLabel, selected, onApply }: { suggestion: LocalCategorySuggestion; merchantLabel: string; selected: boolean; onApply: () => void }) {
+  const { locale, text } = useI18n()
+  const confidence = Math.round(suggestion.confidenceBps / 100)
+  const source = text(suggestion.source === 'HISTORY' ? "確定済み履歴から提案" : "ローカルキーワードから提案")
+  const reason = suggestion.source === 'HISTORY'
+    ? locale === 'ja' ? `${suggestion.sampleCount}件の類似取引・${suggestion.historySharePercent ?? 0}%がこのカテゴリー${suggestion.amountConsistent === false ? '・金額差を考慮済み' : ''}` : locale === 'vi' ? `${suggestion.sampleCount} giao dịch tương tự; ${suggestion.historySharePercent ?? 0}% thuộc danh mục này${suggestion.amountConsistent === false ? '; đã giảm độ tin cậy do chênh lệch số tiền' : ''}` : `${suggestion.sampleCount} similar transactions; ${suggestion.historySharePercent ?? 0}% used this category${suggestion.amountConsistent === false ? '; confidence reduced for the amount difference' : ''}`
+    : locale === 'ja' ? `キーワード「${suggestion.matchedKeyword ?? ''}」に一致` : locale === 'vi' ? `Khớp từ khóa “${suggestion.matchedKeyword ?? ''}”` : `Matched keyword “${suggestion.matchedKeyword ?? ''}”`
+  return <div className="classification-rule-suggestion classification-local-suggestion"><span><strong>{source}</strong><small>{suggestion.categoryName} ・ {text("信頼度")} {confidence}%</small><small>{reason} ・ {text("端末内だけで判定")}</small></span><button type="button" className="mini-btn" aria-label={`${merchantLabel} — ${text("ローカルカテゴリー候補を適用")}`} disabled={selected} onClick={onApply}>{selected ? text("選択済み") : text("提案を適用")}</button></div>
 }
 
 function initialPostingDraft(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDraft {
@@ -1316,7 +1384,9 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   const [receiptSelections, setReceiptSelections] = useState<Record<string, string>>({})
   const [matchingCandidate, setMatchingCandidate] = useState<string | null>(null)
   const [classificationRules, setClassificationRules] = useState<readonly ClassificationRuleDto[]>([])
+  const [classificationHistory, setClassificationHistory] = useState<readonly TransactionRowDto[]>([])
   const [classificationLoadFailed, setClassificationLoadFailed] = useState(false)
+  const [classificationHistoryLoadFailed, setClassificationHistoryLoadFailed] = useState(false)
   const [classificationNotices, setClassificationNotices] = useState<Record<string, string>>({})
   const [applyingClassification, setApplyingClassification] = useState<string | null>(null)
   const classificationLoadStarted = useRef(false)
@@ -1340,6 +1410,14 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
     return () => { active = false }
   }, [hasEligibleClassificationCandidates, householdId])
   useEffect(() => {
+    if (!hasEligibleClassificationCandidates) return
+    let active = true
+    void platformClient.queryTransactions({ householdId, attributionScope: ALL_ATTRIBUTION_SCOPE, accountingBasis: 'ACCRUAL', calculationTargetFilter: 'INCLUDED', page: 1, pageSize: 100 })
+      .then((page) => { if (active) { setClassificationHistory(page.items); setClassificationHistoryLoadFailed(false) } })
+      .catch(() => { if (active) { setClassificationHistory([]); setClassificationHistoryLoadFailed(true) } })
+    return () => { active = false }
+  }, [hasEligibleClassificationCandidates, householdId])
+  useEffect(() => {
     let active = true
     if (!isReceipt) return
     void Promise.all(stagedImport.candidates.map(async (candidate) => [candidate.id, await platformClient.suggestReceiptMatches(householdId, candidate.id)] as const)).then((items) => {
@@ -1360,6 +1438,18 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
     const draft = current[candidateId]
     return !draft ? current : { ...current, [candidateId]: { ...draft, approved: false, touched: true, decision: clearClassificationProvenance(change(draft.decision)) } }
   })
+  const localSuggestionFor = (candidateId: string, draft: PostingDraft): LocalCategorySuggestion | null => {
+    const candidate = stagedImport.candidates.find((item) => item.id === candidateId)
+    return suggestLocalCategory({ merchant: draft.decision.payee, description: draft.decision.description, transactionType: draft.decision.transactionType, amountJpy: candidate?.amountJpy }, classificationHistory, accounts)
+  }
+  const applyLocalSuggestion = (candidateId: string, suggestion: LocalCategorySuggestion) => {
+    const latest = draftsRef.current[candidateId]
+    if (!latest || !eligibleClassificationDecision(latest.decision, accounts)) return
+    const decision = applyLocalCategorySuggestionToDecision(latest.decision, suggestion, accounts)
+    if (!decision) return
+    setDrafts((current) => current[candidateId] !== latest ? current : { ...current, [candidateId]: { ...latest, approved: false, touched: true, decision } })
+    setClassificationNotices((current) => ({ ...current, [candidateId]: localize("ローカル候補を適用しました。承認はまだ行われていません。") }))
+  }
   const applyRuleSuggestion = async (candidateId: string) => {
     const draft = drafts[candidateId]
     if (!draft || !eligibleClassificationDecision(draft.decision, accounts)) return
@@ -1385,20 +1475,26 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
       setClassificationNotices((current) => ({ ...current, [candidateId]: localize("ルールを再確認できませんでした。候補は変更せず、手動で確認できます。") }))
     } finally { setApplyingClassification(null) }
   }
-  const applyAllRuleSuggestions = () => {
+  const applyAllClassificationSuggestions = () => {
     let appliedCount = 0
+    let localAppliedCount = 0
     const nextDrafts = Object.fromEntries(Object.entries(draftsRef.current).map(([candidateId, draft]) => {
       if (draft.touched || !eligibleClassificationDecision(draft.decision, accounts)) return [candidateId, draft]
       const rule = matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description)
-      if (!rule) return [candidateId, draft]
-      const decision = applyClassificationRuleToDecision(draft.decision, rule, accounts)
+      const localSuggestion = rule ? null : localSuggestionFor(candidateId, draft)
+      if (!rule && (!localSuggestion || localSuggestion.confidenceBps < HIGH_CONFIDENCE_CATEGORY_BPS)) return [candidateId, draft]
+      const decision = rule ? applyClassificationRuleToDecision(draft.decision, rule, accounts) : applyLocalCategorySuggestionToDecision(draft.decision, localSuggestion!, accounts)
       if (!decision) return [candidateId, draft]
       appliedCount += 1
+      if (!rule) localAppliedCount += 1
       return [candidateId, { ...draft, approved: false, touched: true, decision }]
     }))
     if (appliedCount > 0) {
       setDrafts(nextDrafts)
-      setClassificationNotices((current) => ({ ...current, all: localize(`${appliedCount}件にルール候補を適用しました。承認はまだ行われていません。`) }))
+      const notice = localAppliedCount === 0
+        ? `${appliedCount}件にルール候補を適用しました。承認はまだ行われていません。`
+        : `${appliedCount}件にカテゴリー候補を適用しました。承認はまだ行われていません。`
+      setClassificationNotices((current) => ({ ...current, all: localize(notice) }))
     }
   }
   const accountIds = new Set(accounts.map((account) => account.id))
@@ -1410,7 +1506,11 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   const decisions = stagedImport.candidates.map((candidate) => drafts[candidate.id]?.decision).filter((decision): decision is PostingDecisionDto => Boolean(decision))
   const sourceOnly = stagedImport.candidates.length === 0
   const postingError = Object.values(drafts).find((draft) => draft.error)?.error
-  const untouchedSuggestionCount = Object.values(drafts).filter((draft) => !draft.touched && eligibleClassificationDecision(draft.decision, accounts) && matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description)).length
+  const untouchedSuggestionCount = Object.entries(drafts).filter(([candidateId, draft]) => {
+    if (draft.touched || !eligibleClassificationDecision(draft.decision, accounts)) return false
+    if (matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description)) return true
+    return (localSuggestionFor(candidateId, draft)?.confidenceBps ?? 0) >= HIGH_CONFIDENCE_CATEGORY_BPS
+  }).length
   const bulkApprovalEligibleIds = new Set(stagedImport.candidates.filter((candidate) => {
     const draft = drafts[candidate.id]
     const duplicateResolved = !candidate.duplicateMatch || Boolean(draft?.decision.duplicateResolution)
@@ -1423,7 +1523,7 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   if (postingError) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}{localize("件の候補")}{recovered ? localize("・再起動後に復元") : ''}</p></div><b>{recovered ? localize("復元済み") : localize("確認")}</b></div><p className="empty-state" role="alert">{postingError}</p><div className="review-actions"><span>{localize("口座設定の修正後に再度開くか、取り消してください。")}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? localize("処理中…") : localize("取り消す")}</button></div></section>
   if (sourceOnly && sourceCompletionBlocked) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{localize("投資・資産データ")}{recovered ? localize("・再起動後に復元") : ''}</p></div><b>{recovered ? localize("復元済み") : localize("確認")}</b></div><p className="empty-state" role="alert">{localize("専用データの保存が完了する前に中断されました。この取込を取り消し、原本ファイルを再度取り込んでください。")}</p><div className="review-actions"><span>{localize("未保存の投資データを完了済みとして扱いません。")}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? localize("処理中…") : localize("取り消して再取込")}</button></div></section>
 
-  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}{localize("件の候補・原本は暗号化済み")}{recovered ? localize("・再起動後に復元") : ''}</p></div><b>{recovered ? localize("復元済み") : localize("確認")}</b></div>{hasEligibleClassificationCandidates && <div className="classification-review-toolbar"><span><strong>{localize("分類ルール候補")}</strong><small>{localize("ルールは候補だけを変更し、承認や台帳反映は行いません。")}</small></span><button type="button" className="secondary-btn" disabled={untouchedSuggestionCount === 0} onClick={applyAllRuleSuggestions}>{localize("未編集の候補に一括適用（")}{untouchedSuggestionCount}{localize("件）")}</button>{classificationLoadFailed && <small role="status">{localize("分類ルールを読み込めませんでした。候補は通常どおり手動で確認できます。")}</small>}{classificationNotices.all && <small role="status">{classificationNotices.all}</small>}</div>}{!sourceOnly && <div className="candidate-approval-toolbar"><label><input aria-label={localize("すべての承認可能な候補を承認")} type="checkbox" checked={allEligibleApproved} disabled={bulkApprovalEligibleIds.size === 0 || busy} onChange={(event) => setAllEligibleApprovals(event.target.checked)} /><span>{localize("すべて承認")}</span></label><small>{bulkApprovedCount}/{bulkApprovalEligibleIds.size}{localize("件承認済み")}{bulkApprovalEligibleIds.size < stagedImport.candidates.length ? localize(`・未解決の${stagedImport.candidates.length - bulkApprovalEligibleIds.size}件は対象外`) : ''}</small></div>}<div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const draftValid = validatePostingDecision(draft.decision, { candidateAmountJpy: candidate.amountJpy, accountIds, expectedCandidateId: candidate.id }).valid; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><ReceiptReviewPanel candidate={candidate} decision={draft.decision} accounts={accounts} onDecisionChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input aria-label={localize(`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`)} type="checkbox" checked={draft.approved} disabled={!draftValid} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>{localize("承認")}</span></label><div><input aria-label={localize(`${candidate.id}の支払先`)} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {directionLabel(candidate.direction, text)} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={localize(`${candidate.id}の取引種別`)} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'ADJUSTMENT', 'TRANSFER'].map((type) => <option key={type} value={type}>{transactionTypeLabel(type, text)}</option>)}</select><PostingEntryEditor candidateId={candidate.id} candidateAmountJpy={candidate.amountJpy} decision={draft.decision} accounts={accounts} onChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>{localize("家計集計に含める")}</span></label>{eligibleClassificationDecision(draft.decision, accounts) && (() => { const rule = matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description); const ruleNotice = classificationNotices[candidate.id]; return rule ? <div className="classification-rule-suggestion"><span><strong>{rule.name}</strong><small>{rule.categoryName}{rule.labels.length > 0 ? ` ・ ${rule.labels.join(' / ')}` : ''}{rule.tags.length > 0 ? ` ・ #${rule.tags.join(' #')}` : ''}</small></span><button type="button" className="mini-btn" aria-label={localize(`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}の分類ルール候補を適用`)} disabled={applyingClassification === candidate.id} onClick={() => void applyRuleSuggestion(candidate.id)}>{applyingClassification === candidate.id ? localize("再確認中…") : draft.decision.classificationRuleId === rule.id ? localize("適用済み・再確認") : localize("提案を適用")}</button>{ruleNotice && <small role="status">{ruleNotice}</small>}</div> : ruleNotice ? <small className="classification-rule-notice" role="status">{ruleNotice}</small> : null })()}{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>{localize("既存取引の候補")}</strong><select aria-label={localize(`${candidate.id}のレシート紐付け候補`)} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? localize("紐付け中…") : localize("新規支出を作らず証憑として紐付け")}</button><small>{localize("金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。")}</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}{sourceOnly && <p className="empty-state">{localize("台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。")}</p>}</div><div className="review-actions"><span>{sourceOnly ? localize("台帳へ取引は追加されません") : approved ? localize("全候補を承認済み") : localize("各候補の口座と種別を確認して承認してください")}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{localize("取り消す")}</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? localize("処理中…") : sourceOnly ? localize("原本処理を完了") : localize("承認済みを台帳へ反映")}</button></div></section>
+  return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}{localize("件の候補・原本は暗号化済み")}{recovered ? localize("・再起動後に復元") : ''}</p></div><b>{recovered ? localize("復元済み") : localize("確認")}</b></div>{hasEligibleClassificationCandidates && <div className="classification-review-toolbar"><span><strong>{localize("分類ルール候補")}</strong><small>{localize("保存済みルール、確定済み履歴、端末内キーワードの順で提案します。承認や台帳反映は自動で行いません。")}</small></span><button type="button" className="secondary-btn" disabled={untouchedSuggestionCount === 0} onClick={applyAllClassificationSuggestions}>{localize("未編集の候補に一括適用（")}{untouchedSuggestionCount}{localize("件）")}</button>{classificationLoadFailed && <small role="status">{localize("保存済みルールを読み込めませんでした。履歴とキーワードによる候補は引き続き利用できます。")}</small>}{classificationHistoryLoadFailed && <small role="status">{localize("取引履歴を読み込めませんでした。保存済みルールとキーワードで提案します。")}</small>}{classificationNotices.all && <small role="status">{classificationNotices.all}</small>}</div>}{!sourceOnly && <div className="candidate-approval-toolbar"><label><input aria-label={localize("すべての承認可能な候補を承認")} type="checkbox" checked={allEligibleApproved} disabled={bulkApprovalEligibleIds.size === 0 || busy} onChange={(event) => setAllEligibleApprovals(event.target.checked)} /><span>{localize("すべて承認")}</span></label><small>{bulkApprovedCount}/{bulkApprovalEligibleIds.size}{localize("件承認済み")}{bulkApprovalEligibleIds.size < stagedImport.candidates.length ? localize(`・未解決の${stagedImport.candidates.length - bulkApprovalEligibleIds.size}件は対象外`) : ''}</small></div>}<div className="candidate-review-list">{stagedImport.candidates.map((candidate) => { const draft = drafts[candidate.id]; const draftValid = validatePostingDecision(draft.decision, { candidateAmountJpy: candidate.amountJpy, accountIds, expectedCandidateId: candidate.id }).valid; return <div className="candidate-review-row candidate-review-edit" key={candidate.id}><ReceiptReviewPanel candidate={candidate} decision={draft.decision} accounts={accounts} onDecisionChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input aria-label={localize(`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}を承認`)} type="checkbox" checked={draft.approved} disabled={!draftValid} onChange={(event) => setDrafts((current) => ({ ...current, [candidate.id]: { ...current[candidate.id], approved: event.target.checked } }))} /><span>{localize("承認")}</span></label><div><input aria-label={localize(`${candidate.id}の支払先`)} value={draft.decision.payee ?? ''} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, payee: event.target.value || null }))} /><span>{candidate.occurredOn} ・ {directionLabel(candidate.direction, text)} ・ {yen(candidate.amountJpy)}</span>{candidate.institutionRaw && <small>{candidate.institutionRaw} ・ {[candidate.categoryMajorRaw, candidate.categoryMinorRaw].filter(Boolean).join(' / ')}{candidate.externalTransactionId ? ` ・ ID ${candidate.externalTransactionId}` : ''}</small>}</div><select aria-label={localize(`${candidate.id}の取引種別`)} value={draft.decision.transactionType} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, transactionType: event.target.value }))}>{['EXPENSE', 'CARD_PURCHASE', 'CARD_PAYMENT', 'INCOME', 'REFUND', 'ADJUSTMENT', 'TRANSFER'].map((type) => <option key={type} value={type}>{transactionTypeLabel(type, text)}</option>)}</select><PostingEntryEditor candidateId={candidate.id} candidateAmountJpy={candidate.amountJpy} decision={draft.decision} accounts={accounts} onChange={(decision) => updateDecision(candidate.id, () => decision)} /><label><input type="checkbox" checked={draft.decision.calculationTarget} disabled={candidate.suggestedTransactionType === 'TRANSFER'} onChange={(event) => updateDecision(candidate.id, (decision) => ({ ...decision, calculationTarget: event.target.checked }))} /><span>{localize("家計集計に含める")}</span></label>{eligibleClassificationDecision(draft.decision, accounts) && (() => { const rule = matchingClassificationRule(classificationRules, draft.decision.payee, draft.decision.description); const localSuggestion = rule ? null : localSuggestionFor(candidate.id, draft); const ruleNotice = classificationNotices[candidate.id]; return rule ? <div className="classification-rule-suggestion"><span><strong>{rule.name}</strong><small>{rule.categoryName}{rule.labels.length > 0 ? ` ・ ${rule.labels.join(' / ')}` : ''}{rule.tags.length > 0 ? ` ・ #${rule.tags.join(' #')}` : ''}</small></span><button type="button" className="mini-btn" aria-label={localize(`${candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id}の分類ルール候補を適用`)} disabled={applyingClassification === candidate.id} onClick={() => void applyRuleSuggestion(candidate.id)}>{applyingClassification === candidate.id ? localize("再確認中…") : draft.decision.classificationRuleId === rule.id ? localize("適用済み・再確認") : localize("提案を適用")}</button>{ruleNotice && <small role="status">{ruleNotice}</small>}</div> : localSuggestion ? <><LocalCategorySuggestionView suggestion={localSuggestion} merchantLabel={candidate.merchantRaw ?? candidate.descriptionRaw ?? candidate.id} selected={decisionUsesCategory(draft.decision, localSuggestion.categoryAccountId, accounts) && draft.touched} onApply={() => applyLocalSuggestion(candidate.id, localSuggestion)} />{ruleNotice && <small className="classification-rule-notice" role="status">{ruleNotice}</small>}</> : ruleNotice ? <small className="classification-rule-notice" role="status">{ruleNotice}</small> : null })()}{isReceipt && (receiptMatches[candidate.id]?.length ?? 0) > 0 && <div className="receipt-match-review"><strong>{localize("既存取引の候補")}</strong><select aria-label={localize(`${candidate.id}のレシート紐付け候補`)} value={receiptSelections[candidate.id] ?? ''} onChange={(event) => setReceiptSelections((current) => ({ ...current, [candidate.id]: event.target.value }))}>{receiptMatches[candidate.id].map((match) => <option key={match.transactionId} value={match.transactionId}>{match.occurredOn} ・ {match.payee ?? match.description ?? match.transactionId} ・ {yen(match.amountJpy)} ・ {Math.round(match.scoreBps / 100)}%</option>)}</select><button className="mini-btn" disabled={matchingCandidate === candidate.id} onClick={() => void linkReceipt(candidate.id)}>{matchingCandidate === candidate.id ? localize("紐付け中…") : localize("新規支出を作らず証憑として紐付け")}</button><small>{localize("金額一致・日付差3日以内の確定済み支出だけを表示します。自動紐付けはしません。")}</small></div>}{candidate.issues.length > 0 && <small>{candidate.issues.join(', ')}</small>}</div> })}{sourceOnly && <p className="empty-state">{localize("台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。")}</p>}</div><div className="review-actions"><span>{sourceOnly ? localize("台帳へ取引は追加されません") : approved ? localize("全候補を承認済み") : localize("各候補の口座と種別を確認して承認してください")}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{localize("取り消す")}</button><button className="primary-btn" disabled={busy || !approved || decisions.length !== stagedImport.candidates.length} onClick={() => onCommit(decisions)}>{busy ? localize("処理中…") : sourceOnly ? localize("原本処理を完了") : localize("承認済みを台帳へ反映")}</button></div></section>
 }
 
 interface DurableFolderInboxView {
@@ -2551,6 +2651,23 @@ function FixedCostReviewPanel({ householdId, accountGroupId, attributionScope, m
   return <FixedCostReviewView data={review} onOpenTransactions={openTransactions} />
 }
 
+function RecurringPage({ householdId, accountGroupId, attributionScope, month, revision, openTransactions }: { householdId: string | null; accountGroupId: string | null; attributionScope: AttributionScopeDto; month: string; revision: number; openTransactions: () => void }) {
+  const [preferenceRevision, setPreferenceRevision] = useState(0)
+  if (platformClient.runtime === 'web') {
+    const previewItems = [
+      { payee: 'Netflix', cadence: localize('毎月'), amount: 1_490, next: '2026-08-12', status: localize('確認済み') },
+      { payee: 'Amazon Prime', cadence: localize('毎年'), amount: 5_900, next: '2026-09-03', status: localize('自動検出') },
+      { payee: '東京電力', cadence: localize('毎月'), amount: 12_840, next: '2026-08-18', status: localize('確認済み') },
+    ]
+    return <><PageHeader eyebrow={localize('Planning & Intelligence')} title={localize('定期取引・固定費')} description={localize('サブスクリプション、固定費、価格変化、異常支出をまとめて確認します。')}><button className="secondary-btn" onClick={openTransactions}><WalletCards size={16} /> {localize('関連取引を開く')}</button></PageHeader><section className="intelligence-grid"><article className="panel recurring-panel"><div className="panel-head"><div><h2>{localize('定期支出・サブスクリプション')}</h2><p>{localize('確定取引の反復履歴から検出')}</p></div><Repeat2 size={19} /></div>{previewItems.map((item) => <div className="recurring-row" key={item.payee}><div><span className="recurring-status recurring-status-confirmed">{item.status}</span><strong>{item.payee}</strong><span>{item.cadence} · {localize('信頼度')} 94%</span></div><div><small>{localize('次回見込み')}</small><strong>{item.next}</strong></div><div><small>{localize('標準金額')}</small><strong>{yen(item.amount)}</strong></div></div>)}</article><article className="panel anomaly-panel"><div className="panel-head"><div><h2>{localize('固定費サマリー')}</h2><p>{localize('直近3か月平均')}</p></div><Clock3 size={19} /></div><div className="gemini-result"><strong>{yen(68_430)} / {localize('月')}</strong><span>{localize('前3か月比')} +2.1% · 8{localize('件')}</span></div></article></section></>
+  }
+  return <>
+    <PageHeader eyebrow={localize('Planning & Intelligence')} title={localize('定期取引・固定費')} description={localize('サブスクリプション、固定費、価格変化、異常支出をまとめて確認します。')}><button className="secondary-btn" onClick={openTransactions}><WalletCards size={16} /> {localize('関連取引を開く')}</button></PageHeader>
+    <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} preferenceRevision={preferenceRevision} openTransactions={openTransactions} onDecisionChanged={() => setPreferenceRevision((value) => value + 1)} />
+    <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} preferenceRevision={preferenceRevision} openTransactions={openTransactions} />
+  </>
+}
+
 function AccountGroupsExportPanel({ householdId, accounts, month, groups, selectedAccountGroupId, attributionScope, onGroupsChanged }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; groups: readonly AccountGroupDto[]; selectedAccountGroupId: string | null; attributionScope: AttributionScopeDto; onGroupsChanged: (groups: readonly AccountGroupDto[]) => void }) {
   const [name, setName] = useState('')
   const [kind, setKind] = useState<AccountGroupKindDto>('FAMILY')
@@ -2789,7 +2906,7 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
             : <AccountGroupsExportPanel householdId={householdId} accounts={accounts} month={month} groups={accountGroups} selectedAccountGroupId={accountGroupId} attributionScope={attributionScope} onGroupsChanged={onGroupsChanged} />
   const reportGroupId = view === 'CALENDAR' ? 'report-tab-calendar' : view === 'MONTHLY' || view === 'ANNUAL' ? 'report-tab-review' : view === 'EXPORT' ? 'report-tab-export' : 'report-tab-analysis'
   const reportBody = <section id="report-tabpanel" role="tabpanel" aria-labelledby={reportGroupId} tabIndex={0}>{reportBodyContent}</section>
-  return <><PageHeader eyebrow={localize("家計レビュー")} title={localize("カレンダー・レポート")} description={localize("計算対象の確定台帳（集計対象外を除く）を日次、月次、年次、予測、定期支出・異常支出の視点で確認します。")}><ReportTabs view={view} onChange={setView} /></PageHeader><ReportSubTabs view={view} onChange={setView} />{reportBody}</>
+  return <><PageHeader eyebrow={localize("家計レビュー")} title={localize("カレンダー・レポート")} description={localize("計算対象の確定台帳（集計対象外を除く）を日次、月次、年次、予測、定期支出・異常支出の視点で確認します。")}><ReportTabs view={view} onChange={setView} /></PageHeader><ReportSubTabs view={view} onChange={setView} />{reportBody}<MonthlyContextNotes householdId={householdId} month={month} /></>
 }
 
 function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number; onChanged: () => void }) {
@@ -2851,7 +2968,7 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
 
   if (!desktop) {
     const demoGoals = [{ name: localize("家族旅行"), saved: 362_000, target: 600_000, date: '2027-03-31', pace: 22_800 }, { name: localize("教育資金"), saved: 1_480_000, target: 3_000_000, date: '2030-04-01', pace: 33_100 }]
-    return <><PageHeader eyebrow={localize("プランニング")} title={localize("予算・貯蓄目標")} description={localize("計画値と確定済み元帳を比較し、家族の目標を追跡します。")} /><section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{localize("2026年7月")}</p></div><strong>{yen(budgetByCategory.reduce((sum, item) => sum + item.amount, 0))}</strong></div>{budgetByCategory.map((item) => { const rate = Math.round(item.amount / item.budget * 100); return <div className={`budget-row budget-row-${rate > 100 ? 'over' : rate > 85 ? 'review' : 'ok'}`} key={item.name}><div><strong>{item.name}</strong><small>{rate > 100 ? localize(`⚠ 超過 ${rate - 100}%`) : `${rate}%`}</small></div><span>{yen(item.amount)} <small>/ {yen(item.budget)}</small></span><div className="progress"><span style={{ width: `${Math.min(100, rate)}%` }} /></div></div>})}<p className="budget-caption">{localize("予算=計画値 / 実績=確定済み元帳値（発生ベース）")}</p></article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{demoGoals.length}{localize("件進行中")}</p></div><Goal size={19} /></div>{demoGoals.map((goal) => <div className="goal-editor demo-goal" key={goal.name}><div><strong>{goal.name}</strong><small>{localize("目標日")} {goal.date}</small></div><span>{yen(goal.saved)} / {yen(goal.target)}</span><div className="progress"><span style={{ width: `${goal.saved / goal.target * 100}%` }} /></div><p>{localize("必要ペース:")} {yen(goal.pace)} {localize("/ 月 —")} <b>{localize("順調")}</b></p></div>)}</article></section></>
+    return <><PageHeader eyebrow={localize("プランニング")} title={localize("予算・貯蓄目標")} description={localize("計画値と確定済み元帳を比較し、家族の目標を追跡します。")} /><section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{localize("2026年7月")}</p></div><strong>{yen(budgetByCategory.reduce((sum, item) => sum + item.amount, 0))}</strong></div>{budgetByCategory.map((item) => { const rate = Math.round(item.amount / item.budget * 100); return <div className={`budget-row budget-row-${rate > 100 ? 'over' : rate > 85 ? 'review' : 'ok'}`} key={item.name}><div><strong>{item.name}</strong><small>{rate > 100 ? localize(`⚠ 超過 ${rate - 100}%`) : `${rate}%`}</small></div><span>{yen(item.amount)} <small>/ {yen(item.budget)}</small></span><div className="progress"><span style={{ width: `${Math.min(100, rate)}%` }} /></div></div>})}<p className="budget-caption">{localize("予算=計画値 / 実績=確定済み元帳値（発生ベース）")}</p></article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{demoGoals.length}{localize("件進行中")}</p></div><Goal size={19} /></div>{demoGoals.map((goal) => <div className="goal-editor demo-goal" key={goal.name}><div><strong>{goal.name}</strong><small>{localize("目標日")} {goal.date}</small></div><span>{yen(goal.saved)} / {yen(goal.target)}</span><div className="progress"><span style={{ width: `${goal.saved / goal.target * 100}%` }} /></div><p>{localize("必要ペース:")} {yen(goal.pace)} {localize("/ 月 —")} <b>{localize("順調")}</b></p></div>)}</article></section><PlanningTools /></>
   }
 
   const totalBudget = budgets.reduce((sum, budget) => sum + budget.budgetJpy, 0)
@@ -2870,6 +2987,7 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {showGoalForm && <section className="panel planning-form"><input aria-label={localize("目標名")} value={goalName} onChange={(event) => setGoalName(event.target.value)} placeholder={localize("家族旅行")} /><input aria-label={localize("目標額")} type="number" min="1" value={goalTarget} onChange={(event) => setGoalTarget(event.target.value)} placeholder="1000000" /><input aria-label={localize("目標日")} type="date" value={goalDate} onChange={(event) => setGoalDate(event.target.value)} /><button className="primary-btn" disabled={busy} onClick={() => void createGoal()}>{localize("保存")}</button></section>}
     <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => <div className="budget-row" key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong></div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div>)}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
+    <PlanningTools />
   </>
 }
 
@@ -3122,9 +3240,11 @@ function IcloudDriveInboxSettingsPanel({ householdId }: { readonly householdId: 
 }
 
 function App() {
+  useI18n()
   const [page, setPage] = useState<PageId>('overview')
   const [reportsInitialView, setReportsInitialView] = useState<ReportView>('CALENDAR')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => globalThis.localStorage?.getItem('kakeflow.sidebar-collapsed') === 'true')
   const [showCreateHousehold, setShowCreateHousehold] = useState(false)
   const [importPreviews, setImportPreviews] = useState<ImportPreview[]>([])
   const [bootstrap, setBootstrap] = useState<AppBootstrapDto | null>(null)
@@ -3431,7 +3551,7 @@ function App() {
     : activeAttributionScope.kind === 'MEMBER'
       ? householdMembers.find((member) => member.id === activeAttributionScope.memberId)?.displayName ?? localize("不明なメンバー")
       : localize("世帯全体")
-  const scopeAppliesToPage = page === 'overview' || page === 'transactions' || page === 'cards' || page === 'investments' || page === 'reports'
+  const scopeAppliesToPage = page === 'overview' || page === 'transactions' || page === 'cards' || page === 'investments' || page === 'reports' || page === 'recurring'
   const basisAppliesToPage = page === 'transactions' || page === 'reports'
   const scopedCards = activeAccountGroup
     ? liveCards.filter((card) => activeAccountGroup.accountIds.includes(card.cardAccountId))
@@ -3489,6 +3609,19 @@ function App() {
     if (next === 'reports') setReportsInitialView('CALENDAR')
     setPage(next)
   }
+  const runGlobalSearch = (query: string) => {
+    setPage('transactions')
+    globalThis.setTimeout(() => globalThis.dispatchEvent(new CustomEvent('kakeflow:global-search', { detail: { query } })), 0)
+  }
+  const openManualEntry = () => {
+    setPage('transactions')
+    globalThis.setTimeout(() => globalThis.dispatchEvent(new CustomEvent('kakeflow:manual-entry')), 0)
+  }
+  const toggleSidebar = () => setSidebarCollapsed((current) => {
+    const next = !current
+    globalThis.localStorage?.setItem('kakeflow.sidebar-collapsed', String(next))
+    return next
+  })
   const openAllActions = () => {
     setReportsInitialView('FORECAST')
     setPage('reports')
@@ -3503,8 +3636,10 @@ function App() {
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => setPage('import')} />,
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} initialView={reportsInitialView} openPage={navigateToPage} />,
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    recurring: <RecurringPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} month={selectedMonth} revision={ledgerRevision} openTransactions={() => setPage('transactions')} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
+    audit: <AuditReadinessPage counts={importCounts} onOpenImport={() => setPage('import')} onOpenTransactions={() => setPage('transactions')} />,
     settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
   }[page]
   const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))
@@ -3516,7 +3651,7 @@ function App() {
   }
   const showFirstRun = platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0
   const nativeWindow = platformClient.runtime === 'tauri'
-  return <div className={`app-shell${nativeWindow ? ' app-shell--native' : ''}`}>{!nativeWindow && <DesktopTitleBar householdName={displayedHouseholdName} />}<Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} createHousehold={() => setShowCreateHousehold(true)} importActionableCount={folderInboxCounts?.actionable ?? 0} capturePendingCount={capturePendingCount} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} showBasis={basisAppliesToPage} basis={workspaceBasis} setBasis={setWorkspaceBasis} /><main><div className="workspace-content">{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">{localize("家族集計範囲:")} <strong>{activeAttributionLabel}</strong>{localize("。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。")}</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">{localize("口座スコープ:")} <strong>{activeAccountGroup?.name ?? localize("すべての口座")}</strong>{activeAccountGroup ? localize(` ・ ${activeAccountGroup.accountIds.length}口座`) : ''}</p>}</div></main></div><ToastCenter />{(showFirstRun || showCreateHousehold) && <Onboarding onCancel={showFirstRun ? undefined : () => setShowCreateHousehold(false)} onCreated={completeHouseholdCreation} />}</div>
+  return <div className={`app-shell${nativeWindow ? ' app-shell--native' : ''}`}>{!nativeWindow && <DesktopTitleBar householdName={displayedHouseholdName} />}<Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} collapsed={sidebarCollapsed} toggleCollapsed={toggleSidebar} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} createHousehold={() => setShowCreateHousehold(true)} importActionableCount={folderInboxCounts?.actionable ?? 0} capturePendingCount={capturePendingCount} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} onGlobalSearch={runGlobalSearch} onManualEntry={openManualEntry} onImport={() => setPage('import')} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} showBasis={basisAppliesToPage} basis={workspaceBasis} setBasis={setWorkspaceBasis} /><main><div className="workspace-content">{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">{localize("家族集計範囲:")} <strong>{activeAttributionLabel}</strong>{localize("。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。")}</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">{localize("口座スコープ:")} <strong>{activeAccountGroup?.name ?? localize("すべての口座")}</strong>{activeAccountGroup ? localize(` ・ ${activeAccountGroup.accountIds.length}口座`) : ''}</p>}</div></main></div><ToastCenter />{(showFirstRun || showCreateHousehold) && <Onboarding onCancel={showFirstRun ? undefined : () => setShowCreateHousehold(false)} onCreated={completeHouseholdCreation} />}</div>
 }
 
 export default App

@@ -258,6 +258,7 @@ describe('KakeFlow desktop read models', () => {
   beforeEach(() => {
     vi.stubGlobal('confirm', vi.fn(() => true))
     localStorage.clear()
+    localStorage.setItem('kakeflow.selectedMonth', '2026-07')
     delete document.documentElement.dataset.theme
     delete document.documentElement.dataset.themePreference
     delete document.documentElement.dataset.density

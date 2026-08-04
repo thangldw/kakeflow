@@ -2095,7 +2095,7 @@ fn packaged_smoke_progress(stage: String) -> Result<(), String> {
     writeln!(file, "{stage}").map_err(|_| "Packaged smoke progress could not be written".to_owned())
 }
 
-const PACKAGED_SMOKE_REQUIRED_PAGES: [(&str, &str); 11] = [
+const PACKAGED_SMOKE_REQUIRED_PAGES: [(&str, &str); 13] = [
     ("ホーム", "ホーム"),
     ("取引", "取引"),
     ("インポート", "インポート"),
@@ -2104,8 +2104,10 @@ const PACKAGED_SMOKE_REQUIRED_PAGES: [(&str, &str); 11] = [
     ("資産・投資", "資産・投資"),
     ("カレンダー・レポート", "カレンダー・レポート"),
     ("予算・目標", "予算・目標"),
+    ("定期取引・固定費", "定期取引・固定費"),
     ("分類ルール", "分類ルール"),
     ("家族スペース", "家族スペース"),
+    ("監査・証跡", "監査・証跡"),
     ("設定", "設定"),
 ];
 
@@ -2163,8 +2165,10 @@ mod packaged_smoke_visual_evidence_tests {
                 "資産・投資",
                 "カレンダー・レポート",
                 "予算・目標",
+                "定期取引・固定費",
                 "分類ルール",
                 "家族スペース",
+                "監査・証跡",
                 "設定",
             ]
             .into_iter()
@@ -2183,7 +2187,7 @@ mod packaged_smoke_visual_evidence_tests {
                     rendered_text_length: 100,
                 })
                 .collect(),
-            interaction_count: 12,
+            interaction_count: 14,
             viewport_width: 1280,
             viewport_height: 800,
             device_pixel_ratio: 2.0,
