@@ -11,6 +11,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::restore::{master_key_fingerprint, RestoreCredentialStore, RestoreError};
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub const SERVICE: &str = "app.kakeflow.desktop";
 pub const ACCOUNT: &str = "database-master-key";
 const PENDING_RESTORE_ACCOUNT: &str = "pending-restore-master-key";
