@@ -31,6 +31,54 @@ describe('receipt text normalization', () => {
     })
   })
 
+  it('compacts wide-spaced yen digits emitted by PP-OCRv5', () => {
+    expect(parseReceiptText([
+      '/EON STYLE',
+      '2024/6/24（月）',
+      'アサヒ富士山エコラベル',
+      '98',
+      'クーリッシュ x カルピス',
+      '118',
+      '小計',
+      '￥216',
+      '合計',
+      '￥23 3',
+      'AEONPay(チャージ払い)',
+      '￥233',
+    ].join('\n'))).toMatchObject({
+      occurredOn: '2024-06-24',
+      amountJpy: 233,
+      issues: [],
+      items: [
+        expect.objectContaining({ description: 'アサヒ富士山エコラベル', amountJpy: 98 }),
+        expect.objectContaining({ description: 'クーリッシュ x カルピス', amountJpy: 118 }),
+      ],
+      paymentMethod: 'AEONPay',
+    })
+  })
+
+  it('treats a leading tax marker as part of a standalone item price', () => {
+    expect(parseReceiptText([
+      'セブンイレブン',
+      '2022年09月06日（火）18:18',
+      '7P挽きたて珈琲無糖900',
+      '*138',
+      '7Pロースハム',
+      '*98',
+      '小計（税抜8%）',
+      '￥236',
+      '合計',
+      '￥254',
+    ].join('\n'))).toMatchObject({
+      occurredOn: '2022-09-06',
+      amountJpy: 254,
+      items: [
+        expect.objectContaining({ description: '7P挽きたて珈琲無糖900', amountJpy: 138 }),
+        expect.objectContaining({ description: '7Pロースハム', amountJpy: 98 }),
+      ],
+    })
+  })
+
   it('refuses statement-like text instead of creating an aggregate expense', async () => {
     const extracted = { method: 'EMBEDDED_TEXT' as const, confidenceBps: 9000, issues: [], text: 'CARD\n2026/07/01 A\n2026/07/02 B\n2026/07/03 C\n2026/07/04 D\nTOTAL 20,000' }
     const result = await buildReceiptImport(extracted, {

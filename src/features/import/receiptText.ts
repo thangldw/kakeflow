@@ -77,8 +77,12 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   const eraMatches = Array.from(normalizedText.matchAll(/(令和|平成)\s*(元|\d{1,2})年\s*(\d{1,2})月\s*(\d{1,2})日/g))
   const eraDate = eraMatches[0] ? isoDate(String((eraMatches[0][1] === '令和' ? 2018 : 1988) + (eraMatches[0][2] === '元' ? 1 : Number(eraMatches[0][2]))), eraMatches[0][3], eraMatches[0][4]) : null
   const occurredOn = dateMatches[0] ? isoDate(dateMatches[0][1], dateMatches[0][2], dateMatches[0][3]) : eraDate
+  const compactYenDigits = (line: string) => line.replace(/((?:¥|￥)\s*)([0-9](?:[\s,.]*[0-9])*)/g, (_match, prefix: string, digits: string) => `${prefix}${digits.replace(/\s+/g, '')}`)
   const parseLineAmount = (line: string): number | null => {
-    const matches = Array.from(line.matchAll(/[-−]?\s*(?:¥|￥)?\s*([0-9]{1,3}(?:[,.][0-9]{3})+|[0-9]+)(?:円)?/g))
+    // Wide-spaced currency digits such as `￥2 3 3` are common on receipts.
+    // PP-OCRv5 preserves that visual spacing, so compact only digit groups
+    // explicitly prefixed by a yen sign before applying the amount pattern.
+    const matches = Array.from(compactYenDigits(line).matchAll(/[-−]?\s*(?:¥|￥|[*※])?\s*([0-9]{1,3}(?:[,.][0-9]{3})+|[0-9]+)(?:円)?/g))
     if (matches.length === 0) return null
     const last = matches[matches.length - 1]
     const amount = Number(last[1].replace(/[,.]/g, ''))
@@ -89,7 +93,7 @@ export function parseReceiptText(text: string): ReceiptTextFields {
     const inline = parseLineAmount(withoutTaxRate)
     if (inline !== null) return inline
     const next = lineTexts[lineIndex + 1]
-    return next && /^[-−]?\s*(?:¥|￥)?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(next) ? parseLineAmount(next) : null
+    return next && /^[-−]?\s*(?:¥|￥|[*※])?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(compactYenDigits(next)) ? parseLineAmount(next) : null
   }
   const totalLineIndexes = lineTexts.flatMap((line, index) => /(?:合計|ご請求|お支払額|GRAND\s*TOTAL|TOTAL)/i.test(line) ? [index] : [])
   const totalLines = totalLineIndexes.map((index) => lineTexts[index])
@@ -133,8 +137,8 @@ export function parseReceiptText(text: string): ReceiptTextFields {
   const singleAdjustmentAmount = (pattern: RegExp) => adjustmentEvidence(pattern)[0]?.amountJpy ?? null
   const subtotalJpy = singleAdjustmentAmount(/(?:小計|税抜合計|SUBTOTAL)/i)
   const changeJpy = singleAdjustmentAmount(/(?:お釣り?|おつり|釣銭|CHANGE)/i)
-  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|现金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
-  const paymentMethodPattern = /(PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金|现金)/i
+  const paymentLine = lines.find(({ text: value }) => /(?:支払|お支払|現金|现金|クレジット|デビット|電子マネー|AEON\s*Pay|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|交通系|iD|QUICPay)/i.test(value))?.text ?? ''
+  const paymentMethodPattern = /(AEON\s*Pay|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|iD|交通系(?:IC)?|電子マネー|クレジット|デビット|現金|现金)/i
   const paymentMethodMatch = paymentLine.match(paymentMethodPattern)?.[1]
     ?? lines.map(({ text: value }) => value.match(paymentMethodPattern)?.[1] ?? null).find((value) => value !== null)
     ?? null
@@ -147,9 +151,9 @@ export function parseReceiptText(text: string): ReceiptTextFields {
     const marker = line.match(/([*※◇◆])\s*(?:は|:|=)?\s*(?:(?:軽減税率|8\s*%)|10\s*%)/)
     if (marker) markerRates.set(marker[1], /10\s*%/.test(marker[0]) ? 10 : 8)
   }
-  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り?|おつり|釣銭|CHANGE|支払|現金|现金|クレジット|デビット|電子マネー|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|交通系|領収|レシ[ー\s-]*ト|登録番号|TEL|電話)/i
+  const nonItem = /(?:合計|TOTAL|小計|SUBTOTAL|税|税込|税抜|対象|課税|クーポン|値引|割引|ポイント|お預り|お釣り?|おつり|釣銭|CHANGE|支払|現金|现金|クレジット|デビット|電子マネー|AEON\s*Pay|PayPay|楽天ペイ|Suica|PASMO|WAON|nanaco|QUICPay|交通系|領収|レシ[ー\s-]*ト|登録番号|TEL|電話)/i
   const items: ReceiptItemEvidence[] = lines.flatMap(({ text: line, lineNumber }, lineIndex) => {
-    if (nonItem.test(line) || /(20\d{2})[/.年-]/.test(line)) return []
+    if (nonItem.test(line) || /(20\d{2})[/.年-]/.test(line) || /^[-−]?\s*(?:¥|￥|[*※])?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(compactYenDigits(line))) return []
     const explicitRate = line.match(/(?:^|\s|\()(8|10)\s*%(?:\)|\s|$)/)
     const mappedMarker = [...markerRates.entries()].find(([marker]) => line.includes(marker))?.[1] ?? null
     const taxRatePercent = explicitRate ? Number(explicitRate[1]) as 8 | 10 : /(?:^|\s)軽(?:\s|$)/.test(line) ? 8 : mappedMarker
@@ -160,7 +164,7 @@ export function parseReceiptText(text: string): ReceiptTextFields {
       .replace(/\s+/g, ' ')
       .trim()
     const inlineMatch = normalizedItemLine.match(/^(.+?)\s+(?:¥|￥)?\s*([0-9]{1,3}(?:[,.][0-9]{3})+|[0-9]+)(?:円)?$/)
-    const followingAmount = lineTexts[lineIndex + 1] && /^[-−]?\s*(?:¥|￥)?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(lineTexts[lineIndex + 1])
+    const followingAmount = lineTexts[lineIndex + 1] && /^[-−]?\s*(?:¥|￥|[*※])?\s*[0-9]{1,3}(?:[,.][0-9]{3})*(?:円)?$/.test(compactYenDigits(lineTexts[lineIndex + 1]))
       ? parseLineAmount(lineTexts[lineIndex + 1])
       : null
     const match = inlineMatch ?? (followingAmount !== null ? [normalizedItemLine, normalizedItemLine, String(followingAmount)] : null)
