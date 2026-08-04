@@ -2611,7 +2611,7 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "encoding_rs",
- "getrandom 0.2.17",
+ "getrandom 0.4.3",
  "hayro",
  "hkdf",
  "keyring",
