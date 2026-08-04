@@ -98,6 +98,15 @@ const en: Record<string, string> = {
   '取引履歴を読み込めませんでした。保存済みルールとキーワードで提案します。': 'Transaction history could not be loaded. Suggestions will use saved rules and keywords.',
   '件にカテゴリー候補を適用しました。承認はまだ行われていません。': ' category suggestions applied. Nothing has been approved yet.',
   '高信頼度の未編集候補に一括適用（': 'Apply high-confidence untouched suggestions (',
+  '更新内容を確認して安全にインストールできます。': 'Review the release notes and install the signed update safely.',
+  '更新を見る': 'View update', '更新通知を閉じる': 'Dismiss update notice', '更新画面を閉じる': 'Close update window',
+  'アプリの更新': 'App update', '署名を検証': 'Signature verified',
+  'KakeFlowは起動後に新しい安定版を確認します。更新ファイルはインストール前に暗号署名を検証します。': 'KakeFlow checks for a new stable release after startup. Every update is cryptographically verified before installation.',
+  '更新をダウンロード中…': 'Downloading update…', 'サイズを確認中': 'Checking download size',
+  '最新バージョンです。': 'You are up to date.', '更新をインストールしました。再起動すると適用されます。': 'The update is installed. Restart to apply it.',
+  '更新を確認またはインストールできませんでした。ネットワークを確認して再試行してください。': 'The update could not be checked or installed. Check your connection and try again.',
+  '更新確認はデスクトップ版で利用できます。': 'Update checks are available in the desktop app.',
+  'ダウンロードしてインストール': 'Download and install', '今すぐ再起動': 'Restart now', '更新を確認中…': 'Checking for updates…', '更新を確認': 'Check for updates',
 }
 
 const vi: Record<string, string> = {
@@ -199,6 +208,15 @@ const vi: Record<string, string> = {
   '取引履歴を読み込めませんでした。保存済みルールとキーワードで提案します。': 'Không tải được lịch sử giao dịch; sẽ đề xuất bằng quy tắc đã lưu và từ khóa.',
   '件にカテゴリー候補を適用しました。承認はまだ行われていません。': ' đề xuất danh mục đã được áp dụng nhưng chưa xác nhận.',
   '高信頼度の未編集候補に一括適用（': 'Áp dụng hàng loạt đề xuất chưa sửa có độ tin cậy cao (',
+  '更新内容を確認して安全にインストールできます。': 'Xem nội dung phát hành và cài đặt bản cập nhật đã ký một cách an toàn.',
+  '更新を見る': 'Xem bản cập nhật', '更新通知を閉じる': 'Đóng thông báo cập nhật', '更新画面を閉じる': 'Đóng cửa sổ cập nhật',
+  'アプリの更新': 'Cập nhật ứng dụng', '署名を検証': 'Đã xác minh chữ ký',
+  'KakeFlowは起動後に新しい安定版を確認します。更新ファイルはインストール前に暗号署名を検証します。': 'KakeFlow kiểm tra bản ổn định mới sau khi khởi động. Mọi bản cập nhật đều được xác minh chữ ký mật mã trước khi cài đặt.',
+  '更新をダウンロード中…': 'Đang tải bản cập nhật…', 'サイズを確認中': 'Đang kiểm tra dung lượng',
+  '最新バージョンです。': 'Bạn đang dùng phiên bản mới nhất.', '更新をインストールしました。再起動すると適用されます。': 'Đã cài đặt bản cập nhật. Hãy khởi động lại để áp dụng.',
+  '更新を確認またはインストールできませんでした。ネットワークを確認して再試行してください。': 'Không thể kiểm tra hoặc cài đặt bản cập nhật. Hãy kiểm tra kết nối rồi thử lại.',
+  '更新確認はデスクトップ版で利用できます。': 'Kiểm tra cập nhật chỉ có trong ứng dụng desktop.',
+  'ダウンロードしてインストール': 'Tải xuống và cài đặt', '今すぐ再起動': 'Khởi động lại ngay', '更新を確認中…': 'Đang kiểm tra cập nhật…', '更新を確認': 'Kiểm tra cập nhật',
 }
 
 type I18nValue = {

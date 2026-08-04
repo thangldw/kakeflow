@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "KakeFlow",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "identifier": "app.kakeflow.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -30,7 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "resources": {
       "generated-resources/ocr/": "ocr/",
       "generated-resources/fonts/OFL.txt": "fonts/OFL.txt",
@@ -48,6 +48,17 @@
     },
     "macOS": {
       "minimumSystemVersion": "12.0"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCREREMUZDREE1MzIxNUEKUldSYUlWUGEvTkhkUzNnZFVXbDVTYm9DOGEwWEhHUE5ranpJdVE0MkNRMTZXS3JGUldXMGZXdFEK",
+      "endpoints": [
+        "https://github.com/thangldw/kakeflow-releases/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

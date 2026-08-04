@@ -23,9 +23,8 @@ describe('KakeFlow project page', () => {
     const version = packageJson.version
     expect(html).toContain(`releases/tag/v${version}`)
     expect(html).toContain(`releases/download/v${version}/KakeFlow_${version}_aarch64.dmg`)
-    expect(html).toContain(`AVAILABLE IN v${version}`)
-    expect(html).toContain('現在の公開バイナリはアドホック署名済み・未公証の macOS ARM64 版です')
-    expect(html).toContain('Windows バイナリは未公開です')
+    expect(html).toContain(`v${version} 公開中 · AIトークン不要`)
+    expect(html).toContain('現在のバイナリはアドホック署名済み・未公証です')
     expect(html).not.toContain('github.com/thangldw/kakeflow/blob/')
   })
 
@@ -40,26 +39,24 @@ describe('KakeFlow project page', () => {
     expect(localImages.every(localAssetExists)).toBe(true)
 
     for (const source of [
-      'assets/infographics/data-pipeline.svg',
-      'assets/infographics/card-reconciliation.svg',
-      'assets/infographics/mobile-capture.svg',
+      'assets/demo/ocr-import-vi.jpg',
+      'assets/demo/budgets-vi.jpg',
+      'assets/demo/investments-vi.jpg',
     ]) {
       expect(script).toContain(source)
       expect(localAssetExists(source)).toBe(true)
     }
+    expect(localAssetExists('assets/demo/kakeflow-feature-tour.gif')).toBe(true)
+    expect(localAssetExists('assets/support/mb-bank-vietqr.png')).toBe(true)
   })
 
-  it('keeps the workflow, accounting boundary, and screen gallery explicit', () => {
-    for (const node of [
-      'bank', 'card', 'wallet', 'receipt', 'securities', 'inbox', 'extract', 'dedupe',
-      'receipt-match', 'card-match', 'household', 'cashflow', 'balance', 'portfolio',
-    ]) {
-      expect(html).toContain(`data-node="${node}"`)
-    }
-    expect(html).toContain('カード利用は一度だけ支出にする。')
-    expect(html).toContain('後日の銀行引落は負債の返済として扱います')
-    expect(script).toContain("['card-match', 'ledger']")
-    expect(script).toContain("['ledger', 'cashflow']")
+  it('keeps OCR, budget, investment, privacy and support conversion paths explicit', () => {
+    expect(html).toContain('PP-OCRv5で日付、合計、税、品目を端末内で読み取ります。')
+    expect(html).toContain('予算閾値、貯蓄目標、定期支出の変化')
+    expect(html).toContain('スナップショット、FIFO実現損益、配当、資産配分')
+    expect(html).toContain('署名を検証する安全な自動更新')
+    expect(html).toContain('https://github.com/sponsors/thangldw')
+    expect(html).toContain('data-support-backdrop')
     expect(html.match(/role="tab"/g)).toHaveLength(3)
     expect(html.match(/role="tab"[^>]+tabindex="-1"/g)).toHaveLength(2)
   })
@@ -68,30 +65,16 @@ describe('KakeFlow project page', () => {
     expect(css).toContain('@media (max-width: 820px)')
     expect(css).toContain('@media (max-width: 540px)')
     expect(css).toContain('@media (prefers-reduced-motion: reduce)')
-    expect(css).toContain('#workflow-lines { display: none; }')
+    expect(css).toContain('.support-grid { grid-template-columns: 1fr; }')
     expect(css).toContain('object-fit: contain')
-    expect(css).not.toContain('object-fit: cover')
+    expect(css).toContain(".hero-product img[src$='.gif']")
     expect(html).not.toMatch(/<script[^>]+https?:\/\//)
     expect(html).not.toMatch(/<link[^>]+href="https?:\/\/[^"]+\.css/)
   })
 
   it('runs the primary menu and product-gallery interactions in a browser document', () => {
     document.documentElement.innerHTML = html
-    vi.stubGlobal('ResizeObserver', class {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    })
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-      scale: vi.fn(), clearRect: vi.fn(), save: vi.fn(), restore: vi.fn(), setLineDash: vi.fn(),
-      beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(),
-      lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn(),
-    } as unknown as CanvasRenderingContext2D)
-
     window.eval(script)
-
-    const explanatoryNodes = [...document.querySelectorAll<HTMLElement>('[data-node]')]
-    expect(explanatoryNodes.every((node) => node.tabIndex === -1)).toBe(true)
 
     const menuButton = document.querySelector<HTMLButtonElement>('.menu-toggle')
     const navigation = document.querySelector('#primary-nav')
@@ -99,10 +82,21 @@ describe('KakeFlow project page', () => {
     expect(menuButton?.getAttribute('aria-expanded')).toBe('true')
     expect(navigation).toHaveClass('is-open')
 
-    const transactionsTab = document.querySelector<HTMLButtonElement>('[data-screen="transactions"]')
-    transactionsTab?.click()
-    expect(transactionsTab?.getAttribute('aria-selected')).toBe('true')
-    expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('card-reconciliation.svg')
-    expect(document.querySelector('#screen-caption')).toHaveTextContent('カテゴリ、ラベル、タグ')
+    const vietnameseButton = document.querySelector<HTMLButtonElement>('[data-locale="vi"]')
+    vietnameseButton?.click()
+    expect(document.documentElement.lang).toBe('vi')
+    expect(document.querySelector('h1')).toHaveTextContent('Tài chính của bạn')
+
+    const budgetsTab = document.querySelector<HTMLButtonElement>('[data-screen="budgets"]')
+    budgetsTab?.click()
+    expect(budgetsTab?.getAttribute('aria-selected')).toBe('true')
+    expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('budgets-vi.jpg')
+    expect(document.querySelector('#screen-caption')).toHaveTextContent('mục tiêu tiết kiệm')
+
+    const supportButton = document.querySelector<HTMLButtonElement>('[data-support-open]')
+    supportButton?.click()
+    expect(document.querySelector('[data-support-backdrop]')).not.toHaveAttribute('hidden')
+    document.querySelector<HTMLButtonElement>('[data-support-close]')?.click()
+    expect(document.querySelector('[data-support-backdrop]')).toHaveAttribute('hidden')
   })
 })
