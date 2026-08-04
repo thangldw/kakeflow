@@ -30,13 +30,14 @@ describe('packaged app smoke harness', () => {
       ['ホーム', 'ホーム'], ['取引', '取引'], ['インポート', 'インポート'],
       ['撮影 Inbox', '撮影 Inbox'],
       ['カード照合', 'カード照合'], ['資産・投資', '資産・投資'], ['カレンダー・レポート', 'カレンダー・レポート'],
-      ['予算・目標', '予算・目標'], ['分類ルール', '分類ルール'], ['家族スペース', '家族スペース'], ['設定', '設定'],
+      ['予算・目標', '予算・目標'], ['定期取引・固定費', '定期取引・固定費'], ['分類ルール', '分類ルール'],
+      ['家族スペース', '家族スペース'], ['監査・証跡', '監査・証跡'], ['設定', '設定'],
     ]
     const visualEvidence = {
       onboardingTitle: '家計簿をはじめましょう',
       householdName: 'Packaged Smoke Household',
       navigationLabels: requiredPages.map(([label]) => label),
-      interactionCount: 12,
+      interactionCount: 14,
       viewportWidth: 1280,
       viewportHeight: 800,
       devicePixelRatio: 2,

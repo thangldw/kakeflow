@@ -1,7 +1,7 @@
 import type { ActionItemDto, ActionKind, ActionPriority, ForecastActionDto } from './forecastActionPlatform'
 import { orderActions } from './actionCenterModel'
 import './forecastActionViews.css'
-import { localize } from '../../i18n'
+import { localize, useI18n } from '../../i18n'
 
 export interface ForecastActionViewsProps {
   readonly data: ForecastActionDto
@@ -25,17 +25,18 @@ const signedYen = (value: number) => `${value > 0 ? '+' : value < 0 ? '−' : ''
 const monthLabel = (month: string) => localize(`${month.slice(0, 4)}年${Number(month.slice(5))}月`)
 
 export function ActionCenter({ actions, totalCount = actions.length, onAction }: { readonly actions: readonly ActionItemDto[]; readonly totalCount?: number; readonly onAction?: (action: ActionItemDto) => void }) {
+  const { locale } = useI18n()
   const ordered = orderActions(actions)
   return <section className="forecast-panel action-center" aria-labelledby="action-center-title">
     <header><div><h2 id="action-center-title">{localize("対応が必要な項目")}</h2></div><span className="action-count" aria-label={localize(`${totalCount}件`)}>{totalCount}</span></header>
     {ordered.length === 0 ? <p className="forecast-empty" role="status">{localize("現在、対応が必要な項目はありません。")}</p> : <ol className="action-list">
       {ordered.map((action) => <li key={action.id} className={`action-item action-item--${action.priority.toLowerCase()}`}>
         <div className="action-badges"><span>{localize(kindLabels[action.kind])}</span><strong>{localize(priorityLabels[action.priority])}</strong></div>
-        <div className="action-copy"><h3>{action.title}</h3><p>{action.detail}</p>
+        <div className="action-copy"><h3>{localize(action.title)}</h3><p>{localize(action.detail)}</p>
           <div className="action-meta">{action.dueOn && <time dateTime={action.dueOn}>{localize("期限")} {action.dueOn}</time>}{action.amountJpy != null && <b>{yen(action.amountJpy)}</b>}</div>
-          {action.reasons.length > 0 && <details><summary>{localize("判定理由")}</summary><ul>{action.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></details>}
+          {action.reasons.length > 0 && <details><summary>{localize("判定理由")}</summary><ul>{action.reasons.map((reason) => <li key={reason}>{localize(reason)}</li>)}</ul></details>}
         </div>
-        {onAction && <button type="button" onClick={() => onAction(action)} aria-label={localize(`${action.title}を確認`)}>{localize("確認する")}</button>}
+        {onAction && <button type="button" onClick={() => onAction(action)} aria-label={locale === 'ja' ? `${action.title}を確認` : `${localize(action.title)} — ${localize("確認する")}`}>{localize("確認する")}</button>}
       </li>)}
     </ol>}
   </section>
@@ -53,7 +54,7 @@ export function CashSavingsForecast({ data }: { readonly data: ForecastActionDto
         <dl><div><dt>{localize("予測収入")}</dt><dd>{yen(month.projectedIncomeJpy)}</dd></div><div><dt>{localize("通常支出")}</dt><dd>{yen(month.projectedNonRecurringExpenseJpy)}</dd></div><div><dt>{localize("定期支出")}</dt><dd>{yen(month.projectedRecurringExpenseJpy)}</dd></div><div><dt>{localize("カード引落")}</dt><dd>{yen(month.knownCardPaymentsJpy)}</dd></div><div className="forecast-closing"><dt>{localize("月末現預金")}</dt><dd>{yen(month.closingCashJpy)}</dd></div></dl>
       </article>)}
     </div>
-    <details className="forecast-assumptions"><summary>{localize("予測の前提と説明")}</summary><p>{localize("計算対象の確定取引のみを使用し、集計対象外は履歴平均・定期支出・予測から除きます。")}</p><div className="assumption-grid"><span>{localize("履歴期間")}<strong>{data.assumptions.historyFrom} — {data.assumptions.historyThrough}</strong></span><span>{localize("平均月収")}<strong>{yen(data.assumptions.averageMonthlyIncomeJpy)}</strong></span><span>{localize("平均月支出")}<strong>{yen(data.assumptions.averageMonthlyExpenseJpy)}</strong></span><span>{localize("定期支出")}<strong>{yen(data.assumptions.recurringMonthlyExpenseJpy)}（{data.assumptions.recurringItemCount}{localize("件）")}</strong></span></div><ul>{data.assumptions.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></details>
+    <details className="forecast-assumptions"><summary>{localize("予測の前提と説明")}</summary><p>{localize("計算対象の確定取引のみを使用し、集計対象外は履歴平均・定期支出・予測から除きます。")}</p><div className="assumption-grid"><span>{localize("履歴期間")}<strong>{data.assumptions.historyFrom} — {data.assumptions.historyThrough}</strong></span><span>{localize("平均月収")}<strong>{yen(data.assumptions.averageMonthlyIncomeJpy)}</strong></span><span>{localize("平均月支出")}<strong>{yen(data.assumptions.averageMonthlyExpenseJpy)}</strong></span><span>{localize("定期支出")}<strong>{yen(data.assumptions.recurringMonthlyExpenseJpy)}（{data.assumptions.recurringItemCount}{localize("件）")}</strong></span></div><ul>{data.assumptions.reasons.map((reason) => <li key={reason}>{localize(reason)}</li>)}</ul></details>
   </section>
 }
 

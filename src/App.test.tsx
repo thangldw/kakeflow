@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import App from './App'
+import { I18nProvider } from './i18n'
 
 async function renderApp() {
   const result = render(<App />)
@@ -126,5 +127,24 @@ describe('KakeFlow application shell', () => {
     expect(screen.getByText(/ログイン、閲覧制限、アクセス制御ではありません/)).toBeInTheDocument()
     expect(screen.getByText('家族メンバーの管理はデスクトップ版で利用できます。')).toBeInTheDocument()
     expect(screen.queryByText('TK')).not.toBeInTheDocument()
+  })
+
+  it('keeps navigation and investment controls fully Vietnamese after switching language', async () => {
+    render(<I18nProvider><App /></I18nProvider>)
+    await screen.findByText('ブラウザプレビュー')
+
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tiếng Việt' }))
+
+    expect(screen.getByRole('button', { name: 'Định kỳ & chi phí cố định' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Kiểm toán & chứng từ' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Tài sản & đầu tư' }))
+
+    expect(await screen.findByRole('tab', { name: 'Ảnh chụp tài sản' })).toBeVisible()
+    expect(screen.getByRole('tab', { name: 'Lãi/lỗ đã thực hiện (FIFO)' })).toBeVisible()
+    expect(screen.getByRole('tab', { name: 'Diễn biến & định giá' })).toBeVisible()
+    expect(screen.getByText('Ảnh chụp tài sản đang hiển thị')).toBeVisible()
+    expect(screen.queryByText('スナップショット')).not.toBeInTheDocument()
+    expect(screen.queryByText('表示するスナップショット')).not.toBeInTheDocument()
   })
 })
