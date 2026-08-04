@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "channel": "stable",
-  "status": "DISABLED_UNCONFIGURED",
-  "reason": "PRODUCTION_SIGNING_KEY_AND_ENDPOINT_NOT_CONFIGURED",
-  "endpoint": null,
-  "publicKey": null
+  "status": "ENABLED",
+  "reason": null,
+  "endpoint": "https://github.com/thangldw/kakeflow-releases/releases/latest/download/latest.json",
+  "publicKey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCREREMUZDREE1MzIxNUEKUldSYUlWUGEvTkhkUzNnZFVXbDVTYm9DOGEwWEhHUE5ranpJdVE0MkNRMTZXS3JGUldXMGZXdFEK"
 }

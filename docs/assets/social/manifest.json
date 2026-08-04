@@ -1,0 +1,13 @@
+{
+  "release": "v1.1.1",
+  "created": "2026-08-04",
+  "source": "docs/social/index.html",
+  "assets": [
+    { "file": "kakeflow-v1.1.1-linkedin-vi.jpg", "locale": "vi", "width": 1200, "height": 627 },
+    { "file": "kakeflow-v1.1.1-linkedin-en.jpg", "locale": "en", "width": 1200, "height": 627 },
+    { "file": "kakeflow-v1.1.1-linkedin-ja.jpg", "locale": "ja", "width": 1200, "height": 627 },
+    { "file": "kakeflow-v1.1.1-square-vi.jpg", "locale": "vi", "width": 1080, "height": 1080 },
+    { "file": "kakeflow-v1.1.1-square-en.jpg", "locale": "en", "width": 1080, "height": 1080 },
+    { "file": "kakeflow-v1.1.1-square-ja.jpg", "locale": "ja", "width": 1080, "height": 1080 }
+  ]
+}

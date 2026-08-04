@@ -4660,6 +4660,12 @@ pub fn run() {
         // Must be the first production plugin: first-run key generation assumes one process.
         builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}));
     }
+    #[cfg(desktop)]
+    {
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
+    }
     let setup_smoke_config = smoke_config.clone();
 
     builder

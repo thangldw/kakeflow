@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KakeFlow PP-OCRv5 regression suite</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; padding: 32px; color: #273029; background: #f3f1eb; font: 15px/1.5 Inter, system-ui, sans-serif; }
+      main { width: min(1080px, 100%); margin: auto; }
+      h1 { margin-bottom: 4px; }
+      #summary { margin-top: 0; color: #617066; }
+      #results { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
+      article { display: grid; grid-template-columns: 180px minmax(0,1fr); gap: 18px; padding: 18px; background: #fff; border: 1px solid #d8ddd5; border-radius: 12px; }
+      article[data-result='passed'] { border-color: #4f8464; }
+      article[data-result='failed'] { border-color: #b45c4f; }
+      img { width: 180px; height: 264px; object-fit: cover; object-position: top; border: 1px solid #e0e0dc; }
+      h2 { margin: 0; font-size: 17px; }
+      p { color: #4f8464; font-weight: 700; }
+      pre { max-height: 240px; overflow: auto; font-size: 11px; white-space: pre-wrap; }
+      @media (max-width: 760px) { #results { grid-template-columns: 1fr; } article { grid-template-columns: 120px minmax(0,1fr); } img { width: 120px; height: 176px; } }
+    </style>
+  </head>
+  <body>
+    <main><h1>PP-OCRv5 receipt regression</h1><p id="summary">Loading the bundled model…</p><section id="results"></section></main>
+    <script type="module" src="/src/ocrRegressionHarness.ts"></script>
+  </body>
+</html>

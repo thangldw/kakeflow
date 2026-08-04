@@ -9,6 +9,7 @@ use std::{
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const SERVICE: &str = "app.kakeflow.desktop";
 const ACCOUNT_PREFIX: &str = "google-drive-refresh-v1:";
 const PAYLOAD_PREFIX: &[u8] = b"kakeflow-google-drive-refresh-v1\0";

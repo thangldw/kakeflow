@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KakeFlow synthetic OCR fixture renderer</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 520px; min-height: 760px; margin: 0; background: #e9e7e1; }
+      body { display: grid; place-items: center; padding: 34px; color: #151515; font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; }
+      .receipt { width: 392px; min-height: 650px; padding: 38px 34px 44px; background: #fff; box-shadow: 0 7px 22px rgba(25, 25, 25, .15); font-size: 20px; line-height: 1.45; }
+      .receipt h1 { margin: 0 0 4px; text-align: center; font-size: 30px; letter-spacing: .08em; }
+      .receipt header p { margin: 0; text-align: center; font-size: 15px; }
+      .receipt time { display: block; margin: 24px 0 18px; padding-block: 8px; border-block: 2px solid #202020; font-size: 17px; font-weight: 700; text-align: center; }
+      .receipt dl { margin: 0; }
+      .receipt dl > div { display: flex; justify-content: space-between; gap: 18px; }
+      .receipt dt, .receipt dd { margin: 0; }
+      .receipt dd { white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .receipt .summary { margin-top: 20px; padding-top: 12px; border-top: 2px solid #202020; }
+      .receipt .summary > div { margin-top: 6px; }
+      .receipt .total { margin-top: 10px; padding-block: 8px; border-block: 4px double #202020; font-size: 25px; font-weight: 800; }
+      .receipt footer { margin-top: 26px; text-align: center; font-size: 14px; }
+      .tax-marker { font-family: ui-monospace, monospace; }
+    </style>
+  </head>
+  <body>
+    <article class="receipt" id="spaced" aria-label="Synthetic spaced-yen receipt">
+      <header><h1>匿名スーパー</h1><p>TEL 000-0000-0000</p></header>
+      <time datetime="2024-06-24T12:34">2024/06/24（月）12:34</time>
+      <dl>
+        <div><dt>練習商品A</dt><dd>￥98</dd></div>
+        <div><dt>練習商品B</dt><dd>￥118</dd></div>
+      </dl>
+      <dl class="summary">
+        <div><dt>小計</dt><dd>￥216</dd></div>
+        <div><dt>外税 8%</dt><dd>￥17</dd></div>
+        <div class="total"><dt>合計</dt><dd>￥2 3 3</dd></div>
+        <div><dt>電子マネー</dt><dd>￥233</dd></div>
+      </dl>
+      <footer>これはテスト用の匿名化された合成伝票です</footer>
+    </article>
+    <article class="receipt" id="tax" aria-label="Synthetic tax-marker receipt" hidden>
+      <header><h1>匿名コンビニ</h1><p>レジ #1</p></header>
+      <time datetime="2022-09-06T18:18">2022年09月06日（火）18:18</time>
+      <dl>
+        <div><dt>商品コード A001</dt><dd class="tax-marker">*138</dd></div>
+        <div><dt>商品コード B002</dt><dd class="tax-marker">*98</dd></div>
+      </dl>
+      <dl class="summary">
+        <div><dt>小計（税抜8%）</dt><dd>￥236</dd></div>
+        <div><dt>消費税等（8%）</dt><dd>￥18</dd></div>
+        <div class="total"><dt>合計</dt><dd>￥254</dd></div>
+        <div><dt>お預り</dt><dd>￥500</dd></div>
+        <div><dt>お釣</dt><dd>￥246</dd></div>
+      </dl>
+      <footer>これはテスト用の匿名化された合成伝票です</footer>
+    </article>
+    <script>
+      const selected = new URLSearchParams(location.search).get('receipt') === 'tax' ? 'tax' : 'spaced';
+      document.querySelectorAll('.receipt').forEach((receipt) => { receipt.hidden = receipt.id !== selected; });
+    </script>
+  </body>
+</html>
