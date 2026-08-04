@@ -292,6 +292,19 @@ button { transition: background-color 120ms ease, border-color 120ms ease, color
 html[data-density='compact'] .transaction-ledger-row { min-height: 35px; padding-block: 3px; }
 html[data-density='compact'] .panel { padding-top: 10px; padding-bottom: 10px; }
 
+/* The settings account editor needs more horizontal room than the summary
+   panel. Stack the panels before either one can paint over its neighbour. */
+@media (max-width: 1320px) {
+  .workspace-content:has(> .preferences-panel) { grid-template-columns: minmax(0,1fr); }
+  .workspace-content:has(> .preferences-panel) > .page-header { grid-column: 1; grid-row: 1; }
+  .workspace-content:has(> .preferences-panel) > .preferences-panel { grid-column: 1; grid-row: 2; }
+  .workspace-content:has(> .preferences-panel) > .account-settings { grid-column: 1; grid-row: 3; }
+  .workspace-content:has(> .preferences-panel) > :not(.page-header):not(.account-settings):not(.preferences-panel) { grid-column: 1; }
+}
+
+.account-settings,.account-list,.account-editor { min-width: 0; }
+.account-editor input,.account-editor select { min-width: 0; width: 100%; }
+
 @media (max-width: 1060px) {
   .transaction-ledger,.table-panel { overflow-x: auto; }
   .bulk-metadata-toolbar { grid-template-columns: 1fr 1fr; }

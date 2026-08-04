@@ -4675,13 +4675,21 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            let app_data_dir = setup_smoke_config
-                .as_ref()
-                .map(|config| config.root.clone())
-                .unwrap_or(app.path().app_data_dir()?);
+            let app_data_dir = match setup_smoke_config.as_ref() {
+                Some(config) => config.root.clone(),
+                None => app.path().app_data_dir()?,
+            };
             let database_path = app_data_dir.join("database").join("kakeflow.db");
             let vault_path = app_data_dir.join("documents");
-            let resource_dir = app.path().resource_dir()?;
+            let resource_dir = if setup_smoke_config.is_some() && cfg!(target_os = "macos") {
+                std::env::current_exe()?
+                    .parent()
+                    .and_then(std::path::Path::parent)
+                    .map(|contents| contents.join("Resources"))
+                    .ok_or_else(|| std::io::Error::other("packaged resource path is unavailable"))?
+            } else {
+                app.path().resource_dir()?
+            };
             let bundled_ocr = resource_dir
                 .join("ocr")
                 .join(if cfg!(target_os = "windows") {
@@ -4699,7 +4707,11 @@ pub fn run() {
                     std::fs::remove_dir_all(&ocr_temporary_directory)?;
                 }
             }
-            let restore_credentials = OsRestoreCredentialStore::new()?;
+            let restore_credentials = if setup_smoke_config.is_some() {
+                None
+            } else {
+                Some(OsRestoreCredentialStore::new()?)
+            };
             let master_key = if setup_smoke_config.is_some() {
                 // Deterministic process-local test key. Packaged smoke runs must
                 // never read or write the user's Keychain/Credential Manager.
@@ -4708,7 +4720,10 @@ pub fn run() {
                 // Finish or roll back any staged restore before SQLite or the vault
                 // obtains a file handle. This is required for reliable Windows
                 // activation and makes every crash checkpoint restart-safe.
-                restore::recover_interrupted_restore(&app_data_dir, &restore_credentials)?;
+                let restore_credentials = restore_credentials.as_ref().ok_or_else(|| {
+                    std::io::Error::other("restore credential store is unavailable")
+                })?;
+                restore::recover_interrupted_restore(&app_data_dir, restore_credentials)?;
                 let key_provider = OsDatabaseKeyProvider::new()?;
                 if database_path.exists() {
                     key_provider.existing_key()?
@@ -4762,7 +4777,9 @@ pub fn run() {
             app.manage(google_drive_credentials);
             app.manage(gmail_credentials);
             app.manage(BackupMasterKey(portable_backup_key));
-            app.manage(restore_credentials);
+            if let Some(restore_credentials) = restore_credentials {
+                app.manage(restore_credentials);
+            }
             app.manage(RestoreCommandAuthorization::default());
             app.manage(PendingImportStages::default());
             app.manage(BackupPaths {

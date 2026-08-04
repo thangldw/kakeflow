@@ -1,5 +1,31 @@
 # KakeFlow changelog / Lịch sử thay đổi / 変更履歴
 
+## 1.1.1 — 2026-08-04
+
+### English
+
+- Fixed the Settings layout at narrower desktop widths so preferences no longer overlap account and category controls.
+- Completed Vietnamese rendering for canonical account names and visible OCR, parser and source-evidence issue messages without rewriting custom user names.
+- Hardened the bundled PP-OCRv5 receipt pipeline for wide-spaced yen totals such as `￥23 3`, tax-marked prices such as `*138`, and AEON Pay settlement rows.
+- Added precise review guidance when OCR succeeds but a receipt image contains no transaction date; no date is invented and nothing is posted automatically.
+- Verified the fixes against the supplied supermarket, AEON and Seven-Eleven receipt images, with full frontend tests, lint, production build and model checksum gates.
+
+### Tiếng Việt
+
+- Sửa layout Cài đặt ở chiều rộng desktop hẹp để khối Tùy chọn không còn chồng lên phần tài khoản và danh mục.
+- Hoàn thiện hiển thị tiếng Việt cho tên tài khoản mặc định và các thông báo OCR, parser, bằng chứng nguồn mà không ghi đè tên người dùng tự đặt.
+- Củng cố pipeline biên lai PP-OCRv5 đóng gói để nhận tổng tiền có khoảng cách như `￥23 3`, giá có dấu thuế như `*138` và dòng thanh toán AEON Pay.
+- Hiển thị hướng dẫn chính xác khi OCR thành công nhưng ảnh biên lai không có ngày; ứng dụng không tự tạo ngày và không tự ghi sổ.
+- Xác minh bản sửa với ba ảnh biên lai siêu thị, AEON và Seven-Eleven được cung cấp, cùng toàn bộ test frontend, lint, production build và checksum model.
+
+### 日本語
+
+- 狭いデスクトップ幅の設定画面で、環境設定が口座・カテゴリ操作へ重ならないようレイアウトを修正しました。
+- カスタム口座名を書き換えず、標準口座名と OCR・parser・原本証跡の問題表示をベトナム語へ完全に切り替えます。
+- 同梱 PP-OCRv5 レシート処理を強化し、`￥23 3` のような桁間スペース、`*138` のような税率マーカー付き価格、AEON Pay 支払行に対応しました。
+- OCR 成功後も原本画像に取引日がない場合は、日付を推測せず、台帳へ自動反映しない明確な案内を表示します。
+- 提供されたスーパー、AEON、セブン‐イレブンの画像で修正を確認し、frontend 全テスト、lint、production build、model checksum を検証しました。
+
 ## 1.1.0 — 2026-08-04
 
 ### English

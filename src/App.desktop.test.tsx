@@ -206,6 +206,7 @@ vi.mock('./platform', async () => {
 })
 
 import App from './App'
+import { I18nProvider } from './i18n'
 import { PlatformIpcError } from './platform'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
@@ -2863,6 +2864,22 @@ describe('KakeFlow desktop read models', () => {
     expect(await screen.findByText('既存取引にレシート証憑を紐付けました。新しい支出は作成していません。')).toBeInTheDocument()
   })
 
+  it('explains when OCR succeeds but the source image contains no receipt date', async () => {
+    desktop.ocrDocument.mockResolvedValueOnce({
+      method: 'OCR', text: 'スーパー\n合計\n￥1,050', confidenceBps: 9600, issues: [],
+    })
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], 'receipt-without-date.png', { type: 'image/png' })] },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: '画像OCR' }))
+
+    expect(await screen.findByText('OCRで合計金額は読み取れましたが、日付が画像にありません。日付が写った原本を選択してください。')).toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+  })
+
   it('creates a household-owned account from settings', async () => {
     render(<App />)
     await screen.findByText('生協')
@@ -2871,6 +2888,28 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '口座を追加' }))
 
     await waitFor(() => expect(desktop.createAccount).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: 'ゆうちょ銀行', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY' })))
+  })
+
+  it('localizes canonical account names and OCR guidance after switching to Vietnamese', async () => {
+    const { container } = render(<I18nProvider><App /></I18nProvider>)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tiếng Việt' }))
+
+    const accountNames = Array.from(container.querySelectorAll<HTMLInputElement>('.account-editor > input'), (input) => input.value)
+    expect(accountNames).toEqual(expect.arrayContaining(['Ngân hàng', 'Khác', 'Thu nhập', 'Thẻ tín dụng']))
+    expect(accountNames).not.toEqual(expect.arrayContaining(['銀行', 'その他']))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Nhập dữ liệu' }))
+    fireEvent.change(container.querySelector<HTMLInputElement>('input[type="file"]')!, {
+      target: { files: [new File([new Uint8Array([1, 2, 3])], 'receipt.png', { type: 'image/png' })] },
+    })
+
+    expect(await screen.findByText('Ảnh biên lai sẽ được đọc bằng OCR ngay trên thiết bị.')).toBeInTheDocument()
+    expect(screen.queryByText('レシート画像を端末内OCRで読み取ります。')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cài đặt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tiếng Nhật' }))
   })
 
   it('manages local household members and explains that personal is not access control', async () => {
