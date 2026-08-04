@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a focused improvement for KakeFlow.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should KakeFlow solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Local-first and privacy considerations
+      description: Explain whether the proposal needs network access or handles sensitive data.

@@ -102,6 +102,7 @@ import { DesktopRelayPanel } from './features/sync/DesktopRelayPanel'
 import { FamilyDeliveryPanel } from './features/sync/FamilyDeliveryPanel'
 import { DelimitedParserProfilesPanel } from './features/parser-profiles/DelimitedParserProfilesPanel'
 import { CustomParserRescueDialog } from './features/parser-profiles/CustomParserRescueDialog'
+import { AppUpdateMonitor, AppUpdatePanel } from './features/updates/AppUpdatePanel'
 import { PendingImportHandoffPanel } from './features/import/PendingImportHandoffPanel'
 import { GoogleDriveSettingsPanel } from './features/import/GoogleDriveSettingsPanel'
 import { googleDriveSyncEventPlatform } from './features/import/googleDriveSyncEventPlatform'
@@ -124,6 +125,7 @@ import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBoot
 import type { NavigationItem, PageId, Transaction } from './types'
 import { localize, useI18n } from './i18n'
 import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
+import { APP_VERSION } from './version'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
 import { AuditReadinessPage, GlobalLedgerSearch, MonthlyContextNotes, PlanningTools, SecondaryCurrencySummary } from './features/gemini/GeminiFeatureSuite'
 
@@ -368,7 +370,7 @@ function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, boots
         <div className="brand">
           <span className="brand-mark gemini-brand-mark" aria-hidden="true"><Sparkles size={21} /></span>
           <span>KakeFlow</span>
-          <small className="brand-version">1.1.0</small>
+          <small className="brand-version">{APP_VERSION}</small>
           <button className="icon-btn sidebar-collapse" aria-label={collapsed ? text('サイドバーを展開') : text('サイドバーを折りたたむ')} onClick={toggleCollapsed}>{collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}</button>
           <button className="icon-btn mobile-close" aria-label={text('メニューを閉じる')} onClick={close}><X size={19} /></button>
         </div>
@@ -489,8 +491,7 @@ function ToastCenter() {
     globalThis.addEventListener(KAKEFLOW_TOAST_EVENT, receive)
     return () => { globalThis.removeEventListener(KAKEFLOW_TOAST_EVENT, receive); if (timer) globalThis.clearTimeout(timer) }
   }, [])
-  if (!toast) return null
-  return <div className={`global-toast global-toast-${toast.tone}`} role={toast.tone === 'error' ? 'alert' : 'status'}><span>{toast.tone === 'error' ? <X size={15} /> : <Check size={15} />}</span><p>{toast.message}</p><button className="icon-btn" aria-label={localize("通知を閉じる")} onClick={() => setToast(null)}><X size={14} /></button></div>
+  return <><AppUpdateMonitor enabled={platformClient.runtime === 'tauri'} />{toast && <div className={`global-toast global-toast-${toast.tone}`} role={toast.tone === 'error' ? 'alert' : 'status'}><span>{toast.tone === 'error' ? <X size={15} /> : <Check size={15} />}</span><p>{toast.message}</p><button className="icon-btn" aria-label={localize("通知を閉じる")} onClick={() => setToast(null)}><X size={14} /></button></div>}</>
 }
 
 function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: string; value: string; meta: string; trend?: string; icon: typeof TrendingUp; accent: string }) {
@@ -3649,7 +3650,7 @@ function App() {
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     audit: <AuditReadinessPage counts={importCounts} onOpenImport={() => setPage('import')} onOpenTransactions={() => setPage('transactions')} />,
-    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><AppUpdatePanel enabled={platformClient.runtime === 'tauri'} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
   }[page]
   const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))
   const completeHouseholdCreation = (household: HouseholdDto) => {
