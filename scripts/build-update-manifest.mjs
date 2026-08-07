@@ -14,7 +14,7 @@ const packageJson = JSON.parse(await readFile(new URL('package.json', root), 'ut
 const version = option('version', packageJson.version)
 const artifactsDirectory = path.resolve(option('artifacts', `packaging/release/v${version}`))
 const output = path.resolve(option('output', path.join(artifactsDirectory, 'latest.json')))
-const baseUrl = option('base-url', `https://github.com/thangldw/kakeflow-releases/releases/download/v${version}`)
+const baseUrl = option('base-url', `https://github.com/thangldw/kakeflow/releases/download/v${version}`)
 const notes = option('notes', `KakeFlow ${version}`)
 const pubDate = option('pub-date', new Date().toISOString())
 

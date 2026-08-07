@@ -6,7 +6,7 @@ Local-first household finance desktop application for Japan.
 
 Version 1.2.0 is the current stable desktop milestone.
 
-[Download v1.2.0](https://github.com/thangldw/kakeflow-releases/releases/tag/v1.2.0) · [Product website](https://thangldw.github.io/kakeflow/) · [Release notes](docs/releases/v1.2.0.md) · [Changelog](CHANGELOG.md)
+[Download v1.2.0](https://github.com/thangldw/kakeflow/releases/tag/v1.2.0) · [Product website](https://thangldw.github.io/kakeflow/) · [Release notes](docs/releases/v1.2.0.md) · [Changelog](CHANGELOG.md)
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#FFFFFF","fontFamily":"Arial, sans-serif","lineColor":"#667085","primaryTextColor":"#172B4D"}}}%%
@@ -42,7 +42,7 @@ npm run build
 cd src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-KakeFlow does not initiate payments or treat extracted records as confirmed accounting. Ambiguous or unsupported data remains blocked for human review. Verified downloads are published at [kakeflow-releases](https://github.com/thangldw/kakeflow-releases/releases/tag/v1.2.0).
+KakeFlow does not initiate payments or treat extracted records as confirmed accounting. Ambiguous or unsupported data remains blocked for human review. Verified downloads are published through [GitHub Releases](https://github.com/thangldw/kakeflow/releases/tag/v1.2.0).
 
 ## Tiếng Việt
 
