@@ -15,7 +15,7 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#f5fbff">
   <title>KakeFlow — 家計の流れを、正しくひとつに。</title>
-  <link rel="stylesheet" href="kakeflow-page.css?v=20260807-1">
+  <link rel="stylesheet" href="kakeflow-page.css?v=20260807-2">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="skip">本文へ移動</a>
@@ -25,6 +25,7 @@
       <a class="wordmark" href="#top" aria-label="KakeFlow">kake<span>flow</span></a>
       <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" data-i18n="menu">メニュー</button>
       <nav id="primary-nav" aria-label="Primary navigation">
+        <a href="#use-case" data-i18n="navUseCase">ユースケース</a>
         <a href="#demo" data-i18n="navDemo">デモ</a>
         <a href="#features" data-i18n="navFeatures">機能</a>
         <a href="#privacy" data-i18n="navPrivacy">プライバシー</a>
@@ -64,9 +65,9 @@
         <figure class="hero-product">
           <span class="hero-orb hero-orb-one" aria-hidden="true"></span>
           <span class="hero-orb hero-orb-two" aria-hidden="true"></span>
-          <div class="product-bar" aria-hidden="true"><span></span><span></span><span></span><b>KakeFlow · feature tour</b></div>
-          <img id="tour-image" src="assets/demo/kakeflow-feature-tour-ja.gif" width="960" height="540" alt="KakeFlow feature tour showing dashboard, OCR import, budgets and investments" fetchpriority="high">
-          <figcaption data-i18n="tourCaption">ダッシュボード、OCR取込、予算、投資管理を約9秒で紹介。</figcaption>
+          <div class="product-bar" aria-hidden="true"><span></span><span></span><span></span><b>KakeFlow · Tanaka family use case</b></div>
+          <img id="tour-image" src="assets/demo/kakeflow-feature-tour-ja.gif" width="960" height="540" alt="田中家の家計確認、OCR取込、予算、投資をたどるKakeFlowデモ" fetchpriority="high">
+          <figcaption data-i18n="tourCaption">田中家の家計確認からOCR取込、予算、投資までを約11秒で紹介。</figcaption>
         </figure>
       </div>
     </section>
@@ -75,6 +76,32 @@
       <article><span>01</span><div><b data-i18n="benefitOcrTitle">日本語レシートOCR</b><p data-i18n="benefitOcrBody">PP-OCRv5で日付、合計、税、品目を端末内で読み取ります。</p></div></article>
       <article><span>02</span><div><b data-i18n="benefitBudgetTitle">予算とアラート</b><p data-i18n="benefitBudgetBody">月次予算、貯蓄目標、超過と変化を一画面で確認。</p></div></article>
       <article><span>03</span><div><b data-i18n="benefitInvestTitle">資産と投資</b><p data-i18n="benefitInvestBody">保有、評価損益、配当、資産配分を家計と分けて管理。</p></div></article>
+    </section>
+
+    <section class="section use-case-section" id="use-case">
+      <div class="section-head split-head">
+        <div><p class="eyebrow">END-TO-END DEMO USE CASE</p><h2 data-i18n-html="useCaseTitle">一枚のレシートから、<br>家計全体の判断まで。</h2></div>
+        <p data-i18n="useCaseIntro">共働き・子ども2人の田中家が、買い物後の記帳から月次予算、長期資産までを外部AIへ送信せずに確認するシナリオです。</p>
+      </div>
+      <div class="use-case-card">
+        <aside class="use-case-persona">
+          <span data-i18n="useCaseBadge">合成デモデータ</span>
+          <h3 data-i18n="useCasePersona">田中家 · 4人世帯</h3>
+          <p data-i18n="useCaseContext">給与、銀行、カード、日常支出と投資をJPYで一元管理。氏名、金額、口座番号はすべて架空です。</p>
+          <dl>
+            <div><dt data-i18n="useCaseInputLabel">入力</dt><dd data-i18n="useCaseInput">日本語レシート</dd></div>
+            <div><dt data-i18n="useCaseRuleLabel">ルール</dt><dd data-i18n="useCaseRule">確認後に記帳</dd></div>
+            <div><dt data-i18n="useCaseStorageLabel">保存先</dt><dd data-i18n="useCaseStorage">端末内台帳</dd></div>
+          </dl>
+        </aside>
+        <ol class="use-case-flow">
+          <li><span>01</span><div><h3 data-i18n="useCaseStep1Title">家計全体を確認</h3><p data-i18n="useCaseStep1Body">今月の収支、予算、未確認項目から今日の優先事項を把握。</p></div></li>
+          <li><span>02</span><div><h3 data-i18n="useCaseStep2Title">レシートを取り込む</h3><p data-i18n="useCaseStep2Body">端末内OCRで日付、合計、税、品目を抽出し、原本と照合。</p></div></li>
+          <li><span>03</span><div><h3 data-i18n="useCaseStep3Title">確認して予算へ反映</h3><p data-i18n="useCaseStep3Body">候補を承認後だけ台帳へ記帳し、超過と貯蓄目標を再評価。</p></div></li>
+          <li><span>04</span><div><h3 data-i18n="useCaseStep4Title">資産形成まで確認</h3><p data-i18n="useCaseStep4Body">日常の家計と投資評価額・損益・配分を同じ流れで確認。</p></div></li>
+        </ol>
+      </div>
+      <p class="use-case-outcome"><strong data-i18n="useCaseOutcomeLabel">結果</strong><span data-i18n="useCaseOutcome">一つの確認済みローカル台帳から、日々の支出、月次計画、長期資産を説明できます。</span></p>
     </section>
 
     <section class="section screens-section" id="demo">
@@ -149,6 +176,6 @@
     </section>
   </div>
 
-  <script src="kakeflow-page.js?v=20260807-1"></script>
+  <script src="kakeflow-page.js?v=20260807-2"></script>
 </body>
 </html>
