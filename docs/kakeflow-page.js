@@ -33,9 +33,9 @@
   };
 
   const screenData = {
-    ocr: { src: 'assets/demo/ocr-import-vi.jpg', alt: 'KakeFlow OCR import workspace', title: 'tabOcr', caption: 'ocrCaption' },
-    budgets: { src: 'assets/demo/budgets-vi.jpg', alt: 'KakeFlow budget and savings goals workspace', title: 'tabBudget', caption: 'budgetCaption' },
-    investments: { src: 'assets/demo/investments-vi.jpg', alt: 'KakeFlow investments workspace', title: 'tabInvest', caption: 'investCaption' },
+    ocr: { file: 'ocr-import', alt: 'KakeFlow OCR import workspace', title: 'tabOcr', caption: 'ocrCaption' },
+    budgets: { file: 'budgets', alt: 'KakeFlow budget and savings goals workspace', title: 'tabBudget', caption: 'budgetCaption' },
+    investments: { file: 'investments', alt: 'KakeFlow investments workspace', title: 'tabInvest', caption: 'investCaption' },
   };
   const state = { locale: 'ja', screen: 'ocr' };
   const menuButton = document.querySelector('.menu-toggle');
@@ -44,6 +44,7 @@
   const screenImage = document.querySelector('#screen-image');
   const screenCaption = document.querySelector('#screen-caption');
   const screenPanel = document.querySelector('#screen-panel');
+  const tourImage = document.querySelector('#tour-image');
 
   function copy(key) { return translations[state.locale][key] ?? translations.ja[key] ?? key; }
   function selectScreen(tab, moveFocus = false) {
@@ -51,7 +52,7 @@
     if (!screen || !screenImage || !screenCaption || !screenPanel) return;
     state.screen = tab.dataset.screen;
     tabs.forEach((candidate) => { const selected = candidate === tab; candidate.setAttribute('aria-selected', String(selected)); candidate.tabIndex = selected ? 0 : -1; });
-    screenImage.src = screen.src; screenImage.alt = screen.alt;
+    screenImage.src = `assets/demo/${screen.file}-${state.locale}.jpg`; screenImage.alt = screen.alt;
     screenCaption.replaceChildren(Object.assign(document.createElement('b'), { textContent: copy(screen.title) }), Object.assign(document.createElement('span'), { textContent: copy(screen.caption) }));
     screenPanel.setAttribute('aria-labelledby', tab.id);
     if (moveFocus) tab.focus();
@@ -62,6 +63,7 @@
     document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = copy(element.dataset.i18n); });
     document.querySelectorAll('[data-i18n-html]').forEach((element) => { element.innerHTML = copy(element.dataset.i18nHtml); });
     document.querySelectorAll('[data-locale]').forEach((button) => { const active = button.dataset.locale === locale; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
+    if (tourImage) tourImage.src = `assets/demo/kakeflow-feature-tour-${locale}.gif`;
     const activeTab = tabs.find((tab) => tab.dataset.screen === state.screen); if (activeTab) selectScreen(activeTab);
     const title = locale === 'vi' ? 'KakeFlow — Tài chính của bạn, ngay trên thiết bị.' : locale === 'en' ? 'KakeFlow — Your finances, on your device.' : 'KakeFlow — 家計の流れを、正しくひとつに。';
     document.title = title; document.querySelector('meta[property="og:title"]')?.setAttribute('content', title);

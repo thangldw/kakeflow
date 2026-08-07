@@ -9,13 +9,13 @@
   <meta property="og:title" content="KakeFlow — 家計の流れを、正しくひとつに。">
   <meta property="og:description" content="端末内OCR、予算、投資を一つのローカルファーストアプリで。">
   <meta property="og:url" content="https://thangldw.github.io/kakeflow/">
-  <meta property="og:image" content="https://thangldw.github.io/kakeflow/assets/demo/overview-vi.jpg">
+  <meta property="og:image" content="https://thangldw.github.io/kakeflow/assets/demo/overview-ja.jpg">
   <meta property="og:image:width" content="1280">
   <meta property="og:image:height" content="720">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="theme-color" content="#f7f6f1">
+  <meta name="theme-color" content="#f5fbff">
   <title>KakeFlow — 家計の流れを、正しくひとつに。</title>
-  <link rel="stylesheet" href="kakeflow-page.css?v=20260804-3">
+  <link rel="stylesheet" href="kakeflow-page.css?v=20260807-1">
 </head>
 <body>
   <a class="skip-link" href="#main" data-i18n="skip">本文へ移動</a>
@@ -46,7 +46,7 @@
       <div class="hero-shell">
         <div class="hero-copy">
           <p class="status-line"><span aria-hidden="true"></span><span data-i18n="status">v1.2.0 公開中 · AIトークン不要</span></p>
-          <p class="eyebrow">LOCAL-FIRST PERSONAL FINANCE</p>
+          <p class="eyebrow hero-eyebrow">LOCAL-FIRST · OPEN SOURCE · PRIVATE</p>
           <h1 data-i18n-html="heroTitle">家計を、<br><em>あなたの端末で。</em></h1>
           <p class="hero-lede" data-i18n="heroLede">レシートOCR、予算、取引、投資を一つに。データを外部AIへ送らず、数字の根拠まで追跡できるデスクトップ家計簿です。</p>
           <div class="hero-actions">
@@ -62,8 +62,10 @@
         </div>
 
         <figure class="hero-product">
+          <span class="hero-orb hero-orb-one" aria-hidden="true"></span>
+          <span class="hero-orb hero-orb-two" aria-hidden="true"></span>
           <div class="product-bar" aria-hidden="true"><span></span><span></span><span></span><b>KakeFlow · feature tour</b></div>
-          <img src="assets/demo/kakeflow-feature-tour.gif" width="960" height="540" alt="KakeFlow feature tour showing dashboard, OCR import, budgets and investments" fetchpriority="high">
+          <img id="tour-image" src="assets/demo/kakeflow-feature-tour-ja.gif" width="960" height="540" alt="KakeFlow feature tour showing dashboard, OCR import, budgets and investments" fetchpriority="high">
           <figcaption data-i18n="tourCaption">ダッシュボード、OCR取込、予算、投資管理を約9秒で紹介。</figcaption>
         </figure>
       </div>
@@ -87,7 +89,7 @@
           <button id="tab-investments" role="tab" aria-selected="false" aria-controls="screen-panel" data-screen="investments" type="button" tabindex="-1"><b data-i18n="tabInvest">投資</b><span data-i18n="tabInvestDetail">評価額と配分を確認</span></button>
         </div>
         <figure id="screen-panel" role="tabpanel" aria-labelledby="tab-ocr">
-          <img id="screen-image" src="assets/demo/ocr-import-vi.jpg" width="1280" height="720" alt="KakeFlow OCR import workspace">
+          <img id="screen-image" src="assets/demo/ocr-import-ja.jpg" width="1280" height="720" alt="KakeFlow OCR import workspace">
           <figcaption id="screen-caption"><b data-i18n="tabOcr">OCR取込</b><span data-i18n="ocrCaption">抽出結果は候補として表示し、人が確認した後だけ台帳へ反映します。</span></figcaption>
         </figure>
       </div>
@@ -147,6 +149,6 @@
     </section>
   </div>
 
-  <script src="kakeflow-page.js?v=20260804-3"></script>
+  <script src="kakeflow-page.js?v=20260807-1"></script>
 </body>
 </html>
