@@ -6,6 +6,14 @@ The Tanaka family is a synthetic four-person, dual-income household in Japan. Th
 
 KakeFlow runs the workflow locally. OCR results remain review candidates until the user confirms them; the application does not initiate payments.
 
+```mermaid
+flowchart LR
+    A["Review household health"] --> B["Import Japanese receipt"]
+    B --> C["Verify OCR candidate"]
+    C --> D["Update budget"]
+    D --> E["Review investments"]
+```
+
 ## Scenario
 
 After a household purchase, a family member wants to record the receipt, understand its effect on the monthly budget, and check whether the household remains aligned with its savings and investment plan.
@@ -30,3 +38,13 @@ The landing-page animation is generated in Japanese, English, and Vietnamese by 
 - `docs/assets/demo/kakeflow-feature-tour-vi.gif`
 
 The generator uses localized product screenshots and localized narrative overlays. Do not replace these assets with personal financial data.
+
+The three GIFs are 960 × 540, contain four frames, and are generated from the same story definition in `scripts/build-landing-demo.mjs`. `src/projectPage.test.ts` verifies their presence, dimensions, frame count and locale switching.
+
+## Tiếng Việt
+
+Use case dùng dữ liệu tổng hợp của gia đình Tanaka bốn người. Flow demo đi từ tổng quan tài chính, nhập và duyệt OCR biên lai Nhật, cập nhật ngân sách đến kiểm tra đầu tư. Tất cả tên, giao dịch, số tiền và hậu tố tài khoản đều là hư cấu; không dùng dữ liệu cá nhân hoặc lịch sử mua sắm thật.
+
+## 日本語
+
+この use case は、4 人世帯の田中家を表す合成データだけを使用します。家計全体の確認、日本語レシート OCR の取込・確認、予算更新、投資確認までを一つの flow として示します。氏名、取引、金額、口座末尾はすべて架空で、個人データや実際の購買履歴は含みません。

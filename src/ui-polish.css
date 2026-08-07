@@ -1,5 +1,4 @@
-/* KakeFlow v2 handoff finishing layer. Loaded after the legacy stylesheet so
-   the production UI can migrate without disturbing accounting workflows. */
+/* Current component polish. Loaded last so feature-level styles remain stable. */
 
 .brand .brand-mark {
   width: 30px;

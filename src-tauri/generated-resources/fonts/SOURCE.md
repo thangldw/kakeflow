@@ -15,3 +15,12 @@ KakeFlow bundles Noto Sans JP for Japanese text in generated PDF reports.
 [Font file](https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf) · [OFL license](https://raw.githubusercontent.com/google/fonts/main/ofl/notosansjp/OFL.txt)
 
 The bundled `OFL.txt` preserves the upstream license; only one trailing space was normalized.
+
+Verify the vendored files before a release:
+
+```bash
+shasum -a 256 src-tauri/generated-resources/fonts/NotoSansJP-wght.ttf \
+  src-tauri/generated-resources/fonts/OFL.txt
+```
+
+Do not replace the font from an unpinned download or remove this provenance record.
