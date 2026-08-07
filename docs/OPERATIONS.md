@@ -12,7 +12,7 @@ Run `npm ci`, `npm run lint`, `npm test -- --run`, `npm run build`, then Rust fo
 
 The stable desktop channel uses signed Tauri updater archives. Keep the private updater key outside the repository, set `TAURI_SIGNING_PRIVATE_KEY` to that local key path while building, and publish the generated updater archive plus its `.sig` file. Run `npm run release:update:manifest -- --version X.Y.Z --artifacts packaging/release/vX.Y.Z` and upload the resulting `latest.json` beside the installers. Never publish or commit the private key. Existing v1.1.1 installations require one manual upgrade to a build that contains the updater; subsequent releases are checked automatically after startup and can also be checked from Settings.
 
-Existing v1.2.0 installations still query `thangldw/kakeflow-releases`. Keep that repository as a read-only compatibility mirror until a newer archive signed with the v1.2.0 updater key has been published there and redirects subsequent updates to this repository.
+Existing v1.2.0 installations query the retired `thangldw/kakeflow-releases` endpoint and therefore cannot receive automatic updates. Users on v1.2.0 must install the next release manually from the canonical releases page; builds produced from the current source query this repository directly.
 
 For OCR release QA, start the local preview and open `/ocr-regression.html`. The page must report that every synthetic PP-OCRv5 case passed. The fixtures contain only invented, anonymized receipt data; their expected date, total, tax and item values are also covered by `npm test`.
 
@@ -30,7 +30,7 @@ Chạy `npm ci`, `npm run lint`, `npm test -- --run`, `npm run build`, sau đó 
 
 Kênh desktop ổn định dùng artifact Tauri có chữ ký. Giữ private key updater bên ngoài repository, đặt `TAURI_SIGNING_PRIVATE_KEY` trỏ tới tệp local đó khi build, rồi publish archive updater và tệp `.sig`. Chạy `npm run release:update:manifest -- --version X.Y.Z --artifacts packaging/release/vX.Y.Z` và upload `latest.json` cùng installer. Tuyệt đối không publish hoặc commit private key. Bản v1.1.1 cần nâng cấp thủ công một lần lên bản có updater; từ các bản sau ứng dụng sẽ tự kiểm tra khi khởi động và cho phép kiểm tra trong Cài đặt.
 
-Các bản v1.2.0 hiện tại vẫn truy vấn `thangldw/kakeflow-releases`. Giữ repo đó làm compatibility mirror chỉ đọc cho đến khi phát hành tại đó một archive mới được ký bằng updater key của v1.2.0 và chuyển các lần cập nhật tiếp theo về repo này.
+Các bản v1.2.0 hiện tại truy vấn endpoint `thangldw/kakeflow-releases` đã ngừng hoạt động nên không thể tự động cập nhật. Người dùng v1.2.0 phải cài thủ công bản kế tiếp từ trang release chính thức; các build từ mã nguồn hiện tại truy vấn trực tiếp repo này.
 
 Để QA OCR trước khi release, chạy bản xem trước local và mở `/ocr-regression.html`. Trang phải báo toàn bộ case PP-OCRv5 tổng hợp đã pass. Fixture chỉ chứa dữ liệu biên lai giả lập, đã ẩn danh; ngày, tổng tiền, thuế và giá từng món cũng được kiểm tra trong `npm test`.
 
@@ -48,7 +48,7 @@ Các bản port tạm, thư mục so sánh và release worktree chỉ là dữ l
 
 stable デスクトップチャンネルでは、署名済み Tauri updater archive を使用します。updater の秘密鍵は repository 外に保存し、build 時だけ `TAURI_SIGNING_PRIVATE_KEY` でそのローカル key path を指定します。生成された updater archive と `.sig` を公開し、`npm run release:update:manifest -- --version X.Y.Z --artifacts packaging/release/vX.Y.Z` で作成した `latest.json` も installer と同じ release に upload します。秘密鍵は公開・commit しないでください。v1.1.1 は updater 搭載版へ一度だけ手動更新が必要で、それ以降は起動後の自動確認と設定画面からの手動確認を利用できます。
 
-既存の v1.2.0 は引き続き `thangldw/kakeflow-releases` を参照します。v1.2.0 の updater key で署名した新しい archive を同 repository に公開し、その後の更新先を本 repository に切り替えるまでは、読み取り専用の compatibility mirror として維持してください。
+既存の v1.2.0 は廃止された `thangldw/kakeflow-releases` endpoint を参照するため、自動更新を受信できません。v1.2.0 の利用者は canonical release page から次の release を手動でインストールする必要があります。現在の source から生成した build は本 repository を直接参照します。
 
 OCR の release QA では local preview を起動し、`/ocr-regression.html` を開きます。匿名の合成 receipt を使うすべての PP-OCRv5 case が passed になることを確認してください。日付・合計・税・品目金額の期待値は `npm test` でも検証されます。
 
