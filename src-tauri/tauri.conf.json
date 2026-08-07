@@ -54,7 +54,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCREREMUZDREE1MzIxNUEKUldSYUlWUGEvTkhkUzNnZFVXbDVTYm9DOGEwWEhHUE5ranpJdVE0MkNRMTZXS3JGUldXMGZXdFEK",
       "endpoints": [
-        "https://github.com/thangldw/kakeflow-releases/releases/latest/download/latest.json"
+        "https://github.com/thangldw/kakeflow/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
