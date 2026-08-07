@@ -1,5 +1,28 @@
 # KakeFlow changelog / Lịch sử thay đổi / 変更履歴
 
+## Unreleased
+
+### English
+
+- Added an end-to-end synthetic Tanaka-family demo and localized Japanese, English and Vietnamese animations.
+- Expanded the architecture and operations documentation with current runtime, trust, posting and compatibility boundaries.
+- Removed the completed design-port handoff, obsolete comparison images, v1.1.1 social campaign page/assets and the superseded single-language demo GIF.
+- Renamed the active application style layers to `theme.css` and `ui-polish.css`; no accounting or compatibility behavior changed.
+
+### Tiếng Việt
+
+- Bổ sung demo end-to-end bằng dữ liệu tổng hợp của gia đình Tanaka và GIF riêng cho Nhật, Anh, Việt.
+- Cập nhật tài liệu kiến trúc/vận hành theo runtime, trust boundary, quy tắc ghi sổ và compatibility hiện tại.
+- Xoá handoff thiết kế đã hoàn thành, ảnh so sánh cũ, trang/asset social v1.1.1 và GIF demo một ngôn ngữ đã được thay thế.
+- Đổi tên layer giao diện đang dùng thành `theme.css` và `ui-polish.css`; không thay đổi logic kế toán hoặc compatibility.
+
+### 日本語
+
+- 田中家の合成データを使う end-to-end demo と、日本語・英語・ベトナム語別 GIF を追加しました。
+- 現行 runtime、trust boundary、記帳条件、compatibility 方針に合わせて architecture／operations 文書を更新しました。
+- 完了済み design port handoff、旧比較画像、v1.1.1 social page／asset、置換済み単一言語 GIF を削除しました。
+- 現行 style layer を `theme.css` と `ui-polish.css` へ改名しました。会計・compatibility 動作は変更していません。
+
 ## 1.2.0 — 2026-08-04
 
 ### English

@@ -1470,8 +1470,7 @@ html[data-theme='dark'] .sidebar,html[data-theme='dark'] .topbar,html[data-theme
   .workspace-content { min-width: 1060px; }
 }
 
-/* Final design-handoff alignment. Keep these rules last so legacy v1 styles
-   cannot leak into the v2 shell. */
+/* Base application alignment. Keep these rules last within the base layer. */
 html { font-size: 14px; }
 body { overflow: hidden; }
 .app-shell { height: 100vh; min-height: 0; overflow: hidden; }

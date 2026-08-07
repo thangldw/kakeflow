@@ -25,6 +25,10 @@ cargo test
 
 For OCR changes, also run `npm run paddleocr:verify`, `npm run ocr:verify` on a staged desktop environment, and the local `/ocr-regression.html` model gate.
 
+For landing-page or demo-media changes, run `npm run landing:demo`, update all three locales, and run `npm test -- --run src/projectPage.test.ts`. The generator and localized source screenshots are canonical; do not hand-edit generated GIFs.
+
+The maintained style load order is `styles.css`, `theme.css`, feature CSS, then `ui-polish.css`. Do not add another temporary port or handoff stylesheet.
+
 ## Pull requests
 
 - Create a focused branch and explain the user-facing impact.
@@ -32,6 +36,8 @@ For OCR changes, also run `npm run paddleocr:verify`, `npm run ocr:verify` on a 
 - Preserve explicit review before imported data becomes a confirmed ledger entry.
 - Keep new functionality local by default. Document every new network boundary.
 - Update English, Vietnamese and Japanese copy together when changing visible UI text.
+- Update [architecture](docs/ARCHITECTURE.md), [operations](docs/OPERATIONS.md) and Mermaid graphs when a runtime, storage, network or posting boundary changes.
 - Do not commit generated installers, local databases, credentials or updater private keys.
+- Do not add separate source/release repositories, design comparison dumps or one-off campaign pages to the canonical tree.
 
 By contributing, you agree that your contribution is licensed under the repository's MIT License.

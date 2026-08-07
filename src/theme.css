@@ -1,4 +1,4 @@
-/* Gemini visual source port. This file intentionally loads after styles.css. */
+/* Canonical KakeFlow theme tokens and application shell. Loaded after styles.css. */
 :root {
   --canvas: #f4f2ec;
   --surface: #fffefa;

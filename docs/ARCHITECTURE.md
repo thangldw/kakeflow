@@ -1,29 +1,86 @@
 # KakeFlow architecture / Kiến trúc / アーキテクチャ
 
+## Runtime and trust boundaries
+
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#FFFFFF","fontFamily":"Arial, sans-serif","lineColor":"#667085","primaryTextColor":"#172B4D"}}}%%
 flowchart LR
-    I["Imports & OCR<br/>Nhập / 取込"]:::yellow
-    E["Immutable evidence<br/>Bằng chứng / 証拠"]:::blue
-    Q["Review queue<br/>Duyệt / 確認"]:::pink
-    L["Encrypted ledger<br/>Sổ cái / 台帳"]:::purple
-    R["Reports & family<br/>Báo cáo / 共有"]:::green
-    I --> E --> Q --> L --> R
-    classDef yellow fill:#FFF4A3,stroke:#C9A227,stroke-width:2px,color:#172B4D
-    classDef blue fill:#D9EAFD,stroke:#4C78A8,stroke-width:2px,color:#172B4D
-    classDef pink fill:#FFE1E6,stroke:#C96A7B,stroke-width:2px,color:#172B4D
-    classDef purple fill:#E9DDF7,stroke:#8064A2,stroke-width:2px,color:#172B4D
-    classDef green fill:#DDF5E3,stroke:#4F9D69,stroke-width:2px,color:#172B4D
+    subgraph External["Optional external sources"]
+        F["User files"]
+        G["Gmail / Google Drive"]
+        C["Family relay / mobile capture"]
+        U["Signed update channel"]
+    end
+
+    subgraph Device["User device · authoritative boundary"]
+        UI["React + TypeScript UI"]
+        IPC["Validated Tauri commands"]
+        PARSE["Deterministic adapters"]
+        OCR["Bundled PP-OCRv5"]
+        VAULT["Encrypted evidence vault"]
+        REVIEW["Review queue"]
+        LEDGER["SQLCipher double-entry ledger"]
+        READ["Read models"]
+        OUTPUT["Budgets · reports · investments · exports"]
+
+        UI <--> IPC
+        IPC --> PARSE
+        IPC --> OCR
+        PARSE --> VAULT
+        OCR --> VAULT
+        VAULT --> REVIEW
+        REVIEW -->|"explicit approval"| LEDGER
+        LEDGER --> READ --> OUTPUT --> UI
+    end
+
+    F --> IPC
+    G --> IPC
+    C --> IPC
+    U -. "signed metadata and artifacts" .-> IPC
 ```
 
-## English
+External services are optional ingress or distribution boundaries. The local SQLCipher ledger is authoritative. OCR and parsing produce candidates and immutable source evidence; they do not create confirmed accounting entries without explicit review.
 
-The React/TypeScript frontend runs inside Tauri 2. Rust commands own local encrypted persistence, import parsing, evidence lineage and accounting boundaries. Extracted candidates enter a review queue; only confirmed records reach the double-entry ledger. Connectors and OCR fail closed on incomplete semantics.
+## Posting invariant
+
+```mermaid
+stateDiagram-v2
+    [*] --> Discovered
+    Discovered --> EvidenceStored: preserve source and lineage
+    EvidenceStored --> Candidate: parse or OCR
+    Candidate --> Blocked: incomplete or unsupported
+    Candidate --> Reviewed: user validates fields
+    Blocked --> Candidate: corrected or mapped
+    Reviewed --> Posted: balanced debit and credit
+    Posted --> ReadModels: committed ledger revision
+    ReadModels --> [*]
+```
+
+The `Candidate → Posted` transition is allowed only after validation and balanced-entry checks. Duplicate detection, audience attribution and source lineage are preserved across that transition.
+
+## Code ownership
+
+| Layer | Canonical location | Responsibility |
+| --- | --- | --- |
+| Application UI | `src/` | Workspaces, localization, browser demo data and validated platform DTOs. |
+| Native boundary | `src-tauri/src/lib.rs` | Tauri command registration and state ownership. |
+| Domain and persistence | `src-tauri/src/` | SQLCipher persistence, evidence vault, imports, accounting, reports, investments and optional connectors. |
+| Schema evolution | `src-tauri/migrations/` | Forward-only data migrations and compatibility projections. |
+| Relay reference service | `relay-service/` | Optional encrypted family-delivery and capture transport; never the ledger of record. |
+| Product website | `docs/` | GitHub Pages landing page, localized demo media and maintained documentation. |
+
+## Compatibility policy
+
+Compatibility readers and migrations are retained when they protect existing backups, evidence bundles, dashboard preferences or family-delivery data. They are not dead code. A compatibility path may be removed only after its supported input version is formally retired, fixtures are removed, and restore/migration tests are updated in the same change.
 
 ## Tiếng Việt
 
-Frontend React/TypeScript chạy trong Tauri 2. Rust command quản lý lưu trữ mã hóa local, parser import, evidence lineage và ranh giới kế toán. Candidate trích xuất vào hàng đợi duyệt; chỉ record đã xác nhận mới vào sổ kép. Connector/OCR fail-closed khi semantics chưa đủ.
+Frontend React/TypeScript chạy trong Tauri 2 và chỉ giao tiếp với Rust qua command đã kiểm tra DTO. Rust quản lý SQLCipher, evidence vault, parser, OCR, ranh giới kế toán và read model. Dữ liệu từ file hoặc connector chỉ trở thành candidate; người dùng phải duyệt và bút toán phải cân bằng trước khi vào sổ cái. Relay và connector là biên tùy chọn, không phải nguồn dữ liệu authoritative.
+
+Code compatibility cho backup, evidence, preference và dữ liệu chia sẻ phiên bản cũ vẫn được giữ khi cần bảo vệ khả năng restore/migrate; không coi các path này là code thừa nếu test compatibility còn yêu cầu.
 
 ## 日本語
 
-React/TypeScript frontend は Tauri 2 内で動作します。Rust command がローカル暗号化保存、取込解析、証拠来歴、会計境界を担当します。抽出候補は確認キューに入り、承認済み記録だけが複式簿記台帳へ反映されます。意味が不完全な connector／OCR は fail-closed です。
+React／TypeScript frontend は Tauri 2 上で動作し、検証済み DTO の command を通じて Rust と通信します。Rust が SQLCipher、証拠 vault、parser、OCR、会計境界、read model を所有します。ファイルや connector から得たデータは candidate に留まり、人による確認と貸借一致を通過した場合だけ台帳へ反映されます。relay／connector は任意の境界であり、authoritative ledger ではありません。
+
+旧 backup、evidence、preference、family delivery を復元・移行する compatibility path は、対応データを保護するために必要な限り保持します。compatibility test が要求する処理は未使用 code として削除しません。
