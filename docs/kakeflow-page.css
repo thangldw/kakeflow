@@ -425,7 +425,7 @@ a:focus-visible, button:focus-visible { outline: 3px solid rgba(84, 107, 74, .42
 .language-switcher button.active { background: var(--green); color: white; }
 .support-trigger { min-height: 36px; padding: 0 12px; border: 1px solid #cfd5ca; border-radius: 8px; background: rgba(255,255,255,.7); color: var(--ink); cursor: pointer; font-size: 11px; font-weight: 800; }
 .support-trigger:hover { border-color: #9ba894; background: white; }
-.hero-product img[src$='.gif'] { aspect-ratio: 16 / 9; object-fit: cover; }
+.hero-product img[src*='.gif'] { aspect-ratio: 16 / 9; object-fit: cover; }
 
 .feature-section { border-top: 1px solid var(--line); }
 .feature-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }

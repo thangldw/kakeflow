@@ -10,7 +10,7 @@ const css = readFileSync(resolve(docsPath, 'kakeflow-page.css'), 'utf8')
 const script = readFileSync(resolve(docsPath, 'kakeflow-page.js'), 'utf8')
 
 function localAssetExists(path: string) {
-  return existsSync(resolve(docsPath, path))
+  return existsSync(resolve(docsPath, path.split('?')[0]))
 }
 
 describe('KakeFlow project page', () => {
@@ -84,7 +84,7 @@ describe('KakeFlow project page', () => {
     expect(css).toContain('@media (prefers-reduced-motion: reduce)')
     expect(css).toContain('.support-grid { grid-template-columns: 1fr; }')
     expect(css).toContain('object-fit: contain')
-    expect(css).toContain(".hero-product img[src$='.gif']")
+    expect(css).toContain(".hero-product img[src*='.gif']")
     expect(html).not.toMatch(/<script[^>]+https?:\/\//)
     expect(html).not.toMatch(/<link[^>]+href="https?:\/\/[^"]+\.css/)
   })
@@ -114,6 +114,7 @@ describe('KakeFlow project page', () => {
     expect(document.querySelector('[data-i18n-html="useCaseTitle"]')).toHaveTextContent('From one receipt')
     expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('budgets-en.jpg')
     expect(document.querySelector<HTMLImageElement>('#tour-image')?.src).toContain('kakeflow-feature-tour-en.gif')
+    expect(document.querySelector<HTMLImageElement>('#tour-image')?.src).toContain('?v=20260807-2')
     expect(document.querySelector<HTMLImageElement>('#tour-image')?.alt).toContain('Tanaka family')
 
     const supportButton = document.querySelector<HTMLButtonElement>('[data-support-open]')
