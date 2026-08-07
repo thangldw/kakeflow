@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import sharp from 'sharp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import packageJson from '../package.json'
 
@@ -60,6 +61,23 @@ describe('KakeFlow project page', () => {
     expect(html.match(/role="tab"[^>]+tabindex="-1"/g)).toHaveLength(2)
   })
 
+  it('publishes a complete synthetic household use case in every locale', async () => {
+    expect(html).toContain('id="use-case"')
+    expect(html).toContain('合成デモデータ')
+    expect(html).toContain('氏名、金額、口座番号はすべて架空です')
+    expect(html.match(/class="use-case-flow"/g)).toHaveLength(1)
+    expect(html.match(/useCaseStep\dTitle/g)).toHaveLength(4)
+    expect(script).toContain("useCaseTitle: 'From one receipt")
+    expect(script).toContain("useCaseTitle: 'Từ một biên lai")
+
+    for (const locale of ['ja', 'en', 'vi']) {
+      const metadata = await sharp(resolve(docsPath, `assets/demo/kakeflow-feature-tour-${locale}.gif`), { animated: true }).metadata()
+      expect(metadata.width).toBe(960)
+      expect(metadata.pageHeight).toBe(540)
+      expect(metadata.pages).toBe(4)
+    }
+  })
+
   it('includes responsive and reduced-motion behavior without external runtime dependencies', () => {
     expect(css).toContain('@media (max-width: 820px)')
     expect(css).toContain('@media (max-width: 540px)')
@@ -93,8 +111,10 @@ describe('KakeFlow project page', () => {
     expect(document.querySelector('#screen-caption')).toHaveTextContent('mục tiêu tiết kiệm')
 
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click()
+    expect(document.querySelector('[data-i18n-html="useCaseTitle"]')).toHaveTextContent('From one receipt')
     expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('budgets-en.jpg')
     expect(document.querySelector<HTMLImageElement>('#tour-image')?.src).toContain('kakeflow-feature-tour-en.gif')
+    expect(document.querySelector<HTMLImageElement>('#tour-image')?.alt).toContain('Tanaka family')
 
     const supportButton = document.querySelector<HTMLButtonElement>('[data-support-open]')
     supportButton?.click()
