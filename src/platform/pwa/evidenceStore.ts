@@ -35,6 +35,11 @@ export class EvidenceStore {
   }
 
   async getEvidence(id: string): Promise<Uint8Array> {
+    const envelope = await this.encryptedEnvelope(id)
+    return this.database.openEnvelope('EVIDENCE', id, envelope)
+  }
+
+  async encryptedEnvelope(id: string): Promise<EncryptedEnvelope> {
     let envelope: EncryptedEnvelope | undefined
     if (this.getDirectory) {
       try {
@@ -46,7 +51,7 @@ export class EvidenceStore {
     }
     envelope ??= await this.database.getEvidenceEnvelope(id)
     if (!envelope) throw new Error('Evidence not found')
-    return this.database.openEnvelope('EVIDENCE', id, envelope)
+    return envelope
   }
 }
 

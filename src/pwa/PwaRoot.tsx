@@ -274,6 +274,26 @@ export default function PwaRoot({
     }
   }
 
+  const restoreArchive = async (archive: Uint8Array, archivePassphrase: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const client = await session.restoreVault(archive, archivePassphrase)
+      setDraft(null)
+      setPosted(null)
+      setDetail(null)
+      setEvidence(null)
+      setApproved(false)
+      setScreen('overview')
+      await loadVault(client)
+    } catch (cause) {
+      setError(messageOf(cause))
+      throw cause
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const lockVault = () => {
     session.lockVault()
     setPassphrase('')
@@ -364,7 +384,11 @@ export default function PwaRoot({
         />}
         {screen === 'ledger' && <LedgerScreen transactions={transactions} onProvenance={showProvenance} />}
         {screen === 'evidence' && <EvidenceScreen detail={detail} evidence={evidence} />}
-        {screen === 'backup' && session.client && <BackupScreen client={session.client} />}
+        {screen === 'backup' && session.client && <BackupScreen
+          client={session.client}
+          busy={busy || session.busy}
+          onRestore={restoreArchive}
+        />}
       </main>
     </div>}
   </div>
@@ -486,7 +510,70 @@ function EvidenceScreen({ detail, evidence }: {
   return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">SOURCE → CANDIDATE → POSTING</p><h1>Transaction provenance</h1></div><span className="pwa-chip">VERIFIED LOCAL</span></div><div className="pwa-provenance"><article className="pwa-panel"><span>01 · encrypted source</span><h2>{evidence.source.originalFilename}</h2><p>{evidence.source.mediaType} · {evidence.source.byteSize} bytes</p><code>SHA-256 {evidence.source.sha256}</code></article><article className="pwa-panel"><span>02 · approved candidate</span><h2>{detail.payee}</h2><p>{detail.occurredOn} · {formatJpy(detail.amountJpy)}</p><code>{detail.candidateId}</code></article><article className="pwa-panel"><span>03 · balanced posting</span><h2>{detail.entries.length} ledger entries</h2>{detail.entries.map((entry) => <p key={entry.id}>{entry.side} · {formatJpy(entry.amountJpy)}</p>)}<code>{detail.canonicalPostingHash}</code></article></div></section>
 }
 
-function BackupScreen({ client }: { readonly client: PwaLedgerClient }) {
-  const [exported, setExported] = useState(false)
-  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 06 · ENCRYPTED</p><h1>Backup and recovery</h1></div></div><article className="pwa-panel"><h2>Encrypted vault state</h2><p>Records and evidence remain encrypted in the exported state. Portable archive restore is added at the next gate.</p><button className="pwa-primary" type="button" onClick={() => { void client.exportVault().then(() => setExported(true)) }}>Verify encrypted export</button>{exported && <p role="status">Encrypted export verified</p>}</article></section>
+export function BackupScreen({ client, busy, onRestore }: {
+  readonly client: PwaLedgerClient
+  readonly busy: boolean
+  readonly onRestore: (archive: Uint8Array, passphrase: string) => Promise<void>
+}) {
+  const [status, setStatus] = useState<string | null>(null)
+  const [archiveFile, setArchiveFile] = useState<File | null>(null)
+  const [archivePassphrase, setArchivePassphrase] = useState('')
+  const [working, setWorking] = useState(false)
+
+  const downloadArchive = async () => {
+    setWorking(true)
+    setStatus('Preparing encrypted archive…')
+    try {
+      const archive = await client.exportVault()
+      const blob = new Blob([Uint8Array.from(archive).buffer], {
+        type: 'application/vnd.kakeflow.encrypted+zip',
+      })
+      const url = URL.createObjectURL(blob)
+      try {
+        const link = document.createElement('a')
+        link.href = url
+        link.download = 'kakeflow-encrypted-vault.kakeflow.zip'
+        link.click()
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+      setStatus('Encrypted archive downloaded')
+    } catch (cause) {
+      setStatus(`Export failed: ${messageOf(cause)}`)
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  const restore = async () => {
+    if (!archiveFile || !archivePassphrase) return
+    setWorking(true)
+    setStatus('Validating the complete archive before activation…')
+    try {
+      await onRestore(await readFileBytes(archiveFile), archivePassphrase)
+    } catch {
+      setStatus('Restore rejected; the active vault was not changed')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return <section>
+    <div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 06 · ENCRYPTED</p><h1>Backup and recovery</h1></div></div>
+    <div className="pwa-compare">
+      <article className="pwa-panel">
+        <h2>Export encrypted archive</h2>
+        <p>Download authenticated encrypted records and source evidence. The archive passphrase is your current vault passphrase.</p>
+        <button className="pwa-primary" type="button" disabled={busy || working} onClick={() => void downloadArchive()}>Download encrypted archive</button>
+      </article>
+      <article className="pwa-panel">
+        <h2>Validate and restore</h2>
+        <p>Restore writes a new vault and switches the active pointer only after every manifest hash and encrypted envelope passes.</p>
+        <label>Encrypted archive file<input aria-label="Encrypted archive file" type="file" accept=".zip,.kakeflow.zip,application/zip,application/vnd.kakeflow.encrypted+zip" disabled={busy || working} onChange={(event) => setArchiveFile(event.target.files?.[0] ?? null)} /></label>
+        <label>Archive passphrase<input aria-label="Archive passphrase" type="password" autoComplete="current-password" value={archivePassphrase} disabled={busy || working} onChange={(event) => setArchivePassphrase(event.target.value)} /></label>
+        <button className="pwa-primary" type="button" disabled={busy || working || !archiveFile || !archivePassphrase} onClick={() => void restore()}>Validate and restore</button>
+      </article>
+    </div>
+    {status && <p role="status">{status}</p>}
+  </section>
 }

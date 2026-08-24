@@ -5,12 +5,12 @@ import { VAULT_SCHEMA_VERSION, type EncryptedEnvelope, type VaultMetadata } from
 
 const STORAGE_VERSION = 2
 
-interface VaultRow {
+export interface VaultRow {
   readonly vaultId: string
   readonly metadata: VaultMetadata
 }
 
-interface EventRow {
+export interface EventRow {
   readonly vaultId: string
   readonly sequence: number
   readonly id: string
@@ -18,14 +18,14 @@ interface EventRow {
   readonly envelope: EncryptedEnvelope
 }
 
-interface ProjectionRow {
+export interface ProjectionRow {
   readonly vaultId: string
   readonly projectionType: string
   readonly id: string
   readonly envelope: EncryptedEnvelope
 }
 
-interface EvidenceRow {
+export interface EvidenceRow {
   readonly vaultId: string
   readonly id: string
   readonly envelope: EncryptedEnvelope
@@ -94,6 +94,10 @@ export interface DecryptedEvent extends PlainEventWrite {
 
 export interface DatabaseFaultHooks {
   readonly beforeProjectionWrites?: () => void
+}
+
+export interface RestoreFaultHooks {
+  readonly beforeActivate?: () => void
 }
 
 export interface EncryptedVaultState {
@@ -175,6 +179,44 @@ export class PwaVaultDatabase {
       const key = await unlockVaultKey(passphrase, vault.metadata)
       return new PwaVaultDatabase(database, vault.vaultId, key, hooks)
     } catch (error) {
+      database.close()
+      throw error
+    }
+  }
+
+  static async activateRestoredVault(
+    databaseName: string,
+    state: EncryptedVaultState,
+    key: CryptoKey,
+    hooks: RestoreFaultHooks = {},
+  ): Promise<PwaVaultDatabase> {
+    validateRestoredState(state)
+    const database = await openVaultDatabase(databaseName)
+    const transaction = database.transaction(
+      ['vaults', 'events', 'projections', 'evidence', 'meta'],
+      'readwrite',
+    )
+    try {
+      await transaction.objectStore('vaults').add(state.vault)
+      for (const event of state.events) await transaction.objectStore('events').add(event)
+      for (const projection of state.projections) {
+        await transaction.objectStore('projections').add(projection)
+      }
+      for (const evidence of state.evidence) {
+        await transaction.objectStore('evidence').add(evidence)
+      }
+      const meta = transaction.objectStore('meta')
+      await Promise.all([
+        meta.put({ key: revisionKey(state.vault.vaultId), value: state.revision }),
+        meta.put({ key: sequenceKey(state.vault.vaultId), value: state.eventSequence }),
+      ])
+      hooks.beforeActivate?.()
+      await meta.put({ key: 'activeVaultId', value: state.vault.vaultId })
+      await transaction.done
+      return new PwaVaultDatabase(database, state.vault.vaultId, key, {})
+    } catch (error) {
+      abortTransaction(transaction)
+      await transaction.done.catch(() => undefined)
       database.close()
       throw error
     }
@@ -460,6 +502,24 @@ function sequenceKey(vaultId: string) {
 
 function numericMeta(row: MetaRow | undefined): number {
   return row && typeof row.value === 'number' ? row.value : 0
+}
+
+function validateRestoredState(state: EncryptedVaultState) {
+  const vaultId = state.vault.vaultId
+  if (!vaultId || state.vault.metadata.vaultId !== vaultId) {
+    throw new Error('Invalid restored vault metadata')
+  }
+  if (!Number.isSafeInteger(state.revision) || state.revision < 0) {
+    throw new Error('Invalid restored revision')
+  }
+  if (!Number.isSafeInteger(state.eventSequence) || state.eventSequence < 0) {
+    throw new Error('Invalid restored event sequence')
+  }
+  if (state.events.some((row) => row.vaultId !== vaultId)
+    || state.projections.some((row) => row.vaultId !== vaultId)
+    || state.evidence.some((row) => row.vaultId !== vaultId)) {
+    throw new Error('Restored record belongs to another vault')
+  }
 }
 
 function abortTransaction(transaction: { abort(): void }) {

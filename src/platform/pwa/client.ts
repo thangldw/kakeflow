@@ -1,4 +1,5 @@
-import type { EncryptedVaultState, PlainEventWrite, PlainProjectionWrite } from './database'
+import { createPwaArchive, restorePwaArchive, type RestorePwaArchiveOptions } from './archive'
+import type { PlainEventWrite, PlainProjectionWrite } from './database'
 import { PwaVaultDatabase } from './database'
 import { EvidenceStore, type EvidenceStoreOptions } from './evidenceStore'
 import type {
@@ -22,10 +23,12 @@ import type {
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
-interface ClientOptions {
+export interface ClientOptions {
   readonly vaultId?: string
   readonly evidence?: EvidenceStoreOptions
 }
+
+export interface RestoreClientOptions extends ClientOptions, RestorePwaArchiveOptions {}
 
 interface CorePostingValidation {
   readonly valid: boolean
@@ -64,6 +67,17 @@ export class PwaLedgerClient {
   ) {
     const database = await PwaVaultDatabase.open(databaseName, passphrase)
     return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence))
+  }
+
+  static async restoreVault(
+    databaseName: string,
+    archive: Uint8Array,
+    passphrase: string,
+    options: RestoreClientOptions = {},
+  ) {
+    const { evidence, ...restoreOptions } = options
+    const database = await restorePwaArchive(databaseName, archive, passphrase, restoreOptions)
+    return new PwaLedgerClient(database, new EvidenceStore(database, evidence))
   }
 
   lock() {
@@ -327,12 +341,9 @@ export class PwaLedgerClient {
     }
   }
 
-  exportVault(): Promise<EncryptedVaultState> {
-    return this.database.exportEncryptedState()
-  }
-
-  async restoreVault(): Promise<never> {
-    throw new Error('Encrypted archive restore is not implemented in this task')
+  async exportVault(): Promise<Uint8Array> {
+    const sourceIds = (await this.listModels<SourceRecord>('SOURCE')).map((source) => source.id)
+    return createPwaArchive(this.database, this.evidence, sourceIds)
   }
 
   private async sourceEvidenceById(sourceId: string): Promise<SourceEvidence> {

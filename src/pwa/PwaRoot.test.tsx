@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -27,8 +27,9 @@ vi.mock('./serviceWorker', () => ({
 }))
 
 import { I18nProvider } from '../i18n'
+import type { PwaLedgerClient } from '../platform/pwa/client'
 import type { PwaOcrDocument } from './PwaRoot'
-import PwaRoot from './PwaRoot'
+import PwaRoot, { BackupScreen } from './PwaRoot'
 
 const originalFetch = globalThis.fetch
 const passphrase = 'correct horse battery staple'
@@ -201,5 +202,45 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(screen.getByText(/Finish or leave the active receipt review/u)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
     expect(screen.getByRole('button', { name: 'Apply update' })).toBeEnabled()
+  })
+
+  it('downloads an encrypted archive and restores it through the recovery screen', async () => {
+    let downloaded: Blob | undefined
+    const client = {
+      exportVault: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3, 4])),
+    } as unknown as PwaLedgerClient
+    const onRestore = vi.fn().mockResolvedValue(undefined)
+    render(<BackupScreen client={client} busy={false} onRestore={onRestore} />)
+    Object.defineProperties(URL, {
+      createObjectURL: {
+        configurable: true,
+        value: vi.fn((blob: Blob) => {
+          downloaded = blob
+          return 'blob:kakeflow-archive'
+        }),
+      },
+      revokeObjectURL: { configurable: true, value: vi.fn() },
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Download encrypted archive' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Encrypted archive downloaded')
+    await waitFor(() => expect(downloaded).toBeDefined())
+    expect(downloaded?.type).toBe('application/vnd.kakeflow.encrypted+zip')
+    fireEvent.change(screen.getByLabelText('Encrypted archive file'), {
+      target: {
+        files: [new File([downloaded!], 'kakeflow-vault.kakeflow.zip', {
+          type: 'application/vnd.kakeflow.encrypted+zip',
+        })],
+      },
+    })
+    fireEvent.change(screen.getByLabelText('Archive passphrase'), {
+      target: { value: passphrase },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Validate and restore' }))
+
+    await waitFor(() => expect(onRestore).toHaveBeenCalledOnce())
+    expect([...onRestore.mock.calls[0][0]]).toEqual([1, 2, 3, 4])
+    expect(onRestore.mock.calls[0][1]).toBe(passphrase)
   })
 })

@@ -11,6 +11,7 @@ export interface PwaClientSession {
   readonly error: string | null
   readonly createVault: (passphrase: string) => Promise<PwaLedgerClient>
   readonly unlockVault: (passphrase: string) => Promise<PwaLedgerClient>
+  readonly restoreVault: (archive: Uint8Array, passphrase: string) => Promise<PwaLedgerClient>
   readonly lockVault: () => void
   readonly clearError: () => void
 }
@@ -52,6 +53,14 @@ export function usePwaClient(databaseName: string): PwaClientSession {
     run(() => PwaLedgerClient.unlock(databaseName, passphrase))
   ), [databaseName, run])
 
+  const restoreVault = useCallback((archive: Uint8Array, passphrase: string) => (
+    run(async () => {
+      const restored = await PwaLedgerClient.restoreVault(databaseName, archive, passphrase)
+      client?.close()
+      return restored
+    })
+  ), [client, databaseName, run])
+
   const lockVault = useCallback(() => {
     client?.lock()
     client?.close()
@@ -67,6 +76,7 @@ export function usePwaClient(databaseName: string): PwaClientSession {
     error,
     createVault,
     unlockVault,
+    restoreVault,
     lockVault,
     clearError: useCallback(() => setError(null), []),
   }
