@@ -19,25 +19,118 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test -- --run
+      - run: npm run test:functional
       - run: npm run build
       - run: npm run check:versions
       - run: npm run check:update-channel
       - run: npm run paddleocr:verify
+
+  pdf-visual-qa:
+    name: Poppler PDF visual QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y poppler-utils
+          command -v pdfinfo
+          command -v pdftoppm
+      - name: Render PDF visual evidence
+        env:
+          KAKEFLOW_REQUIRE_POPPLER: '1'
+          KAKEFLOW_PDF_QA_OUTPUT: artifacts/pdf-report-visual-qa
+        run: npm run test:pdf-visual
+      - name: Upload machine-readable evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pdf-visual-qa-machine
+          path: artifacts/pdf-report-visual-qa/manifest.json
+          if-no-files-found: error
+      - name: Upload human-review evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pdf-visual-qa-human-review
+          path: |
+            artifacts/pdf-report-visual-qa/VISUAL_REVIEW.md
+            artifacts/pdf-report-visual-qa/**/*.png
+          if-no-files-found: error
+
+  pwa:
+    name: PWA core, installability, and offline recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install pinned Rust and WASM toolchain
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.97.0
+          cargo +1.97.0 install wasm-pack --locked --version 0.15.0
+      - run: cargo +1.97.0 test -p kakeflow-core
+      - name: Verify WASM build and interface are reproducible
+        run: |
+          npm run pwa:core:build
+          cp src/platform/pwa/core-wasm/kakeflow_core_bg.wasm /tmp/kakeflow_core_bg.first.wasm
+          npm run pwa:core:build
+          cmp /tmp/kakeflow_core_bg.first.wasm src/platform/pwa/core-wasm/kakeflow_core_bg.wasm
+          git diff --exit-code -- \
+            src/platform/pwa/core-wasm/LICENSE \
+            src/platform/pwa/core-wasm/kakeflow_core.d.ts \
+            src/platform/pwa/core-wasm/kakeflow_core.js \
+            src/platform/pwa/core-wasm/kakeflow_core_bg.wasm.d.ts \
+            src/platform/pwa/core-wasm/package.json
+      - run: npx vitest run scripts/pwa-contract.test.ts src/platform/pwa src/pwa
+      - run: npm run build:pwa
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run account-free offline recovery E2E
+        env:
+          CI: '1'
+        run: npm run test:pwa:e2e
+      - name: Upload synthetic failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pwa-offline-e2e-failure
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   rust:
     name: Rust checks
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install Tauri system dependencies
         run: |
           sudo apt-get update

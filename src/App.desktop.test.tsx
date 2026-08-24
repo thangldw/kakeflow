@@ -2909,6 +2909,13 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.queryByText('レシート画像を端末内OCRで読み取ります。')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Cài đặt' }))
+    await waitFor(() => expect(container.querySelector('.google-drive-settings .drive-connect')).toBeInTheDocument())
+    await waitFor(() => expect(container.querySelector('.desktop-relay input[type="url"]')).toBeInTheDocument())
+    await screen.findByText('Local bank CSV')
+    await waitFor(() => {
+      expect(desktop.listWatchedFolders).toHaveBeenCalledWith('family')
+      expect(desktop.getMobileCaptureBackgroundStatus).toHaveBeenCalledWith('family')
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Tiếng Nhật' }))
   })
 

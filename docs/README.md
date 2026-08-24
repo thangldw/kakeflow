@@ -5,7 +5,8 @@ This directory contains the current project documentation for the canonical repo
 | Document | Purpose |
 | --- | --- |
 | [Architecture](ARCHITECTURE.md) | Runtime boundaries, data flow, trust model and compatibility policy. |
-| [Demo use case](DEMO_USE_CASE.md) | Synthetic Tanaka-family scenario and localized landing-page assets. |
+| [Demo use case](DEMO_USE_CASE.md) | Synthetic Tanaka-family scenario, localized landing assets and account-free PWA evidence. |
+| [PWA storyboard](demo/KakeFlow-90-second-storyboard.md) | Timing and claim boundary for the reviewed receipt-to-provenance video. |
 | [Operations](OPERATIONS.md) | Build, release, updater, Pages and repository maintenance procedures. |
 | [Security](SECURITY.md) | Supported versions, private reporting and prohibited data. |
 | [v1.2.0 release notes](releases/v1.2.0.md) | Installation, release scope and verification evidence. |

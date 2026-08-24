@@ -28,6 +28,11 @@ const MAX_PAGE_PIXELS = 25_000_000
 const MAX_TOTAL_PIXELS = 200_000_000
 const RENDER_DPI = 144
 
+export function pdfQaExecutionPolicy(available, required) {
+  if (available) return 'run'
+  return required ? 'fail' : 'skip'
+}
+
 function parseInteger(value, field) {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isInteger(parsed)) throw new Error(`pdfinfo did not provide a valid ${field}`)
