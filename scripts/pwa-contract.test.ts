@@ -57,6 +57,8 @@ describe('production PWA contract', () => {
     ])
 
     expect(index).toContain('content="default-src \'self\'')
+    expect(index).toContain("script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval'")
+    expect(index).not.toContain("script-src 'self' 'unsafe-inline'")
     expect(index).toContain('href="/kakeflow/app/manifest.webmanifest"')
     expect(index).toMatch(/(?:src|href)="\/kakeflow\/app\//u)
     expect(files).toEqual(expect.arrayContaining([
