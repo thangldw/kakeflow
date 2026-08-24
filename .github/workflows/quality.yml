@@ -28,11 +28,50 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
-      - run: npm test -- --run
+      - run: npm run test:functional
       - run: npm run build
       - run: npm run check:versions
       - run: npm run check:update-channel
       - run: npm run paddleocr:verify
+
+  pdf-visual-qa:
+    name: Poppler PDF visual QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y poppler-utils
+          command -v pdfinfo
+          command -v pdftoppm
+      - name: Render PDF visual evidence
+        env:
+          KAKEFLOW_REQUIRE_POPPLER: '1'
+          KAKEFLOW_PDF_QA_OUTPUT: artifacts/pdf-report-visual-qa
+        run: npm run test:pdf-visual
+      - name: Upload machine-readable evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pdf-visual-qa-machine
+          path: artifacts/pdf-report-visual-qa/manifest.json
+          if-no-files-found: error
+      - name: Upload human-review evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pdf-visual-qa-human-review
+          path: |
+            artifacts/pdf-report-visual-qa/VISUAL_REVIEW.md
+            artifacts/pdf-report-visual-qa/**/*.png
+          if-no-files-found: error
 
   rust:
     name: Rust checks

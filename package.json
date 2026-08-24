@@ -13,6 +13,8 @@
     "build": "npm run paddleocr:stage && tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:functional": "vitest run --exclude scripts/pdf-report-visual-qa.integration.test.ts",
+    "test:pdf-visual": "vitest run scripts/pdf-report-visual-qa.integration.test.ts --testTimeout=90000",
     "test:watch": "vitest",
     "i18n:codemod": "node scripts/localize-tsx.mjs",
     "i18n:generate": "node scripts/generate-ui-translations.mjs",
