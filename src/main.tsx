@@ -14,13 +14,11 @@ if ((runtime === 'pwa') !== isPwaBuild) {
   throw new Error('PWA runtime requires a dedicated PWA build')
 }
 const runtimeRoot = lazy(() => import('@runtime-root'))
+const runtimeElement = <Suspense fallback={null}>{createElement(runtimeRoot)}</Suspense>
+if (isPwaBuild) document.documentElement.lang = 'en'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <I18nProvider>
-      <Suspense fallback={null}>
-        {createElement(runtimeRoot)}
-      </Suspense>
-    </I18nProvider>
+    {isPwaBuild ? runtimeElement : <I18nProvider>{runtimeElement}</I18nProvider>}
   </StrictMode>,
 )

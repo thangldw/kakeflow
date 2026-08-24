@@ -8,7 +8,7 @@ export default defineConfig({
     alias: {
       '@runtime-root': fileURLToPath(new URL(
         process.env.VITE_KAKEFLOW_RUNTIME === 'pwa'
-          ? './src/platform/pwa/PwaRoot.tsx'
+          ? './src/pwa/PwaRoot.tsx'
           : './src/runtimeRoot.tsx',
         import.meta.url,
       )),
@@ -56,6 +56,7 @@ export default defineConfig({
       },
     },
   },
+  worker: { format: 'es' },
   server: { port: 1420, strictPort: true },
   clearScreen: false,
 })
