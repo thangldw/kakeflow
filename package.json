@@ -13,7 +13,7 @@
     "build": "npm run paddleocr:stage && tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:functional": "vitest run --exclude scripts/pdf-report-visual-qa.integration.test.ts",
+    "test:functional": "vitest run --exclude scripts/pdf-report-visual-qa.integration.test.ts --maxWorkers=4",
     "test:pdf-visual": "vitest run scripts/pdf-report-visual-qa.integration.test.ts --testTimeout=90000",
     "test:watch": "vitest",
     "i18n:codemod": "node scripts/localize-tsx.mjs",
