@@ -34,30 +34,14 @@ fn json_boundary_rejects_malformed_input() {
 
 #[test]
 fn argon2id_derivation_is_deterministic_salt_bound_and_32_bytes() {
-    let first = derive_key_argon2id_bytes(
-        b"correct horse battery staple",
-        b"0123456789abcdef",
-        64,
-        2,
-        1,
-    )
-    .unwrap();
-    let repeated = derive_key_argon2id_bytes(
-        b"correct horse battery staple",
-        b"0123456789abcdef",
-        64,
-        2,
-        1,
-    )
-    .unwrap();
-    let other_salt = derive_key_argon2id_bytes(
-        b"correct horse battery staple",
-        b"fedcba9876543210",
-        64,
-        2,
-        1,
-    )
-    .unwrap();
+    let salt = (0_u8..16).collect::<Vec<_>>();
+    let other_salt = (16_u8..32).collect::<Vec<_>>();
+    let first =
+        derive_key_argon2id_bytes(b"correct horse battery staple", &salt, 64, 2, 1).unwrap();
+    let repeated =
+        derive_key_argon2id_bytes(b"correct horse battery staple", &salt, 64, 2, 1).unwrap();
+    let other_salt =
+        derive_key_argon2id_bytes(b"correct horse battery staple", &other_salt, 64, 2, 1).unwrap();
 
     assert_eq!(first.len(), 32);
     assert_eq!(first, repeated);
@@ -66,6 +50,7 @@ fn argon2id_derivation_is_deterministic_salt_bound_and_32_bytes() {
 
 #[test]
 fn argon2id_derivation_rejects_invalid_parameters() {
+    let valid_salt = (0_u8..16).collect::<Vec<_>>();
     assert!(derive_key_argon2id_bytes(b"passphrase", b"short", 64, 2, 1).is_err());
-    assert!(derive_key_argon2id_bytes(b"passphrase", b"0123456789abcdef", 0, 2, 1).is_err());
+    assert!(derive_key_argon2id_bytes(b"passphrase", &valid_salt, 0, 2, 1).is_err());
 }
