@@ -2646,10 +2646,13 @@ dependencies = [
 name = "kakeflow-core"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 2.0.19",
+ "wasm-bindgen",
+ "zeroize",
 ]
 
 [[package]]

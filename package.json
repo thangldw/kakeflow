@@ -36,6 +36,7 @@
     "ocr:verify": "node scripts/verify-ocr-resources.mjs",
     "paddleocr:stage": "node scripts/stage-paddleocr-resources.mjs",
     "paddleocr:verify": "node scripts/stage-paddleocr-resources.mjs --verify-only",
+    "pwa:core:build": "node scripts/build-pwa-core.mjs",
     "check:update-channel": "node scripts/check-update-channel.mjs",
     "release:update:manifest": "node scripts/build-update-manifest.mjs",
     "landing:demo": "node scripts/build-landing-demo.mjs",

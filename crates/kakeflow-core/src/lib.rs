@@ -1,10 +1,15 @@
 //! Deterministic financial invariants shared by native and browser runtimes.
 
+use argon2::{Algorithm, Argon2, Params, Version};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt::Write as _;
 use thiserror::Error;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use zeroize::Zeroize;
 
 const MAX_ID_BYTES: usize = 255;
 const MIN_ENTRIES: usize = 2;
@@ -77,6 +82,10 @@ pub enum CoreError {
     InvalidPosting(Vec<ValidationCode>),
     #[error("canonical serialization failed")]
     Serialization(#[from] serde_json::Error),
+    #[error("invalid Argon2id parameters")]
+    InvalidKdfParameters,
+    #[error("Argon2id derivation failed")]
+    KdfFailed,
 }
 
 #[derive(Serialize)]
@@ -208,6 +217,58 @@ pub fn canonical_posting_hash(input: &PostingInput) -> Result<String, CoreError>
         write!(&mut hash, "{byte:02x}").expect("writing to a String cannot fail");
     }
     Ok(hash)
+}
+
+pub fn validate_posting_json(input: &str) -> Result<String, CoreError> {
+    let posting: PostingInput = serde_json::from_str(input)?;
+    Ok(serde_json::to_string(&validate_posting(&posting))?)
+}
+
+pub fn derive_key_argon2id_bytes(
+    passphrase: &[u8],
+    salt: &[u8],
+    memory_kib: u32,
+    iterations: u32,
+    parallelism: u32,
+) -> Result<[u8; 32], CoreError> {
+    let parameters = Params::new(memory_kib, iterations, parallelism, Some(32))
+        .map_err(|_| CoreError::InvalidKdfParameters)?;
+    let mut output = [0_u8; 32];
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, parameters)
+        .hash_password_into(passphrase, salt, &mut output)
+        .map_err(|_| CoreError::KdfFailed)?;
+    Ok(output)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = validate_posting_json)]
+pub fn wasm_validate_posting_json(input: &str) -> Result<String, JsValue> {
+    validate_posting_json(input).map_err(core_error_to_js)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(js_name = derive_key_argon2id)]
+pub fn derive_key_argon2id(
+    passphrase: &[u8],
+    salt: &[u8],
+    memory_kib: u32,
+    iterations: u32,
+    parallelism: u32,
+) -> Result<Vec<u8>, JsValue> {
+    let mut passphrase_copy = passphrase.to_vec();
+    let result =
+        derive_key_argon2id_bytes(&passphrase_copy, salt, memory_kib, iterations, parallelism);
+    passphrase_copy.zeroize();
+
+    let mut derived = result.map_err(core_error_to_js)?;
+    let output = derived.to_vec();
+    derived.zeroize();
+    Ok(output)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn core_error_to_js(error: CoreError) -> JsValue {
+    JsValue::from_str(&error.to_string())
 }
 
 fn valid_id(value: &str) -> bool {
