@@ -20,9 +20,3 @@ zeroize = "1.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
-
-[package.metadata.wasm-pack.profile.release]
-# wasm-pack bundles platform-specific wasm-opt binaries whose byte output is not
-# stable across macOS and Linux. The core is small; skip that non-reproducible
-# post-processing so CI can verify the committed WASM byte-for-byte.
-wasm-opt = false

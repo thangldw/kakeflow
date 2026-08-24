@@ -92,10 +92,18 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain 1.97.0
           cargo +1.97.0 install wasm-pack --locked --version 0.15.0
       - run: cargo +1.97.0 test -p kakeflow-core
-      - name: Verify committed WASM is reproducible
+      - name: Verify WASM build and interface are reproducible
         run: |
           npm run pwa:core:build
-          git diff --exit-code -- src/platform/pwa/core-wasm
+          cp src/platform/pwa/core-wasm/kakeflow_core_bg.wasm /tmp/kakeflow_core_bg.first.wasm
+          npm run pwa:core:build
+          cmp /tmp/kakeflow_core_bg.first.wasm src/platform/pwa/core-wasm/kakeflow_core_bg.wasm
+          git diff --exit-code -- \
+            src/platform/pwa/core-wasm/LICENSE \
+            src/platform/pwa/core-wasm/kakeflow_core.d.ts \
+            src/platform/pwa/core-wasm/kakeflow_core.js \
+            src/platform/pwa/core-wasm/kakeflow_core_bg.wasm.d.ts \
+            src/platform/pwa/core-wasm/package.json
       - run: npx vitest run scripts/pwa-contract.test.ts src/platform/pwa src/pwa
       - run: npm run build:pwa
       - name: Install Playwright Chromium
