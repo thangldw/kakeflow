@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const argonMock = vi.hoisted(() => ({
   derive: vi.fn(async (passphrase: Uint8Array, salt: Uint8Array) => {
@@ -13,8 +13,18 @@ const argonMock = vi.hoisted(() => ({
     return output
   }),
 }))
+const updateMock = vi.hoisted(() => ({
+  updateAvailable: false,
+  activating: false,
+  activateUpdate: vi.fn(),
+  dismissUpdate: vi.fn(),
+}))
 
 vi.mock('../platform/pwa/argonWorker', () => ({ deriveArgon2idInWorker: argonMock.derive }))
+vi.mock('./serviceWorker', () => ({
+  canActivatePwaUpdate: ({ vaultUnlocked, activeOperation }: { vaultUnlocked: boolean; activeOperation: boolean }) => !vaultUnlocked || !activeOperation,
+  usePwaServiceWorker: () => ({ ...updateMock, offlineReady: true }),
+}))
 
 import { I18nProvider } from '../i18n'
 import type { PwaOcrDocument } from './PwaRoot'
@@ -77,6 +87,13 @@ async function createConfiguredVault(databaseName: string, ocrDocument: PwaOcrDo
 }
 
 describe('PWA receipt-to-provenance journey', () => {
+  beforeEach(() => {
+    updateMock.updateAvailable = false
+    updateMock.activating = false
+    updateMock.activateUpdate.mockReset()
+    updateMock.dismissUpdate.mockReset()
+  })
+
   beforeAll(() => {
     vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
       if (String(input).endsWith('kakeflow_core_bg.wasm')) {
@@ -166,5 +183,23 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(await screen.findByText('Candidate needs more information')).toBeInTheDocument()
     expect(screen.getByText('Synthetic Corner Shop')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Approve and post' })).not.toBeInTheDocument()
+  })
+
+  it('defers an available update during an active receipt review and enables it when locked', async () => {
+    updateMock.updateAvailable = true
+    await createConfiguredVault(
+      'pwa-ui-update-boundary',
+      vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    fireEvent.change(screen.getByLabelText('Receipt image'), {
+      target: { files: [new File(['synthetic'], 'update-review.png', { type: 'image/png' })] },
+    })
+
+    await screen.findByText('CANDIDATE')
+    expect(screen.getByRole('button', { name: 'Apply update' })).toBeDisabled()
+    expect(screen.getByText(/Finish or leave the active receipt review/u)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    expect(screen.getByRole('button', { name: 'Apply update' })).toBeEnabled()
   })
 })

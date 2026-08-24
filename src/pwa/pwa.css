@@ -167,6 +167,28 @@ body {
   background: #fff0eb;
 }
 
+.pwa-update {
+  padding: 10px 28px;
+  border-bottom: 1px solid #b9cdbd;
+  background: #e0eddf;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pwa-update span {
+  margin-right: auto;
+}
+
+.pwa-update .pwa-primary {
+  min-height: 38px;
+  margin: 0;
+}
+
+.pwa-update small {
+  color: #5e4335;
+}
+
 .pwa-workspace {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
@@ -406,6 +428,17 @@ body {
 
   .pwa-workspace {
     display: block;
+  }
+
+  .pwa-update {
+    padding: 12px 14px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .pwa-update span,
+  .pwa-update small {
+    width: 100%;
   }
 
   .pwa-navigation {

@@ -13,6 +13,7 @@ import type {
   Transaction,
   TransactionDetail,
 } from '../platform/pwa/types'
+import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
 import { usePwaClient } from './usePwaClient'
 import './pwa.css'
 
@@ -121,6 +122,7 @@ export default function PwaRoot({
   const [creditAccountId, setCreditAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const serviceWorker = usePwaServiceWorker()
 
   const loadVault = useCallback(async (client: PwaLedgerClient) => {
     const households = await client.listHouseholds()
@@ -287,6 +289,10 @@ export default function PwaRoot({
 
   const status = session.mode === 'unlocked' ? 'UNLOCKED' : 'LOCKED'
   const effectiveError = error ?? session.error
+  const canActivateUpdate = canActivatePwaUpdate({
+    vaultUnlocked: session.mode === 'unlocked',
+    activeOperation: busy || Boolean(draft?.candidate && !posted),
+  })
 
   return <div className="pwa-shell">
     <header className="pwa-header">
@@ -299,6 +305,12 @@ export default function PwaRoot({
       </div>
       {session.mode === 'unlocked' && <button className="pwa-quiet" type="button" onClick={lockVault}>Lock vault</button>}
     </header>
+    {serviceWorker.updateAvailable && <aside className="pwa-update" role="status">
+      <span><strong>Update ready</strong> The new app shell will activate only at a safe boundary.</span>
+      <button className="pwa-primary" type="button" disabled={!canActivateUpdate || serviceWorker.activating} onClick={serviceWorker.activateUpdate}>{serviceWorker.activating ? 'Activating…' : 'Apply update'}</button>
+      <button className="pwa-quiet" type="button" onClick={serviceWorker.dismissUpdate}>Later</button>
+      {!canActivateUpdate && <small>Finish or leave the active receipt review, or lock the vault.</small>}
+    </aside>}
 
     {session.mode !== 'unlocked' && <main className="pwa-auth">
       <section className="pwa-auth-card">
