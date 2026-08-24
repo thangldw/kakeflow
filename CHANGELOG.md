@@ -4,6 +4,11 @@
 
 ### English
 
+- Added an installable account-free PWA foundation with an Argon2id/AES-GCM browser vault, encrypted IndexedDB/OPFS storage, local PP-OCRv5 receipt review, explicit approval, balanced posting, provenance, offline reload, and authenticated atomic export/restore.
+- Extracted platform-neutral Rust posting invariants into `kakeflow-core`, consumed natively and through a reproducible pinned WASM build.
+- Added production PWA scope/service-worker contracts, offline Playwright E2E, GitHub Pages artifact deployment, and an 85-second synthetic public evidence video with SHA-256.
+- Removed the Nano ID advisory, documented the applicable Linux-only `glib` path, pinned every GitHub Action by immutable SHA, isolated Poppler visual QA with machine/human artifacts, and settled React `act(...)` warnings.
+- Kept desktop release 1.2.0: no `v1.2.1` tag or installer is published by these unreleased changes; the current macOS binary remains explicitly ad-hoc signed and not notarized.
 - Added an end-to-end synthetic Tanaka-family demo and localized Japanese, English and Vietnamese animations.
 - Expanded the architecture and operations documentation with current runtime, trust, posting and compatibility boundaries.
 - Removed the completed design-port handoff, obsolete comparison images, v1.1.1 social campaign page/assets and the superseded single-language demo GIF.
@@ -11,6 +16,11 @@
 
 ### Tiếng Việt
 
+- Bổ sung PWA cài đặt được, không cần account, với vault Argon2id/AES-GCM, lưu trữ IndexedDB/OPFS mã hóa, PP-OCRv5 local, duyệt rõ ràng, bút toán cân bằng, provenance, reload offline và export/restore nguyên tử có xác thực.
+- Tách invariant ghi sổ trung lập nền tảng vào `kakeflow-core`, dùng trực tiếp trong native và qua WASM build tái lập được, có pin version.
+- Bổ sung contract scope/service worker production, E2E Playwright offline, deploy artifact GitHub Pages và video evidence tổng hợp 85 giây kèm SHA-256.
+- Loại advisory Nano ID, ghi rõ affected path `glib` chỉ áp dụng Linux, pin GitHub Actions bằng immutable SHA, tách Poppler visual QA cùng artifact machine/human và dọn warning React `act(...)`.
+- Giữ desktop release ở 1.2.0: các thay đổi unreleased này không tạo tag hay installer `v1.2.1`; binary macOS hiện tại vẫn được công bố rõ là ad-hoc signed và chưa notarize.
 - Bổ sung demo end-to-end bằng dữ liệu tổng hợp của gia đình Tanaka và GIF riêng cho Nhật, Anh, Việt.
 - Cập nhật tài liệu kiến trúc/vận hành theo runtime, trust boundary, quy tắc ghi sổ và compatibility hiện tại.
 - Xoá handoff thiết kế đã hoàn thành, ảnh so sánh cũ, trang/asset social v1.1.1 và GIF demo một ngôn ngữ đã được thay thế.
@@ -18,6 +28,11 @@
 
 ### 日本語
 
+- account 不要で install 可能な PWA foundation を追加しました。Argon2id／AES-GCM browser vault、暗号化 IndexedDB／OPFS、端末内 PP-OCRv5、明示的承認、貸借一致、provenance、offline reload、認証付き原子的 export／restore に対応します。
+- platform-neutral な記帳 invariant を `kakeflow-core` へ抽出し、native と再現可能な pinned WASM build の両方から利用します。
+- production scope／service worker contract、offline Playwright E2E、GitHub Pages artifact deploy、SHA-256 付き 85 秒合成 evidence video を追加しました。
+- Nano ID advisory を除去し、Linux のみ該当する `glib` path を明記し、全 GitHub Actions を immutable SHA へ pin し、Poppler visual QA と machine／human artifact を分離し、React `act(...)` warning を解消しました。
+- desktop release は 1.2.0 のままです。この unreleased 変更は `v1.2.1` tag／installer を公開せず、現行 macOS binary は引き続き ad-hoc 署名済み・未公証と明記します。
 - 田中家の合成データを使う end-to-end demo と、日本語・英語・ベトナム語別 GIF を追加しました。
 - 現行 runtime、trust boundary、記帳条件、compatibility 方針に合わせて architecture／operations 文書を更新しました。
 - 完了済み design port handoff、旧比較画像、v1.1.1 social page／asset、置換済み単一言語 GIF を削除しました。

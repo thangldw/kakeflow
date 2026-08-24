@@ -1,0 +1,15 @@
+{
+  "name": "@kakeflow/core-wasm",
+  "version": "0.1.0",
+  "type": "module",
+  "files": [
+    "LICENSE",
+    "kakeflow_core_bg.wasm",
+    "kakeflow_core.js",
+    "kakeflow_core.d.ts",
+    "kakeflow_core_bg.wasm.d.ts"
+  ],
+  "module": "kakeflow_core.js",
+  "types": "kakeflow_core.d.ts",
+  "sideEffects": false
+}

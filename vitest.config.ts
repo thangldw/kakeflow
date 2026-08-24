@@ -8,6 +8,6 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: true,
-    exclude: [...configDefaults.exclude, 'relay-service/**'],
+    exclude: [...configDefaults.exclude, 'relay-service/**', 'e2e/**'],
   },
 })

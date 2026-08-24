@@ -78,6 +78,16 @@ describe('KakeFlow project page', () => {
     }
   })
 
+  it('publishes the reviewed account-free PWA evidence artifact', () => {
+    expect(html).toContain('assets/demo/kakeflow-receipt-to-provenance.mp4')
+    expect(html).toContain('data-i18n="pwaDemoTitle"')
+    expect(html).toContain('data-i18n="pwaDemoBoundary"')
+    expect(localAssetExists('assets/demo/kakeflow-receipt-to-provenance.mp4')).toBe(true)
+    expect(localAssetExists('assets/demo/kakeflow-receipt-to-provenance.mp4.sha256')).toBe(true)
+    expect(script).toContain("pwaDemoTitle: 'Receipt to provenance in 85 seconds'")
+    expect(script).toContain("pwaDemoTitle: 'Từ biên lai đến provenance trong 85 giây'")
+  })
+
   it('includes responsive and reduced-motion behavior without external runtime dependencies', () => {
     expect(css).toContain('@media (max-width: 820px)')
     expect(css).toContain('@media (max-width: 540px)')

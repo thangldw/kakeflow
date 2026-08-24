@@ -1,0 +1,5 @@
+[workspace]
+members = ["crates/kakeflow-core"]
+exclude = ["src-tauri"]
+resolver = "2"
+

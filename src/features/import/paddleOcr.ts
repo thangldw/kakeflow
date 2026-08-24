@@ -11,7 +11,8 @@ let enginePromise: Promise<Engine> | null = null
 
 function bundledAssetUrl(path: string): string {
   if (typeof globalThis.location === 'undefined') return path
-  return new URL(path.startsWith('/') ? path : `/${path}`, globalThis.location.href).href
+  const relativePath = path.startsWith('/') ? path.slice(1) : path
+  return new URL(`${import.meta.env.BASE_URL}${relativePath}`, globalThis.location.origin).href
 }
 
 async function createEngine(): Promise<Engine> {

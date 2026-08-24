@@ -3,6 +3,10 @@
 //! This module deliberately accepts already-extracted JSON and an opaque vault
 //! URI. Raw document bytes never cross this persistence boundary.
 
+use kakeflow_core::{
+    validate_posting as validate_core_posting, EntrySide as CoreEntrySide,
+    PostingEntry as CorePostingEntry, PostingInput as CorePostingInput, ValidationCode,
+};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2122,6 +2126,7 @@ pub fn commit_import(
                 ));
             }
         }
+        validate_shared_posting(decision, candidate_amount)?;
         if debit != credit || debit != candidate_amount {
             return Err(ImportWorkflowError::UnbalancedJournal(
                 decision.candidate_id.clone(),
@@ -2945,6 +2950,61 @@ fn validate_posting_decision(decision: &PostingDecision) -> Result<()> {
     Ok(())
 }
 
+fn validate_shared_posting(decision: &PostingDecision, candidate_amount_jpy: i64) -> Result<()> {
+    let entries = decision
+        .entries
+        .iter()
+        .map(|entry| {
+            let side = match entry.side.as_str() {
+                "DEBIT" => CoreEntrySide::Debit,
+                "CREDIT" => CoreEntrySide::Credit,
+                _ => {
+                    return Err(ImportWorkflowError::Validation(
+                        "invalid journal entry".into(),
+                    ));
+                }
+            };
+            Ok(CorePostingEntry {
+                id: entry.id.clone(),
+                account_id: entry.account_id.clone(),
+                side,
+                amount_jpy: entry.amount_jpy,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let validation = validate_core_posting(&CorePostingInput {
+        candidate_id: decision.candidate_id.clone(),
+        transaction_id: decision.transaction_id.clone(),
+        transaction_type: decision.transaction_type.clone(),
+        candidate_amount_jpy,
+        approved: true,
+        entries,
+    });
+    if validation.valid {
+        return Ok(());
+    }
+    if validation.codes.contains(&ValidationCode::AmountOverflow) {
+        return Err(ImportWorkflowError::Validation(
+            "journal amount overflow".into(),
+        ));
+    }
+    if validation.codes.iter().any(|code| {
+        matches!(
+            code,
+            ValidationCode::UnbalancedJournal
+                | ValidationCode::CandidateAmountMismatch
+                | ValidationCode::NonPositiveAmount
+        )
+    }) {
+        return Err(ImportWorkflowError::UnbalancedJournal(
+            decision.candidate_id.clone(),
+        ));
+    }
+    Err(ImportWorkflowError::Validation(
+        "invalid posting decision".into(),
+    ))
+}
+
 fn validate_id(name: &str, value: &str) -> Result<()> {
     if value.trim().is_empty() || value.len() > 255 || value.chars().any(char::is_control) {
         return Err(ImportWorkflowError::Validation(format!("invalid {name}")));
@@ -3323,6 +3383,15 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn shared_posting_core_rejects_native_candidate_total_mismatch() {
+        assert!(matches!(
+            validate_shared_posting(&decision("shared-core", 1_000), 1_001),
+            Err(ImportWorkflowError::UnbalancedJournal(candidate))
+                if candidate == "shared-core-candidate"
+        ));
     }
 
     fn install_classification_rule(connection: &Connection) {
