@@ -73,6 +73,48 @@ jobs:
             artifacts/pdf-report-visual-qa/**/*.png
           if-no-files-found: error
 
+  pwa:
+    name: PWA core, installability, and offline recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install pinned Rust and WASM toolchain
+        run: |
+          rustup toolchain install 1.97.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.97.0
+          cargo +1.97.0 install wasm-pack --locked --version 0.15.0
+      - run: cargo +1.97.0 test -p kakeflow-core
+      - name: Verify committed WASM is reproducible
+        run: |
+          npm run pwa:core:build
+          git diff --exit-code -- src/platform/pwa/core-wasm
+      - run: npx vitest run scripts/pwa-contract.test.ts src/platform/pwa src/pwa
+      - run: npm run build:pwa
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run account-free offline recovery E2E
+        env:
+          CI: '1'
+        run: npm run test:pwa:e2e
+      - name: Upload synthetic failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pwa-offline-e2e-failure
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   rust:
     name: Rust checks
     runs-on: ubuntu-latest

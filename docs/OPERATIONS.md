@@ -18,7 +18,9 @@ For OCR release QA, start the local preview and open `/ocr-regression.html`. The
 
 Treat temporary ports, comparison copies and release worktrees as disposable local state. Before removing one, confirm that its Git working tree is clean and that every required commit and tag exists on the remote. Keep only the active checkout; move obsolete local copies to Trash first so they remain recoverable. Build output, `node_modules`, Rust `target` directories and updater private keys must never be committed.
 
-GitHub Pages publishes `main/docs`. After a documentation merge, wait for `pages-build-deployment`, then verify the live HTML, localized JavaScript and all three GIF assets. Version changed asset URLs so returning visitors do not receive stale media.
+GitHub Pages must use **GitHub Actions** as its source. `.github/workflows/pages.yml` builds the production PWA, copies `docs/` to the artifact root and mounts `dist/` at `app/`; do not commit the generated 148 MB build. After merge, switch Settings → Pages → Build and deployment → Source from the legacy `main/docs` source to GitHub Actions, run the workflow, then verify the landing page and `/kakeflow/app/` online and offline. Keep the legacy source active until the workflow exists on `main`.
+
+The current v1.2.0 macOS binary is ad-hoc signed and not notarized. Do not describe it as a frictionless production installer. Prefer Developer ID signing and Apple notarization for the next desktop release; otherwise preserve the explicit ad-hoc/not-notarized disclosure. Create `v1.2.1` only after substantive dependency, test, or release changes pass every gate; this documentation or a PWA preview alone does not publish a release.
 
 Delete only merged or strict-ancestor feature branches. Keep release tags, changelog entries, migration files and compatibility readers that are required to install, restore or open previously supported data.
 
@@ -40,7 +42,9 @@ Các bản v1.2.0 hiện tại truy vấn một endpoint release đã ngừng ho
 
 Các bản port tạm, thư mục so sánh và release worktree chỉ là dữ liệu local có thể dọn bỏ. Trước khi xoá, phải xác nhận Git working tree sạch và mọi commit/tag cần thiết đã có trên remote. Chỉ giữ checkout đang hoạt động; nên chuyển bản local cũ vào Trash trước để có thể khôi phục. Không commit build output, `node_modules`, thư mục Rust `target` hoặc private key updater.
 
-GitHub Pages publish từ `main/docs`. Sau khi merge tài liệu, chờ `pages-build-deployment`, rồi kiểm tra HTML live, JavaScript đa ngôn ngữ và cả ba GIF. URL asset thay đổi phải có version để tránh cache cũ.
+GitHub Pages phải dùng **GitHub Actions** làm source. `.github/workflows/pages.yml` build PWA production, copy `docs/` vào root artifact và mount `dist/` tại `app/`; không commit build 148 MB đã generate. Sau khi merge, đổi Settings → Pages → Build and deployment → Source từ legacy `main/docs` sang GitHub Actions, chạy workflow rồi kiểm tra landing page và `/kakeflow/app/` cả online lẫn offline. Giữ source legacy cho tới khi workflow có trên `main`.
+
+Binary macOS v1.2.0 hiện tại được ký ad-hoc và chưa notarize; không mô tả đây là installer production frictionless. Ưu tiên Developer ID signing và Apple notarization cho desktop release tiếp theo; nếu chưa có thì phải giữ disclosure rõ ràng. Chỉ tạo `v1.2.1` sau khi thay đổi dependency, test hoặc release thực chất vượt qua mọi gate; tài liệu hoặc PWA preview tự nó không phát hành release.
 
 Chỉ xoá feature branch đã merge hoặc là ancestor của `main`. Giữ release tag, changelog, migration và compatibility reader cần thiết để cài đặt, restore hoặc mở dữ liệu từng được hỗ trợ.
 
@@ -62,6 +66,8 @@ OCR の release QA では local preview を起動し、`/ocr-regression.html` �
 
 一時 port、比較用 copy、release worktree は破棄可能な local state として扱います。削除前に Git working tree が clean で、必要な commit と tag が remote に存在することを確認してください。使用中の checkout だけを残し、古い local copy は復元できるよう先に Trash へ移動します。build output、`node_modules`、Rust の `target`、updater private key は commit しません。
 
-GitHub Pages は `main/docs` から publish します。documentation merge 後は `pages-build-deployment` を待ち、live HTML、多言語 JavaScript、3 つの GIF asset を確認します。変更した asset URL には version を付け、古い cache を避けます。
+GitHub Pages の source は **GitHub Actions** を使用します。`.github/workflows/pages.yml` が production PWA を build し、`docs/` を artifact root、`dist/` を `app/` に配置します。生成済み 148 MB build は commit しません。merge 後、Settings → Pages → Build and deployment → Source を legacy `main/docs` から GitHub Actions へ変更し、workflow 実行後に landing page と `/kakeflow/app/` を online／offline で確認します。workflow が `main` に入るまでは legacy source を維持します。
+
+現在の macOS v1.2.0 binary は ad-hoc 署名済み・未公証で、frictionless production installer と表現しません。次の desktop release では Developer ID 署名と Apple notarization を優先し、未対応なら明示的な disclosure を維持します。`v1.2.1` は実質的な dependency／test／release 変更が全 gate を通過した場合だけ作成し、documentation または PWA preview だけでは release しません。
 
 削除する feature branch は merge 済み、または `main` の strict ancestor に限ります。過去に対応したデータの install／restore／open に必要な release tag、changelog、migration、compatibility reader は保持します。

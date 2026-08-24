@@ -1,6 +1,6 @@
 # KakeFlow PWA foundation design
 
-**Status:** Approved in chat on 2026-08-24; implementation is pending written-spec review.
+**Status:** Implemented on `codex/phase2-pwa-hardening`; final CI and deployment-source cutover remain release gates.
 
 **Goal:** Make KakeFlow an installable, offline-first PWA that supports the authoritative local receipt-to-ledger workflow without an account while preserving a path to native/PWA parity and eventual Money Forward ME replacement.
 
