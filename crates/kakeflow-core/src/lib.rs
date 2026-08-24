@@ -109,6 +109,14 @@ struct CanonicalEntry<'a> {
     amount_jpy: i64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PostingValidationOutput {
+    #[serde(flatten)]
+    validation: PostingValidation,
+    canonical_hash: Option<String>,
+}
+
 pub fn validate_posting(input: &PostingInput) -> PostingValidation {
     let mut codes = Vec::new();
     let mut push_code = |code| {
@@ -221,7 +229,15 @@ pub fn canonical_posting_hash(input: &PostingInput) -> Result<String, CoreError>
 
 pub fn validate_posting_json(input: &str) -> Result<String, CoreError> {
     let posting: PostingInput = serde_json::from_str(input)?;
-    Ok(serde_json::to_string(&validate_posting(&posting))?)
+    let validation = validate_posting(&posting);
+    let canonical_hash = validation
+        .valid
+        .then(|| canonical_posting_hash(&posting))
+        .transpose()?;
+    Ok(serde_json::to_string(&PostingValidationOutput {
+        validation,
+        canonical_hash,
+    })?)
 }
 
 pub fn derive_key_argon2id_bytes(

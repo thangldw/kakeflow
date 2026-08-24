@@ -21,6 +21,10 @@ fn json_boundary_returns_the_serialized_core_validation() {
     assert_eq!(validation["codes"], serde_json::json!([]));
     assert_eq!(validation["debitTotalJpy"], 1_000);
     assert_eq!(validation["creditTotalJpy"], 1_000);
+    assert_eq!(
+        validation["canonicalHash"],
+        "c190a870d36257f86f3e473bdfb77f085d5c21a171332025ff04460392ee484f"
+    );
 }
 
 #[test]

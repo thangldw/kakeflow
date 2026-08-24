@@ -3,7 +3,7 @@ import type { EncryptedEnvelope } from './vaultTypes'
 
 const MAX_ENVELOPE_BYTES = 64 * 1024 * 1024
 
-interface EvidenceStoreOptions {
+export interface EvidenceStoreOptions {
   readonly getDirectory?: (() => Promise<FileSystemDirectoryHandle>) | undefined
 }
 
