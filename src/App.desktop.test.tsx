@@ -92,6 +92,7 @@ const desktop = vi.hoisted(() => ({
   getGoogleDriveSchedule: vi.fn(),
   updateGoogleDriveSchedule: vi.fn(),
   syncGoogleDriveNow: vi.fn(),
+  listConnectorSummaries: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -195,6 +196,7 @@ vi.mock('./platform', async () => {
       getGoogleDriveSchedule: desktop.getGoogleDriveSchedule,
       updateGoogleDriveSchedule: desktop.updateGoogleDriveSchedule,
       syncGoogleDriveNow: desktop.syncGoogleDriveNow,
+      listConnectorSummaries: desktop.listConnectorSummaries,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -237,6 +239,27 @@ const pendingBankReview = {
   householdId: 'family',
   runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }],
 }
+
+const connectorSummary = (overrides: Record<string, unknown> = {}) => ({
+  schemaVersion: 1,
+  connectorKind: 'GOOGLE_DRIVE',
+  connectionKey: 'drive-primary',
+  displayLabel: 'Household statements',
+  availability: 'AVAILABLE',
+  lifecycle: 'CONNECTED',
+  health: 'FRESH',
+  capabilities: ['CONFIGURE', 'REFRESH_NOW', 'SCHEDULE'],
+  lastAttemptAt: '2026-08-25T00:00:00Z',
+  lastSuccessAt: '2026-08-25T00:00:00Z',
+  freshnessDeadlineAt: '2026-08-26T00:00:00Z',
+  nextDueAt: '2026-08-25T00:30:00Z',
+  pendingReviewCount: 2,
+  consecutiveFailures: 0,
+  lastErrorCode: null,
+  bindingSummary: null,
+  configurationDestination: 'GOOGLE_DRIVE_SETTINGS',
+  ...overrides,
+})
 
 const recurringIntelligenceResponse = {
   asOf: '2026-07-31', historyFrom: '2025-07-31',
@@ -320,6 +343,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.getGoogleDriveSchedule.mockReset()
     desktop.updateGoogleDriveSchedule.mockReset()
     desktop.syncGoogleDriveNow.mockReset()
+    desktop.listConnectorSummaries.mockReset().mockResolvedValue({ schemaVersion: 1, items: [], nextCursor: null })
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -1880,6 +1904,74 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByText(/Google Drive のファイルは自動で台帳へ記帳されません/)).toBeInTheDocument()
     expect(desktop.getGoogleDriveAvailability).toHaveBeenCalledOnce()
     expect(desktop.listGoogleDriveConnections).toHaveBeenCalledWith('family')
+  })
+
+  it('loads every connector summary page into the Settings control center', async () => {
+    const cursor = { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' }
+    desktop.listConnectorSummaries
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [connectorSummary()], nextCursor: cursor })
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', configurationDestination: 'GMAIL_SETTINGS' })], nextCursor: null })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(await screen.findByRole('article', { name: 'Household statements' })).toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Receipt mail' })).toBeInTheDocument()
+    expect(desktop.listConnectorSummaries.mock.calls).toEqual([
+      ['family', undefined, 100],
+      ['family', cursor, 100],
+    ])
+  })
+
+  it('rejects repeated connector cursors without leaking cursor detail', async () => {
+    const repeated = { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' }
+    desktop.listConnectorSummaries
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [connectorSummary()], nextCursor: repeated })
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [], nextCursor: repeated })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(await screen.findByText('コネクタの状態を読み込めませんでした。')).toHaveAttribute('role', 'alert')
+    expect(desktop.listConnectorSummaries).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('drive-primary')).not.toBeInTheDocument()
+  })
+
+  it('opens the existing connector disclosure, scrolls its exact panel, and focuses its heading', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const disclosure = screen.getByText('コネクタ').closest('details')
+    expect(disclosure).not.toHaveAttribute('open')
+
+    fireEvent.click(await screen.findByRole('button', { name: '設定を開く' }))
+
+    await waitFor(() => expect(disclosure).toHaveAttribute('open'))
+    const panel = document.getElementById('connector-settings-google-drive')
+    const heading = screen.getByRole('heading', { name: 'Google Drive' })
+    expect(scrollIntoView).toHaveBeenCalledOnce()
+    expect(scrollIntoView.mock.instances[0]).toBe(panel)
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('routes manual import configuration to the existing Import Inbox heading', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'], lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null, configurationDestination: 'IMPORT_INBOX' })], nextCursor: null })
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    fireEvent.click(await screen.findByRole('button', { name: '設定を開く' }))
+
+    const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })
+    await waitFor(() => expect(document.activeElement).toBe(heading))
+    expect(heading).toHaveAttribute('id', 'connector-import-inbox')
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {
