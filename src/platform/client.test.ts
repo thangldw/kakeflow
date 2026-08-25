@@ -302,6 +302,25 @@ describe('platform client', () => {
     })).rejects.toEqual(new PlatformIpcError('COMMAND_FAILED', 'connector_binding_upsert'))
   })
 
+  it.each([
+    ['household', { householdId: 'another-family' }],
+    ['connector kind', { connectorKind: 'GMAIL' }],
+    ['connection key', { connectionKey: 'another-drive' }],
+  ] as const)('rejects a valid-shaped upsert response from a different %s scope', async (_label, override) => {
+    const response = {
+      householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null,
+      version: 2, createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:05:00Z',
+      ...override,
+    }
+    const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+
+    await expect(client.upsertConnectorBinding({
+      householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null, expectedVersion: 1,
+    })).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'connector_binding_upsert' })
+  })
+
   it('invokes each desktop command and returns validated camelCase DTOs', async () => {
     const responses: Record<string, unknown> = {
       app_bootstrap: { application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } },

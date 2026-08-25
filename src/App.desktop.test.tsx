@@ -236,6 +236,7 @@ vi.mock('./platform', async () => {
 import App, { ImportPage } from './App'
 import { I18nProvider } from './i18n'
 import { PlatformIpcError } from './platform'
+import { previewImportFiles } from './features/import/importService'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
   FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
@@ -2160,6 +2161,63 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.getByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
     expect(desktop.commitImport).toHaveBeenCalledOnce()
+  })
+
+  it('blocks a stale brokerage destination after binding refresh until a valid account is explicitly reselected', async () => {
+    const bank = classificationAccounts[0]
+    const oldBroker = { ...bank, id: 'broker-old', name: 'Old broker', accountSubtype: 'SECURITIES' }
+    const newBroker = { ...bank, id: 'broker-new', name: 'New broker', accountSubtype: 'SECURITIES' }
+    const initialAccounts = [...classificationAccounts, oldBroker, newBroker]
+    const reloadedAccounts = [...classificationAccounts, newBroker]
+    desktop.listAccounts.mockResolvedValueOnce(initialAccounts).mockResolvedValue(reloadedAccounts)
+    desktop.listConnectorBindings
+      .mockResolvedValueOnce([{
+        householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+        allowedAccountIds: ['family-bank', 'broker-old'], parserProfileId: null, parserProfileVersion: null,
+        version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+      }])
+      .mockResolvedValue([{
+        householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+        allowedAccountIds: ['family-bank', 'broker-new'], parserProfileId: null, parserProfileVersion: null,
+        version: 2, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:05:00Z',
+      }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId: 'run-review', documentId: 'document-review', status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'review.csv', mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    desktop.commitImport.mockRejectedValueOnce(new Error('connector binding changed')).mockResolvedValue({ runId: 'run-investment', postedCount: 0 })
+    desktop.startImport.mockResolvedValue({ runId: 'run-investment', documentId: 'document-investment', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 0, reusedExisting: false })
+    const baseInvoke = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'brokerage_events_import'
+      ? { sourceDocumentId: 'document-investment', importedEventCount: 1, importedLegCount: 3 }
+      : baseInvoke(command, args))
+    const [brokeragePreview] = await previewImportFiles([new File([
+      '約定日,銘柄,取引,預り,約定数量,約定単価,受渡日,受渡金額／決済損益\n2026/07/01,7203 トヨタ自動車 東証,株式現物買,特定,100,2500,2026/07/03,250000',
+    ], 'sbi-trades.csv', { type: 'text/csv' })])
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[{ ...brokeragePreview, sourceType: 'MANUAL_UPLOAD' }]} setPreviews={vi.fn()} householdId="family"
+      accounts={initialAccounts as never} members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    const destination = await screen.findByRole('combobox', { name: 'sbi-trades.csvの取込先証券口座' })
+    fireEvent.change(destination, { target: { value: 'broker-old' } })
+    expect(screen.getByRole('button', { name: '証券取引に保存' })).toBeEnabled()
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'STOREを承認' }))
+    fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
+
+    await waitFor(() => expect(destination).toHaveValue(''))
+    const save = screen.getByRole('button', { name: '証券取引に保存' })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(desktop.startImport).not.toHaveBeenCalled()
+
+    fireEvent.change(destination, { target: { value: 'broker-new' } })
+    expect(save).toBeEnabled()
+    fireEvent.click(save)
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-new' }) }))
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {

@@ -197,6 +197,33 @@ describe('ConnectorControlCenter', () => {
     expect(onSave).toHaveBeenCalledOnce()
   })
 
+  it.each(['保存', '削除'] as const)('keeps the draft version when refreshed props race with %s', async (action) => {
+    const onSave = vi.fn().mockRejectedValue(new Error('conflict'))
+    const onRemove = vi.fn().mockRejectedValue(new Error('conflict'))
+    const onReload = vi.fn().mockResolvedValue(undefined)
+    const management = {
+      householdId: 'family', bindings: [binding({ version: 7 })], accounts: [account('family-bank', 'Family bank')],
+      parserProfiles: [profile()], onSave, onRemove, onReload,
+    }
+    const { rerender } = render(<ConnectorControlCenter
+      summaries={[summary({ capabilities: ['CONFIGURE', 'ACCOUNT_BINDING'] })]}
+      loading={false} error={null} onConfigure={() => undefined} bindingManagement={management}
+    />)
+    fireEvent.click(screen.getByRole('button', { name: 'レビュー範囲を管理' }))
+
+    rerender(<ConnectorControlCenter
+      summaries={[summary({ capabilities: ['CONFIGURE', 'ACCOUNT_BINDING'] })]}
+      loading={false} error={null} onConfigure={() => undefined}
+      bindingManagement={{ ...management, bindings: [binding({ version: 8 })] }}
+    />)
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: action })); await Promise.resolve() })
+
+    const mutation = action === '保存' ? onSave : onRemove
+    await vi.waitFor(() => expect(mutation).toHaveBeenCalledWith(expect.objectContaining({ expectedVersion: 7 })))
+    expect(mutation).toHaveBeenCalledOnce()
+    expect(onReload).toHaveBeenCalledOnce()
+  })
+
   it('renders loading and bounded runtime failure states without provider detail', () => {
     const { rerender } = render(<ConnectorControlCenter summaries={[]} loading error={null} onConfigure={() => undefined} />)
     expect(screen.getByRole('status')).toHaveTextContent('コネクタの状態を読み込んでいます…')

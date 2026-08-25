@@ -125,6 +125,7 @@ function ConnectorBindingEditor({ summary, management }: {
   const [selectedParserToken, setSelectedParserToken] = useState(binding?.parserProfileId && binding.parserProfileVersion
     ? `${binding.parserProfileId}@${binding.parserProfileVersion}`
     : '')
+  const [expectedVersion] = useState(binding?.version ?? null)
   const [conflicted, setConflicted] = useState(false)
   const [saving, setSaving] = useState(false)
   const operation = useRef<'save' | 'remove' | null>(null)
@@ -157,7 +158,7 @@ function ConnectorBindingEditor({ summary, management }: {
         allowedAccountIds: validSelectedAccountIds,
         parserProfileId: selectedParser?.id ?? null,
         parserProfileVersion: selectedParser?.version ?? null,
-        expectedVersion: binding?.version ?? null,
+        expectedVersion,
       })
     } catch {
       setSelectedAccountIds([])
@@ -170,7 +171,7 @@ function ConnectorBindingEditor({ summary, management }: {
     }
   }
   const remove = async () => {
-    if (!binding || operation.current !== null) return
+    if (!binding || expectedVersion === null || operation.current !== null) return
     operation.current = 'remove'
     setSaving(true)
     try {
@@ -178,7 +179,7 @@ function ConnectorBindingEditor({ summary, management }: {
         householdId: management.householdId,
         connectorKind: summary.connectorKind,
         connectionKey: summary.connectionKey,
-        expectedVersion: binding.version,
+        expectedVersion,
       })
     } catch {
       setSelectedAccountIds([])
