@@ -78,6 +78,21 @@ describe('platform client', () => {
       }],
       nextCursor: null,
     })
+    await expect(client.listConnectorSummaries('family', { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })).resolves.toEqual({
+      schemaVersion: 1,
+      items: [],
+      nextCursor: null,
+    })
+    for (const cursor of [
+      'provider-cursor-secret',
+      { connectorKind: 'DROPBOX', connectionKey: 'drive-primary' },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129) },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', providerCursor: 'provider-cursor-secret' },
+    ]) {
+      await expect(client.listConnectorSummaries('family', cursor as never)).rejects.toThrow('connector cursor')
+    }
+    await expect(client.listConnectorSummaries('')).rejects.toThrow('household id')
+    await expect(client.listConnectorSummaries('family', undefined, 101)).rejects.toThrow('connector limit')
     await expect(client.selectWatchedFolder('family', 'Inbox')).rejects.toMatchObject({ command: 'watched_folder_select' })
     await expect(client.selectIcloudFolder('family', 'iCloud Drive Inbox')).rejects.toMatchObject({ command: 'icloud_folder_select' })
     await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
