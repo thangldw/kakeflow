@@ -1,4 +1,12 @@
 {
+  "レビュー範囲を管理": "Manage review scope",
+  "レビュー対象口座": "Review accounts",
+  "読み取りプロファイル": "Parser profile",
+  "プロファイルを使用しない": "Do not use a parser profile",
+  "選択内容が利用できなくなりました。新しい対応付けを明示的に選択してください。": "The selected options are no longer available. Explicitly select a new mapping.",
+  "少なくとも1つのレビュー対象口座を選択してください。": "Select at least one review account.",
+  "対応付けを再確認してください。口座または読み取りプロファイルが変更されています。": "Review the mapping. An account or parser profile has changed.",
+  "対応付けが必要": "Mapping required",
   " ・ 逆数利用": "・Using reciprocal numbers",
   " ・ 行 ": "・ Row",
   " ・ 支払期日 ": "・Payment date",

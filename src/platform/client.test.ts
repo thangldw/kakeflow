@@ -215,6 +215,93 @@ describe('platform client', () => {
     }
   })
 
+  it('reconstructs connector bindings field by field and invokes optimistic mutations exactly', async () => {
+    const binding = {
+      householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
+      allowedAccountIds: ['family-bank', 'family-card'], parserProfileId: 'profile-bank', parserProfileVersion: 3,
+      version: 7, createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:05:00Z',
+    }
+    const invokeSpy = vi.fn(async (command: AppCommand, args?: Record<string, unknown>) => {
+      void args
+      if (command === 'connector_bindings_list') return [binding]
+      if (command === 'connector_binding_upsert') return { ...binding, version: 8 }
+      return null
+    })
+    const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => await invokeSpy(command, args) as T
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.listConnectorBindings('family')).resolves.toEqual([binding])
+    await expect(client.upsertConnectorBinding({
+      householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
+      allowedAccountIds: ['family-card', 'family-bank'], parserProfileId: 'profile-bank', parserProfileVersion: 3,
+      expectedVersion: 7,
+    })).resolves.toEqual({ ...binding, version: 8 })
+    await expect(client.deleteConnectorBinding({
+      householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary', expectedVersion: 8,
+    })).resolves.toBeUndefined()
+
+    expect(invokeSpy.mock.calls).toEqual([
+      ['connector_bindings_list', { householdId: 'family' }],
+      ['connector_binding_upsert', { input: {
+        householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
+        allowedAccountIds: ['family-card', 'family-bank'], parserProfileId: 'profile-bank', parserProfileVersion: 3,
+        expectedVersion: 7,
+      } }],
+      ['connector_binding_delete', { input: {
+        householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary', expectedVersion: 8,
+      } }],
+    ])
+  })
+
+  it('rejects malformed connector binding DTOs and unsafe mutation inputs', async () => {
+    const binding = {
+      householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null,
+      version: 1, createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:00:00Z',
+    } as const
+    const invalidBindings = [
+      { ...binding, providerToken: 'secret' },
+      { ...binding, householdId: 'another-family' },
+      { ...binding, connectorKind: 'DROPBOX' },
+      { ...binding, allowedAccountIds: ['family-bank', 'family-bank'] },
+      { ...binding, allowedAccountIds: ['a'.repeat(65)] },
+      { ...binding, allowedAccountIds: [] },
+      { ...binding, parserProfileId: 'p'.repeat(65), parserProfileVersion: 1 },
+      { ...binding, parserProfileId: 'profile-bank', parserProfileVersion: null },
+      { ...binding, version: 0 },
+      { ...binding, createdAt: '2026-08-25T19:00:00+09:00' },
+    ]
+    for (const value of invalidBindings) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => [value] as T })
+      await expect(client.listConnectorBindings('family')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'connector_bindings_list',
+      })
+    }
+
+    const duplicateClient = createPlatformClient({ tauri: true, invoke: async <T>() => [binding, binding] as T })
+    await expect(duplicateClient.listConnectorBindings('family')).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE', command: 'connector_bindings_list',
+    })
+
+    const invoke = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 1, allowedAccountIds: ['family-bank', 'family-bank'] })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 1, allowedAccountIds: ['a'.repeat(65)] })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 1, parserProfileId: 'p'.repeat(65), parserProfileVersion: 1 })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 0 })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: null, parserProfileId: 'profile-bank', parserProfileVersion: null })).rejects.toThrow('connector binding')
+    await expect(client.deleteConnectorBinding({ householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'wrong', expectedVersion: 1 })).rejects.toThrow('connector binding')
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes optimistic binding conflicts while preserving the command identity', async () => {
+    const client = createPlatformClient({ tauri: true, invoke: async () => { throw new Error('connector binding changed; reload it and try again') } })
+    await expect(client.upsertConnectorBinding({
+      householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null, expectedVersion: 4,
+    })).rejects.toEqual(new PlatformIpcError('COMMAND_FAILED', 'connector_binding_upsert'))
+  })
+
   it('invokes each desktop command and returns validated camelCase DTOs', async () => {
     const responses: Record<string, unknown> = {
       app_bootstrap: { application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } },

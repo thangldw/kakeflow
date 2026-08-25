@@ -130,7 +130,13 @@ import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonic
 import { AuditReadinessPage, GlobalLedgerSearch, MonthlyContextNotes, PlanningTools, SecondaryCurrencySummary } from './features/gemini/GeminiFeatureSuite'
 import { ConnectorControlCenter } from './features/connectors/ConnectorControlCenter'
 import { loadAllConnectorSummaries } from './features/connectors/connectorControlModel'
-import type { ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
+import {
+  bindingForReviewSource,
+  filterReviewAccountOptions,
+  filterReviewParserOptions,
+  isStagedReviewBindingValid,
+} from './features/connectors/connectorBindingModel'
+import type { ConnectorBindingDto, ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const hasRakutenStatementMismatch = (item: Pick<ImportPreview, 'issues'>) => item.issues.some((issue) => issue.code === 'RAKUTEN_PDF_TOTAL_MISMATCH')
@@ -1382,7 +1388,7 @@ export function DuplicateReviewGate({ preview, onResolution }: { preview: Import
   </section>
 }
 
-function ImportReviewSection({ stagedImport, accounts, householdId, busy, isReceipt, recovered, sourceCompletionBlocked, onRollback, onCommit, onReceiptLinked }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; isReceipt: boolean; recovered: boolean; sourceCompletionBlocked: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void; onReceiptLinked: () => Promise<void> }) {
+function ImportReviewSection({ stagedImport, accounts, householdId, busy, isReceipt, recovered, sourceCompletionBlocked, bindingValid, onRollback, onCommit, onReceiptLinked }: { stagedImport: ImportPreviewDto; accounts: readonly AccountDto[]; householdId: string; busy: boolean; isReceipt: boolean; recovered: boolean; sourceCompletionBlocked: boolean; bindingValid: boolean; onRollback: () => void; onCommit: (decisions: readonly PostingDecisionDto[]) => void; onReceiptLinked: () => Promise<void> }) {
   const { text } = useI18n()
   const [drafts, setDrafts] = useState<Record<string, PostingDraft>>(() => Object.fromEntries(stagedImport.candidates.map((candidate) => [candidate.id, initialPostingDraft(candidate, accounts, householdId)])))
   const [receiptMatches, setReceiptMatches] = useState<Record<string, readonly ReceiptMatchSuggestionDto[]>>({})
@@ -1523,6 +1529,7 @@ function ImportReviewSection({ stagedImport, accounts, householdId, busy, isRece
   }).map((candidate) => candidate.id))
   const bulkApprovedCount = [...bulkApprovalEligibleIds].filter((candidateId) => drafts[candidateId]?.approved).length
   const allEligibleApproved = bulkApprovalEligibleIds.size > 0 && bulkApprovedCount === bulkApprovalEligibleIds.size
+  if (!bindingValid) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}{localize("件の候補・原本は暗号化済み")}</p></div><b>{localize("対応付けが必要")}</b></div><p role="status">{localize("対応付けを再確認してください。口座または読み取りプロファイルが変更されています。")}</p><div className="review-actions"><button className="secondary-btn" disabled={busy} onClick={onRollback}>{localize("取り消す")}</button><button className="primary-btn" disabled>{sourceOnly ? localize("原本処理を完了") : localize("承認済みを台帳へ反映")}</button></div></section>
   const setAllEligibleApprovals = (checked: boolean) => setDrafts((current) => Object.fromEntries(Object.entries(current).map(([candidateId, draft]) => [candidateId, bulkApprovalEligibleIds.has(candidateId) ? { ...draft, approved: checked } : draft])))
 
   if (postingError) return <section className="panel review-panel"><div className="panel-head"><div><h2>{stagedImport.source.originalFilename}</h2><p>{stagedImport.candidates.length}{localize("件の候補")}{recovered ? localize("・再起動後に復元") : ''}</p></div><b>{recovered ? localize("復元済み") : localize("確認")}</b></div><p className="empty-state" role="alert">{postingError}</p><div className="review-actions"><span>{localize("口座設定の修正後に再度開くか、取り消してください。")}</span><button className="secondary-btn" disabled={busy} onClick={onRollback}>{busy ? localize("処理中…") : localize("取り消す")}</button></div></section>
@@ -1556,7 +1563,7 @@ function ImportInboxDemo({ inputRef, onPick, busy, processFiles }: { inputRef: R
   return <><PageHeader eyebrow={localize("データ取り込み")} title={localize("インポート Inbox")} description={localize("ファイルから読み取った候補を確認して台帳へ反映します。")}><button className="primary-btn" disabled={busy} onClick={onPick}><Import size={17} /> {busy ? localize("解析中…") : localize("ファイルを選択")}</button><input ref={inputRef} aria-label={localize("取込ファイルを選択")} className="visually-hidden" type="file" multiple onChange={(event) => { const files = takeFileInputSelection(event.currentTarget); void processFiles(files) }} /></PageHeader><div className="import-stage-strip" aria-label={localize("インポート処理段階")}><strong>{localize("処理段階:")}</strong>{[localize("検出"), localize("抽出中"), localize("プレビュー"), localize("マッピング必要"), localize("レビュー必要"), localize("転記可能"), localize("転記済み")].map((label, index) => <span className={index === 6 ? 'complete' : ''} key={label}>{label}{index < 6 && <ArrowRight size={11} />}</span>)}</div><section className="import-master-detail"><aside className="panel import-file-column"><div className="panel-head"><div><h2>{localize("ファイル")}</h2><p>{localize("自動転記は行いません")}</p></div><b>{importItems.length}</b></div><button className="mini-drop-zone" onClick={onPick} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={16} /> {localize("ファイルを追加")}</button>{importItems.map((item) => <button key={item.file} className={`import-file-card${selected === item.file ? ' active' : ''}`} onClick={() => setSelected(item.file)}><strong>{item.file}</strong><small>{item.source} ・ {item.records}{localize("行 ・")} {item.time}</small><b className={posted.has(item.file) ? 'posted' : item.state}>{posted.has(item.file) ? localize("✓ 転記済み") : item.state === 'review' ? localize("◐ レビュー必要") : item.state === 'ready' ? localize("◇ プレビュー可") : item.state === 'matched' ? localize("◐ マッピング必要") : localize("✓ 転記済み")}</b></button>)}<p>{localize("新規ファイルが自動転記されることはありません。必ず候補を確認してください。")}</p></aside><div className="import-review-column"><article className="panel import-candidate-review"><div className="panel-head"><div><h2>{active.file}</h2><p>{active.source} {localize("・ 解析信頼度 0.98")}</p></div><b className={isPosted ? 'posted' : 'review'}>{isPosted ? localize("✓ 転記済み") : localize("◐ レビュー必要")}</b></div>{active.state === 'matched' && !isPosted && <div className="import-state-banner review">{localize("◐ マッピング必要 — 取込先口座を選択してください。")}<select aria-label={localize("取込先口座")}><option>{localize("三井住友銀行・家計")}</option><option>{localize("PayPay残高")}</option></select></div>}{!isPosted && <div className="import-candidate-table"><div className="import-candidate-head"><span>{localize("日付")}</span><span>{localize("元の摘要")}</span><span>{localize("カテゴリ案")}</span><span>{localize("金額")}</span><span>{localize("提案・警告")}</span></div>{demoImportCandidates.map((candidate) => <div key={candidate.date + candidate.description}><code>{candidate.date}</code><strong>{candidate.description}</strong><span>{candidate.category}</span><b>{yen(candidate.amount)}</b><em className={candidate.tone}>{candidate.suggestion}</em></div>)}</div>}{isPosted ? <div className="import-posted-state"><Check size={28} /><div><strong>{localize("台帳へ転記済み")}</strong><span>{active.records}{localize("件の確認済み候補")}</span></div><button className="secondary-btn" onClick={() => setPosted((current) => { const next = new Set(current); next.delete(active.file); return next })}>{localize("ロールバック")}</button></div> : <div className="review-actions"><span>{localize("提案は未確定です。候補を確認してから転記します。")}</span><button className="secondary-btn">{localize("行を除外")}</button><button className="primary-btn" onClick={() => setPosted((current) => new Set([...current, active.file]))}>{localize("レビュー確定して転記")}</button></div>}</article><article className="panel source-preview"><div className="panel-head"><div><h2>{localize("ソースビューア")}</h2><p>{localize("原本は不変")}</p></div><FileText size={18} /></div><pre><span>{localize("2026-07-22,コンビニ,1280")}</span>{'\n'}<mark>{localize("2026-07-23,成城石井,13876")}</mark>{'\n'}<span>2026-07-24,JR EAST,2180</span></pre><p>{localize("原本は不変 — 正規化値の編集は原本を変更しません。")}</p></article></div></section></>
 }
 
-function ImportPage({ previews, setPreviews, householdId, accounts, members, summary, onChanged, folderInbox, initialView = 'LOCAL' }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; folderInbox: DurableFolderInboxView; initialView?: 'LOCAL' | 'CONNECTORS' }) {
+export function ImportPage({ previews, setPreviews, householdId, accounts, members, summary, onChanged, folderInbox, initialView = 'LOCAL' }: { previews: ImportPreview[]; setPreviews: React.Dispatch<React.SetStateAction<ImportPreview[]>>; householdId: string | null; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; summary: ImportRunCountsDto | null; onChanged: () => void; folderInbox: DurableFolderInboxView; initialView?: 'LOCAL' | 'CONNECTORS' }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [importView, setImportView] = useState<'LOCAL' | 'CONNECTORS'>(initialView)
   const [busy, setBusy] = useState(false)
@@ -1576,6 +1583,11 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const [aggregateAssetImported, setAggregateAssetImported] = useState<ReadonlySet<string>>(() => new Set())
   const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
   const [selectedParserProfiles, setSelectedParserProfiles] = useState<Record<string, string>>({})
+  const [selectedParserProfileVersions, setSelectedParserProfileVersions] = useState<Record<string, number>>({})
+  const [connectorBindings, setConnectorBindings] = useState<readonly ConnectorBindingDto[]>([])
+  const [reviewAccounts, setReviewAccounts] = useState<readonly AccountDto[]>(() => platformClient.runtime === 'web' ? accounts : [])
+  const [reviewOptionsLoaded, setReviewOptionsLoaded] = useState(platformClient.runtime === 'web')
+  const [bindingInvalidRunIds, setBindingInvalidRunIds] = useState<ReadonlySet<string>>(() => new Set())
   const [customParserPreviews, setCustomParserPreviews] = useState<Record<string, CustomDelimitedPreview>>({})
   const [customParserAccounts, setCustomParserAccounts] = useState<Record<string, string>>({})
   const [moneyForwardAccounts, setMoneyForwardAccounts] = useState<Record<string, Record<string, string>>>({})
@@ -1595,7 +1607,44 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   const inFlightRunsRef = useRef(new Set<string>())
   const hydratedDriveItemsRef = useRef(new Set<string>())
   const hydratedGmailItemsRef = useRef(new Set<string>())
+  const reviewOptionsRequestRef = useRef(0)
   const recoveredReviewCount = Object.keys(staged).filter((key) => key.startsWith('recovered:')).length
+
+  const reloadReviewOptions = useCallback(async () => {
+    const request = ++reviewOptionsRequestRef.current
+    if (!householdId) {
+      setConnectorBindings([]); setReviewAccounts([]); setParserProfiles([]); setReviewOptionsLoaded(false)
+      return
+    }
+    try {
+      const [nextBindings, nextAccounts, nextProfiles] = await Promise.all([
+        platformClient.listConnectorBindings(householdId),
+        platformClient.listAccounts(householdId),
+        delimitedParserProfilePlatform.list(householdId),
+      ])
+      if (request !== reviewOptionsRequestRef.current) return
+      setConnectorBindings(nextBindings)
+      setReviewAccounts(nextAccounts)
+      setParserProfiles(nextProfiles.filter((profile) => profile.householdId === householdId && profile.isEnabled))
+      setReviewOptionsLoaded(true)
+    } catch {
+      if (request !== reviewOptionsRequestRef.current) return
+      setConnectorBindings([]); setReviewAccounts([]); setParserProfiles([]); setReviewOptionsLoaded(false)
+    }
+  }, [householdId])
+  const reviewInboxRows = { drive: driveInboxItems, gmail: gmailInboxItems, watched: folderInbox.items }
+  const reviewAccountOptionsFor = (source: ImportPreview) => filterReviewAccountOptions(source, reviewAccounts, connectorBindings, reviewInboxRows)
+  const reviewParserOptionsFor = (source: ImportPreview) => filterReviewParserOptions(source, parserProfiles, connectorBindings, reviewInboxRows)
+  const effectiveReviewAccountId = (source: ImportPreview, selectedId: string | undefined) => selectedId && reviewAccountOptionsFor(source).some(({ id }) => id === selectedId) ? selectedId : ''
+  const effectiveReviewParser = (source: ImportPreview) => reviewParserOptionsFor(source).find((profile) => profile.id === selectedParserProfiles[source.id] && profile.version === selectedParserProfileVersions[source.id]) ?? null
+  const reviewSelectionNeedsRemapping = (source: ImportPreview) => {
+    const selectedAccountIds = [
+      customParserAccounts[source.id], yuchoAccounts[source.id], standardImportAccounts[source.id], investmentImportAccounts[source.id],
+      ...Object.values(moneyForwardAccounts[source.id] ?? {}),
+    ].filter((id): id is string => Boolean(id))
+    return selectedAccountIds.some((id) => effectiveReviewAccountId(source, id) === '')
+      || (Boolean(selectedParserProfiles[source.id]) && effectiveReviewParser(source) === null)
+  }
 
   useEffect(() => {
     hydratedStagedRunsRef.current.clear()
@@ -1610,10 +1659,16 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     setGmailInboxItems([])
     hydratedGmailItemsRef.current.clear()
     setMoneyForwardAccounts({})
+    setYuchoAccounts({})
     setStandardImportAccounts({})
     setInvestmentImportAccounts({})
+    setSelectedParserProfiles({})
+    setSelectedParserProfileVersions({})
+    setBindingInvalidRunIds(new Set())
     setRescuePreviewId(null)
   }, [householdId])
+
+  useEffect(() => { if (platformClient.runtime === 'tauri') void reloadReviewOptions() }, [reloadReviewOptions])
 
   useEffect(() => {
     if (platformClient.runtime !== 'tauri' || !householdId) { setRecoveryBusy(false); setRecoveryError(''); return }
@@ -1798,13 +1853,6 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   }, [householdId])
 
   useEffect(() => {
-    if (platformClient.runtime !== 'tauri' || !householdId) { setParserProfiles([]); return }
-    let active = true
-    void delimitedParserProfilePlatform.list(householdId).then((items) => { if (active) setParserProfiles(items.filter((profile) => profile.isEnabled)) }).catch(() => { if (active) setParserProfiles([]) })
-    return () => { active = false }
-  }, [householdId])
-
-  useEffect(() => {
     if (!householdId) return
     let active = true
     for (const item of folderInbox.items) {
@@ -1833,15 +1881,12 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   }, [driveInboxItems, householdId])
 
   const applyCustomParserProfile = (item: ImportPreview, explicitProfile?: DelimitedParserProfileDto, explicitAccountId?: string) => {
-    const profile = explicitProfile ?? parserProfiles.find((candidate) => candidate.id === selectedParserProfiles[item.id])
+    const profile = explicitProfile ?? effectiveReviewParser(item)
     if (!profile || !item.fileBytes) return
     setOriginalParserPreviews((current) => current[item.id] ? current : { ...current, [item.id]: item })
     const result = parseCustomDelimitedBytes(item.fileBytes, profile, { filename: item.filename })
-    const hints = [...new Set(result.parsed.records.flatMap((record) => typeof record === 'object' && record !== null && 'accountHint' in record && typeof record.accountHint === 'string' && record.accountHint.trim() ? [record.accountHint.trim()] : []))]
-    const balanceAccounts = accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY')
-    const hintedAccount = hints.length === 1 ? balanceAccounts.find((account) => account.id === hints[0] || account.name === hints[0]) : undefined
-    const fallbackAccount = accounts.find((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK')
-    setCustomParserAccounts((current) => ({ ...current, [item.id]: explicitAccountId ?? hintedAccount?.id ?? fallbackAccount?.id ?? '' }))
+    const selectedAccountId = explicitAccountId ?? effectiveReviewAccountId(item, customParserAccounts[item.id])
+    setCustomParserAccounts((current) => ({ ...current, [item.id]: selectedAccountId }))
     setCustomParserPreviews((current) => ({ ...current, [item.id]: result.preview }))
     const hasErrors = result.preview.issues.some((issue) => issue.severity === 'error')
     setPreviews((current) => current.map((preview) => preview.id === item.id ? {
@@ -1858,7 +1903,14 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
   }
 
   const selectCustomParserProfile = (item: ImportPreview, profileId: string) => {
+    const profile = reviewParserOptionsFor(item).find((candidate) => candidate.id === profileId)
     setSelectedParserProfiles((current) => ({ ...current, [item.id]: profileId }))
+    setSelectedParserProfileVersions((current) => {
+      const next = { ...current }
+      if (profile) next[item.id] = profile.version
+      else delete next[item.id]
+      return next
+    })
     if (!customParserPreviews[item.id]) return
     const original = originalParserPreviews[item.id]
     if (original) setPreviews((current) => current.map((preview) => preview.id === item.id ? original : preview))
@@ -1960,16 +2012,17 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
 
   const stageImport = async (item: ImportPreview) => {
     if (!householdId || !item.fileBytes || !item.parsed || !item.detectedAdapterId) return
+    const eligibleReviewAccounts = reviewAccountOptionsFor(item)
     if (item.detectedAdapterId === 'custom-delimited-v1') {
-      const selected = accounts.find((account) => account.id === customParserAccounts[item.id])
+      const selected = eligibleReviewAccounts.find((account) => account.id === effectiveReviewAccountId(item, customParserAccounts[item.id]))
       if (!selected || (selected.accountKind !== 'ASSET' && selected.accountKind !== 'LIABILITY')) { setNotice(localize("カスタム形式の有効な取込先口座を選択してください。")); return }
     }
-    if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], accounts)) { setNotice(localize("Money Forwardのすべての「保有金融機関」に対応する取込先口座を選択してください。")); return }
-    if (item.detectedAdapterId === 'yucho-direct-ledger-v1' && !yuchoAccounts[item.id]) { setNotice(localize("ゆうちょCSVの取込先銀行口座を選択してください。")); return }
+    if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], eligibleReviewAccounts)) { setNotice(localize("Money Forwardのすべての「保有金融機関」に対応する取込先口座を選択してください。")); return }
+    if (item.detectedAdapterId === 'yucho-direct-ledger-v1' && !effectiveReviewAccountId(item, yuchoAccounts[item.id])) { setNotice(localize("ゆうちょCSVの取込先銀行口座を選択してください。")); return }
     const standardRequirement = STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId]
-    const standardAccountId = standardImportAccounts[item.id]
+    const standardAccountId = effectiveReviewAccountId(item, standardImportAccounts[item.id])
     if (standardRequirement) {
-      const selected = accounts.find((account) => account.id === standardAccountId)
+      const selected = eligibleReviewAccounts.find((account) => account.id === effectiveReviewAccountId(item, standardAccountId))
       if (!selected || selected.accountKind !== standardRequirement.kind || selected.accountSubtype !== standardRequirement.subtype) { setNotice(standardRequirement.message); return }
     }
     setActiveRun(item.id)
@@ -1977,8 +2030,8 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     try {
       const defaultAccount = standardRequirement
         ? standardAccountId
-        : item.detectedAdapterId === 'yucho-direct-ledger-v1' ? yuchoAccounts[item.id] ?? ''
-        : item.detectedAdapterId === 'custom-delimited-v1' ? customParserAccounts[item.id] ?? ''
+        : item.detectedAdapterId === 'yucho-direct-ledger-v1' ? effectiveReviewAccountId(item, yuchoAccounts[item.id])
+        : item.detectedAdapterId === 'custom-delimited-v1' ? effectiveReviewAccountId(item, customParserAccounts[item.id])
         : ''
       const mapping = await mapParsedImportToStartImport({
         file: {
@@ -1996,6 +2049,17 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
           ...preview, status: 'error', issues: [...preview.issues, ...mapping.issues.map((issue) => ({ code: issue.code, message: issue.message, severity: issue.severity, row: issue.sourceRow }))],
         } : preview))
         setNotice(localize("正規化できない行があります。ファイル内容を確認してください。"))
+        return
+      }
+      const binding = bindingForReviewSource(item, connectorBindings, reviewInboxRows)
+      if (!reviewOptionsLoaded || !isStagedReviewBindingValid({
+        binding,
+        candidateAccountIds: mapping.request.candidates.map(({ accountId }) => accountId),
+        activeAccountIds: reviewAccounts.map(({ id }) => id),
+        adapterId: mapping.request.adapterId,
+        adapterVersion: mapping.request.adapterVersion ?? null,
+      })) {
+        setNotice(localize("対応付けを再確認してください。口座または読み取りプロファイルが変更されています。"))
         return
       }
       const summary = await startTrackedImport(item, mapping.request, item.fileBytes)
@@ -2197,6 +2261,26 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     finally { setActiveRun(null) }
   }
 
+  const stagedReviewBindingValid = (previewId: string, stagedImport: ImportPreviewDto) => {
+    if (!reviewOptionsLoaded || bindingInvalidRunIds.has(stagedImport.summary.runId)) return false
+    const preview = previews.find((item) => item.id === previewId)
+    const pending = pendingReviewRuns.find((run) => run.runId === stagedImport.summary.runId)
+    const source = preview ?? { sourceType: pending?.sourceType ?? stagedImport.source.sourceType, importRunId: stagedImport.summary.runId }
+    const binding = bindingForReviewSource(source, connectorBindings, reviewInboxRows)
+    const adapterId = pending?.adapterId ?? preview?.detectedAdapterId ?? null
+    const adapterVersion = pending?.adapterVersion
+      ?? (preview?.detectedAdapterId === 'custom-delimited-v1' && customParserPreviews[preview.id]
+        ? `${customParserPreviews[preview.id].profileId}@${customParserPreviews[preview.id].profileVersion}`
+        : preview?.detectedAdapterId ? builtInAdapterVersion(preview.detectedAdapterId) : null)
+    return isStagedReviewBindingValid({
+      binding,
+      candidateAccountIds: stagedImport.candidates.map(({ accountId }) => accountId),
+      activeAccountIds: reviewAccounts.map(({ id }) => id),
+      adapterId,
+      adapterVersion,
+    })
+  }
+
   const commitRun = async (previewId: string, stagedImport: ImportPreviewDto, decisions: readonly PostingDecisionDto[]) => {
     if (inFlightRunsRef.current.has(stagedImport.summary.runId)) return
     inFlightRunsRef.current.add(stagedImport.summary.runId)
@@ -2206,12 +2290,15 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
+      setBindingInvalidRunIds((current) => { const next = new Set(current); next.delete(stagedImport.summary.runId); return next })
       onChanged()
       setRecoveryRevision((value) => value + 1)
       setNotice(result.postedCount === 0 ? localize("取引を追加せず原本処理を完了しました。") : localize(`${result.postedCount}件の取引を台帳へ反映しました。`))
       showToast(result.postedCount === 0 ? localize("原本処理を完了しました。") : localize(`${result.postedCount}件を台帳へ反映しました。`))
     } catch {
-      setNotice(localize("台帳へ反映できませんでした。候補の口座と仕訳を確認してください。"))
+      setBindingInvalidRunIds((current) => new Set([...current, stagedImport.summary.runId]))
+      await reloadReviewOptions()
+      setNotice('')
       showToast(localize("台帳へ反映できませんでした。"), 'error')
     } finally {
       inFlightRunsRef.current.delete(stagedImport.summary.runId)
@@ -2227,6 +2314,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
       await platformClient.rollbackImport(runId)
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
+      setBindingInvalidRunIds((current) => { const next = new Set(current); next.delete(runId); return next })
       onChanged()
       setRecoveryRevision((value) => value + 1)
       const folderInboxItemId = previewId.startsWith('folder:')
@@ -2297,7 +2385,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     {importView === 'CONNECTORS' && platformClient.runtime === 'tauri' && <div className="import-notice"><span>{localize("iCloud Drive は Apple API へ直接接続しません。macOS または Windows の iCloud Drive が端末へ同期したフォルダーをローカルで監視します。")}</span></div>}
     {importView === 'CONNECTORS' && folderInbox.counts && folderInbox.counts.actionable > 0 && <div className="import-notice folder-discovery-notice" role="status"><span>{localize("永続フォルダー受信箱 に")} {folderInbox.counts.actionable} {localize("件の確認対象があります。プレビューだけを自動化し、台帳への反映は必ず明示的な承認後です。")}</span><button className="text-btn" disabled={folderInbox.busy} onClick={() => void folderInbox.refresh(true)}>{localize("更新")}</button></div>}
     {(recoveryBusy || recoveryError) && <div className="import-notice" role={recoveryError ? 'alert' : 'status'}><span>{recoveryError || localize("保存済みの確認待ちインポートを復元しています…")}</span>{recoveryError && <button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>{localize("再試行")}</button>}</div>}
-    {!recoveryBusy && !recoveryError && recoveredReviewCount > 0 && <div className="import-notice" role="status"><span>{localize("再起動前からの確認待ちを")} {recoveredReviewCount} {localize("件復元しました。台帳へは自動反映しません。")}</span><button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>{localize("確認待ちを更新")}</button></div>}
+    {!recoveryBusy && !recoveryError && recoveredReviewCount > 0 && bindingInvalidRunIds.size === 0 && <div className="import-notice" role="status"><span>{localize("再起動前からの確認待ちを")} {recoveredReviewCount} {localize("件復元しました。台帳へは自動反映しません。")}</span><button className="text-btn" onClick={() => setRecoveryRevision((value) => value + 1)}>{localize("確認待ちを更新")}</button></div>}
     {importView === 'CONNECTORS' && <section className="panel import-connectors-overview" aria-label={localize("接続済みコネクタ")}><article><div><strong>Google Drive</strong><span className="review-pill">{localize("テストユーザー限定")}</span><small>{driveInboxItems.length}{localize("件を検出")}</small></div><button className="secondary-btn" disabled={driveInboxBusy} onClick={() => void refreshGoogleDriveInbox(true)}>{localize("取り込む候補を確認")}</button></article><article><div><strong>Gmail</strong><span className="review-pill">{localize("テストユーザー限定")}</span><small>{gmailInboxItems.length}{localize("件を検出")}</small></div><button className="secondary-btn" disabled={gmailInboxBusy} onClick={() => void refreshGmailInbox(true)}>{localize("取り込む候補を確認")}</button></article><article><div><strong>{localize("iCloud / 同期フォルダー")}</strong><span className="review-pill">{localize("ローカル同期")}</span><small>{watchedFolders.length}{localize("フォルダー")}</small></div><button className="secondary-btn" disabled={folderInbox.busy} onClick={() => void folderInbox.refresh(true)}>{localize("取り込む候補を確認")}</button></article></section>}
     <section className="status-grid import-status-summary" hidden={importView !== 'LOCAL'}>
       {[
@@ -2320,6 +2408,7 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
     </div>
     <div className="import-production-master-detail" hidden={importView !== 'LOCAL'}>
     <section className="panel import-panel">
+      {previews.some(reviewSelectionNeedsRemapping) && <p className="import-notice" role="status">{localize("選択内容が利用できなくなりました。新しい対応付けを明示的に選択してください。")}</p>}
       <div className="panel-head"><div><h2>{localize("最近のファイル")}</h2><p>{localize("ローカル、Google Drive、Gmail Inbox のプレビュー")}</p></div></div>
       <button className="drop-zone" onClick={() => inputRef.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); void processFiles(event.dataTransfer.files) }}><Import size={20} /><span>{localize("CSV / TSV / Excel / PDF / レシート画像 / ZIP / EMLをここにドロップ")}</span><small>{localize("PayPay・銀行・カード・ゆうちょ公式CSV一括ZIP・メール添付・PNG / JPEGレシート")}</small></button>
       {parserProfiles.length > 0 && previews.some((item) => /\.(?:csv|tsv)$/i.test(item.filename) && item.fileBytes) && <div className="custom-parser-files">
@@ -2329,12 +2418,12 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
           const errorCount = preview?.issues.filter((issue) => issue.severity === 'error').length ?? 0
           return <div className="custom-parser-file" key={item.id}>
             <span><strong>{item.filename}</strong><small>{item.detectedAdapterId ? localize(`現在: ${item.detectedAdapterId}`) : localize("組み込み形式では未対応")}</small></span>
-            <select aria-label={localize(`${item.filename}の読み取りプロファイル`)} value={selectedParserProfiles[item.id] ?? ''} onChange={(event) => selectCustomParserProfile(item, event.target.value)}><option value="">{localize("プロファイルを選択")}</option>{parserProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}{localize("（優先度")} {profile.priority}）</option>)}</select>
-            <button className="mini-btn" disabled={!selectedParserProfiles[item.id]} onClick={() => applyCustomParserProfile(item)}>{localize("適用してプレビュー")}</button>
+            <select aria-label={localize(`${item.filename}の読み取りプロファイル`)} value={effectiveReviewParser(item)?.id ?? ''} onChange={(event) => selectCustomParserProfile(item, event.target.value)}><option value="">{localize("プロファイルを選択")}</option>{reviewParserOptionsFor(item).map((profile) => <option key={`${profile.id}@${profile.version}`} value={profile.id}>{profile.name}{localize("（優先度")} {profile.priority}）</option>)}</select>
+            <button className="mini-btn" disabled={!effectiveReviewParser(item)} onClick={() => applyCustomParserProfile(item)}>{localize("適用してプレビュー")}</button>
             {preview && <div className="custom-parser-result">
               <strong>{preview.candidateCount}{localize("件の候補 /")} {preview.rejectedRowCount}{localize("行を除外 /")} {errorCount}{localize("件のエラー")}</strong>
               <span>{preview.encoding} {localize("・ 区切り「")}{preview.delimiter === '\t' ? 'TAB' : preview.delimiter}{localize("」・ ヘッダー行")} {preview.headerRow}</span>
-              <label>{localize("取込先口座（口座ヒントは候補としてのみ使用）")}<select aria-label={localize(`${item.filename}の取込先口座`)} value={customParserAccounts[item.id] ?? ''} onChange={(event) => setCustomParserAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{localize("口座を選択")}</option>{accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+              <label>{localize("取込先口座（口座ヒントは候補としてのみ使用）")}<select aria-label={localize(`${item.filename}の取込先口座`)} value={effectiveReviewAccountId(item, customParserAccounts[item.id])} onChange={(event) => setCustomParserAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{localize("口座を選択")}</option>{reviewAccountOptionsFor(item).filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
               <div>{preview.mappings.map((mapping) => <span className={mapping.columnIndex == null ? 'missing' : 'matched'} key={mapping.role}>{localize(customColumnRoleLabels[mapping.role])}: {mapping.configuredHeader} → {mapping.matchedHeader ?? localize("未一致")}</span>)}</div>
               {preview.issues.length > 0 && <ul>{preview.issues.slice(0, 6).map((issue, index) => <li key={`${issue.code}-${issue.row ?? 0}-${index}`}>{issue.row ? localize(`行 ${issue.row}: `) : ''}{localize(issue.message)}</li>)}</ul>}
               <small>{errorCount > 0 ? localize("エラーを解消して再プレビューするまで取込を開始できません。") : localize("この候補も次の「取込開始」後にレビューと個別承認が必要です。")}</small>
@@ -2343,20 +2432,20 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
         })}
       </div>}
       {previews.some((item) => item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && item.status === 'ready') && <div className="custom-parser-files"><div><strong>{localize("Money Forward ME 家計簿CSV")}</strong><small>{localize("原本内の保有金融機関ごとにKakeFlow口座を明示します。振替と計算対象は元データを保持します。")}</small></div>{previews.filter((item) => item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && item.status === 'ready').flatMap((item) => {
-        const eligibleAccounts = eligibleMoneyForwardAccounts(accounts)
-        return moneyForwardInstitutions(item).map((institution, index) => <div className="custom-parser-file" key={`${item.id}:${institution}`}><span><strong>{institution}</strong><small>{item.filename} {localize("・ 口座を推測または自動作成しません。")}</small>{index === 0 && eligibleAccounts.length === 0 && <small id={`money-forward-account-empty-${item.id}`} role="status">{localize("設定ページで先に資産または負債口座を追加してください。追加するまで取込は開始できません。")}</small>}</span><select aria-label={localize(`${item.filename}の${institution}取込先口座`)} aria-describedby={eligibleAccounts.length === 0 ? `money-forward-account-empty-${item.id}` : undefined} disabled={eligibleAccounts.length === 0} value={moneyForwardAccounts[item.id]?.[institution] ?? ''} onChange={(event) => setMoneyForwardAccounts((current) => ({ ...current, [item.id]: { ...current[item.id], [institution]: event.target.value } }))}><option value="">{localize("対応する口座を選択")}</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)
+        const eligibleAccounts = eligibleMoneyForwardAccounts(reviewAccountOptionsFor(item))
+        return moneyForwardInstitutions(item).map((institution, index) => <div className="custom-parser-file" key={`${item.id}:${institution}`}><span><strong>{institution}</strong><small>{item.filename} {localize("・ 口座を推測または自動作成しません。")}</small>{index === 0 && eligibleAccounts.length === 0 && <small id={`money-forward-account-empty-${item.id}`} role="status">{localize("設定ページで先に資産または負債口座を追加してください。追加するまで取込は開始できません。")}</small>}</span><select aria-label={localize(`${item.filename}の${institution}取込先口座`)} aria-describedby={eligibleAccounts.length === 0 ? `money-forward-account-empty-${item.id}` : undefined} disabled={eligibleAccounts.length === 0} value={effectiveReviewAccountId(item, moneyForwardAccounts[item.id]?.[institution])} onChange={(event) => setMoneyForwardAccounts((current) => ({ ...current, [item.id]: { ...current[item.id], [institution]: event.target.value } }))}><option value="">{localize("対応する口座を選択")}</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)
       })}</div>}
-      {previews.some((item) => item.detectedAdapterId === 'yucho-direct-ledger-v1' && item.status === 'ready') && <div className="custom-parser-files"><div><strong>{localize("ゆうちょダイレクトCSV")}</strong><small>{localize("ZIP内のCSVもファイルごとに対応する銀行口座を明示的に選択します。")}</small></div>{previews.filter((item) => item.detectedAdapterId === 'yucho-direct-ledger-v1' && item.status === 'ready').map((item) => <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{localize("口座情報を推測せず、選択した銀行口座へ取り込みます。")}</small></span><select aria-label={localize(`${item.filename}のゆうちょ取込先口座`)} value={yuchoAccounts[item.id] ?? ''} onChange={(event) => setYuchoAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{localize("銀行口座を選択")}</option>{accounts.filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)}</div>}
+      {previews.some((item) => item.detectedAdapterId === 'yucho-direct-ledger-v1' && item.status === 'ready') && <div className="custom-parser-files"><div><strong>{localize("ゆうちょダイレクトCSV")}</strong><small>{localize("ZIP内のCSVもファイルごとに対応する銀行口座を明示的に選択します。")}</small></div>{previews.filter((item) => item.detectedAdapterId === 'yucho-direct-ledger-v1' && item.status === 'ready').map((item) => <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{localize("口座情報を推測せず、選択した銀行口座へ取り込みます。")}</small></span><select aria-label={localize(`${item.filename}のゆうちょ取込先口座`)} value={effectiveReviewAccountId(item, yuchoAccounts[item.id])} onChange={(event) => setYuchoAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{localize("銀行口座を選択")}</option>{reviewAccountOptionsFor(item).filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'BANK').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>)}</div>}
       {previews.some((item) => dedicatedBrokerageImport(item.detectedAdapterId) != null && item.status === 'ready') && <div className="custom-parser-files">{previews.filter((item) => dedicatedBrokerageImport(item.detectedAdapterId) != null && item.status === 'ready').map((item) => {
         const config = dedicatedBrokerageImport(item.detectedAdapterId)!
-        const eligibleAccounts = accounts.filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'SECURITIES')
+        const eligibleAccounts = reviewAccountOptionsFor(item).filter((account) => account.accountKind === 'ASSET' && account.accountSubtype === 'SECURITIES')
         const descriptionId = eligibleAccounts.length === 0 ? `investment-account-empty-${item.id}` : undefined
-        return <div className="custom-parser-file" key={item.id}><span><strong>{config.title}</strong><small>{item.filename} ・ {config.description}</small><small>{config.accountHint}</small>{eligibleAccounts.length === 0 && <small id={descriptionId} role="status">{localize("設定ページで先に証券口座を追加してください。追加するまで保存できません。")}</small>}</span><select aria-label={localize(`${item.filename}の取込先証券口座`)} aria-describedby={descriptionId} disabled={eligibleAccounts.length === 0} value={investmentImportAccounts[item.id] ?? ''} onChange={(event) => setInvestmentImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{localize("証券口座を選択")}</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
+        return <div className="custom-parser-file" key={item.id}><span><strong>{config.title}</strong><small>{item.filename} ・ {config.description}</small><small>{config.accountHint}</small>{eligibleAccounts.length === 0 && <small id={descriptionId} role="status">{localize("設定ページで先に証券口座を追加してください。追加するまで保存できません。")}</small>}</span><select aria-label={localize(`${item.filename}の取込先証券口座`)} aria-describedby={descriptionId} disabled={eligibleAccounts.length === 0} value={effectiveReviewAccountId(item, investmentImportAccounts[item.id])} onChange={(event) => setInvestmentImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{localize("証券口座を選択")}</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       })}</div>}
       {previews.some((item) => item.detectedAdapterId != null && STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId] != null && item.status === 'ready') && <div className="custom-parser-files"><div><strong>{localize("取込先口座を明示的に選択")}</strong><small>{localize("ファイル名、カード会社名、既定口座から推測せず、原本ごとに対応する口座を選択します。")}</small></div>{previews.filter((item) => item.detectedAdapterId != null && STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId] != null && item.status === 'ready').map((item) => {
         const requirement = STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[item.detectedAdapterId!]!
-        const eligibleAccounts = accounts.filter((account) => account.accountKind === requirement.kind && account.accountSubtype === requirement.subtype)
-        return <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{item.adapterId} ・ {requirement.kindLabel}{localize("のみ選択できます。")}</small>{eligibleAccounts.length === 0 && <small id={`standard-account-empty-${item.id}`} role="status">{localize("設定ページで先に")}{requirement.kindLabel}{localize("を追加してください。追加するまで取込は開始できません。")}</small>}</span><select aria-label={localize(`${item.filename}の取込先${requirement.kindLabel}`)} disabled={eligibleAccounts.length === 0} value={standardImportAccounts[item.id] ?? ''} onChange={(event) => setStandardImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{requirement.kindLabel}{localize("を選択")}</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
+        const eligibleAccounts = reviewAccountOptionsFor(item).filter((account) => account.accountKind === requirement.kind && account.accountSubtype === requirement.subtype)
+        return <div className="custom-parser-file" key={item.id}><span><strong>{item.filename}</strong><small>{item.adapterId} ・ {requirement.kindLabel}{localize("のみ選択できます。")}</small>{eligibleAccounts.length === 0 && <small id={`standard-account-empty-${item.id}`} role="status">{localize("設定ページで先に")}{requirement.kindLabel}{localize("を追加してください。追加するまで取込は開始できません。")}</small>}</span><select aria-label={localize(`${item.filename}の取込先${requirement.kindLabel}`)} disabled={eligibleAccounts.length === 0} value={effectiveReviewAccountId(item, standardImportAccounts[item.id])} onChange={(event) => setStandardImportAccounts((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">{requirement.kindLabel}{localize("を選択")}</option>{eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></div>
       })}</div>}
       <div className="import-list">
         {previews.map((item) => <div className="import-row" key={item.id}><div className="file-icon"><FileCheck2 size={19} /></div><div><strong>{item.filename}</strong><span>{item.adapterId ?? localize("未対応の形式")} ・ {item.encoding}{item.emailAttachmentName ? localize(` ・ 添付 ${item.emailAttachmentName}`) : ''}</span>{item.issues.length > 0 && <small className="import-row-issues" role={item.issues.some((issue) => issue.severity === 'error') ? 'alert' : 'status'}>{item.issues.slice(0, 2).map((issue) => localize(issue.message)).join(' / ')}</small>}</div><span>{item.recordCount} {localize("レコード")}</span><b className={item.status === 'ready' && !hasRakutenStatementMismatch(item) ? 'ready' : 'review'}>{aggregateAssetImported.has(item.id) ? localize("総資産履歴に反映済み") : portfolioImported.has(item.id) ? localize("資産に反映済み") : staged[item.id] ? localize("レビュー待ち") : item.status === 'ready' ? hasRakutenStatementMismatch(item) ? localize("要確認・取込可能") : localize("プレビュー完了") : item.status === 'extractable' ? item.mediaType?.startsWith('image/') ? localize("OCR待ち") : pdfOcrRequiredIds.has(item.id) ? localize("画像PDF・OCR待ち") : localize("テキスト解析待ち") : localize("確認が必要")}</b>{item.status === 'ready' && item.detectedAdapterId === 'money-forward-me-asset-trend-v1' && !aggregateAssetImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importAggregateAssetHistory(item)}>{activeRun === item.id ? localize("保存中…") : localize("総資産履歴に保存")}</button> : item.status === 'ready' && item.detectedAdapterId === 'securities-asset-snapshot-v1' && !portfolioImported.has(item.id) ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void importPortfolioSnapshot(item)}>{activeRun === item.id ? localize("保存中…") : localize("資産に保存")}</button> : item.status === 'ready' && isBrokerageTransactionAdapter(item.detectedAdapterId) && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-describedby={dedicatedBrokerageImport(item.detectedAdapterId) && accounts.every((account) => account.accountKind !== 'ASSET' || account.accountSubtype !== 'SECURITIES') ? `investment-account-empty-${item.id}` : undefined} disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id || (dedicatedBrokerageImport(item.detectedAdapterId) != null && !investmentImportAccounts[item.id])} onClick={() => void importBrokerageHistory(item)}>{activeRun === item.id ? localize("保存中…") : localize("証券取引に保存")}</button> : item.status === 'ready' && item.detectedAdapterId !== 'money-forward-me-asset-trend-v1' && !staged[item.id] && !portfolioImported.has(item.id) ? <button className="mini-btn" aria-label={previews.length > 1 ? localize(`${item.filename}の取込開始`) : undefined} aria-describedby={importAccountDescriptionId(item, accounts)} disabled={platformClient.runtime !== 'tauri' || !householdId || accounts.length === 0 || !hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts) || (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && !hasCompleteMoneyForwardMapping(item, moneyForwardAccounts[item.id], accounts)) || activeRun === item.id} onClick={() => void stageImport(item)}>{activeRun === item.id ? localize("暗号化中…") : platformClient.runtime === 'tauri' ? localize("取込開始") : localize("デスクトップ版のみ")}</button> : item.status === 'extractable' && !staged[item.id] ? <button className="mini-btn" disabled={platformClient.runtime !== 'tauri' || !householdId || activeRun === item.id} onClick={() => void extractDocument(item)}>{activeRun === item.id ? pdfOcrRequiredIds.has(item.id) ? localize("OCR中…") : localize("解析中…") : item.mediaType?.startsWith('image/') ? localize("画像OCR") : pdfOcrRequiredIds.has(item.id) ? localize("スキャンPDF OCR") : localize("PDFを解析")}</button> : item.status === 'unsupported' && item.fileBytes && /\.(?:csv|tsv)$/i.test(item.filename) ? <button className="mini-btn" onClick={(event) => { rescueTriggerRef.current = event.currentTarget; setRescuePreviewId(item.id) }}>{localize("このファイルを読み取る")}</button> : <span className="icon-btn" title={item.issues.map((issue) => localize(issue.message)).join('\n')}><MoreHorizontal size={18} /></span>}</div>)}
@@ -2364,13 +2453,13 @@ function ImportPage({ previews, setPreviews, householdId, accounts, members, sum
         {platformClient.runtime === 'tauri' && previews.length === 0 && <p className="empty-state">{localize("ファイルを選択すると、ここに解析結果が表示されます。")}</p>}
       </div>
       {protectedPdf && (() => { const item = previews.find((preview) => preview.id === protectedPdf.itemId); return item ? <PdfPasswordPrompt filename={item.filename} status={protectedPdf.status} onSubmit={(ephemeralPassword) => extractDocument(item, ephemeralPassword, protectedPdf.operation)} onCancel={() => setProtectedPdf(null)} /> : null })()}
-      {rescuePreviewId && householdId && (() => { const item = previews.find((preview) => preview.id === rescuePreviewId); return item?.fileBytes ? <CustomParserRescueDialog householdId={householdId} filename={item.filename} bytes={item.fileBytes} accounts={accounts} returnFocus={rescueTriggerRef.current} onCancel={() => setRescuePreviewId(null)} onSaved={(profile, accountId) => { setParserProfiles((current) => [...current.filter((candidate) => candidate.id !== profile.id), profile]); setSelectedParserProfiles((current) => ({ ...current, [item.id]: profile.id })); applyCustomParserProfile(item, profile, accountId); setRescuePreviewId(null) }} /> : null })()}
+      {rescuePreviewId && householdId && (() => { const item = previews.find((preview) => preview.id === rescuePreviewId); return item?.fileBytes ? <CustomParserRescueDialog householdId={householdId} filename={item.filename} bytes={item.fileBytes} accounts={reviewAccountOptionsFor(item)} returnFocus={rescueTriggerRef.current} onCancel={() => setRescuePreviewId(null)} onSaved={(profile, accountId) => { setParserProfiles((current) => [...current.filter((candidate) => candidate.id !== profile.id), profile]); setSelectedParserProfiles((current) => ({ ...current, [item.id]: profile.id })); setSelectedParserProfileVersions((current) => ({ ...current, [item.id]: profile.version })); applyCustomParserProfile(item, profile, accountId); setRescuePreviewId(null) }} /> : null })()}
     </section>
     <div className="import-production-review-column">
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {Object.keys(staged).map((previewId) => { const source = previews.find((item) => item.id === previewId); return source && hasRakutenStatementMismatch(source) ? <div className="import-notice" role="status" key={`statement-mismatch:${previewId}`}>{localize("請求額と明細合計に差があります。原本PDFは保持したまま、返金行は「返金」、調整行は「調整」に変更し、仕訳を確認してから承認してください。")}</div> : null })}
     {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <DuplicateReviewGate key={`duplicate:${stagedImport.summary.runId}`} preview={stagedImport} onResolution={(candidateId, resolution) => setDuplicateResolution(previewId, candidateId, resolution)} />)}
-    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} isReceipt={receiptStagedIds.has(previewId) || recoveredReceiptRunIds.has(stagedImport.summary.runId)} recovered={previewId.startsWith('recovered:')} sourceCompletionBlocked={sourceResumeRequiredRunIds.has(stagedImport.summary.runId)} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} onReceiptLinked={() => refreshAfterReceiptLink(previewId, stagedImport.summary.runId)} />)}
+    {householdId && Object.entries(staged).map(([previewId, stagedImport]) => <ImportReviewSection key={stagedImport.summary.runId} stagedImport={stagedImport} accounts={accounts} householdId={householdId} busy={activeRun === stagedImport.summary.runId} isReceipt={receiptStagedIds.has(previewId) || recoveredReceiptRunIds.has(stagedImport.summary.runId)} recovered={previewId.startsWith('recovered:')} sourceCompletionBlocked={sourceResumeRequiredRunIds.has(stagedImport.summary.runId)} bindingValid={stagedReviewBindingValid(previewId, stagedImport)} onRollback={() => void rollbackRun(previewId, stagedImport.summary.runId)} onCommit={(decisions) => void commitRun(previewId, stagedImport, decisions)} onReceiptLinked={() => refreshAfterReceiptLink(previewId, stagedImport.summary.runId)} />)}
     {Object.keys(staged).length === 0 && <section className="panel import-review-placeholder"><FileCheck2 size={24} /><strong>{localize("レビューするファイルを選択")}</strong><span>{localize("左のファイルで「取込開始」を選ぶと、候補・重複・原本をここで確認できます。")}</span></section>}
     </div>
     </div>
@@ -3223,21 +3312,51 @@ function SyncSettingsPanels({ householdId, members }: { readonly householdId: st
 
 function SettingsConnectorControl({ householdId, onConfigure }: { readonly householdId: string | null; readonly onConfigure: (destination: ConfigurationDestinationDto) => void }) {
   const [summaries, setSummaries] = useState<readonly ConnectorSummaryDto[]>([])
+  const [bindings, setBindings] = useState<readonly ConnectorBindingDto[]>([])
+  const [accounts, setAccounts] = useState<readonly AccountDto[]>([])
+  const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const loadRequest = useRef(0)
 
-  useEffect(() => {
-    if (!householdId) { setSummaries([]); setLoading(false); setError(null); return }
-    let active = true
+  const reload = useCallback(async () => {
+    const request = ++loadRequest.current
+    if (!householdId) {
+      setSummaries([]); setBindings([]); setAccounts([]); setParserProfiles([]); setLoading(false); setError(null)
+      return
+    }
     setSummaries([]); setLoading(true); setError(null)
-    void loadAllConnectorSummaries((cursor) => platformClient.listConnectorSummaries(householdId, cursor, 100))
-      .then((items) => { if (active) setSummaries(items) })
-      .catch(() => { if (active) setError('CONNECTOR_SUMMARY_UNAVAILABLE') })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
+    try {
+      const [nextSummaries, nextBindings, nextAccounts, nextProfiles] = await Promise.all([
+        loadAllConnectorSummaries((cursor) => platformClient.listConnectorSummaries(householdId, cursor, 100)),
+        platformClient.listConnectorBindings(householdId),
+        platformClient.listAccounts(householdId),
+        delimitedParserProfilePlatform.list(householdId),
+      ])
+      if (request !== loadRequest.current) return
+      setSummaries(nextSummaries)
+      setBindings(nextBindings)
+      setAccounts(nextAccounts)
+      setParserProfiles(nextProfiles.filter((profile) => profile.householdId === householdId && profile.isEnabled))
+    } catch {
+      if (request === loadRequest.current) setError('CONNECTOR_SUMMARY_UNAVAILABLE')
+    } finally {
+      if (request === loadRequest.current) setLoading(false)
+    }
   }, [householdId])
+  useEffect(() => { void reload() }, [reload])
+  const saveBinding = useCallback(async (input: Parameters<typeof platformClient.upsertConnectorBinding>[0]) => {
+    await platformClient.upsertConnectorBinding(input)
+    await reload()
+  }, [reload])
+  const removeBinding = useCallback(async (input: Parameters<typeof platformClient.deleteConnectorBinding>[0]) => {
+    await platformClient.deleteConnectorBinding(input)
+    await reload()
+  }, [reload])
 
-  return <ConnectorControlCenter summaries={summaries} loading={loading} error={error} onConfigure={onConfigure} />
+  return <ConnectorControlCenter summaries={summaries} loading={loading} error={error} onConfigure={onConfigure} bindingManagement={householdId ? {
+    householdId, bindings, accounts, parserProfiles, onSave: saveBinding, onRemove: removeBinding, onReload: reload,
+  } : undefined} />
 }
 
 function SettingsDisclosure({ title, description, children }: { readonly title: string; readonly description: string; readonly children: React.ReactNode }) {

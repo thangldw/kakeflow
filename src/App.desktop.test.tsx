@@ -92,7 +92,20 @@ const desktop = vi.hoisted(() => ({
   getGoogleDriveSchedule: vi.fn(),
   updateGoogleDriveSchedule: vi.fn(),
   syncGoogleDriveNow: vi.fn(),
+  listGoogleDriveInbox: vi.fn(),
+  readGoogleDriveInboxFile: vi.fn(),
+  retryGoogleDriveInboxItem: vi.fn(),
+  ignoreGoogleDriveInboxItem: vi.fn(),
+  reopenGoogleDriveInboxItem: vi.fn(),
+  listGmailInbox: vi.fn(),
+  readGmailInboxFile: vi.fn(),
+  retryGmailInboxItem: vi.fn(),
+  ignoreGmailInboxItem: vi.fn(),
+  reopenGmailInboxItem: vi.fn(),
   listConnectorSummaries: vi.fn(),
+  listConnectorBindings: vi.fn(),
+  upsertConnectorBinding: vi.fn(),
+  deleteConnectorBinding: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -196,7 +209,20 @@ vi.mock('./platform', async () => {
       getGoogleDriveSchedule: desktop.getGoogleDriveSchedule,
       updateGoogleDriveSchedule: desktop.updateGoogleDriveSchedule,
       syncGoogleDriveNow: desktop.syncGoogleDriveNow,
+      listGoogleDriveInbox: desktop.listGoogleDriveInbox,
+      readGoogleDriveInboxFile: desktop.readGoogleDriveInboxFile,
+      retryGoogleDriveInboxItem: desktop.retryGoogleDriveInboxItem,
+      ignoreGoogleDriveInboxItem: desktop.ignoreGoogleDriveInboxItem,
+      reopenGoogleDriveInboxItem: desktop.reopenGoogleDriveInboxItem,
+      listGmailInbox: desktop.listGmailInbox,
+      readGmailInboxFile: desktop.readGmailInboxFile,
+      retryGmailInboxItem: desktop.retryGmailInboxItem,
+      ignoreGmailInboxItem: desktop.ignoreGmailInboxItem,
+      reopenGmailInboxItem: desktop.reopenGmailInboxItem,
       listConnectorSummaries: desktop.listConnectorSummaries,
+      listConnectorBindings: desktop.listConnectorBindings,
+      upsertConnectorBinding: desktop.upsertConnectorBinding,
+      deleteConnectorBinding: desktop.deleteConnectorBinding,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -207,7 +233,7 @@ vi.mock('./platform', async () => {
   }
 })
 
-import App from './App'
+import App, { ImportPage } from './App'
 import { I18nProvider } from './i18n'
 import { PlatformIpcError } from './platform'
 
@@ -343,7 +369,20 @@ describe('KakeFlow desktop read models', () => {
     desktop.getGoogleDriveSchedule.mockReset()
     desktop.updateGoogleDriveSchedule.mockReset()
     desktop.syncGoogleDriveNow.mockReset()
+    desktop.listGoogleDriveInbox.mockReset().mockResolvedValue([])
+    desktop.readGoogleDriveInboxFile.mockReset()
+    desktop.retryGoogleDriveInboxItem.mockReset()
+    desktop.ignoreGoogleDriveInboxItem.mockReset()
+    desktop.reopenGoogleDriveInboxItem.mockReset()
+    desktop.listGmailInbox.mockReset().mockResolvedValue([])
+    desktop.readGmailInboxFile.mockReset()
+    desktop.retryGmailInboxItem.mockReset()
+    desktop.ignoreGmailInboxItem.mockReset()
+    desktop.reopenGmailInboxItem.mockReset()
     desktop.listConnectorSummaries.mockReset().mockResolvedValue({ schemaVersion: 1, items: [], nextCursor: null })
+    desktop.listConnectorBindings.mockReset().mockResolvedValue([])
+    desktop.upsertConnectorBinding.mockReset()
+    desktop.deleteConnectorBinding.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -2013,7 +2052,8 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
     const card = await screen.findByRole('article', { name: 'Manual import' })
-    expect(within(card).getAllByRole('button')).toHaveLength(1)
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
+    expect(within(card).getByRole('button', { name: 'レビュー範囲を管理' })).toBeInTheDocument()
     fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
 
     const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })
@@ -2021,6 +2061,105 @@ describe('KakeFlow desktop read models', () => {
     expect(heading).toHaveAttribute('id', 'connector-import-inbox')
     expect(screen.getByRole('tab', { name: 'ローカル' })).toHaveAttribute('aria-selected', 'true')
     expect(scrollIntoView.mock.instances[0]).toBe(heading)
+  })
+
+  it('narrows Drive, Gmail, watched-folder, and manual review selectors by exact binding identity without defaults', async () => {
+    const bankAccounts = ['drive-bank', 'gmail-bank', 'folder-bank', 'manual-bank'].map((id) => ({
+      id, name: id, accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD',
+      ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED',
+    }))
+    desktop.listAccounts.mockResolvedValue(bankAccounts)
+    desktop.listConnectorBindings.mockResolvedValue([
+      { householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', allowedAccountIds: ['drive-bank'], parserProfileId: 'drive-profile', parserProfileVersion: 1, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+      { householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary', allowedAccountIds: ['gmail-bank'], parserProfileId: null, parserProfileVersion: null, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+      { householdId: 'family', connectorKind: 'WATCHED_FOLDER', connectionKey: 'folder-primary', allowedAccountIds: ['folder-bank'], parserProfileId: 'folder-profile', parserProfileVersion: 1, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+    ])
+    desktop.listGoogleDriveInbox.mockResolvedValue([{
+      id: 'drive-item', householdId: 'family', connectionId: 'drive-primary', fileId: 'remote-drive', generationFingerprint: 'generation', fileName: 'drive.csv', mediaType: 'text/csv',
+      remoteByteSize: 1, remoteModifiedAt: null, remoteMd5Checksum: null, driveVersion: '1', contentSha256: 'hash', state: 'FAILED', attemptCount: 1, importRunId: null,
+      lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.listGmailInbox.mockResolvedValue([{
+      id: 'gmail-item', householdId: 'family', connectionId: 'gmail-primary', fileName: 'gmail.csv', mediaType: 'message/rfc822', internalDateMs: 1,
+      estimatedByteSize: 1, contentReady: true, state: 'FAILED', attemptCount: 1, importRunId: null, lastErrorCode: 'PREVIEW_FAILED',
+      discoveredAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    const baseInvoke = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'delimited_parser_profiles_list'
+      ? [
+        { id: 'drive-profile', householdId: 'family', name: 'Drive profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: null, isEnabled: true, priority: 10, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+        { id: 'folder-profile', householdId: 'family', name: 'Folder profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: null, isEnabled: true, priority: 20, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+      ]
+      : baseInvoke(command, args))
+    const preview = (id: string, source: Record<string, unknown>) => ({
+      id, filename: `${id}.csv`, adapterId: 'yucho-direct-ledger-v1', detectedAdapterId: 'yucho-direct-ledger-v1' as const,
+      encoding: 'utf-8', recordCount: 1, issues: [], status: 'ready' as const, parsedAt: '2026-08-25T00:00:00Z',
+      fileBytes: new Uint8Array([1]), parsed: { adapterId: 'yucho-direct-ledger-v1' as const, records: [], issues: [], metadata: {} }, ...source,
+    })
+    const previews = [
+      preview('drive', { sourceType: 'GOOGLE_DRIVE', driveInboxItemId: 'drive-item' }),
+      preview('gmail', { sourceType: 'GMAIL', gmailInboxItemId: 'gmail-item' }),
+      preview('folder', { sourceType: 'LOCAL_FOLDER', watchedFolderId: 'folder-primary' }),
+      preview('manual', { sourceType: 'MANUAL_UPLOAD' }),
+    ]
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={previews} setPreviews={vi.fn()} householdId="family" accounts={bankAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalledWith('family'))
+    const optionTexts = (label: string) => within(screen.getByRole('combobox', { name: label })).getAllByRole('option').map((option) => option.textContent)
+    expect(optionTexts('drive.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'drive-bank'])
+    expect(optionTexts('gmail.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'gmail-bank'])
+    expect(optionTexts('folder.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'folder-bank'])
+    expect(optionTexts('manual.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'drive-bank', 'gmail-bank', 'folder-bank', 'manual-bank'])
+    expect(optionTexts('drive.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Drive profile（優先度 10）'])
+    expect(optionTexts('gmail.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Drive profile（優先度 10）', 'Folder profile（優先度 20）'])
+    expect(optionTexts('folder.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Folder profile（優先度 20）'])
+    expect(optionTexts('manual.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Drive profile（優先度 10）', 'Folder profile（優先度 20）'])
+    for (const name of ['drive.csvのゆうちょ取込先口座', 'gmail.csvのゆうちょ取込先口座', 'folder.csvのゆうちょ取込先口座', 'manual.csvのゆうちょ取込先口座', 'drive.csvの読み取りプロファイル']) {
+      expect(screen.getByRole('combobox', { name })).toHaveValue('')
+    }
+  })
+
+  it('reloads a rejected staged binding and blocks another commit after account archive and parser version change', async () => {
+    const initialAccounts = [...classificationAccounts]
+    desktop.listAccounts.mockResolvedValueOnce(initialAccounts).mockResolvedValue(initialAccounts.filter((account) => account.id !== 'family-bank'))
+    desktop.listConnectorBindings.mockResolvedValue([{
+      householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', allowedAccountIds: ['family-bank'],
+      parserProfileId: 'profile-bank', parserProfileVersion: 2, version: 4,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'custom-delimited-v1', adapterVersion: 'profile-bank@2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    desktop.commitImport.mockRejectedValue(new Error('connector binding changed'))
+    let profileVersion = 2
+    const baseInvoke = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'delimited_parser_profiles_list'
+      ? [{ id: 'profile-bank', householdId: 'family', name: 'Bank profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: null, isEnabled: true, priority: 10, version: profileVersion++, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' }]
+      : baseInvoke(command, args))
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[]} setPreviews={vi.fn()} householdId="family" accounts={initialAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    const approve = await screen.findByRole('checkbox', { name: 'STOREを承認' })
+    fireEvent.click(approve)
+    const commit = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('対応付けを再確認してください。口座または読み取りプロファイルが変更されています。'))
+    expect(screen.getByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
+    expect(desktop.commitImport).toHaveBeenCalledOnce()
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {
@@ -2674,7 +2813,9 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
     expect(screen.getByText('取引日: Date → Date')).toBeInTheDocument()
-    expect(screen.getByLabelText('local-bank.csvの取込先口座')).toHaveValue('family-bank')
+    const destination = screen.getByLabelText('local-bank.csvの取込先口座')
+    expect(destination).toHaveValue('')
+    fireEvent.change(destination, { target: { value: 'family-bank' } })
 
     fireEvent.change(profile, { target: { value: 'custom-bank-2' } })
     expect(screen.queryByText('1件の候補 / 0行を除外 / 0件のエラー')).not.toBeInTheDocument()
@@ -2683,6 +2824,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(profile, { target: { value: 'custom-bank' } })
     fireEvent.click(screen.getByRole('button', { name: '適用してプレビュー' }))
     expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('local-bank.csvの取込先口座'), { target: { value: 'family-bank' } })
     fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
 
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
