@@ -178,6 +178,11 @@ const WEB_CONNECTOR_SUMMARY_PAGE: ConnectorSummaryPageDto = Object.freeze({
   })]),
   nextCursor: null,
 })
+const WEB_EMPTY_CONNECTOR_SUMMARY_PAGE: ConnectorSummaryPageDto = Object.freeze({
+  schemaVersion: 1,
+  items: Object.freeze([]),
+  nextCursor: null,
+})
 
 const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
   netWorthAsOf: '1970-01-31', assetsJpy: 0, liabilitiesJpy: 0, netWorthJpy: 0,
@@ -299,7 +304,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       updateSourceDocumentAudience: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_audience_update') },
       querySourceDocumentRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_records_query') },
       listTransactionSourceRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_source_records_list') },
-      listConnectorSummaries: async () => WEB_CONNECTOR_SUMMARY_PAGE,
+      listConnectorSummaries: async (householdId, cursor, limit) => {
+        const { cursor: after } = connectorListArgs(householdId, cursor, limit)
+        return after === null ? WEB_CONNECTOR_SUMMARY_PAGE : WEB_EMPTY_CONNECTOR_SUMMARY_PAGE
+      },
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
       selectIcloudFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'icloud_folder_select') },
