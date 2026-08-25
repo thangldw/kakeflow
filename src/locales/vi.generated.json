@@ -1,4 +1,12 @@
 {
+  "レビュー範囲を管理": "Quản lý phạm vi kiểm tra",
+  "レビュー対象口座": "Tài khoản cần kiểm tra",
+  "読み取りプロファイル": "Hồ sơ phân tích",
+  "プロファイルを使用しない": "Không dùng hồ sơ phân tích",
+  "選択内容が利用できなくなりました。新しい対応付けを明示的に選択してください。": "Các lựa chọn đã chọn không còn khả dụng. Hãy chọn rõ một liên kết mới.",
+  "少なくとも1つのレビュー対象口座を選択してください。": "Chọn ít nhất một tài khoản cần kiểm tra.",
+  "対応付けを再確認してください。口座または読み取りプロファイルが変更されています。": "Hãy kiểm tra lại liên kết. Tài khoản hoặc hồ sơ phân tích đã thay đổi.",
+  "対応付けが必要": "Cần liên kết",
   " ・ 逆数利用": "・Sử dụng số nghịch đảo",
   " ・ 行 ": "・ Hàng",
   " ・ 支払期日 ": "・Ngày thanh toán",

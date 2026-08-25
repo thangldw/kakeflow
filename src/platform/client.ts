@@ -89,6 +89,7 @@ import type {
   GmailInboxFileDto,
   GmailInboxClaimDto,
   ConnectorAvailabilityDto,
+  ConnectorBindingDto,
   ConnectorBindingSummaryDto,
   ConnectorCapabilityDto,
   ConnectorCursorDto,
@@ -98,6 +99,8 @@ import type {
   ConnectorSummaryDto,
   ConnectorSummaryPageDto,
   ConfigurationDestinationDto,
+  DeleteConnectorBindingInputDto,
+  UpsertConnectorBindingInputDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE' | 'CLOUD_FILE_UNAVAILABLE'
@@ -308,6 +311,9 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
         const { cursor: after } = connectorListArgs(householdId, cursor, limit)
         return after === null ? WEB_CONNECTOR_SUMMARY_PAGE : WEB_EMPTY_CONNECTOR_SUMMARY_PAGE
       },
+      listConnectorBindings: async () => [],
+      upsertConnectorBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_binding_upsert') },
+      deleteConnectorBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_binding_delete') },
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
       selectIcloudFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'icloud_folder_select') },
@@ -487,6 +493,12 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     querySourceDocumentRecords: (request) => invokeValidated(invoke, 'source_document_records_query', parseSourceRecordPage, { request }),
     listTransactionSourceRecords: (householdId, transactionId) => invokeValidated(invoke, 'transaction_source_records_list', parseSourceRecords, { householdId, transactionId }),
     listConnectorSummaries: async (householdId, cursor, limit) => invokeValidated(invoke, 'connector_control_list', parseConnectorSummaryPage, connectorListArgs(householdId, cursor, limit)),
+    listConnectorBindings: (householdId) => {
+      const args = connectorBindingListArgs(householdId)
+      return invokeValidated(invoke, 'connector_bindings_list', (value) => parseConnectorBindings(value, args.householdId), args)
+    },
+    upsertConnectorBinding: async (input) => invokeValidated(invoke, 'connector_binding_upsert', parseConnectorBinding, { input: parseUpsertConnectorBindingInput(input) }),
+    deleteConnectorBinding: async (input) => { await invokeValidated(invoke, 'connector_binding_delete', parseVoid, { input: parseDeleteConnectorBindingInput(input) }) },
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
     selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
     selectIcloudFolder: (householdId, label) => invokeValidated(invoke, 'icloud_folder_select', parseNullableWatchedFolder, { householdId, label }),
@@ -2042,12 +2054,115 @@ const CONNECTOR_SUMMARY_FIELDS = new Set([
 const CONNECTOR_PAGE_FIELDS = new Set(['schemaVersion', 'items', 'nextCursor'])
 const CONNECTOR_BINDING_FIELDS = new Set(['allowedAccountCount', 'parserProfileConfigured', 'version'])
 const CONNECTOR_CURSOR_FIELDS = new Set(['connectorKind', 'connectionKey'])
+const CONNECTOR_BINDING_DTO_FIELDS = new Set([
+  'householdId', 'connectorKind', 'connectionKey', 'allowedAccountIds', 'parserProfileId', 'parserProfileVersion',
+  'version', 'createdAt', 'updatedAt',
+])
+const CONNECTOR_BINDING_UPSERT_FIELDS = new Set([
+  'householdId', 'connectorKind', 'connectionKey', 'allowedAccountIds', 'parserProfileId', 'parserProfileVersion',
+  'expectedVersion',
+])
+const CONNECTOR_BINDING_DELETE_FIELDS = new Set(['householdId', 'connectorKind', 'connectionKey', 'expectedVersion'])
 const UTF8_ENCODER = new TextEncoder()
 
 function connectorListArgs(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Record<string, unknown> {
   if (typeof householdId !== 'string' || householdId.length === 0) throw new TypeError('household id')
   if (typeof limit !== 'undefined' && (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) throw new TypeError('connector limit')
   return { householdId, cursor: typeof cursor === 'undefined' ? null : asConnectorCursor(cursor), limit: limit ?? null }
+}
+
+function connectorBindingListArgs(householdId: string): { readonly householdId: string } {
+  return { householdId: asConnectorBindingIdentifier(householdId, 128, 'connector binding') }
+}
+
+function parseConnectorBindings(value: unknown, expectedHouseholdId: string): readonly ConnectorBindingDto[] {
+  if (!Array.isArray(value) || value.length > 1024) throw new TypeError('connector binding')
+  const bindings = value.map(parseConnectorBinding)
+  const identities = new Set<string>()
+  for (const binding of bindings) {
+    if (binding.householdId !== expectedHouseholdId) throw new TypeError('connector binding')
+    const identity = `${binding.connectorKind}\u0000${binding.connectionKey}`
+    if (identities.has(identity)) throw new TypeError('connector binding')
+    identities.add(identity)
+  }
+  return bindings
+}
+
+function parseConnectorBinding(value: unknown): ConnectorBindingDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_DTO_FIELDS, 'connector binding')
+  const common = parseConnectorBindingCommon(record)
+  const version = asPositiveSafeInteger(record.version, 'connector binding')
+  const createdAt = asConnectorTimestamp(record.createdAt)
+  const updatedAt = asConnectorTimestamp(record.updatedAt)
+  if (Date.parse(createdAt) > Date.parse(updatedAt)) throw new TypeError('connector binding')
+  return { ...common, version, createdAt, updatedAt }
+}
+
+function parseUpsertConnectorBindingInput(value: UpsertConnectorBindingInputDto): UpsertConnectorBindingInputDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_UPSERT_FIELDS, 'connector binding')
+  const common = parseConnectorBindingCommon(record)
+  const expectedVersion = record.expectedVersion === null
+    ? null
+    : asPositiveSafeInteger(record.expectedVersion, 'connector binding')
+  return { ...common, expectedVersion }
+}
+
+function parseDeleteConnectorBindingInput(value: DeleteConnectorBindingInputDto): DeleteConnectorBindingInputDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_DELETE_FIELDS, 'connector binding')
+  const householdId = asConnectorBindingIdentifier(record.householdId, 128, 'connector binding')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector binding')
+  const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'connector binding')
+  validateManualConnectorKey(connectorKind, connectionKey)
+  return {
+    householdId,
+    connectorKind,
+    connectionKey,
+    expectedVersion: asPositiveSafeInteger(record.expectedVersion, 'connector binding'),
+  }
+}
+
+function parseConnectorBindingCommon(record: Record<string, unknown>): Pick<ConnectorBindingDto,
+  'householdId' | 'connectorKind' | 'connectionKey' | 'allowedAccountIds' | 'parserProfileId' | 'parserProfileVersion'> {
+  const householdId = asConnectorBindingIdentifier(record.householdId, 128, 'connector binding')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector binding')
+  const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'connector binding')
+  validateManualConnectorKey(connectorKind, connectionKey)
+  if (!Array.isArray(record.allowedAccountIds) || record.allowedAccountIds.length < 1 || record.allowedAccountIds.length > 256) {
+    throw new TypeError('connector binding')
+  }
+  const allowedAccountIds = record.allowedAccountIds.map((id) => asConnectorBindingIdentifier(id, 64, 'connector binding'))
+  if (new Set(allowedAccountIds).size !== allowedAccountIds.length) throw new TypeError('connector binding')
+  const parserProfileId = record.parserProfileId === null
+    ? null
+    : asConnectorBindingIdentifier(record.parserProfileId, 64, 'connector binding')
+  const parserProfileVersion = record.parserProfileVersion === null
+    ? null
+    : asPositiveSafeInteger(record.parserProfileVersion, 'connector binding')
+  if ((parserProfileId === null) !== (parserProfileVersion === null)) throw new TypeError('connector binding')
+  return { householdId, connectorKind, connectionKey, allowedAccountIds, parserProfileId, parserProfileVersion }
+}
+
+function asConnectorBindingIdentifier(value: unknown, maximumBytes: number, label: string): string {
+  if (typeof value !== 'string' || value.length > maximumBytes || !/^[A-Za-z0-9_-]+$/.test(value)) throw new TypeError(label)
+  return value
+}
+
+function asPositiveSafeInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new TypeError(label)
+  return value
+}
+
+function asConnectorTimestamp(value: unknown): string {
+  const timestamp = asNullableConnectorTimestamp(value)
+  if (timestamp === null) throw new TypeError('connector binding')
+  return timestamp
+}
+
+function validateManualConnectorKey(connectorKind: ConnectorKindDto, connectionKey: string): void {
+  if (connectorKind === 'MANUAL_IMPORT' && connectionKey !== 'manual-import') throw new TypeError('connector binding')
 }
 
 function parseConnectorSummaryPage(value: unknown): ConnectorSummaryPageDto {

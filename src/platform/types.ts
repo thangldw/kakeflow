@@ -963,6 +963,32 @@ export interface ConnectorSummaryPageDto {
   readonly items: readonly ConnectorSummaryDto[]
   readonly nextCursor: ConnectorCursorDto | null
 }
+export interface ConnectorBindingDto {
+  readonly householdId: string
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly allowedAccountIds: readonly string[]
+  readonly parserProfileId: string | null
+  readonly parserProfileVersion: number | null
+  readonly version: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+export interface UpsertConnectorBindingInputDto {
+  readonly householdId: string
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly allowedAccountIds: readonly string[]
+  readonly parserProfileId: string | null
+  readonly parserProfileVersion: number | null
+  readonly expectedVersion: number | null
+}
+export interface DeleteConnectorBindingInputDto {
+  readonly householdId: string
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly expectedVersion: number
+}
 
 export type AppCommand =
   | 'app_bootstrap'
@@ -1065,6 +1091,9 @@ export type AppCommand =
   | 'watched_file_inbox_mark_failed'
   | 'watched_file_inbox_mark_staged'
   | 'connector_control_list'
+  | 'connector_bindings_list'
+  | 'connector_binding_upsert'
+  | 'connector_binding_delete'
   | 'google_drive_availability'
   | 'google_drive_connections_list'
   | 'google_drive_connect'
@@ -1229,6 +1258,9 @@ export interface PlatformClient {
   querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>
   listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
   listConnectorSummaries(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Promise<ConnectorSummaryPageDto>
+  listConnectorBindings(householdId: string): Promise<readonly ConnectorBindingDto[]>
+  upsertConnectorBinding(input: UpsertConnectorBindingInputDto): Promise<ConnectorBindingDto>
+  deleteConnectorBinding(input: DeleteConnectorBindingInputDto): Promise<void>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   selectIcloudFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
