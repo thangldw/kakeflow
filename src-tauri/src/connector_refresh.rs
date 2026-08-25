@@ -119,6 +119,8 @@ pub enum ConnectorRefreshError {
     NotFound,
     #[error("connector refresh lease is stale")]
     StaleLease,
+    #[error("connector refresh changed count exceeds the supported range")]
+    ChangedCountOverflow,
     #[error("connector refresh database is unavailable")]
     Database,
 }
@@ -131,6 +133,7 @@ impl ConnectorRefreshError {
             Self::ActiveBatchExists => "CONNECTOR_REFRESH_ACTIVE_BATCH_EXISTS",
             Self::NotFound => "CONNECTOR_REFRESH_NOT_FOUND",
             Self::StaleLease => "CONNECTOR_REFRESH_STALE_LEASE",
+            Self::ChangedCountOverflow => "CONNECTOR_REFRESH_CHANGED_COUNT_OVERFLOW",
             Self::Database => "CONNECTOR_REFRESH_DATABASE_UNAVAILABLE",
         }
     }
@@ -367,6 +370,33 @@ pub fn complete_item(
     let (item_status, changed_count, error_code) = outcome_values(outcome)?;
     let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)
         .map_err(database_error)?;
+    let current_changed_count = transaction
+        .query_row(
+            "SELECT b.changed_count
+             FROM connector_refresh_batches b
+             JOIN connector_refresh_batch_items i ON i.batch_id=b.batch_id
+             WHERE b.batch_id=?2 AND b.household_id=?1 AND b.status='ACTIVE'
+               AND i.item_id=?3 AND i.status='RUNNING'
+               AND i.lease_token=?4 AND i.attempt_generation=?5
+               AND i.lease_expires_at>strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+            params![
+                household_id,
+                batch_id,
+                item_id,
+                lease_token,
+                attempt_generation,
+            ],
+            |row| row.get::<_, u64>(0),
+        )
+        .optional()
+        .map_err(database_error)?
+        .ok_or(ConnectorRefreshError::StaleLease)?;
+    if current_changed_count
+        .checked_add(changed_count)
+        .is_none_or(|total| total > MAX_SAFE_INTEGER)
+    {
+        return Err(ConnectorRefreshError::ChangedCountOverflow);
+    }
     let changed = transaction
         .execute(
             "UPDATE connector_refresh_batch_items SET status=?6,changed_count=?7,
@@ -469,7 +499,8 @@ pub fn recover_expired(
     let changed = transaction
         .execute(
             "UPDATE connector_refresh_batch_items SET status='PENDING',lease_token=NULL,
-               lease_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+               lease_expires_at=NULL,started_at=NULL,completed_at=NULL,changed_count=0,
+               last_error_code=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
              WHERE batch_id=?1 AND status='RUNNING'
                AND lease_expires_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')",
             [batch_id],
@@ -1009,6 +1040,41 @@ mod tests {
                     [&batch.batch_id],
                 )
                 .is_err());
+
+            let manual = create_batch(
+                connection,
+                "other",
+                &[target(ConnectorKind::ManualImport, "manual-import")],
+            )
+            .unwrap();
+            assert!(connection
+                .execute(
+                    "UPDATE connector_refresh_batch_items
+                     SET status='PENDING',completed_at=NULL WHERE batch_id=?1",
+                    [&manual.batch_id],
+                )
+                .is_err());
+            assert!(connection
+                .execute(
+                    "UPDATE connector_refresh_batch_items
+                     SET status='SKIPPED_MANUAL',completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                     WHERE batch_id=?1",
+                    [&batch.batch_id],
+                )
+                .is_err());
+
+            let claim = claim_next(connection, "family", &batch.batch_id)
+                .unwrap()
+                .unwrap();
+            assert!(connection
+                .execute(
+                    "UPDATE connector_refresh_batch_items
+                     SET status='NO_CHANGES',lease_token=NULL,lease_expires_at=NULL,
+                         started_at=NULL,completed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                     WHERE item_id=?1",
+                    [&claim.item_id],
+                )
+                .is_err());
         });
     }
 
@@ -1149,6 +1215,8 @@ mod tests {
             let recovered = load_batch(connection, "family", &batch.batch_id).unwrap();
             assert_eq!(recovered.items[0].status, RefreshItemStatus::Pending);
             assert!(recovered.items[0].lease_token.is_none());
+            assert!(recovered.items[0].lease_expires_at.is_none());
+            assert!(recovered.items[0].started_at.is_none());
             assert_eq!(recovered.items[0].attempt_generation, 1);
 
             let replacement = claim_next(connection, "family", &batch.batch_id)
@@ -1252,6 +1320,64 @@ mod tests {
             assert_eq!(complete.no_changes_count, 1);
             assert_eq!(complete.skipped_manual_count, 1);
             assert_eq!(complete.failed_count, 0);
+        });
+    }
+
+    #[test]
+    fn cumulative_changed_count_overflow_is_rejected_before_item_completion() {
+        with_database(|connection| {
+            let batch = create_batch(
+                connection,
+                "family",
+                &[
+                    target(ConnectorKind::GoogleDrive, "drive"),
+                    target(ConnectorKind::Gmail, "gmail"),
+                ],
+            )
+            .unwrap();
+            let first = claim_and_complete(
+                connection,
+                "family",
+                &batch.batch_id,
+                RefreshOutcome::Succeeded {
+                    changed_count: MAX_SAFE_INTEGER - 1,
+                },
+            );
+            assert_eq!(first.status, RefreshBatchStatus::Active);
+            assert_eq!(first.changed_count, MAX_SAFE_INTEGER - 1);
+
+            let second = claim_next(connection, "family", &batch.batch_id)
+                .unwrap()
+                .unwrap();
+            let error = complete_item(
+                connection,
+                "family",
+                &batch.batch_id,
+                &second.item_id,
+                &second.lease_token,
+                second.attempt_generation,
+                &RefreshOutcome::Succeeded { changed_count: 2 },
+            )
+            .unwrap_err();
+            assert_eq!(error, ConnectorRefreshError::ChangedCountOverflow);
+            assert_eq!(error.code(), "CONNECTOR_REFRESH_CHANGED_COUNT_OVERFLOW");
+
+            let unchanged = load_batch(connection, "family", &batch.batch_id).unwrap();
+            assert_eq!(unchanged.status, RefreshBatchStatus::Active);
+            assert_eq!(unchanged.terminal_count, 1);
+            assert_eq!(unchanged.changed_count, MAX_SAFE_INTEGER - 1);
+            let running = unchanged
+                .items
+                .iter()
+                .find(|item| item.item_id == second.item_id)
+                .unwrap();
+            assert_eq!(running.status, RefreshItemStatus::Running);
+            assert_eq!(running.attempt_generation, second.attempt_generation);
+            assert_eq!(
+                running.lease_token.as_deref(),
+                Some(second.lease_token.as_str())
+            );
+            assert_eq!(running.changed_count, 0);
         });
     }
 
@@ -1410,7 +1536,50 @@ mod tests {
                     [&running.item_id],
                 )
                 .unwrap();
-            recover_expired(connection, "family", &batch.batch_id).unwrap();
+            let expired = load_batch(connection, "family", &batch.batch_id).unwrap();
+            assert_eq!(
+                heartbeat_item(
+                    connection,
+                    "family",
+                    &batch.batch_id,
+                    &running.item_id,
+                    &running.lease_token,
+                    running.attempt_generation,
+                )
+                .unwrap_err(),
+                ConnectorRefreshError::StaleLease
+            );
+            assert_eq!(
+                complete_item(
+                    connection,
+                    "family",
+                    &batch.batch_id,
+                    &running.item_id,
+                    &running.lease_token,
+                    running.attempt_generation,
+                    &RefreshOutcome::NoChanges,
+                )
+                .unwrap_err(),
+                ConnectorRefreshError::StaleLease
+            );
+            assert_eq!(
+                load_batch(connection, "family", &batch.batch_id).unwrap(),
+                expired
+            );
+            assert_eq!(
+                recover_expired(connection, "family", &batch.batch_id).unwrap(),
+                1
+            );
+            let recovered = load_batch(connection, "family", &batch.batch_id).unwrap();
+            let recovered_item = recovered
+                .items
+                .iter()
+                .find(|item| item.item_id == running.item_id)
+                .unwrap();
+            assert_eq!(recovered_item.status, RefreshItemStatus::Pending);
+            assert!(recovered_item.lease_token.is_none());
+            assert!(recovered_item.lease_expires_at.is_none());
+            assert!(recovered_item.started_at.is_none());
             let after: (String, String, String, String) = connection
                 .query_row(
                     "SELECT d.start_page_token,d.change_page_token,g.start_history_id,g.history_id

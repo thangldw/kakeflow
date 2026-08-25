@@ -91,16 +91,41 @@ CREATE TABLE connector_refresh_batch_items (
     UNIQUE(batch_id,connector_kind,connection_key),
     CHECK(updated_at>=created_at),
     CHECK(connector_kind!='MANUAL_IMPORT' OR connection_key='manual-import'),
-    CHECK((status='RUNNING')=(lease_token IS NOT NULL)),
-    CHECK((status='RUNNING')=(lease_expires_at IS NOT NULL)),
-    CHECK(status!='RUNNING' OR attempt_generation>0),
-    CHECK((status IN ('SUCCEEDED','NO_CHANGES','SKIPPED_MANUAL','FAILED_RETRYABLE','NEEDS_ACTION'))=(completed_at IS NOT NULL)),
-    CHECK((status IN ('FAILED_RETRYABLE','NEEDS_ACTION'))=(last_error_code IS NOT NULL)),
-    CHECK(status='SUCCEEDED' OR changed_count=0),
-    CHECK(status!='SUCCEEDED' OR changed_count>0),
-    CHECK(status NOT IN ('SUCCEEDED','NO_CHANGES','FAILED_RETRYABLE','NEEDS_ACTION') OR attempt_generation>0),
-    CHECK(status!='RUNNING' OR started_at IS NOT NULL),
-    CHECK(status!='SKIPPED_MANUAL' OR (connector_kind='MANUAL_IMPORT' AND attempt_generation=0))
+    CHECK(started_at IS NULL OR (started_at>=created_at AND started_at<=updated_at)),
+    CHECK(completed_at IS NULL OR (completed_at>=created_at AND completed_at<=updated_at)),
+    CHECK(completed_at IS NULL OR started_at IS NULL OR completed_at>=started_at),
+    CHECK(
+      (status='PENDING' AND connector_kind!='MANUAL_IMPORT'
+       AND lease_token IS NULL AND lease_expires_at IS NULL
+       AND started_at IS NULL AND completed_at IS NULL
+       AND changed_count=0 AND last_error_code IS NULL)
+      OR
+      (status='RUNNING' AND connector_kind!='MANUAL_IMPORT' AND attempt_generation>0
+       AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL
+       AND started_at IS NOT NULL AND completed_at IS NULL
+       AND changed_count=0 AND last_error_code IS NULL)
+      OR
+      (status='SUCCEEDED' AND connector_kind!='MANUAL_IMPORT' AND attempt_generation>0
+       AND lease_token IS NULL AND lease_expires_at IS NULL
+       AND started_at IS NOT NULL AND completed_at IS NOT NULL
+       AND changed_count>0 AND last_error_code IS NULL)
+      OR
+      (status='NO_CHANGES' AND connector_kind!='MANUAL_IMPORT' AND attempt_generation>0
+       AND lease_token IS NULL AND lease_expires_at IS NULL
+       AND started_at IS NOT NULL AND completed_at IS NOT NULL
+       AND changed_count=0 AND last_error_code IS NULL)
+      OR
+      (status IN ('FAILED_RETRYABLE','NEEDS_ACTION')
+       AND connector_kind!='MANUAL_IMPORT' AND attempt_generation>0
+       AND lease_token IS NULL AND lease_expires_at IS NULL
+       AND started_at IS NOT NULL AND completed_at IS NOT NULL
+       AND changed_count=0 AND last_error_code IS NOT NULL)
+      OR
+      (status='SKIPPED_MANUAL' AND connector_kind='MANUAL_IMPORT'
+       AND attempt_generation=0 AND lease_token IS NULL AND lease_expires_at IS NULL
+       AND started_at IS NULL AND completed_at IS NOT NULL
+       AND changed_count=0 AND last_error_code IS NULL)
+    )
 ) STRICT, WITHOUT ROWID;
 
 CREATE INDEX idx_connector_refresh_claim

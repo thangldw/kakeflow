@@ -1726,6 +1726,170 @@ fn validate_restored_semantics(
         reject_if_exists(
             connection,
             "SELECT 1 FROM connector_refresh_batches b
+             WHERE length(b.batch_id) NOT BETWEEN 1 AND 64
+                OR b.batch_id!=trim(b.batch_id)
+                OR b.batch_id GLOB '*[^0-9A-Za-z_-]*'
+                OR length(b.household_id) NOT BETWEEN 1 AND 128
+                OR b.status NOT IN ('ACTIVE','COMPLETE','PARTIAL','FAILED')
+                OR b.total_count NOT BETWEEN 0 AND 10000
+                OR b.terminal_count NOT BETWEEN 0 AND 10000
+                OR b.succeeded_count NOT BETWEEN 0 AND 10000
+                OR b.no_changes_count NOT BETWEEN 0 AND 10000
+                OR b.skipped_manual_count NOT BETWEEN 0 AND 10000
+                OR b.failed_count NOT BETWEEN 0 AND 10000
+                OR b.changed_count NOT BETWEEN 0 AND 9007199254740991
+                OR length(b.created_at) NOT BETWEEN 20 AND 32
+                OR substr(b.created_at,-1)!='Z' OR datetime(b.created_at) IS NULL
+                OR length(b.updated_at) NOT BETWEEN 20 AND 32
+                OR substr(b.updated_at,-1)!='Z' OR datetime(b.updated_at) IS NULL
+                OR (b.completed_at IS NOT NULL AND (
+                     length(b.completed_at) NOT BETWEEN 20 AND 32
+                     OR substr(b.completed_at,-1)!='Z'
+                     OR datetime(b.completed_at) IS NULL))
+                OR b.updated_at<b.created_at
+                OR (b.completed_at IS NOT NULL AND b.completed_at<b.created_at)
+                OR b.terminal_count!=b.succeeded_count+b.no_changes_count
+                                          +b.skipped_manual_count+b.failed_count
+                OR b.terminal_count>b.total_count
+                OR NOT (
+                  (b.status='ACTIVE' AND b.completed_at IS NULL
+                   AND b.terminal_count<b.total_count)
+                  OR (b.status='COMPLETE' AND b.completed_at IS NOT NULL
+                      AND b.terminal_count=b.total_count AND b.failed_count=0)
+                  OR (b.status='PARTIAL' AND b.completed_at IS NOT NULL
+                      AND b.terminal_count=b.total_count AND b.failed_count>0
+                      AND b.succeeded_count+b.no_changes_count>0)
+                  OR (b.status='FAILED' AND b.completed_at IS NOT NULL
+                      AND b.terminal_count=b.total_count AND b.failed_count>0
+                      AND b.succeeded_count+b.no_changes_count=0)
+                )
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_refresh_batch_items i
+             WHERE length(i.item_id) NOT BETWEEN 1 AND 64
+                OR i.item_id!=trim(i.item_id)
+                OR i.item_id GLOB '*[^0-9A-Za-z_-]*'
+                OR i.connector_kind NOT IN (
+                     'GOOGLE_DRIVE','GMAIL','WATCHED_FOLDER','MANUAL_IMPORT')
+                OR length(i.connection_key) NOT BETWEEN 1 AND 128
+                OR i.connection_key!=trim(i.connection_key)
+                OR i.connection_key GLOB '*[^!-~]*'
+                OR instr(i.connection_key,'/')!=0
+                OR (i.connector_kind='MANUAL_IMPORT'
+                    AND i.connection_key!='manual-import')
+                OR i.status NOT IN (
+                     'PENDING','RUNNING','SUCCEEDED','NO_CHANGES','SKIPPED_MANUAL',
+                     'FAILED_RETRYABLE','NEEDS_ACTION')
+                OR i.attempt_generation NOT BETWEEN 0 AND 9007199254740991
+                OR (i.lease_token IS NOT NULL AND (
+                     length(i.lease_token)!=64
+                     OR i.lease_token GLOB '*[^0-9a-f]*'))
+                OR (i.lease_expires_at IS NOT NULL AND (
+                     length(i.lease_expires_at) NOT BETWEEN 20 AND 32
+                     OR substr(i.lease_expires_at,-1)!='Z'
+                     OR datetime(i.lease_expires_at) IS NULL))
+                OR i.changed_count NOT BETWEEN 0 AND 9007199254740991
+                OR (i.last_error_code IS NOT NULL AND (
+                     length(i.last_error_code) NOT BETWEEN 1 AND 64
+                     OR i.last_error_code GLOB '*[^A-Z0-9_]*'))
+                OR length(i.created_at) NOT BETWEEN 20 AND 32
+                OR substr(i.created_at,-1)!='Z' OR datetime(i.created_at) IS NULL
+                OR length(i.updated_at) NOT BETWEEN 20 AND 32
+                OR substr(i.updated_at,-1)!='Z' OR datetime(i.updated_at) IS NULL
+                OR (i.started_at IS NOT NULL AND (
+                     length(i.started_at) NOT BETWEEN 20 AND 32
+                     OR substr(i.started_at,-1)!='Z'
+                     OR datetime(i.started_at) IS NULL))
+                OR (i.completed_at IS NOT NULL AND (
+                     length(i.completed_at) NOT BETWEEN 20 AND 32
+                     OR substr(i.completed_at,-1)!='Z'
+                     OR datetime(i.completed_at) IS NULL))
+                OR i.updated_at<i.created_at
+                OR (i.started_at IS NOT NULL AND (
+                     i.started_at<i.created_at OR i.started_at>i.updated_at))
+                OR (i.completed_at IS NOT NULL AND (
+                     i.completed_at<i.created_at OR i.completed_at>i.updated_at))
+                OR (i.completed_at IS NOT NULL AND i.started_at IS NOT NULL
+                    AND i.completed_at<i.started_at)
+                OR NOT (
+                  (i.status='PENDING' AND i.connector_kind!='MANUAL_IMPORT'
+                   AND i.lease_token IS NULL AND i.lease_expires_at IS NULL
+                   AND i.started_at IS NULL AND i.completed_at IS NULL
+                   AND i.changed_count=0 AND i.last_error_code IS NULL)
+                  OR (i.status='RUNNING' AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NOT NULL
+                      AND i.lease_expires_at IS NOT NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NULL AND i.changed_count=0
+                      AND i.last_error_code IS NULL)
+                  OR (i.status='SUCCEEDED' AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count>0
+                      AND i.last_error_code IS NULL)
+                  OR (i.status='NO_CHANGES' AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count=0
+                      AND i.last_error_code IS NULL)
+                  OR (i.status IN ('FAILED_RETRYABLE','NEEDS_ACTION')
+                      AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count=0
+                      AND i.last_error_code IS NOT NULL)
+                  OR (i.status='SKIPPED_MANUAL'
+                      AND i.connector_kind='MANUAL_IMPORT'
+                      AND i.attempt_generation=0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count=0
+                      AND i.last_error_code IS NULL)
+                )
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_runtime_observations o
+             WHERE length(o.household_id) NOT BETWEEN 1 AND 128
+                OR o.connector_kind NOT IN (
+                     'GOOGLE_DRIVE','GMAIL','WATCHED_FOLDER','MANUAL_IMPORT')
+                OR length(o.connection_key) NOT BETWEEN 1 AND 128
+                OR o.connection_key!=trim(o.connection_key)
+                OR o.connection_key GLOB '*[^!-~]*'
+                OR instr(o.connection_key,'/')!=0
+                OR (o.connector_kind='MANUAL_IMPORT'
+                    AND o.connection_key!='manual-import')
+                OR (o.last_attempt_at IS NOT NULL AND (
+                     length(o.last_attempt_at) NOT BETWEEN 20 AND 32
+                     OR substr(o.last_attempt_at,-1)!='Z'
+                     OR datetime(o.last_attempt_at) IS NULL))
+                OR (o.last_success_at IS NOT NULL AND (
+                     length(o.last_success_at) NOT BETWEEN 20 AND 32
+                     OR substr(o.last_success_at,-1)!='Z'
+                     OR datetime(o.last_success_at) IS NULL))
+                OR (o.freshness_deadline_at IS NOT NULL AND (
+                     length(o.freshness_deadline_at) NOT BETWEEN 20 AND 32
+                     OR substr(o.freshness_deadline_at,-1)!='Z'
+                     OR datetime(o.freshness_deadline_at) IS NULL))
+                OR (o.next_due_at IS NOT NULL AND (
+                     length(o.next_due_at) NOT BETWEEN 20 AND 32
+                     OR substr(o.next_due_at,-1)!='Z'
+                     OR datetime(o.next_due_at) IS NULL))
+                OR o.pending_review_count NOT BETWEEN 0 AND 9007199254740991
+                OR o.consecutive_failures NOT BETWEEN 0 AND 10000
+                OR (o.last_error_code IS NOT NULL AND (
+                     length(o.last_error_code) NOT BETWEEN 1 AND 64
+                     OR o.last_error_code GLOB '*[^A-Z0-9_]*'))
+                OR length(o.updated_at) NOT BETWEEN 20 AND 32
+                OR substr(o.updated_at,-1)!='Z' OR datetime(o.updated_at) IS NULL
+                OR (o.last_success_at IS NOT NULL AND o.last_attempt_at IS NOT NULL
+                    AND o.last_success_at>o.last_attempt_at)
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_refresh_batches b
              LEFT JOIN (
                SELECT batch_id,count(*) AS total_count,
                       sum(status IN ('SUCCEEDED','NO_CHANGES','SKIPPED_MANUAL',
@@ -5223,6 +5387,137 @@ mod tests {
                 Ok(())
             })
             .expect("restore refresh audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_manual_pending_refresh_item() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count)
+                     VALUES('refresh','family','ACTIVE',1);
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status)
+                     VALUES('refresh','manual-item','MANUAL_IMPORT','manual-import','PENDING');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_err());
+                Ok(())
+            })
+            .expect("manual refresh restore audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_attempted_terminal_refresh_item_without_start() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                        completed_at)
+                     VALUES('refresh','family','COMPLETE',1,1,1,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        completed_at)
+                     VALUES('refresh','gmail-item','GMAIL','gmail','NO_CHANGES',1,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_err());
+                Ok(())
+            })
+            .expect("terminal refresh restore audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_malformed_refresh_item_fields() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                for (case, item_insert) in [
+                    (
+                        "connector kind",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status)
+                         VALUES('refresh','item','DROPBOX','dropbox','PENDING')",
+                    ),
+                    (
+                        "status",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status)
+                         VALUES('refresh','item','GMAIL','gmail','QUEUED')",
+                    ),
+                    (
+                        "lease",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,
+                            attempt_generation,lease_token,lease_expires_at,started_at)
+                         VALUES('refresh','item','GMAIL','gmail','RUNNING',1,'abc',
+                                strftime('%Y-%m-%dT%H:%M:%fZ','now','+5 minutes'),
+                                strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                    ),
+                    (
+                        "timestamp",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,updated_at)
+                         VALUES('refresh','item','GMAIL','gmail','PENDING',
+                                '2026-08-25 00:00:00')",
+                    ),
+                    (
+                        "count",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,changed_count)
+                         VALUES('refresh','item','GMAIL','gmail','PENDING',-1)",
+                    ),
+                    (
+                        "error code",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,
+                            attempt_generation,last_error_code,started_at,completed_at)
+                         VALUES('refresh','item','GMAIL','gmail','FAILED_RETRYABLE',1,
+                                'bad error',strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                                strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                    ),
+                ] {
+                    connection.execute_batch("PRAGMA ignore_check_constraints=ON")?;
+                    connection.execute(
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count)
+                         VALUES('refresh','family','ACTIVE',1)",
+                        [],
+                    )?;
+                    connection.execute(item_insert, [])?;
+                    connection.execute_batch("PRAGMA ignore_check_constraints=OFF")?;
+                    assert!(
+                        validate_restored_semantics(connection, 71).is_err(),
+                        "restore accepted malformed refresh {case}"
+                    );
+                    connection.execute(
+                        "DELETE FROM connector_refresh_batches WHERE batch_id='refresh'",
+                        [],
+                    )?;
+                }
+                Ok(())
+            })
+            .expect("malformed refresh restore audits should remain queryable");
     }
 
     #[test]
