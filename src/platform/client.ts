@@ -88,6 +88,15 @@ import type {
   GmailInboxItemDto,
   GmailInboxFileDto,
   GmailInboxClaimDto,
+  ConnectorAvailabilityDto,
+  ConnectorBindingSummaryDto,
+  ConnectorCapabilityDto,
+  ConnectorHealthDto,
+  ConnectorKindDto,
+  ConnectorLifecycleDto,
+  ConnectorSummaryDto,
+  ConnectorSummaryPageDto,
+  ConfigurationDestinationDto,
 } from './types'
 
 export type PlatformIpcErrorCode = 'COMMAND_FAILED' | 'INVALID_RESPONSE' | 'CLOUD_FILE_UNAVAILABLE'
@@ -144,6 +153,29 @@ const WEB_GOOGLE_DRIVE_AVAILABILITY: GoogleDriveAvailabilityDto = Object.freeze(
 })
 const WEB_GMAIL_AVAILABILITY: GmailAvailabilityDto = Object.freeze({
   available: false, authorizationMode: 'SYSTEM_BROWSER_LOOPBACK', scopeProfile: 'GMAIL_READONLY', unavailableReason: 'CLIENT_ID_NOT_COMPILED',
+})
+const WEB_CONNECTOR_SUMMARY_PAGE: ConnectorSummaryPageDto = Object.freeze({
+  schemaVersion: 1,
+  items: Object.freeze([Object.freeze({
+    schemaVersion: 1,
+    connectorKind: 'MANUAL_IMPORT',
+    connectionKey: 'manual-import',
+    displayLabel: 'Manual import',
+    availability: 'AVAILABLE',
+    lifecycle: 'CONNECTED',
+    health: 'MANUAL',
+    capabilities: Object.freeze(['IMPORT_FILE', 'ACCOUNT_BINDING'] as const),
+    lastAttemptAt: null,
+    lastSuccessAt: null,
+    freshnessDeadlineAt: null,
+    nextDueAt: null,
+    pendingReviewCount: 0,
+    consecutiveFailures: 0,
+    lastErrorCode: null,
+    bindingSummary: null,
+    configurationDestination: 'IMPORT_INBOX',
+  })]),
+  nextCursor: null,
 })
 
 const EMPTY_DASHBOARD_ANALYTICS = Object.freeze({
@@ -266,6 +298,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       updateSourceDocumentAudience: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_audience_update') },
       querySourceDocumentRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'source_document_records_query') },
       listTransactionSourceRecords: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'transaction_source_records_list') },
+      listConnectorSummaries: async () => WEB_CONNECTOR_SUMMARY_PAGE,
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
       selectIcloudFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'icloud_folder_select') },
@@ -444,6 +477,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     updateSourceDocumentAudience: (input) => invokeValidated(invoke, 'source_document_audience_update', parseSourceDocument, { input }),
     querySourceDocumentRecords: (request) => invokeValidated(invoke, 'source_document_records_query', parseSourceRecordPage, { request }),
     listTransactionSourceRecords: (householdId, transactionId) => invokeValidated(invoke, 'transaction_source_records_list', parseSourceRecords, { householdId, transactionId }),
+    listConnectorSummaries: async (householdId, cursor, limit) => invokeValidated(invoke, 'connector_control_list', parseConnectorSummaryPage, connectorListArgs(householdId, cursor, limit)),
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
     selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
     selectIcloudFolder: (householdId, label) => invokeValidated(invoke, 'icloud_folder_select', parseNullableWatchedFolder, { householdId, label }),
@@ -1971,6 +2005,166 @@ function parseSourceRecordPage(value: unknown): SourceRecordPageDto {
     items: parseSourceRecords(record.items), page: asSafeInteger(record.page), pageSize: asSafeInteger(record.pageSize),
     totalItems: asSafeInteger(record.totalItems), totalPages: asSafeInteger(record.totalPages),
   }
+}
+
+const CONNECTOR_KINDS = new Set<ConnectorKindDto>(['GOOGLE_DRIVE', 'GMAIL', 'WATCHED_FOLDER', 'MANUAL_IMPORT'])
+const CONNECTOR_CAPABILITIES = new Set<ConnectorCapabilityDto>(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'IMPORT_FILE', 'ACCOUNT_BINDING'])
+const CONNECTOR_AVAILABILITIES = new Set<ConnectorAvailabilityDto>(['AVAILABLE', 'RUNTIME_UNSUPPORTED', 'CONFIG_MISSING'])
+const CONNECTOR_LIFECYCLES = new Set<ConnectorLifecycleDto>(['DISCONNECTED', 'CONFIGURING', 'CONNECTED'])
+const CONNECTOR_HEALTH = new Set<ConnectorHealthDto>(['NEVER_REFRESHED', 'MANUAL', 'FRESH', 'STALE', 'RUNNING', 'RETRY_BACKOFF', 'NEEDS_ACTION'])
+const CONNECTOR_DESTINATIONS = new Set<ConfigurationDestinationDto>(['GOOGLE_DRIVE_SETTINGS', 'GMAIL_SETTINGS', 'WATCHED_FOLDER_SETTINGS', 'IMPORT_INBOX'])
+const CONNECTOR_DESCRIPTOR_CAPABILITIES: Readonly<Record<ConnectorKindDto, ReadonlySet<ConnectorCapabilityDto>>> = {
+  GOOGLE_DRIVE: new Set(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING']),
+  GMAIL: new Set(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING']),
+  WATCHED_FOLDER: new Set(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING']),
+  MANUAL_IMPORT: new Set(['IMPORT_FILE', 'ACCOUNT_BINDING']),
+}
+const CONNECTOR_DESTINATION_BY_KIND: Readonly<Record<ConnectorKindDto, ConfigurationDestinationDto>> = {
+  GOOGLE_DRIVE: 'GOOGLE_DRIVE_SETTINGS',
+  GMAIL: 'GMAIL_SETTINGS',
+  WATCHED_FOLDER: 'WATCHED_FOLDER_SETTINGS',
+  MANUAL_IMPORT: 'IMPORT_INBOX',
+}
+const CONNECTOR_SUMMARY_FIELDS = new Set([
+  'schemaVersion', 'connectorKind', 'connectionKey', 'displayLabel', 'availability', 'lifecycle', 'health', 'capabilities',
+  'lastAttemptAt', 'lastSuccessAt', 'freshnessDeadlineAt', 'nextDueAt', 'pendingReviewCount', 'consecutiveFailures',
+  'lastErrorCode', 'bindingSummary', 'configurationDestination',
+])
+const CONNECTOR_PAGE_FIELDS = new Set(['schemaVersion', 'items', 'nextCursor'])
+const CONNECTOR_BINDING_FIELDS = new Set(['allowedAccountCount', 'parserProfileConfigured', 'version'])
+const UTF8_ENCODER = new TextEncoder()
+
+function connectorListArgs(householdId: string, cursor?: string, limit?: number): Record<string, unknown> {
+  if (typeof householdId !== 'string' || householdId.length === 0) throw new TypeError('household id')
+  if (typeof cursor !== 'undefined' && (typeof cursor !== 'string' || cursor.length === 0)) throw new TypeError('connector cursor')
+  if (typeof limit !== 'undefined' && (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) throw new TypeError('connector limit')
+  return { householdId, cursor: cursor ?? null, limit: limit ?? null }
+}
+
+function parseConnectorSummaryPage(value: unknown): ConnectorSummaryPageDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_PAGE_FIELDS, 'connector page')
+  if (record.schemaVersion !== 1 || !Array.isArray(record.items) || record.items.length > 100) throw new TypeError('connector page')
+  const items = record.items.map(parseConnectorSummary)
+  const identities = new Set<string>()
+  for (const item of items) {
+    const identity = `${item.connectorKind}\u0000${item.connectionKey}`
+    if (identities.has(identity)) throw new TypeError('connector identity')
+    identities.add(identity)
+  }
+  return { schemaVersion: 1, items, nextCursor: asNullableConnectorCursor(record.nextCursor) }
+}
+
+function parseConnectorSummary(value: unknown): ConnectorSummaryDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_SUMMARY_FIELDS, 'connector summary')
+  if (record.schemaVersion !== 1) throw new TypeError('connector schema')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector kind')
+  const availability = asConnectorEnum(record.availability, CONNECTOR_AVAILABILITIES, 'connector availability')
+  const lifecycle = asConnectorEnum(record.lifecycle, CONNECTOR_LIFECYCLES, 'connector lifecycle')
+  const health = asConnectorEnum(record.health, CONNECTOR_HEALTH, 'connector health')
+  const configurationDestination = asConnectorEnum(record.configurationDestination, CONNECTOR_DESTINATIONS, 'connector destination')
+  const capabilities = parseConnectorCapabilities(record.capabilities)
+  const connectionKey = asConnectorIdentifier(record.connectionKey, 128, 'connector connection key')
+  const displayLabel = asConnectorDisplayLabel(record.displayLabel)
+  const lastErrorCode = asNullableConnectorIdentifier(record.lastErrorCode, 128, 'connector error code')
+  const summary: ConnectorSummaryDto = {
+    schemaVersion: 1,
+    connectorKind,
+    connectionKey,
+    displayLabel,
+    availability,
+    lifecycle,
+    health,
+    capabilities,
+    lastAttemptAt: asNullableConnectorTimestamp(record.lastAttemptAt),
+    lastSuccessAt: asNullableConnectorTimestamp(record.lastSuccessAt),
+    freshnessDeadlineAt: asNullableConnectorTimestamp(record.freshnessDeadlineAt),
+    nextDueAt: asNullableConnectorTimestamp(record.nextDueAt),
+    pendingReviewCount: asSafeInteger(record.pendingReviewCount),
+    consecutiveFailures: asBoundedInteger(record.consecutiveFailures, 255),
+    lastErrorCode,
+    bindingSummary: parseNullableConnectorBindingSummary(record.bindingSummary),
+    configurationDestination,
+  }
+  validateConnectorSummary(summary)
+  return summary
+}
+
+function parseConnectorCapabilities(value: unknown): readonly ConnectorCapabilityDto[] {
+  if (!Array.isArray(value)) throw new TypeError('connector capabilities')
+  const capabilities = value.map((capability) => asConnectorEnum(capability, CONNECTOR_CAPABILITIES, 'connector capability'))
+  if (new Set(capabilities).size !== capabilities.length) throw new TypeError('connector capabilities')
+  return capabilities
+}
+
+function parseNullableConnectorBindingSummary(value: unknown): ConnectorBindingSummaryDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_FIELDS, 'connector binding')
+  if (typeof record.parserProfileConfigured !== 'boolean') throw new TypeError('connector binding')
+  return {
+    allowedAccountCount: asBoundedInteger(record.allowedAccountCount, 65535),
+    parserProfileConfigured: record.parserProfileConfigured,
+    version: asSafeInteger(record.version),
+  }
+}
+
+function validateConnectorSummary(summary: ConnectorSummaryDto): void {
+  const allowedCapabilities = CONNECTOR_DESCRIPTOR_CAPABILITIES[summary.connectorKind]
+  if (summary.configurationDestination !== CONNECTOR_DESTINATION_BY_KIND[summary.connectorKind]
+      || summary.capabilities.some((capability) => !allowedCapabilities.has(capability))
+      || (summary.availability === 'RUNTIME_UNSUPPORTED' && summary.capabilities.length !== 0)
+      || (summary.lifecycle !== 'CONNECTED' && summary.capabilities.some((capability) => capability === 'REFRESH_NOW' || capability === 'SCHEDULE' || capability === 'RETRY'))
+      || (summary.health === 'RUNNING' && !summary.capabilities.includes('REFRESH_NOW'))
+      || (summary.health === 'RETRY_BACKOFF' && !summary.capabilities.includes('RETRY'))) {
+    throw new TypeError('connector capabilities')
+  }
+  if ((summary.lifecycle === 'DISCONNECTED' || summary.lifecycle === 'CONFIGURING') && summary.health !== 'NEVER_REFRESHED') throw new TypeError('connector state')
+  if (summary.lifecycle === 'CONNECTED' && summary.connectorKind === 'MANUAL_IMPORT' && summary.health !== 'MANUAL') throw new TypeError('connector state')
+  if (summary.lifecycle === 'CONNECTED' && summary.connectorKind !== 'MANUAL_IMPORT' && summary.health === 'MANUAL') throw new TypeError('connector state')
+}
+
+function asConnectorEnum<T extends string>(value: unknown, allowed: ReadonlySet<T>, label: string): T {
+  if (typeof value !== 'string' || !allowed.has(value as T)) throw new TypeError(label)
+  return value as T
+}
+
+function asConnectorIdentifier(value: unknown, maximumBytes: number, label: string): string {
+  const identifier = asRequiredString(value)
+  const bytes = UTF8_ENCODER.encode(identifier)
+  if (identifier.trim() !== identifier || bytes.length > maximumBytes || bytes.some((byte) => byte < 0x21 || byte > 0x7e || byte === 0x2f)) throw new TypeError(label)
+  return identifier
+}
+
+function asNullableConnectorIdentifier(value: unknown, maximumBytes: number, label: string): string | null {
+  return value === null ? null : asConnectorIdentifier(value, maximumBytes, label)
+}
+
+function asConnectorDisplayLabel(value: unknown): string {
+  const label = asRequiredString(value)
+  if (label.trim() !== label || UTF8_ENCODER.encode(label).length > 256 || /\p{Cc}/u.test(label)) throw new TypeError('connector display label')
+  return label
+}
+
+function asNullableConnectorTimestamp(value: unknown): string | null {
+  if (value === null) return null
+  const timestamp = asRequiredString(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/.exec(timestamp)
+  if (!match) throw new TypeError('connector timestamp')
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number)
+  const daysInMonth = month === 2 ? ((year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0)) ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59) throw new TypeError('connector timestamp')
+  return timestamp
+}
+
+function asNullableConnectorCursor(value: unknown): string | null {
+  if (value === null) return null
+  return asRequiredString(value)
+}
+
+function assertExactFields(record: Record<string, unknown>, allowed: ReadonlySet<string>, label: string): void {
+  if (Object.keys(record).some((field) => !allowed.has(field))) throw new TypeError(label)
 }
 
 function parseWatchedFolderSource(record: Record<string, unknown>) {
