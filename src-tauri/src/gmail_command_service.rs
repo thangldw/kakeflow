@@ -448,6 +448,8 @@ mod tests {
             next_due_at: Some("2026-07-15T00:30:00Z".into()),
             running: true,
             lease_expires_at: Some("2026-07-15T00:02:00Z".into()),
+            last_attempt_at: Some("2026-07-15T00:00:00Z".into()),
+            last_success_at: Some("2026-07-14T00:00:00Z".into()),
             last_result: "RUNNING".into(),
             last_discovered_count: 2,
             consecutive_failures: 0,
@@ -461,6 +463,8 @@ mod tests {
         assert_eq!(item.media_type, "message/rfc822");
         let json = serde_json::to_string(&(schedule, item)).unwrap();
         assert_provider_metadata_redacted(&json);
+        assert!(!json.contains("lastAttemptAt"));
+        assert!(!json.contains("lastSuccessAt"));
     }
 
     #[test]
