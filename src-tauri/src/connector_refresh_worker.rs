@@ -1,10 +1,10 @@
 use crate::connector_refresh::{
-    self, ConnectorRefreshBatchDto, ConnectorRefreshClaimDto, LoadedConnectorRefreshBatchDto,
-    RefreshBatchStatus, RefreshOutcome,
+    self, classify_provider_outcome, provider_runner_error_outcome, ConnectorRefreshBatchDto,
+    ConnectorRefreshClaimDto, LoadedConnectorRefreshBatchDto, RefreshBatchStatus, RefreshOutcome,
 };
 use crate::{
-    connector_control::ConnectorKind, folder_discovery, gmail_commands, gmail_store,
-    google_drive_commands, google_drive_store, persistence::AppState,
+    connector_control::ConnectorKind, folder_discovery, gmail_commands, google_drive_commands,
+    persistence::AppState,
 };
 #[cfg(test)]
 use rusqlite::Connection;
@@ -17,6 +17,7 @@ use tauri::{AppHandle, Manager};
 
 const IDLE_WAIT: Duration = Duration::from_secs(15);
 const ACTIVE_WAIT: Duration = Duration::from_secs(1);
+const ITEM_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RefreshInfrastructureError {
@@ -27,6 +28,7 @@ enum RefreshInfrastructureError {
 enum RunBatchState {
     Drained,
     WaitingForLease,
+    Stopped,
 }
 
 trait ConnectorRefreshExecutor {
@@ -49,6 +51,12 @@ trait RefreshPersistence {
         household_id: &str,
         batch_id: &str,
     ) -> Result<Option<ConnectorRefreshClaimDto>, RefreshInfrastructureError>;
+
+    fn heartbeat(
+        &self,
+        household_id: &str,
+        claim: &ConnectorRefreshClaimDto,
+    ) -> Result<(), RefreshInfrastructureError>;
 
     fn complete_item(
         &self,
@@ -94,6 +102,22 @@ impl RefreshPersistence for SqliteRefreshPersistence<'_> {
     ) -> Result<Option<ConnectorRefreshClaimDto>, RefreshInfrastructureError> {
         connector_refresh::claim_next(self.connection, household_id, batch_id)
             .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
+    }
+
+    fn heartbeat(
+        &self,
+        household_id: &str,
+        claim: &ConnectorRefreshClaimDto,
+    ) -> Result<(), RefreshInfrastructureError> {
+        connector_refresh::heartbeat_item(
+            self.connection,
+            household_id,
+            &claim.batch_id,
+            &claim.item_id,
+            &claim.lease_token,
+            claim.attempt_generation,
+        )
+        .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
     }
 
     fn complete_item(
@@ -169,6 +193,26 @@ impl RefreshPersistence for AppStateRefreshPersistence<'_> {
             .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
     }
 
+    fn heartbeat(
+        &self,
+        household_id: &str,
+        claim: &ConnectorRefreshClaimDto,
+    ) -> Result<(), RefreshInfrastructureError> {
+        self.state
+            .with_connection(|connection| {
+                Ok(connector_refresh::heartbeat_item(
+                    connection,
+                    household_id,
+                    &claim.batch_id,
+                    &claim.item_id,
+                    &claim.lease_token,
+                    claim.attempt_generation,
+                ))
+            })
+            .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)?
+            .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
+    }
+
     fn complete_item(
         &self,
         household_id: &str,
@@ -209,6 +253,7 @@ impl RefreshPersistence for AppStateRefreshPersistence<'_> {
     }
 }
 
+#[cfg(test)]
 fn run_batch(
     persistence: &impl RefreshPersistence,
     executor: &impl ConnectorRefreshExecutor,
@@ -233,69 +278,118 @@ fn run_batch(
     }
 }
 
-fn classify_provider_outcome(
-    runner_succeeded: bool,
-    running: bool,
-    last_result: &str,
-    changed_count: u64,
-    provider_error_code: Option<&str>,
-    connection_status: Option<&str>,
-) -> RefreshOutcome {
-    if runner_succeeded && last_result == "DISCOVERED" && changed_count > 0 {
-        return RefreshOutcome::Succeeded { changed_count };
-    }
-    if runner_succeeded && last_result == "NO_CHANGES" {
-        return RefreshOutcome::NoChanges;
-    }
-    if connection_status.is_some_and(|status| status != "CONNECTED") {
-        return RefreshOutcome::NeedsAction {
-            error_code: if connection_status == Some("AUTH_REQUIRED") {
-                "AUTH_REQUIRED"
-            } else {
-                "CONNECTION_ACTION_REQUIRED"
-            }
-            .to_owned(),
-        };
-    }
-    if running {
-        return RefreshOutcome::FailedRetryable {
-            error_code: "PROVIDER_BUSY".to_owned(),
-        };
-    }
+trait ExecutionControl {
+    fn is_stopped(&self) -> bool;
+}
 
-    let action_code = match provider_error_code {
-        Some("AUTH_EXPIRED") => Some("AUTH_REQUIRED"),
-        Some("MISSING_CREDENTIAL") => Some("CREDENTIAL_REQUIRED"),
-        Some("CONFIG_UNAVAILABLE" | "LABEL_UNAVAILABLE") => Some("CONFIGURATION_REQUIRED"),
-        Some("CURSOR_INVALID") => Some("CURSOR_ACTION_REQUIRED"),
-        _ => None,
-    };
-    if last_result == "TERMINAL_SUSPENDED" || action_code.is_some() {
-        return RefreshOutcome::NeedsAction {
-            error_code: action_code
-                .unwrap_or("CONNECTION_ACTION_REQUIRED")
-                .to_owned(),
-        };
-    }
+#[cfg(test)]
+struct NeverStopped;
 
-    let error_code = match provider_error_code {
-        Some("REMOTE_RATE_LIMITED") => "RATE_LIMITED",
-        Some("DRIVE_UNAVAILABLE" | "GMAIL_UNAVAILABLE" | "REMOTE_UNAVAILABLE") => {
-            "PROVIDER_UNAVAILABLE"
+#[cfg(test)]
+impl ExecutionControl for NeverStopped {
+    fn is_stopped(&self) -> bool {
+        false
+    }
+}
+
+#[derive(Default)]
+struct HeartbeatStop {
+    stopped: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl HeartbeatStop {
+    fn wait(&self, duration: Duration) -> bool {
+        let Ok(stopped) = self.stopped.lock() else {
+            return true;
+        };
+        if *stopped {
+            return true;
         }
-        Some("REMOTE_NETWORK_FAILED") => "NETWORK_UNAVAILABLE",
-        Some(
-            "AUTH_REFRESH_FAILED"
-            | "CONNECTION_UNAVAILABLE"
-            | "SYNC_FAILED"
-            | "WORKER_FAILED"
-            | "WORKER_INCOMPLETE"
-            | "FULL_RECONCILIATION_REQUIRED",
-        ) => "PROVIDER_REFRESH_FAILED",
-        _ => "PROVIDER_REFRESH_FAILED",
-    };
-    RefreshOutcome::FailedRetryable {
-        error_code: error_code.to_owned(),
+        self.changed
+            .wait_timeout_while(stopped, duration, |stopped| !*stopped)
+            .map_or(true, |(stopped, _)| *stopped)
+    }
+
+    fn stop(&self) {
+        if let Ok(mut stopped) = self.stopped.lock() {
+            *stopped = true;
+            self.changed.notify_all();
+        }
+    }
+}
+
+fn execute_with_heartbeat(
+    persistence: &(impl RefreshPersistence + Sync),
+    executor: &impl ConnectorRefreshExecutor,
+    household_id: &str,
+    claim: &ConnectorRefreshClaimDto,
+    heartbeat_interval: Duration,
+) -> Result<RefreshOutcome, RefreshInfrastructureError> {
+    let stop = Arc::new(HeartbeatStop::default());
+    let heartbeat_failed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    thread::scope(|scope| {
+        let heartbeat_stop = Arc::clone(&stop);
+        let heartbeat_failure = Arc::clone(&heartbeat_failed);
+        scope.spawn(move || {
+            while !heartbeat_stop.wait(heartbeat_interval) {
+                if persistence.heartbeat(household_id, claim).is_err() {
+                    heartbeat_failure.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
+                }
+            }
+        });
+        let outcome = executor.execute(household_id, claim);
+        stop.stop();
+        outcome
+    })
+    .and_then(|outcome| {
+        if heartbeat_failed.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(RefreshInfrastructureError::PersistenceUnavailable)
+        } else {
+            Ok(outcome)
+        }
+    })
+}
+
+fn run_batch_controlled(
+    persistence: &(impl RefreshPersistence + Sync),
+    executor: &impl ConnectorRefreshExecutor,
+    control: &impl ExecutionControl,
+    household_id: &str,
+    batch_id: &str,
+    heartbeat_interval: Duration,
+) -> Result<RunBatchState, RefreshInfrastructureError> {
+    if control.is_stopped() {
+        return Ok(RunBatchState::Stopped);
+    }
+    persistence.recover_expired(household_id, batch_id)?;
+    loop {
+        if control.is_stopped() {
+            return Ok(RunBatchState::Stopped);
+        }
+        let Some(claim) = persistence.claim_next(household_id, batch_id)? else {
+            let batch = persistence.load_batch(household_id, batch_id)?;
+            return Ok(if batch.status == RefreshBatchStatus::Active {
+                RunBatchState::WaitingForLease
+            } else {
+                RunBatchState::Drained
+            });
+        };
+        let outcome = execute_with_heartbeat(
+            persistence,
+            executor,
+            household_id,
+            &claim,
+            heartbeat_interval,
+        )?;
+        let batch = persistence.complete_item(household_id, &claim, &outcome)?;
+        if control.is_stopped() {
+            return Ok(RunBatchState::Stopped);
+        }
+        if batch.status != RefreshBatchStatus::Active {
+            return Ok(RunBatchState::Drained);
+        }
     }
 }
 
@@ -326,64 +420,21 @@ impl NativeConnectorRefreshExecutor<'_> {
         household_id: &str,
         claim: &ConnectorRefreshClaimDto,
     ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
-        match google_drive_commands::google_drive_sync_now_blocking(
+        match google_drive_commands::google_drive_sync_for_refresh_blocking(
             self.app,
             household_id,
             &claim.connection_key,
+            claim,
         ) {
             Ok(schedule) => Ok(classify_provider_outcome(
                 true,
-                schedule.running,
                 &schedule.last_result,
                 schedule.last_discovered_count,
                 schedule.last_error_code.as_deref(),
                 Some("CONNECTED"),
             )),
-            Err(_) => {
-                let state = self.app.state::<AppState>();
-                let (schedule, connection) = state
-                    .with_connection(|connection| {
-                        Ok((
-                            google_drive_store::load_schedule(
-                                connection,
-                                household_id,
-                                &claim.connection_key,
-                            ),
-                            google_drive_store::load_connection(
-                                connection,
-                                household_id,
-                                &claim.connection_key,
-                            ),
-                        ))
-                    })
-                    .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)?;
-                let schedule = match schedule {
-                    Ok(schedule) => schedule,
-                    Err(google_drive_store::GoogleDriveStoreError::Database(_)) => {
-                        return Err(RefreshInfrastructureError::PersistenceUnavailable);
-                    }
-                    Err(_) => {
-                        return Ok(RefreshOutcome::NeedsAction {
-                            error_code: "CONFIGURATION_REQUIRED".to_owned(),
-                        });
-                    }
-                };
-                let connection_status = match connection {
-                    Ok(connection) => connection.status,
-                    Err(google_drive_store::GoogleDriveStoreError::Database(_)) => {
-                        return Err(RefreshInfrastructureError::PersistenceUnavailable);
-                    }
-                    Err(_) => "CONNECTION_CHANGED".to_owned(),
-                };
-                Ok(classify_provider_outcome(
-                    false,
-                    schedule.running,
-                    &schedule.last_result,
-                    schedule.last_discovered_count,
-                    schedule.last_error_code.as_deref(),
-                    Some(&connection_status),
-                ))
-            }
+            Err(error) => provider_runner_error_outcome(error)
+                .ok_or(RefreshInfrastructureError::PersistenceUnavailable),
         }
     }
 
@@ -392,60 +443,21 @@ impl NativeConnectorRefreshExecutor<'_> {
         household_id: &str,
         claim: &ConnectorRefreshClaimDto,
     ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
-        match gmail_commands::sync_now_blocking(self.app, household_id, &claim.connection_key) {
+        match gmail_commands::sync_for_refresh_blocking(
+            self.app,
+            household_id,
+            &claim.connection_key,
+            claim,
+        ) {
             Ok(schedule) => Ok(classify_provider_outcome(
                 true,
-                schedule.running,
                 &schedule.last_result,
                 schedule.last_discovered_count,
                 schedule.last_error_code.as_deref(),
                 Some("CONNECTED"),
             )),
-            Err(_) => {
-                let state = self.app.state::<AppState>();
-                let (schedule, connection) = state
-                    .with_connection(|connection| {
-                        Ok((
-                            gmail_store::load_schedule(
-                                connection,
-                                household_id,
-                                &claim.connection_key,
-                            ),
-                            gmail_store::load_connection(
-                                connection,
-                                household_id,
-                                &claim.connection_key,
-                            ),
-                        ))
-                    })
-                    .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)?;
-                let schedule = match schedule {
-                    Ok(schedule) => schedule,
-                    Err(gmail_store::GmailStoreError::Database(_)) => {
-                        return Err(RefreshInfrastructureError::PersistenceUnavailable);
-                    }
-                    Err(_) => {
-                        return Ok(RefreshOutcome::NeedsAction {
-                            error_code: "CONFIGURATION_REQUIRED".to_owned(),
-                        });
-                    }
-                };
-                let connection_status = match connection {
-                    Ok(connection) => connection.status,
-                    Err(gmail_store::GmailStoreError::Database(_)) => {
-                        return Err(RefreshInfrastructureError::PersistenceUnavailable);
-                    }
-                    Err(_) => "CONNECTION_CHANGED".to_owned(),
-                };
-                Ok(classify_provider_outcome(
-                    false,
-                    schedule.running,
-                    &schedule.last_result,
-                    schedule.last_discovered_count,
-                    schedule.last_error_code.as_deref(),
-                    Some(&connection_status),
-                ))
-            }
+            Err(error) => provider_runner_error_outcome(error)
+                .ok_or(RefreshInfrastructureError::PersistenceUnavailable),
         }
     }
 
@@ -511,6 +523,10 @@ struct WorkerSignal {
 }
 
 impl WorkerSignal {
+    fn is_stopped_now(&self) -> bool {
+        self.state.lock().map_or(true, |state| state.stopped)
+    }
+
     fn wait(&self, duration: Duration) -> bool {
         let Ok(state) = self.state.lock() else {
             return true;
@@ -537,6 +553,12 @@ impl WorkerSignal {
             state.stopped = true;
             self.changed.notify_all();
         }
+    }
+}
+
+impl ExecutionControl for WorkerSignal {
+    fn is_stopped(&self) -> bool {
+        self.is_stopped_now()
     }
 }
 
@@ -584,6 +606,9 @@ impl Drop for BackgroundConnectorRefresh {
 
 fn run_worker(app: AppHandle, signal: Arc<WorkerSignal>) {
     loop {
+        if signal.is_stopped_now() {
+            break;
+        }
         let state = app.state::<AppState>();
         let batches = match active_batches(state.inner()) {
             Ok(batches) => batches,
@@ -602,14 +627,20 @@ fn run_worker(app: AppHandle, signal: Arc<WorkerSignal>) {
             let mut infrastructure_failed = false;
             let mut waiting_for_lease = false;
             for batch in batches {
-                match run_batch(
+                if signal.is_stopped_now() {
+                    return;
+                }
+                match run_batch_controlled(
                     &persistence,
                     &executor,
+                    signal.as_ref(),
                     &batch.household_id,
                     &batch.batch_id,
+                    ITEM_HEARTBEAT_INTERVAL,
                 ) {
                     Ok(RunBatchState::Drained) => {}
                     Ok(RunBatchState::WaitingForLease) => waiting_for_lease = true,
+                    Ok(RunBatchState::Stopped) => return,
                     Err(_) => {
                         infrastructure_failed = true;
                         break;
@@ -637,10 +668,12 @@ mod tests {
             self, ConnectorRefreshBatchDto, ConnectorRefreshClaimDto, RefreshBatchStatus,
             RefreshItemStatus, RefreshOutcome, RefreshTarget,
         },
+        gmail_store, google_drive_store,
         persistence::AppState,
     };
     use rusqlite::{params, Connection};
     use std::cell::{Cell, RefCell};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     const TEST_KEY: &[u8] = b"connector-refresh-worker-test-key";
 
@@ -799,6 +832,14 @@ mod tests {
             batch_id: &str,
         ) -> Result<Option<ConnectorRefreshClaimDto>, RefreshInfrastructureError> {
             self.inner.claim_next(household_id, batch_id)
+        }
+
+        fn heartbeat(
+            &self,
+            household_id: &str,
+            claim: &ConnectorRefreshClaimDto,
+        ) -> Result<(), RefreshInfrastructureError> {
+            self.inner.heartbeat(household_id, claim)
         }
 
         fn complete_item(
@@ -962,11 +1003,11 @@ mod tests {
     #[test]
     fn provider_outcomes_use_a_closed_stable_error_classification() {
         assert_eq!(
-            classify_provider_outcome(true, false, "DISCOVERED", 3, None, Some("CONNECTED")),
+            classify_provider_outcome(true, "DISCOVERED", 3, None, Some("CONNECTED")),
             RefreshOutcome::Succeeded { changed_count: 3 }
         );
         assert_eq!(
-            classify_provider_outcome(true, false, "NO_CHANGES", 0, None, Some("CONNECTED")),
+            classify_provider_outcome(true, "NO_CHANGES", 0, None, Some("CONNECTED")),
             RefreshOutcome::NoChanges
         );
         for (provider_code, public_code) in [
@@ -977,7 +1018,6 @@ mod tests {
         ] {
             assert_eq!(
                 classify_provider_outcome(
-                    false,
                     false,
                     "TERMINAL_SUSPENDED",
                     0,
@@ -992,7 +1032,6 @@ mod tests {
         assert_eq!(
             classify_provider_outcome(
                 false,
-                false,
                 "FAILED_RETRYABLE",
                 0,
                 Some("REMOTE_RATE_LIMITED"),
@@ -1005,7 +1044,6 @@ mod tests {
         assert_eq!(
             classify_provider_outcome(
                 false,
-                false,
                 "FAILED_RETRYABLE",
                 0,
                 Some("contains provider detail: /private/path"),
@@ -1016,16 +1054,27 @@ mod tests {
             }
         );
         assert_eq!(
-            classify_provider_outcome(false, true, "RUNNING", 0, None, Some("CONNECTED"),),
+            provider_runner_error_outcome(connector_refresh::ProviderRunnerError::new(
+                connector_refresh::ProviderRunnerErrorKind::ProviderBusy,
+                "provider busy",
+            ))
+            .unwrap(),
             RefreshOutcome::FailedRetryable {
                 error_code: "PROVIDER_BUSY".to_owned(),
             }
         );
         assert_eq!(
-            classify_provider_outcome(false, false, "NEVER", 0, None, Some("AUTH_REQUIRED")),
+            classify_provider_outcome(false, "NEVER", 0, None, Some("AUTH_REQUIRED")),
             RefreshOutcome::NeedsAction {
                 error_code: "AUTH_REQUIRED".to_owned(),
             }
+        );
+        assert_eq!(
+            provider_runner_error_outcome(connector_refresh::ProviderRunnerError::new(
+                connector_refresh::ProviderRunnerErrorKind::Infrastructure,
+                "persistence failed",
+            )),
+            None
         );
     }
 
@@ -1218,5 +1267,300 @@ mod tests {
                 assert_eq!(count, expected, "unexpected durable rows in {table}");
             }
         });
+    }
+
+    struct LogicalLeasePersistence {
+        state: Arc<AppState>,
+        clock: Arc<AtomicU64>,
+        deadline: AtomicU64,
+        heartbeat_calls: AtomicUsize,
+        completion_calls: AtomicUsize,
+        fail_heartbeat_at: Option<usize>,
+        completed_outcome: Mutex<Option<RefreshOutcome>>,
+    }
+
+    impl RefreshPersistence for LogicalLeasePersistence {
+        fn recover_expired(
+            &self,
+            household_id: &str,
+            batch_id: &str,
+        ) -> Result<u64, RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).recover_expired(household_id, batch_id)
+        }
+
+        fn claim_next(
+            &self,
+            household_id: &str,
+            batch_id: &str,
+        ) -> Result<Option<ConnectorRefreshClaimDto>, RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).claim_next(household_id, batch_id)
+        }
+
+        fn heartbeat(
+            &self,
+            household_id: &str,
+            claim: &ConnectorRefreshClaimDto,
+        ) -> Result<(), RefreshInfrastructureError> {
+            let call = self.heartbeat_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if self.fail_heartbeat_at == Some(call)
+                || self.clock.load(Ordering::SeqCst) > self.deadline.load(Ordering::SeqCst)
+            {
+                return Err(RefreshInfrastructureError::PersistenceUnavailable);
+            }
+            self.deadline.store(
+                self.clock.load(Ordering::SeqCst).saturating_add(3),
+                Ordering::SeqCst,
+            );
+            AppStateRefreshPersistence::new(&self.state).heartbeat(household_id, claim)
+        }
+
+        fn complete_item(
+            &self,
+            household_id: &str,
+            claim: &ConnectorRefreshClaimDto,
+            outcome: &RefreshOutcome,
+        ) -> Result<ConnectorRefreshBatchDto, RefreshInfrastructureError> {
+            if self.clock.load(Ordering::SeqCst) > self.deadline.load(Ordering::SeqCst) {
+                return Err(RefreshInfrastructureError::PersistenceUnavailable);
+            }
+            self.completion_calls.fetch_add(1, Ordering::SeqCst);
+            *self.completed_outcome.lock().unwrap() = Some(outcome.clone());
+            AppStateRefreshPersistence::new(&self.state).complete_item(household_id, claim, outcome)
+        }
+
+        fn load_batch(
+            &self,
+            household_id: &str,
+            batch_id: &str,
+        ) -> Result<LoadedConnectorRefreshBatchDto, RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).load_batch(household_id, batch_id)
+        }
+    }
+
+    struct LongClockExecutor {
+        clock: Arc<AtomicU64>,
+        calls: AtomicUsize,
+    }
+
+    impl ConnectorRefreshExecutor for LongClockExecutor {
+        fn execute(
+            &self,
+            _household_id: &str,
+            _claim: &ConnectorRefreshClaimDto,
+        ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            for _ in 0..12 {
+                std::thread::sleep(Duration::from_millis(6));
+                self.clock.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(RefreshOutcome::Succeeded { changed_count: 7 })
+        }
+    }
+
+    #[test]
+    fn long_executor_is_heartbeated_and_its_original_outcome_is_persisted() {
+        let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
+        let batch = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[target(ConnectorKind::GoogleDrive, "drive")],
+                )
+                .unwrap())
+            })
+            .unwrap();
+        let clock = Arc::new(AtomicU64::new(0));
+        let executor = LongClockExecutor {
+            clock: Arc::clone(&clock),
+            calls: AtomicUsize::new(0),
+        };
+        let persistence = LogicalLeasePersistence {
+            state: Arc::clone(&state),
+            clock,
+            deadline: AtomicU64::new(3),
+            heartbeat_calls: AtomicUsize::new(0),
+            completion_calls: AtomicUsize::new(0),
+            fail_heartbeat_at: None,
+            completed_outcome: Mutex::new(None),
+        };
+
+        assert_eq!(
+            run_batch_controlled(
+                &persistence,
+                &executor,
+                &NeverStopped,
+                "home",
+                &batch.batch_id,
+                Duration::from_millis(4),
+            )
+            .unwrap(),
+            RunBatchState::Drained
+        );
+        assert!(persistence.heartbeat_calls.load(Ordering::SeqCst) >= 3);
+        assert_eq!(persistence.completion_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *persistence.completed_outcome.lock().unwrap(),
+            Some(RefreshOutcome::Succeeded { changed_count: 7 })
+        );
+        state
+            .with_connection(|connection| {
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::Succeeded);
+                assert_eq!(loaded.items[0].changed_count, 7);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn heartbeat_failure_waits_for_executor_but_stops_without_completion_or_next_item() {
+        let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
+        let batch = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[
+                        target(ConnectorKind::GoogleDrive, "drive"),
+                        target(ConnectorKind::Gmail, "gmail"),
+                    ],
+                )
+                .unwrap())
+            })
+            .unwrap();
+        let clock = Arc::new(AtomicU64::new(0));
+        let executor = LongClockExecutor {
+            clock: Arc::clone(&clock),
+            calls: AtomicUsize::new(0),
+        };
+        let persistence = LogicalLeasePersistence {
+            state: Arc::clone(&state),
+            clock,
+            deadline: AtomicU64::new(3),
+            heartbeat_calls: AtomicUsize::new(0),
+            completion_calls: AtomicUsize::new(0),
+            fail_heartbeat_at: Some(2),
+            completed_outcome: Mutex::new(None),
+        };
+
+        assert_eq!(
+            run_batch_controlled(
+                &persistence,
+                &executor,
+                &NeverStopped,
+                "home",
+                &batch.batch_id,
+                Duration::from_millis(4),
+            ),
+            Err(RefreshInfrastructureError::PersistenceUnavailable)
+        );
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(persistence.completion_calls.load(Ordering::SeqCst), 0);
+        state
+            .with_connection(|connection| {
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::Running);
+                assert_eq!(loaded.items[1].status, RefreshItemStatus::Pending);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[derive(Default)]
+    struct BlockingGate {
+        started: Mutex<bool>,
+        started_changed: Condvar,
+        released: Mutex<bool>,
+        release_changed: Condvar,
+    }
+
+    struct BlockingExecutor {
+        gate: Arc<BlockingGate>,
+        calls: AtomicUsize,
+    }
+
+    impl ConnectorRefreshExecutor for BlockingExecutor {
+        fn execute(
+            &self,
+            _household_id: &str,
+            _claim: &ConnectorRefreshClaimDto,
+        ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            *self.gate.started.lock().unwrap() = true;
+            self.gate.started_changed.notify_all();
+            let released = self.gate.released.lock().unwrap();
+            drop(
+                self.gate
+                    .release_changed
+                    .wait_while(released, |released| !*released)
+                    .unwrap(),
+            );
+            Ok(RefreshOutcome::NoChanges)
+        }
+    }
+
+    #[test]
+    fn shutdown_waits_for_only_the_current_provider_and_never_claims_the_next_item() {
+        let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
+        let batch = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[
+                        target(ConnectorKind::GoogleDrive, "drive"),
+                        target(ConnectorKind::Gmail, "gmail"),
+                    ],
+                )
+                .unwrap())
+            })
+            .unwrap();
+        let gate = Arc::new(BlockingGate::default());
+        let executor = Arc::new(BlockingExecutor {
+            gate: Arc::clone(&gate),
+            calls: AtomicUsize::new(0),
+        });
+        let signal = Arc::new(WorkerSignal::default());
+        let run_state = Arc::clone(&state);
+        let run_executor = Arc::clone(&executor);
+        let run_signal = Arc::clone(&signal);
+        let batch_id = batch.batch_id.clone();
+        let worker = std::thread::spawn(move || {
+            run_batch_controlled(
+                &AppStateRefreshPersistence::new(&run_state),
+                run_executor.as_ref(),
+                run_signal.as_ref(),
+                "home",
+                &batch_id,
+                Duration::from_millis(5),
+            )
+        });
+        let started = gate.started.lock().unwrap();
+        drop(
+            gate.started_changed
+                .wait_while(started, |started| !*started)
+                .unwrap(),
+        );
+        signal.stop();
+        *gate.released.lock().unwrap() = true;
+        gate.release_changed.notify_all();
+
+        assert_eq!(worker.join().unwrap().unwrap(), RunBatchState::Stopped);
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        state
+            .with_connection(|connection| {
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::NoChanges);
+                assert_eq!(loaded.items[1].status, RefreshItemStatus::Pending);
+                Ok(())
+            })
+            .unwrap();
     }
 }

@@ -8,14 +8,14 @@ use crate::{
         ConnectorSummaryPageDto, SqliteProjectionClock,
     },
     connector_refresh::{
-        self, ConnectorRefreshBatchDto, ConnectorRefreshError, LoadedConnectorRefreshBatchDto,
-        RefreshTarget,
+        self, ConnectorRefreshBatchDto, ConnectorRefreshError, RefreshBatchStatus,
+        RefreshItemStatus, RefreshTarget,
     },
     connector_refresh_worker::BackgroundConnectorRefresh,
     persistence::AppState,
 };
 use rusqlite::Connection;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 const REFRESH_PAGE_LIMIT: u16 = 100;
@@ -47,6 +47,39 @@ pub struct ConnectorRefreshOneInput {
     household_id: String,
     connector_kind: ConnectorRefreshKindInput,
     connection_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorRefreshBatchProgressDto {
+    schema_version: u8,
+    batch_id: String,
+    household_id: String,
+    status: RefreshBatchStatus,
+    total_count: u64,
+    terminal_count: u64,
+    succeeded_count: u64,
+    no_changes_count: u64,
+    skipped_manual_count: u64,
+    failed_count: u64,
+    changed_count: u64,
+    created_at: String,
+    updated_at: String,
+    completed_at: Option<String>,
+    items: Vec<ConnectorRefreshItemProgressDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorRefreshItemProgressDto {
+    connector_kind: ConnectorKind,
+    connection_key: String,
+    status: RefreshItemStatus,
+    changed_count: u64,
+    last_error_code: Option<String>,
+    updated_at: String,
+    started_at: Option<String>,
+    completed_at: Option<String>,
 }
 
 #[tauri::command]
@@ -146,9 +179,15 @@ pub fn connector_refresh_batch_get(
     state: State<'_, AppState>,
     household_id: String,
     batch_id: String,
-) -> Result<LoadedConnectorRefreshBatchDto, String> {
+) -> Result<ConnectorRefreshBatchProgressDto, String> {
     state
-        .with_connection(|connection| Ok(load_refresh_batch(connection, &household_id, &batch_id)))
+        .with_connection(|connection| {
+            Ok(load_refresh_batch_progress(
+                connection,
+                &household_id,
+                &batch_id,
+            ))
+        })
         .map_err(|_| ConnectorRefreshError::Database.code().to_owned())?
         .map_err(|error| error.code().to_owned())
 }
@@ -225,9 +264,10 @@ fn snapshot_refreshable_targets(
             )
             .map_err(projection_refresh_error)?;
         for summary in page.items {
-            if summary
-                .capabilities
-                .contains(&ConnectorCapability::RefreshNow)
+            if summary.connector_kind == ConnectorKind::ManualImport
+                || summary
+                    .capabilities
+                    .contains(&ConnectorCapability::RefreshNow)
             {
                 targets.push(RefreshTarget {
                     connector_kind: summary.connector_kind,
@@ -256,12 +296,42 @@ fn projection_refresh_error(error: ConnectorProjectionError) -> ConnectorRefresh
     }
 }
 
-fn load_refresh_batch(
+fn load_refresh_batch_progress(
     connection: &Connection,
     household_id: &str,
     batch_id: &str,
-) -> Result<LoadedConnectorRefreshBatchDto, ConnectorRefreshError> {
-    connector_refresh::load_batch(connection, household_id, batch_id)
+) -> Result<ConnectorRefreshBatchProgressDto, ConnectorRefreshError> {
+    let loaded = connector_refresh::load_batch(connection, household_id, batch_id)?;
+    Ok(ConnectorRefreshBatchProgressDto {
+        schema_version: 1,
+        batch_id: loaded.batch.batch_id,
+        household_id: loaded.batch.household_id,
+        status: loaded.batch.status,
+        total_count: loaded.batch.total_count,
+        terminal_count: loaded.batch.terminal_count,
+        succeeded_count: loaded.batch.succeeded_count,
+        no_changes_count: loaded.batch.no_changes_count,
+        skipped_manual_count: loaded.batch.skipped_manual_count,
+        failed_count: loaded.batch.failed_count,
+        changed_count: loaded.batch.changed_count,
+        created_at: loaded.batch.created_at,
+        updated_at: loaded.batch.updated_at,
+        completed_at: loaded.batch.completed_at,
+        items: loaded
+            .items
+            .into_iter()
+            .map(|item| ConnectorRefreshItemProgressDto {
+                connector_kind: item.connector_kind,
+                connection_key: item.connection_key,
+                status: item.status,
+                changed_count: item.changed_count,
+                last_error_code: item.last_error_code,
+                updated_at: item.updated_at,
+                started_at: item.started_at,
+                completed_at: item.completed_at,
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]
@@ -297,14 +367,20 @@ mod tests {
                 )?;
 
                 let batch = create_refresh_all_batch(connection, "home").unwrap();
-                assert_eq!(batch.total_count, 104);
+                assert_eq!(batch.total_count, 105);
                 let loaded =
                     connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
-                assert_eq!(loaded.items.len(), 104);
-                assert!(loaded.items.iter().all(|item| {
-                    item.connector_kind == ConnectorKind::WatchedFolder
-                        && item.connection_key != "folder-050"
+                assert_eq!(loaded.items.len(), 105);
+                assert_eq!(loaded.skipped_manual_count, 1);
+                assert!(loaded.items.iter().any(|item| {
+                    item.connector_kind == ConnectorKind::ManualImport
+                        && item.connection_key == "manual-import"
                 }));
+                assert!(loaded
+                    .items
+                    .iter()
+                    .filter(|item| { item.connector_kind == ConnectorKind::WatchedFolder })
+                    .all(|item| item.connection_key != "folder-050"));
                 Ok(())
             })
             .unwrap();
@@ -318,7 +394,7 @@ mod tests {
                 connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
                 connection.execute(
                     "WITH RECURSIVE sequence(value) AS (
-                         SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value < 10001
+                         SELECT 1 UNION ALL SELECT value+1 FROM sequence WHERE value < 10000
                      )
                      INSERT INTO watched_folders(
                          id,household_id,label,canonical_path,source_type,provider
@@ -401,6 +477,16 @@ mod tests {
                     .unwrap_err(),
                     connector_refresh::ConnectorRefreshError::InvalidInput
                 );
+                assert_eq!(
+                    create_refresh_one_batch(
+                        connection,
+                        "home",
+                        ConnectorKind::ManualImport,
+                        "manual-import",
+                    )
+                    .unwrap_err(),
+                    connector_refresh::ConnectorRefreshError::InvalidInput
+                );
                 Ok(())
             })
             .unwrap();
@@ -446,9 +532,126 @@ mod tests {
                 )
                 .unwrap();
                 assert_eq!(
-                    load_refresh_batch(connection, "other", &batch.batch_id).unwrap_err(),
+                    load_refresh_batch_progress(connection, "other", &batch.batch_id).unwrap_err(),
                     connector_refresh::ConnectorRefreshError::NotFound
                 );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn refresh_all_manual_only_household_returns_a_completed_skipped_batch() {
+        let state = state();
+        state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                let batch = create_refresh_all_batch(connection, "home").unwrap();
+                assert_eq!(
+                    batch.status,
+                    connector_refresh::RefreshBatchStatus::Complete
+                );
+                assert_eq!(batch.total_count, 1);
+                assert_eq!(batch.terminal_count, 1);
+                assert_eq!(batch.skipped_manual_count, 1);
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items.len(), 1);
+                assert_eq!(
+                    loaded.items[0].status,
+                    connector_refresh::RefreshItemStatus::SkippedManual
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn batch_progress_serialization_has_only_explicit_redacted_fields() {
+        let state = state();
+        state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                connection.execute(
+                    "INSERT INTO watched_folders(
+                         id,household_id,label,canonical_path,source_type,provider
+                     ) VALUES('folder','home','Folder','/private/sentinel','LOCAL_FOLDER','LOCAL')",
+                    [],
+                )?;
+                let batch = create_refresh_one_batch(
+                    connection,
+                    "home",
+                    ConnectorKind::WatchedFolder,
+                    "folder",
+                )
+                .unwrap();
+                let claim = connector_refresh::claim_next(connection, "home", &batch.batch_id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(claim.lease_token.len(), 64);
+
+                let progress =
+                    load_refresh_batch_progress(connection, "home", &batch.batch_id).unwrap();
+                let value = serde_json::to_value(progress).unwrap();
+                let top = value
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>();
+                assert_eq!(
+                    top,
+                    [
+                        "batchId",
+                        "changedCount",
+                        "completedAt",
+                        "createdAt",
+                        "failedCount",
+                        "householdId",
+                        "items",
+                        "noChangesCount",
+                        "schemaVersion",
+                        "skippedManualCount",
+                        "status",
+                        "succeededCount",
+                        "terminalCount",
+                        "totalCount",
+                        "updatedAt",
+                    ]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+                );
+                let item = value["items"][0].as_object().unwrap();
+                assert_eq!(
+                    item.keys()
+                        .cloned()
+                        .collect::<std::collections::BTreeSet<_>>(),
+                    [
+                        "changedCount",
+                        "completedAt",
+                        "connectionKey",
+                        "connectorKind",
+                        "lastErrorCode",
+                        "startedAt",
+                        "status",
+                        "updatedAt",
+                    ]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+                );
+                let serialized = serde_json::to_string(&value).unwrap();
+                for forbidden in [
+                    "leaseToken",
+                    "leaseExpiresAt",
+                    "attemptGeneration",
+                    "itemId",
+                    "/private/sentinel",
+                    &claim.lease_token,
+                ] {
+                    assert!(!serialized.contains(forbidden));
+                }
                 Ok(())
             })
             .unwrap();

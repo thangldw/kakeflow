@@ -1,12 +1,21 @@
 use crate::connector_control::ConnectorKind;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::{
+    cell::Cell,
+    collections::BTreeSet,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 
 const MAX_BATCH_ITEMS: usize = 10_000;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const LEASE_MINUTES: u8 = 5;
+const INLINE_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefreshTarget {
@@ -20,6 +29,196 @@ pub enum RefreshOutcome {
     NoChanges,
     FailedRetryable { error_code: String },
     NeedsAction { error_code: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProviderRunnerErrorKind {
+    Retryable { error_code: &'static str },
+    NeedsAction { error_code: &'static str },
+    ProviderBusy,
+    Infrastructure,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProviderRunnerError {
+    pub(crate) kind: ProviderRunnerErrorKind,
+    public_message: String,
+}
+
+impl ProviderRunnerError {
+    pub(crate) fn new(kind: ProviderRunnerErrorKind, public_message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            public_message: public_message.into(),
+        }
+    }
+
+    pub(crate) fn public_message(&self) -> &str {
+        &self.public_message
+    }
+
+    pub(crate) fn from_outcome(outcome: RefreshOutcome, public_message: impl Into<String>) -> Self {
+        let kind = match outcome {
+            RefreshOutcome::FailedRetryable { error_code } => ProviderRunnerErrorKind::Retryable {
+                error_code: stable_error_code(&error_code),
+            },
+            RefreshOutcome::NeedsAction { error_code } => ProviderRunnerErrorKind::NeedsAction {
+                error_code: stable_error_code(&error_code),
+            },
+            RefreshOutcome::Succeeded { .. } | RefreshOutcome::NoChanges => {
+                ProviderRunnerErrorKind::Retryable {
+                    error_code: "PROVIDER_REFRESH_FAILED",
+                }
+            }
+        };
+        Self::new(kind, public_message)
+    }
+}
+
+pub(crate) fn provider_runner_error_outcome(error: ProviderRunnerError) -> Option<RefreshOutcome> {
+    match error.kind {
+        ProviderRunnerErrorKind::Retryable { error_code } => {
+            Some(RefreshOutcome::FailedRetryable {
+                error_code: error_code.to_owned(),
+            })
+        }
+        ProviderRunnerErrorKind::NeedsAction { error_code } => Some(RefreshOutcome::NeedsAction {
+            error_code: error_code.to_owned(),
+        }),
+        ProviderRunnerErrorKind::ProviderBusy => Some(RefreshOutcome::FailedRetryable {
+            error_code: "PROVIDER_BUSY".to_owned(),
+        }),
+        ProviderRunnerErrorKind::Infrastructure => None,
+    }
+}
+
+pub(crate) fn classify_provider_outcome(
+    runner_succeeded: bool,
+    last_result: &str,
+    changed_count: u64,
+    provider_error_code: Option<&str>,
+    connection_status: Option<&str>,
+) -> RefreshOutcome {
+    if runner_succeeded && last_result == "DISCOVERED" && changed_count > 0 {
+        return RefreshOutcome::Succeeded { changed_count };
+    }
+    if runner_succeeded && last_result == "NO_CHANGES" {
+        return RefreshOutcome::NoChanges;
+    }
+    if connection_status.is_some_and(|status| status != "CONNECTED") {
+        return RefreshOutcome::NeedsAction {
+            error_code: if connection_status == Some("AUTH_REQUIRED") {
+                "AUTH_REQUIRED"
+            } else {
+                "CONNECTION_ACTION_REQUIRED"
+            }
+            .to_owned(),
+        };
+    }
+
+    let action_code = match provider_error_code {
+        Some("AUTH_EXPIRED") => Some("AUTH_REQUIRED"),
+        Some("MISSING_CREDENTIAL") => Some("CREDENTIAL_REQUIRED"),
+        Some("CONFIG_UNAVAILABLE" | "LABEL_UNAVAILABLE") => Some("CONFIGURATION_REQUIRED"),
+        Some("CURSOR_INVALID") => Some("CURSOR_ACTION_REQUIRED"),
+        _ => None,
+    };
+    if last_result == "TERMINAL_SUSPENDED" || action_code.is_some() {
+        return RefreshOutcome::NeedsAction {
+            error_code: action_code
+                .unwrap_or("CONNECTION_ACTION_REQUIRED")
+                .to_owned(),
+        };
+    }
+
+    let error_code = match provider_error_code {
+        Some("REMOTE_RATE_LIMITED") => "RATE_LIMITED",
+        Some("DRIVE_UNAVAILABLE" | "GMAIL_UNAVAILABLE" | "REMOTE_UNAVAILABLE") => {
+            "PROVIDER_UNAVAILABLE"
+        }
+        Some("REMOTE_NETWORK_FAILED") => "NETWORK_UNAVAILABLE",
+        Some(
+            "AUTH_REFRESH_FAILED"
+            | "CONNECTION_UNAVAILABLE"
+            | "SYNC_FAILED"
+            | "WORKER_FAILED"
+            | "WORKER_INCOMPLETE"
+            | "FULL_RECONCILIATION_REQUIRED",
+        ) => "PROVIDER_REFRESH_FAILED",
+        _ => "PROVIDER_REFRESH_FAILED",
+    };
+    RefreshOutcome::FailedRetryable {
+        error_code: error_code.to_owned(),
+    }
+}
+
+fn stable_error_code(error_code: &str) -> &'static str {
+    match error_code {
+        "RATE_LIMITED" => "RATE_LIMITED",
+        "PROVIDER_UNAVAILABLE" => "PROVIDER_UNAVAILABLE",
+        "NETWORK_UNAVAILABLE" => "NETWORK_UNAVAILABLE",
+        "PROVIDER_REFRESH_FAILED" => "PROVIDER_REFRESH_FAILED",
+        "PROVIDER_BUSY" => "PROVIDER_BUSY",
+        "AUTH_REQUIRED" => "AUTH_REQUIRED",
+        "CREDENTIAL_REQUIRED" => "CREDENTIAL_REQUIRED",
+        "CONFIGURATION_REQUIRED" => "CONFIGURATION_REQUIRED",
+        "CURSOR_ACTION_REQUIRED" => "CURSOR_ACTION_REQUIRED",
+        "CONNECTION_ACTION_REQUIRED" => "CONNECTION_ACTION_REQUIRED",
+        _ => "PROVIDER_REFRESH_FAILED",
+    }
+}
+
+pub(crate) struct InlineRefreshHeartbeat<'a> {
+    household_id: &'a str,
+    claim: Option<&'a ConnectorRefreshClaimDto>,
+    last_heartbeat: Cell<Option<Instant>>,
+    failed: Arc<AtomicBool>,
+}
+
+impl<'a> InlineRefreshHeartbeat<'a> {
+    pub(crate) fn new(
+        household_id: &'a str,
+        claim: Option<&'a ConnectorRefreshClaimDto>,
+        failed: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            household_id,
+            claim,
+            last_heartbeat: Cell::new(None),
+            failed,
+        }
+    }
+
+    pub(crate) fn before_provider_call(&self, connection: &Connection) -> Result<(), ()> {
+        if self.failed.load(Ordering::SeqCst) {
+            return Err(());
+        }
+        let Some(claim) = self.claim else {
+            return Ok(());
+        };
+        if self
+            .last_heartbeat
+            .get()
+            .is_some_and(|last| last.elapsed() < INLINE_HEARTBEAT_INTERVAL)
+        {
+            return Ok(());
+        }
+        if heartbeat_item(
+            connection,
+            self.household_id,
+            &claim.batch_id,
+            &claim.item_id,
+            &claim.lease_token,
+            claim.attempt_generation,
+        )
+        .is_err()
+        {
+            self.failed.store(true, Ordering::SeqCst);
+            return Err(());
+        }
+        self.last_heartbeat.set(Some(Instant::now()));
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -61,9 +260,8 @@ pub struct ConnectorRefreshBatchDto {
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectorRefreshItemDto {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConnectorRefreshItemDto {
     pub item_id: String,
     pub connector_kind: ConnectorKind,
     pub connection_key: String,
@@ -79,10 +277,8 @@ pub struct ConnectorRefreshItemDto {
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LoadedConnectorRefreshBatchDto {
-    #[serde(flatten)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LoadedConnectorRefreshBatchDto {
     pub batch: ConnectorRefreshBatchDto,
     pub items: Vec<ConnectorRefreshItemDto>,
 }
@@ -214,7 +410,7 @@ pub fn create_batch(
     Ok(batch)
 }
 
-pub fn load_batch(
+pub(crate) fn load_batch(
     connection: &Connection,
     household_id: &str,
     batch_id: &str,
