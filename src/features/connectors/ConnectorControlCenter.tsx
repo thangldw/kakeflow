@@ -22,6 +22,7 @@ interface Props {
   readonly loading: boolean
   readonly error: string | null
   readonly onConfigure: (destination: ConfigurationDestinationDto) => void
+  readonly bindingManagementUnavailable?: boolean
   readonly bindingManagement?: ConnectorBindingManagement
 }
 
@@ -54,7 +55,7 @@ const stateLabel: Readonly<Record<ConnectorPrimaryState, string>> = {
   DISCONNECTED: '未接続',
 }
 
-export function ConnectorControlCenter({ summaries, loading, error, onConfigure, bindingManagement }: Props) {
+export function ConnectorControlCenter({ summaries, loading, error, onConfigure, bindingManagementUnavailable = false, bindingManagement }: Props) {
   const { localeCode, text } = useI18n()
   const [filter, setFilter] = useState<ConnectorControlFilter>('ALL')
   const [editingIdentity, setEditingIdentity] = useState<string | null>(null)
@@ -98,6 +99,7 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
                     {bindingManagement && summary.capabilities.includes('ACCOUNT_BINDING') && <button className="secondary-btn" type="button" onClick={() => setEditingIdentity(`${summary.connectorKind}:${summary.connectionKey}`)}>{text('レビュー範囲を管理')}</button>}
                   </div>
                 </div>
+                {bindingManagementUnavailable && summary.capabilities.includes('ACCOUNT_BINDING') && <p className="connector-control-unavailable"><strong>{text('レビュー範囲を管理')}</strong>{' — '}{text('この実行環境では利用できません。デスクトップ版の設定を確認してください。')}</p>}
                 {summary.availability === 'RUNTIME_UNSUPPORTED' && <p className="connector-control-unavailable">{text('この実行環境では利用できません。デスクトップ版の設定を確認してください。')}</p>}
                 {summary.availability === 'CONFIG_MISSING' && <p className="connector-control-unavailable">{text('このコネクタには追加設定が必要です。')}</p>}
                 <dl className="connector-control-details">

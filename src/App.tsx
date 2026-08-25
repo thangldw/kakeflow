@@ -3346,17 +3346,26 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
     }
     setSummaries([]); setLoading(true); setError(null)
     try {
-      const [nextSummaries, nextBindings, nextAccounts, nextProfiles] = await Promise.all([
-        loadAllConnectorSummaries((cursor) => platformClient.listConnectorSummaries(householdId, cursor, 100)),
-        platformClient.listConnectorBindings(householdId),
-        platformClient.listAccounts(householdId),
-        delimitedParserProfilePlatform.list(householdId),
-      ])
-      if (request !== loadRequest.current) return
-      setSummaries(nextSummaries)
-      setBindings(nextBindings)
-      setAccounts(nextAccounts)
-      setParserProfiles(nextProfiles.filter((profile) => profile.householdId === householdId && profile.isEnabled))
+      if (platformClient.runtime === 'tauri') {
+        const [nextSummaries, nextBindings, nextAccounts, nextProfiles] = await Promise.all([
+          loadAllConnectorSummaries((cursor) => platformClient.listConnectorSummaries(householdId, cursor, 100)),
+          platformClient.listConnectorBindings(householdId),
+          platformClient.listAccounts(householdId),
+          delimitedParserProfilePlatform.list(householdId),
+        ])
+        if (request !== loadRequest.current) return
+        setSummaries(nextSummaries)
+        setBindings(nextBindings)
+        setAccounts(nextAccounts)
+        setParserProfiles(nextProfiles.filter((profile) => profile.householdId === householdId && profile.isEnabled))
+      } else {
+        const nextSummaries = await loadAllConnectorSummaries((cursor) => platformClient.listConnectorSummaries(householdId, cursor, 100))
+        if (request !== loadRequest.current) return
+        setSummaries(nextSummaries)
+        setBindings([])
+        setAccounts([])
+        setParserProfiles([])
+      }
     } catch {
       if (request === loadRequest.current) setError('CONNECTOR_SUMMARY_UNAVAILABLE')
     } finally {
@@ -3373,7 +3382,7 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
     await reload()
   }, [reload])
 
-  return <ConnectorControlCenter summaries={summaries} loading={loading} error={error} onConfigure={onConfigure} bindingManagement={householdId ? {
+  return <ConnectorControlCenter summaries={summaries} loading={loading} error={error} onConfigure={onConfigure} bindingManagementUnavailable={platformClient.runtime !== 'tauri'} bindingManagement={householdId && platformClient.runtime === 'tauri' ? {
     householdId, bindings, accounts, parserProfiles, onSave: saveBinding, onRemove: removeBinding, onReload: reload,
   } : undefined} />
 }
