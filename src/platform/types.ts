@@ -924,6 +924,42 @@ export interface LastClassificationApplicationDto {
   readonly categoryAccountId: string; readonly categoryName: string; readonly labels: readonly string[]; readonly tags: readonly string[]; readonly appliedAt: string
 }
 
+export type ConnectorKindDto = 'GOOGLE_DRIVE' | 'GMAIL' | 'WATCHED_FOLDER' | 'MANUAL_IMPORT'
+export type ConnectorCapabilityDto = 'CONFIGURE' | 'DISCONNECT' | 'REFRESH_NOW' | 'SCHEDULE' | 'RETRY' | 'IMPORT_FILE' | 'ACCOUNT_BINDING'
+export type ConnectorAvailabilityDto = 'AVAILABLE' | 'RUNTIME_UNSUPPORTED' | 'CONFIG_MISSING'
+export type ConnectorLifecycleDto = 'DISCONNECTED' | 'CONFIGURING' | 'CONNECTED'
+export type ConnectorHealthDto = 'NEVER_REFRESHED' | 'MANUAL' | 'FRESH' | 'STALE' | 'RUNNING' | 'RETRY_BACKOFF' | 'NEEDS_ACTION'
+export type ConfigurationDestinationDto = 'GOOGLE_DRIVE_SETTINGS' | 'GMAIL_SETTINGS' | 'WATCHED_FOLDER_SETTINGS' | 'IMPORT_INBOX'
+export interface ConnectorBindingSummaryDto {
+  readonly allowedAccountCount: number
+  readonly parserProfileConfigured: boolean
+  readonly version: number
+}
+export interface ConnectorSummaryDto {
+  readonly schemaVersion: 1
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly displayLabel: string
+  readonly availability: ConnectorAvailabilityDto
+  readonly lifecycle: ConnectorLifecycleDto
+  readonly health: ConnectorHealthDto
+  readonly capabilities: readonly ConnectorCapabilityDto[]
+  readonly lastAttemptAt: string | null
+  readonly lastSuccessAt: string | null
+  readonly freshnessDeadlineAt: string | null
+  readonly nextDueAt: string | null
+  readonly pendingReviewCount: number
+  readonly consecutiveFailures: number
+  readonly lastErrorCode: string | null
+  readonly bindingSummary: ConnectorBindingSummaryDto | null
+  readonly configurationDestination: ConfigurationDestinationDto
+}
+export interface ConnectorSummaryPageDto {
+  readonly schemaVersion: 1
+  readonly items: readonly ConnectorSummaryDto[]
+  readonly nextCursor: string | null
+}
+
 export type AppCommand =
   | 'app_bootstrap'
   | 'app_health'
@@ -1024,6 +1060,7 @@ export type AppCommand =
   | 'watched_file_inbox_mark_needs_mapping'
   | 'watched_file_inbox_mark_failed'
   | 'watched_file_inbox_mark_staged'
+  | 'connector_control_list'
   | 'google_drive_availability'
   | 'google_drive_connections_list'
   | 'google_drive_connect'
@@ -1187,6 +1224,7 @@ export interface PlatformClient {
   updateSourceDocumentAudience(input: UpdateSourceDocumentAudienceInputDto): Promise<SourceDocumentViewDto>
   querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>
   listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
+  listConnectorSummaries(householdId: string, cursor?: string, limit?: number): Promise<ConnectorSummaryPageDto>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   selectIcloudFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>

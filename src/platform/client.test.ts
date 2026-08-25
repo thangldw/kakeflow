@@ -55,6 +55,29 @@ describe('platform client', () => {
     await expect(client.querySourceDocumentRecords({ householdId: 'family', sourceDocumentId: 'document', page: 1, pageSize: 20 })).rejects.toMatchObject({ command: 'source_document_records_query' })
     await expect(client.listTransactionSourceRecords('family', 'tx')).rejects.toMatchObject({ command: 'transaction_source_records_list' })
     await expect(client.listWatchedFolders('family')).resolves.toEqual([])
+    await expect(client.listConnectorSummaries('family')).resolves.toEqual({
+      schemaVersion: 1,
+      items: [{
+        schemaVersion: 1,
+        connectorKind: 'MANUAL_IMPORT',
+        connectionKey: 'manual-import',
+        displayLabel: 'Manual import',
+        availability: 'AVAILABLE',
+        lifecycle: 'CONNECTED',
+        health: 'MANUAL',
+        capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'],
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        freshnessDeadlineAt: null,
+        nextDueAt: null,
+        pendingReviewCount: 0,
+        consecutiveFailures: 0,
+        lastErrorCode: null,
+        bindingSummary: null,
+        configurationDestination: 'IMPORT_INBOX',
+      }],
+      nextCursor: null,
+    })
     await expect(client.selectWatchedFolder('family', 'Inbox')).rejects.toMatchObject({ command: 'watched_folder_select' })
     await expect(client.selectIcloudFolder('family', 'iCloud Drive Inbox')).rejects.toMatchObject({ command: 'icloud_folder_select' })
     await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
@@ -89,6 +112,80 @@ describe('platform client', () => {
     await expect(client.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13' })).resolves.toMatchObject({ horizonDays: 45, banks: [] })
     expect(client.runtime).toBe('web')
     expect(invokeSpy).not.toHaveBeenCalled()
+  })
+
+  it('validates bounded, redacted connector summary pages at the native IPC boundary', async () => {
+    const page = {
+      schemaVersion: 1,
+      items: [
+        {
+          schemaVersion: 1, connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', displayLabel: 'Household Drive',
+          availability: 'AVAILABLE', lifecycle: 'CONNECTED', health: 'FRESH',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING'],
+          lastAttemptAt: '2026-08-25T10:00:00Z', lastSuccessAt: '2026-08-25T10:00:00Z', freshnessDeadlineAt: '2026-08-25T11:00:00Z', nextDueAt: '2026-08-25T11:00:00Z',
+          pendingReviewCount: 2, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: { allowedAccountCount: 2, parserProfileConfigured: true, version: 4 }, configurationDestination: 'GOOGLE_DRIVE_SETTINGS',
+        },
+        {
+          schemaVersion: 1, connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Statements mailbox',
+          availability: 'AVAILABLE', lifecycle: 'CONNECTED', health: 'RUNNING',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING'],
+          lastAttemptAt: '2026-08-25T10:05:00Z', lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null,
+          pendingReviewCount: 0, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: null, configurationDestination: 'GMAIL_SETTINGS',
+        },
+        {
+          schemaVersion: 1, connectorKind: 'WATCHED_FOLDER', connectionKey: 'watched-inbox', displayLabel: 'Inbox folder',
+          availability: 'AVAILABLE', lifecycle: 'CONFIGURING', health: 'NEVER_REFRESHED',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'ACCOUNT_BINDING'],
+          lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null,
+          pendingReviewCount: 1, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: null, configurationDestination: 'WATCHED_FOLDER_SETTINGS',
+        },
+        {
+          schemaVersion: 1, connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import',
+          availability: 'AVAILABLE', lifecycle: 'CONNECTED', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'],
+          lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null,
+          pendingReviewCount: 3, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: null, configurationDestination: 'IMPORT_INBOX',
+        },
+      ],
+      nextCursor: 'WATCHED_FOLDER:watched-inbox',
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      invokeSpy(command, args)
+      return page as T
+    } })
+
+    await expect(client.listConnectorSummaries('family', 'GMAIL:gmail-primary', 25)).resolves.toEqual(page)
+    expect(invokeSpy).toHaveBeenCalledWith('connector_control_list', {
+      householdId: 'family', cursor: 'GMAIL:gmail-primary', limit: 25,
+    })
+    await expect(client.listConnectorSummaries('family', undefined, 0)).rejects.toThrow('connector limit')
+    await expect(client.listConnectorSummaries('family', undefined, 101)).rejects.toThrow('connector limit')
+
+    const invalidPages = [
+      { name: 'unknown enum', value: { ...page, items: [{ ...page.items[0], connectorKind: 'DROPBOX' }] } },
+      { name: 'unknown capability', value: { ...page, items: [{ ...page.items[0], capabilities: ['UNKNOWN_CAPABILITY'] }] } },
+      { name: 'duplicate connector identity', value: { ...page, items: [...page.items, { ...page.items[0] }] } },
+      { name: 'invalid UTC timestamp', value: { ...page, items: [{ ...page.items[0], lastAttemptAt: '2026-08-25T10:00:00+09:00' }] } },
+      { name: 'negative count', value: { ...page, items: [{ ...page.items[0], pendingReviewCount: -1 }] } },
+      { name: 'more than one hundred items', value: { ...page, items: Array.from({ length: 101 }, (_, index) => ({ ...page.items[0], connectionKey: `drive-${index}` })) } },
+      { name: 'overlong UTF-8 display label', value: { ...page, items: [{ ...page.items[0], displayLabel: '日'.repeat(86) }] } },
+      { name: 'overlong connection key', value: { ...page, items: [{ ...page.items[0], connectionKey: 'a'.repeat(129) }] } },
+      { name: 'running without refresh capability', value: { ...page, items: [{ ...page.items[1], capabilities: ['CONFIGURE'] }] } },
+      { name: 'runtime unsupported with executable capability', value: { ...page, items: [{ ...page.items[0], availability: 'RUNTIME_UNSUPPORTED', capabilities: ['REFRESH_NOW'] }] } },
+      { name: 'manual health on a non-manual connector', value: { ...page, items: [{ ...page.items[0], health: 'MANUAL' }] } },
+      { name: 'provider cursor field', value: { ...page, items: [{ ...page.items[0], cursor: 'provider-cursor-secret' }] } },
+      { name: 'provider path field', value: { ...page, items: [{ ...page.items[0], absolutePath: '/Users/private/statement.csv' }] } },
+    ]
+    for (const { value } of invalidPages) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => value as T })
+      await expect(invalidClient.listConnectorSummaries('family')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'connector_control_list',
+      })
+    }
   })
 
   it('invokes each desktop command and returns validated camelCase DTOs', async () => {
