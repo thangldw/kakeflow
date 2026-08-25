@@ -41,7 +41,8 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure 
   const totals = aggregateConnectorSummaries(summaries)
   const visible = filterConnectorSummaries(summaries, filter)
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(localeCode, { dateStyle: 'short', timeStyle: 'short' }), [localeCode])
-  const formatDate = (value: string | null) => value === null ? text('未実行') : dateFormatter.format(new Date(value))
+  const formatDate = (value: string | null, emptyLabel: string) => value === null ? emptyLabel : dateFormatter.format(new Date(value))
+  const formatPendingCount = (count: number) => text('{count}件').replace('{count}', count.toLocaleString(localeCode))
 
   return <section className="panel connector-control" aria-labelledby="connector-control-title">
     <div className="connector-control-heading">
@@ -77,9 +78,9 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure 
                 {summary.availability === 'RUNTIME_UNSUPPORTED' && <p className="connector-control-unavailable">{text('この実行環境では利用できません。デスクトップ版の設定を確認してください。')}</p>}
                 {summary.availability === 'CONFIG_MISSING' && <p className="connector-control-unavailable">{text('このコネクタには追加設定が必要です。')}</p>}
                 <dl className="connector-control-details">
-                  <div><dt>{text('最終成功')}</dt><dd>{formatDate(summary.lastSuccessAt)}</dd></div>
-                  <div><dt>{text('次回予定')}</dt><dd>{formatDate(summary.nextDueAt)}</dd></div>
-                  <div><dt>{text('確認待ち')}</dt><dd>{summary.pendingReviewCount}{text('件')}</dd></div>
+                  <div><dt>{text('最後に成功した更新')}</dt><dd>{formatDate(summary.lastSuccessAt, text('成功した更新はまだありません'))}</dd></div>
+                  <div><dt>{text('次回の予定更新')}</dt><dd>{formatDate(summary.nextDueAt, text('スケジュールなし'))}</dd></div>
+                  <div><dt>{text('レビュー待ち')}</dt><dd>{formatPendingCount(summary.pendingReviewCount)}</dd></div>
                 </dl>
               </article>
             })}</div>}
