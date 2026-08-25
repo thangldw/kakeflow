@@ -1949,8 +1949,10 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
     const disclosure = screen.getByText('コネクタ').closest('details')
     expect(disclosure).not.toHaveAttribute('open')
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    expect(within(card).getAllByRole('button')).toHaveLength(1)
 
-    fireEvent.click(await screen.findByRole('button', { name: '設定を開く' }))
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
 
     await waitFor(() => expect(disclosure).toHaveAttribute('open'))
     const panel = document.getElementById('connector-settings-google-drive')
@@ -1960,18 +1962,65 @@ describe('KakeFlow desktop read models', () => {
     expect(document.activeElement).toBe(heading)
   })
 
-  it('routes manual import configuration to the existing Import Inbox heading', async () => {
-    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'], lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null, configurationDestination: 'IMPORT_INBOX' })], nextCursor: null })
-    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+  it('opens the existing Gmail disclosure target without duplicating provider controls', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', configurationDestination: 'GMAIL_SETTINGS' })], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
 
     render(<App />)
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
-    fireEvent.click(await screen.findByRole('button', { name: '設定を開く' }))
+    const disclosure = screen.getByText('コネクタ').closest('details')
+    const card = await screen.findByRole('article', { name: 'Receipt mail' })
+    expect(within(card).getAllByRole('button')).toHaveLength(1)
+
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
+
+    await waitFor(() => expect(disclosure).toHaveAttribute('open'))
+    const panel = document.getElementById('connector-settings-gmail')
+    const heading = screen.getByRole('heading', { name: 'Gmail' })
+    expect(scrollIntoView.mock.instances[0]).toBe(panel)
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('routes a local watched folder to the shared local and iCloud connector controls', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'WATCHED_FOLDER', connectionKey: 'local-folder', displayLabel: 'Household Inbox', configurationDestination: 'WATCHED_FOLDER_SETTINGS' })], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household Inbox' })
+    expect(within(card).getAllByRole('button')).toHaveLength(1)
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
+
+    const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })
+    await waitFor(() => expect(heading).toHaveAttribute('id', 'connector-settings-watched-folder'))
+    expect(screen.getByRole('tab', { name: 'コネクタ' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('button', { name: '同期フォルダーを追加' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'iCloud Drive を接続' })).toBeInTheDocument()
+    expect(scrollIntoView.mock.instances[0]).toBe(heading)
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('routes manual import configuration to the existing Import Inbox heading', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'], lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null, configurationDestination: 'IMPORT_INBOX' })], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Manual import' })
+    expect(within(card).getAllByRole('button')).toHaveLength(1)
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
 
     const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })
     await waitFor(() => expect(document.activeElement).toBe(heading))
     expect(heading).toHaveAttribute('id', 'connector-import-inbox')
+    expect(screen.getByRole('tab', { name: 'ローカル' })).toHaveAttribute('aria-selected', 'true')
+    expect(scrollIntoView.mock.instances[0]).toBe(heading)
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {

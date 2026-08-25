@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ConnectorSummaryDto, ConfigurationDestinationDto } from '../../platform/types'
+import { I18nProvider } from '../../i18n'
 import { ConnectorControlCenter } from './ConnectorControlCenter'
 
 const summary = (overrides: Partial<ConnectorSummaryDto> = {}): ConnectorSummaryDto => ({
@@ -25,6 +26,8 @@ const summary = (overrides: Partial<ConnectorSummaryDto> = {}): ConnectorSummary
 })
 
 describe('ConnectorControlCenter', () => {
+  beforeEach(() => localStorage.clear())
+
   it('shows aggregate status, badge precedence, dates, counts, and review-only refresh semantics', () => {
     render(<ConnectorControlCenter summaries={[
       summary(),
@@ -36,9 +39,9 @@ describe('ConnectorControlCenter', () => {
     expect(screen.getByText('要対応', { selector: 'dt' }).closest('div')).toHaveTextContent('要対応1')
     expect(screen.getByText('要対応', { selector: '.connector-control-badge' })).toBeInTheDocument()
     const card = screen.getByRole('article', { name: 'Household statements' })
-    expect(within(card).getByText('最終成功').closest('div')).toHaveTextContent(/最終成功2026\/0?8\/25 9:00/)
-    expect(within(card).getByText('次回予定').closest('div')).toHaveTextContent(/次回予定2026\/0?8\/25 9:30/)
-    expect(within(card).getByText('確認待ち').closest('div')).toHaveTextContent('確認待ち3件')
+    expect(within(card).getByText('最後に成功した更新').closest('div')).toHaveTextContent(/最後に成功した更新2026\/0?8\/25 9:00/)
+    expect(within(card).getByText('次回の予定更新').closest('div')).toHaveTextContent(/次回の予定更新2026\/0?8\/25 9:30/)
+    expect(within(card).getByText('レビュー待ち').closest('div')).toHaveTextContent('レビュー待ち3件')
     expect(screen.getByText('更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。')).toBeInTheDocument()
     expect(screen.queryByText('never-render-this-provider-id')).not.toBeInTheDocument()
     expect(screen.queryByText('gmail-provider-id')).not.toBeInTheDocument()
@@ -96,5 +99,22 @@ describe('ConnectorControlCenter', () => {
     rerender(<ConnectorControlCenter summaries={[]} loading={false} error="native ipc/private/path" onConfigure={() => undefined} />)
     expect(screen.getByRole('alert')).toHaveTextContent('コネクタの状態を読み込めませんでした。')
     expect(screen.queryByText('native ipc/private/path')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['en', 'Last successful refresh', 'No successful refresh yet', 'Next scheduled refresh', 'Not scheduled', 'Pending review', '3 items'],
+    ['vi', 'Lần cập nhật thành công gần nhất', 'Chưa có lần cập nhật thành công', 'Lần cập nhật theo lịch tiếp theo', 'Không có lịch', 'Chờ kiểm tra', '3 mục'],
+  ] as const)('renders reviewed %s phrases for counts and null dates', (locale, lastLabel, lastNull, nextLabel, nextNull, pendingLabel, count) => {
+    localStorage.setItem('kakeflow.locale', locale)
+    render(<I18nProvider><ConnectorControlCenter summaries={[summary({ connectorKind: 'MANUAL_IMPORT', lifecycle: 'CONNECTED', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'], lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null, pendingReviewCount: 3, configurationDestination: 'IMPORT_INBOX' })]} loading={false} error={null} onConfigure={() => undefined} /></I18nProvider>)
+
+    expect(screen.getByText(lastLabel).closest('div')).toHaveTextContent(`${lastLabel}${lastNull}`)
+    expect(screen.getByText(nextLabel).closest('div')).toHaveTextContent(`${nextLabel}${nextNull}`)
+    expect(screen.getByText(pendingLabel).closest('div')).toHaveTextContent(`${pendingLabel}${count}`)
+    expect(document.body.textContent).not.toContain('3items')
+    expect(document.body.textContent).not.toContain('3mục')
+    expect(screen.queryByText('final success', { exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByText('Next schedule', { exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByText('Not executed', { exact: true })).not.toBeInTheDocument()
   })
 })
