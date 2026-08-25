@@ -237,6 +237,7 @@ import App, { ImportPage } from './App'
 import { I18nProvider } from './i18n'
 import { PlatformIpcError } from './platform'
 import { previewImportFiles } from './features/import/importService'
+import type { ImportPreviewDto } from './platform/types'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
   FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
@@ -2163,30 +2164,45 @@ describe('KakeFlow desktop read models', () => {
     expect(desktop.commitImport).toHaveBeenCalledOnce()
   })
 
-  it('blocks a stale brokerage destination after binding refresh until a valid account is explicitly reselected', async () => {
+  it('clears a disallowed brokerage destination so re-allowing it still requires explicit reselection', async () => {
     const bank = classificationAccounts[0]
     const oldBroker = { ...bank, id: 'broker-old', name: 'Old broker', accountSubtype: 'SECURITIES' }
     const newBroker = { ...bank, id: 'broker-new', name: 'New broker', accountSubtype: 'SECURITIES' }
     const initialAccounts = [...classificationAccounts, oldBroker, newBroker]
-    const reloadedAccounts = [...classificationAccounts, newBroker]
-    desktop.listAccounts.mockResolvedValueOnce(initialAccounts).mockResolvedValue(reloadedAccounts)
+    desktop.listAccounts.mockResolvedValue(initialAccounts)
     desktop.listConnectorBindings
       .mockResolvedValueOnce([{
         householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
         allowedAccountIds: ['family-bank', 'broker-old'], parserProfileId: null, parserProfileVersion: null,
         version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
       }])
-      .mockResolvedValue([{
+      .mockResolvedValueOnce([{
         householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
         allowedAccountIds: ['family-bank', 'broker-new'], parserProfileId: null, parserProfileVersion: null,
         version: 2, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:05:00Z',
       }])
-    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
-      runId: 'run-review', documentId: 'document-review', status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
-      startedAt: '2026-08-25T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'review.csv', mediaType: 'text/csv', byteSize: 42,
+      .mockResolvedValue([{
+        householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+        allowedAccountIds: ['family-bank', 'broker-old', 'broker-new'], parserProfileId: null, parserProfileVersion: null,
+        version: 3, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:10:00Z',
+      }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: ['one', 'two'].map((suffix) => ({
+      runId: `run-review-${suffix}`, documentId: `document-review-${suffix}`, status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: `review-${suffix}.csv`, mediaType: 'text/csv', byteSize: 42,
       sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
-    }] })
-    desktop.commitImport.mockRejectedValueOnce(new Error('connector binding changed')).mockResolvedValue({ runId: 'run-investment', postedCount: 0 })
+    })) })
+    const previewReview = desktop.previewImport.getMockImplementation()!
+    desktop.previewImport.mockImplementation(async (runId: string) => {
+      const loaded = await previewReview(runId) as ImportPreviewDto
+      const suffix = runId.endsWith('one') ? 'one' : 'two'
+      return {
+        ...loaded,
+        summary: { ...loaded.summary, runId, documentId: `document-review-${suffix}` },
+        source: { ...loaded.source, originalFilename: `review-${suffix}.csv` },
+        candidates: loaded.candidates.map((candidate) => ({ ...candidate, id: `candidate-${suffix}`, merchantRaw: `STORE ${suffix}` })),
+      }
+    })
+    desktop.commitImport.mockRejectedValue(new Error('connector binding changed'))
     desktop.startImport.mockResolvedValue({ runId: 'run-investment', documentId: 'document-investment', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 0, reusedExisting: false })
     const baseInvoke = nativeInvoke.getMockImplementation()!
     nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'brokerage_events_import'
@@ -2205,8 +2221,9 @@ describe('KakeFlow desktop read models', () => {
     const destination = await screen.findByRole('combobox', { name: 'sbi-trades.csvの取込先証券口座' })
     fireEvent.change(destination, { target: { value: 'broker-old' } })
     expect(screen.getByRole('button', { name: '証券取引に保存' })).toBeEnabled()
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'STOREを承認' }))
-    fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
+    const firstReview = (await screen.findByRole('heading', { name: 'review-one.csv' })).closest('section')!
+    fireEvent.click(within(firstReview).getByRole('checkbox', { name: 'STORE oneを承認' }))
+    fireEvent.click(within(firstReview).getByRole('button', { name: '承認済みを台帳へ反映' }))
 
     await waitFor(() => expect(destination).toHaveValue(''))
     const save = screen.getByRole('button', { name: '証券取引に保存' })
@@ -2214,10 +2231,82 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(save)
     expect(desktop.startImport).not.toHaveBeenCalled()
 
-    fireEvent.change(destination, { target: { value: 'broker-new' } })
+    const secondReview = screen.getByRole('heading', { name: 'review-two.csv' }).closest('section')!
+    fireEvent.click(within(secondReview).getByRole('checkbox', { name: 'STORE twoを承認' }))
+    fireEvent.click(within(secondReview).getByRole('button', { name: '承認済みを台帳へ反映' }))
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(within(destination).getByRole('option', { name: 'Old broker' })).toBeInTheDocument())
+    expect(destination).toHaveValue('')
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(desktop.startImport).not.toHaveBeenCalled()
+
+    fireEvent.change(destination, { target: { value: 'broker-old' } })
     expect(save).toBeEnabled()
     fireEvent.click(save)
-    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-new' }) }))
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-old' }) }))
+  })
+
+  it.each(['CAMERA_SCAN', 'OTHER', 'BROKEN_SOURCE'] as const)('blocks a recovered %s commit when a Drive inbox row claims the run', async (sourceType) => {
+    const runId = `mismatch-${sourceType.toLowerCase()}`
+    desktop.listGoogleDriveInbox.mockResolvedValue([{
+      id: `drive-${runId}`, householdId: 'family', connectionId: 'drive-primary', fileId: `remote-${runId}`, generationFingerprint: 'generation', fileName: `${runId}.csv`, mediaType: 'text/csv',
+      remoteByteSize: 1, remoteModifiedAt: null, remoteMd5Checksum: null, driveVersion: '1', contentSha256: 'hash', state: 'FAILED', attemptCount: 1, importRunId: runId,
+      lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId, documentId: `document-${runId}`, status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType, originalFilename: `${runId}.csv`, mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    const previewReview = desktop.previewImport.getMockImplementation()!
+    desktop.previewImport.mockImplementation(async () => {
+      const loaded = await previewReview(runId)
+      return { ...loaded, summary: { ...loaded.summary, runId, documentId: `document-${runId}` }, source: { ...loaded.source, sourceType, originalFilename: `${runId}.csv` } }
+    })
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[]} setPreviews={vi.fn()} householdId="family" accounts={classificationAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    await waitFor(() => expect(desktop.listGoogleDriveInbox).toHaveBeenCalled())
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalled())
+    const review = (await screen.findByRole('heading', { name: `${runId}.csv` })).closest('section')!
+    expect(within(review).getByRole('status')).toHaveTextContent('対応付けを再確認してください。口座または読み取りプロファイルが変更されています。')
+    const commit = within(review).getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeDisabled()
+    fireEvent.click(commit)
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
+
+  it.each(['CAMERA_SCAN', 'OTHER', 'MANUAL_UPLOAD'] as const)('keeps a standalone recovered %s commit reviewable', async (sourceType) => {
+    const runId = `standalone-${sourceType.toLowerCase()}`
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId, documentId: `document-${runId}`, status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType, originalFilename: `${runId}.csv`, mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    const previewReview = desktop.previewImport.getMockImplementation()!
+    desktop.previewImport.mockImplementation(async () => {
+      const loaded = await previewReview(runId)
+      return { ...loaded, summary: { ...loaded.summary, runId, documentId: `document-${runId}` }, source: { ...loaded.source, sourceType, originalFilename: `${runId}.csv` } }
+    })
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[]} setPreviews={vi.fn()} householdId="family" accounts={classificationAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalled())
+    const review = (await screen.findByRole('heading', { name: `${runId}.csv` })).closest('section')!
+    fireEvent.click(within(review).getByRole('checkbox', { name: 'STOREを承認' }))
+    const commit = within(review).getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith(runId, expect.any(Array)))
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {

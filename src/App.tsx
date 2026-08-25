@@ -137,6 +137,7 @@ import {
   isReviewConnectorResolutionValid,
   isStagedReviewBindingValid,
 } from './features/connectors/connectorBindingModel'
+import type { ReviewInboxRows } from './features/connectors/connectorBindingModel'
 import type { ConnectorBindingDto, ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
@@ -1611,10 +1612,13 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
   const reviewOptionsRequestRef = useRef(0)
   const recoveredReviewCount = Object.keys(staged).filter((key) => key.startsWith('recovered:')).length
 
-  const reloadReviewOptions = useCallback(async () => {
+  const reloadReviewOptions = useCallback(async (selectionContext?: {
+    readonly previews: readonly ImportPreview[]
+    readonly inbox: ReviewInboxRows
+  }) => {
     const request = ++reviewOptionsRequestRef.current
     if (!householdId) {
-      setConnectorBindings([]); setReviewAccounts([]); setParserProfiles([]); setReviewOptionsLoaded(false)
+      setConnectorBindings([]); setReviewAccounts([]); setParserProfiles([]); setInvestmentImportAccounts({}); setReviewOptionsLoaded(false)
       return
     }
     try {
@@ -1627,10 +1631,19 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
       setConnectorBindings(nextBindings)
       setReviewAccounts(nextAccounts)
       setParserProfiles(nextProfiles.filter((profile) => profile.householdId === householdId && profile.isEnabled))
+      setInvestmentImportAccounts((current) => {
+        const sources = new Map(selectionContext?.previews.map((preview) => [preview.id, preview]) ?? [])
+        const retained = Object.entries(current).filter(([previewId, accountId]) => {
+          const source = sources.get(previewId)
+          return source != null && selectionContext != null && filterReviewAccountOptions(source, nextAccounts, nextBindings, selectionContext.inbox)
+            .some((account) => account.id === accountId && account.accountKind === 'ASSET' && account.accountSubtype === 'SECURITIES')
+        })
+        return retained.length === Object.keys(current).length ? current : Object.fromEntries(retained)
+      })
       setReviewOptionsLoaded(true)
     } catch {
       if (request !== reviewOptionsRequestRef.current) return
-      setConnectorBindings([]); setReviewAccounts([]); setParserProfiles([]); setReviewOptionsLoaded(false)
+      setConnectorBindings([]); setReviewAccounts([]); setParserProfiles([]); setInvestmentImportAccounts({}); setReviewOptionsLoaded(false)
     }
   }, [householdId])
   const reviewInboxRows = { drive: driveInboxItems, gmail: gmailInboxItems, watched: folderInbox.items }
@@ -2303,7 +2316,7 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
       showToast(result.postedCount === 0 ? localize("原本処理を完了しました。") : localize(`${result.postedCount}件を台帳へ反映しました。`))
     } catch {
       setBindingInvalidRunIds((current) => new Set([...current, stagedImport.summary.runId]))
-      await reloadReviewOptions()
+      await reloadReviewOptions({ previews, inbox: reviewInboxRows })
       setNotice('')
       showToast(localize("台帳へ反映できませんでした。"), 'error')
     } finally {

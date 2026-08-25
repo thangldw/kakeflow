@@ -76,6 +76,32 @@ describe('connector binding review model', () => {
     })], rows)).toEqual([])
   })
 
+  it.each([
+    ['camera source with Drive row', { sourceType: 'CAMERA_SCAN', importRunId: 'camera-run' }, {
+      drive: [{ ...driveRow, importRunId: 'camera-run' }], gmail: [], watched: [],
+    }],
+    ['other source with Gmail row', { sourceType: 'OTHER', importRunId: 'other-run' }, {
+      drive: [], gmail: [{ ...gmailRow, importRunId: 'other-run' }], watched: [],
+    }],
+    ['malformed source with watched row', { sourceType: 'BROKEN_SOURCE', importRunId: 'broken-run' }, {
+      drive: [], gmail: [], watched: [{ ...watchedRow, importRunId: 'broken-run' }],
+    }],
+  ] as const)('fails closed for recovered %s instead of treating it as unbound', (_label, source, rows) => {
+    expect(resolveReviewConnector(source, rows)).toBeNull()
+    expect(isReviewConnectorResolutionValid(source, rows)).toBe(false)
+    expect(filterReviewAccountOptions(source, [account('bank')], [], rows)).toEqual([])
+    expect(filterReviewParserOptions(source, [{ id: 'profile', version: 1 }], [], rows)).toEqual([])
+  })
+
+  it.each(['CAMERA_SCAN', 'OTHER', 'BROKEN_SOURCE'] as const)('keeps a standalone %s run unbound-valid when no connector row claims it', (sourceType) => {
+    const source = { sourceType, importRunId: 'standalone-run' }
+    const emptyInbox = { drive: [], gmail: [], watched: [] }
+
+    expect(resolveReviewConnector(source, emptyInbox)).toBeNull()
+    expect(isReviewConnectorResolutionValid(source, emptyInbox)).toBe(true)
+    expect(filterReviewAccountOptions(source, [account('bank')], [], emptyInbox).map(({ id }) => id)).toEqual(['bank'])
+  })
+
   it('narrows only the source whose exact connector identity has a binding', () => {
     const bindings = [
       binding({ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', allowedAccountIds: ['drive-bank'] }),

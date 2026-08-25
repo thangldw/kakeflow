@@ -33,6 +33,30 @@ export interface VersionedParserOption {
 }
 
 export function resolveReviewConnector(source: ReviewSourceIdentity, inbox: ReviewInboxRows): ReviewConnectorIdentity | null {
+  const { identities, unresolvedExplicitIdentity } = collectReviewConnectorIdentities(source, inbox)
+  const expectedKind = connectorKindForSourceType(source.sourceType)
+  if (expectedKind === 'MANUAL_IMPORT') identities.push({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })
+  if (unresolvedExplicitIdentity || expectedKind === null) return null
+  const unique = uniqueConnectorIdentities(identities)
+  if (unique.size !== 1) return null
+  const identity = [...unique.values()][0]
+  return typeof expectedKind === 'undefined' || identity.connectorKind === expectedKind ? identity : null
+}
+
+export function isReviewConnectorResolutionValid(source: ReviewSourceIdentity, inbox: ReviewInboxRows): boolean {
+  const expectedKind = connectorKindForSourceType(source.sourceType)
+  if (expectedKind === null) {
+    const collected = collectReviewConnectorIdentities(source, inbox)
+    return !collected.unresolvedExplicitIdentity && uniqueConnectorIdentities(collected.identities).size === 0
+  }
+  const hasIdentityHint = Boolean(source.driveInboxItemId || source.gmailInboxItemId || source.folderInboxItemId || source.watchedFolderId || source.importRunId)
+  return (typeof expectedKind !== 'undefined' || hasIdentityHint) ? resolveReviewConnector(source, inbox) !== null : true
+}
+
+function collectReviewConnectorIdentities(source: ReviewSourceIdentity, inbox: ReviewInboxRows): {
+  identities: ReviewConnectorIdentity[]
+  unresolvedExplicitIdentity: boolean
+} {
   const identities: ReviewConnectorIdentity[] = []
   let unresolvedExplicitIdentity = false
   if (source.driveInboxItemId) {
@@ -60,20 +84,11 @@ export function resolveReviewConnector(source: ReviewSourceIdentity, inbox: Revi
       ...inbox.watched.filter(({ importRunId }) => importRunId === source.importRunId).map((row) => ({ connectorKind: 'WATCHED_FOLDER' as const, connectionKey: row.watchedFolderId })),
     )
   }
-  const expectedKind = connectorKindForSourceType(source.sourceType)
-  if (expectedKind === 'MANUAL_IMPORT') identities.push({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })
-  if (unresolvedExplicitIdentity || expectedKind === null) return null
-  const unique = new Map(identities.map((identity) => [`${identity.connectorKind}\u0000${identity.connectionKey}`, identity]))
-  if (unique.size !== 1) return null
-  const identity = [...unique.values()][0]
-  return typeof expectedKind === 'undefined' || identity.connectorKind === expectedKind ? identity : null
+  return { identities, unresolvedExplicitIdentity }
 }
 
-export function isReviewConnectorResolutionValid(source: ReviewSourceIdentity, inbox: ReviewInboxRows): boolean {
-  const expectedKind = connectorKindForSourceType(source.sourceType)
-  if (expectedKind === null) return true
-  const hasIdentityHint = Boolean(source.driveInboxItemId || source.gmailInboxItemId || source.folderInboxItemId || source.watchedFolderId || source.importRunId)
-  return (typeof expectedKind !== 'undefined' || hasIdentityHint) ? resolveReviewConnector(source, inbox) !== null : true
+function uniqueConnectorIdentities(identities: readonly ReviewConnectorIdentity[]): Map<string, ReviewConnectorIdentity> {
+  return new Map(identities.map((identity) => [`${identity.connectorKind}\u0000${identity.connectionKey}`, identity]))
 }
 
 export function bindingForReviewSource(
