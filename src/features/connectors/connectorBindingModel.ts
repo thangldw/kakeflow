@@ -33,32 +33,47 @@ export interface VersionedParserOption {
 }
 
 export function resolveReviewConnector(source: ReviewSourceIdentity, inbox: ReviewInboxRows): ReviewConnectorIdentity | null {
+  const identities: ReviewConnectorIdentity[] = []
+  let unresolvedExplicitIdentity = false
   if (source.driveInboxItemId) {
     const row = inbox.drive.find(({ id }) => id === source.driveInboxItemId)
-    return row ? { connectorKind: 'GOOGLE_DRIVE', connectionKey: row.connectionId } : null
+    if (row) identities.push({ connectorKind: 'GOOGLE_DRIVE', connectionKey: row.connectionId })
+    else unresolvedExplicitIdentity = true
   }
   if (source.gmailInboxItemId) {
     const row = inbox.gmail.find(({ id }) => id === source.gmailInboxItemId)
-    return row ? { connectorKind: 'GMAIL', connectionKey: row.connectionId } : null
+    if (row) identities.push({ connectorKind: 'GMAIL', connectionKey: row.connectionId })
+    else unresolvedExplicitIdentity = true
   }
   if (source.folderInboxItemId) {
     const row = inbox.watched.find(({ id }) => id === source.folderInboxItemId)
-    return row ? { connectorKind: 'WATCHED_FOLDER', connectionKey: row.watchedFolderId } : null
+    if (row) identities.push({ connectorKind: 'WATCHED_FOLDER', connectionKey: row.watchedFolderId })
+    else unresolvedExplicitIdentity = true
   }
   if (source.watchedFolderId) {
-    return { connectorKind: 'WATCHED_FOLDER', connectionKey: source.watchedFolderId }
+    identities.push({ connectorKind: 'WATCHED_FOLDER', connectionKey: source.watchedFolderId })
   }
   if (source.importRunId) {
-    const drive = inbox.drive.find(({ importRunId }) => importRunId === source.importRunId)
-    if (drive) return { connectorKind: 'GOOGLE_DRIVE', connectionKey: drive.connectionId }
-    const gmail = inbox.gmail.find(({ importRunId }) => importRunId === source.importRunId)
-    if (gmail) return { connectorKind: 'GMAIL', connectionKey: gmail.connectionId }
-    const watched = inbox.watched.find(({ importRunId }) => importRunId === source.importRunId)
-    if (watched) return { connectorKind: 'WATCHED_FOLDER', connectionKey: watched.watchedFolderId }
+    identities.push(
+      ...inbox.drive.filter(({ importRunId }) => importRunId === source.importRunId).map((row) => ({ connectorKind: 'GOOGLE_DRIVE' as const, connectionKey: row.connectionId })),
+      ...inbox.gmail.filter(({ importRunId }) => importRunId === source.importRunId).map((row) => ({ connectorKind: 'GMAIL' as const, connectionKey: row.connectionId })),
+      ...inbox.watched.filter(({ importRunId }) => importRunId === source.importRunId).map((row) => ({ connectorKind: 'WATCHED_FOLDER' as const, connectionKey: row.watchedFolderId })),
+    )
   }
-  return source.sourceType === 'MANUAL_UPLOAD'
-    ? { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' }
-    : null
+  const expectedKind = connectorKindForSourceType(source.sourceType)
+  if (expectedKind === 'MANUAL_IMPORT') identities.push({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })
+  if (unresolvedExplicitIdentity || expectedKind === null) return null
+  const unique = new Map(identities.map((identity) => [`${identity.connectorKind}\u0000${identity.connectionKey}`, identity]))
+  if (unique.size !== 1) return null
+  const identity = [...unique.values()][0]
+  return typeof expectedKind === 'undefined' || identity.connectorKind === expectedKind ? identity : null
+}
+
+export function isReviewConnectorResolutionValid(source: ReviewSourceIdentity, inbox: ReviewInboxRows): boolean {
+  const expectedKind = connectorKindForSourceType(source.sourceType)
+  if (expectedKind === null) return true
+  const hasIdentityHint = Boolean(source.driveInboxItemId || source.gmailInboxItemId || source.folderInboxItemId || source.watchedFolderId || source.importRunId)
+  return (typeof expectedKind !== 'undefined' || hasIdentityHint) ? resolveReviewConnector(source, inbox) !== null : true
 }
 
 export function bindingForReviewSource(
@@ -77,6 +92,7 @@ export function filterReviewAccountOptions<T extends Pick<AccountDto, 'id'>>(
   bindings: readonly ConnectorBindingDto[],
   inbox: ReviewInboxRows,
 ): readonly T[] {
+  if (!isReviewConnectorResolutionValid(source, inbox)) return []
   const binding = bindingForReviewSource(source, bindings, inbox)
   if (!binding) return accounts
   const allowed = new Set(binding.allowedAccountIds)
@@ -89,6 +105,7 @@ export function filterReviewParserOptions<T extends VersionedParserOption>(
   bindings: readonly ConnectorBindingDto[],
   inbox: ReviewInboxRows,
 ): readonly T[] {
+  if (!isReviewConnectorResolutionValid(source, inbox)) return []
   const binding = bindingForReviewSource(source, bindings, inbox)
   if (!binding?.parserProfileId || binding.parserProfileVersion === null) return profiles
   return profiles.filter(({ id, version }) => id === binding.parserProfileId && version === binding.parserProfileVersion)
@@ -130,4 +147,12 @@ export function isStagedReviewBindingValid(input: {
   if (input.binding.parserProfileId === null || input.binding.parserProfileVersion === null) return true
   return input.adapterId === 'custom-delimited-v1'
     && input.adapterVersion === `${input.binding.parserProfileId}@${input.binding.parserProfileVersion}`
+}
+
+function connectorKindForSourceType(sourceType: string | null | undefined): ConnectorKindDto | null | undefined {
+  if (sourceType === 'GOOGLE_DRIVE') return 'GOOGLE_DRIVE'
+  if (sourceType === 'GMAIL') return 'GMAIL'
+  if (sourceType === 'LOCAL_FOLDER' || sourceType === 'ICLOUD_PICKER') return 'WATCHED_FOLDER'
+  if (sourceType === 'MANUAL_UPLOAD') return 'MANUAL_IMPORT'
+  return sourceType == null ? undefined : null
 }

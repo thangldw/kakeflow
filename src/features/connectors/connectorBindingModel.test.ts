@@ -10,6 +10,7 @@ import {
   bindingForReviewSource,
   filterReviewAccountOptions,
   filterReviewParserOptions,
+  isReviewConnectorResolutionValid,
   isStagedReviewBindingValid,
   resolveReviewConnector,
   sanitizeReviewSelections,
@@ -39,6 +40,40 @@ describe('connector binding review model', () => {
     expect(resolveReviewConnector({ watchedFolderId: 'folder-primary', sourceType: 'LOCAL_FOLDER' }, inbox)).toEqual({ connectorKind: 'WATCHED_FOLDER', connectionKey: 'folder-primary' })
     expect(resolveReviewConnector({ sourceType: 'MANUAL_UPLOAD' }, inbox)).toEqual({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })
     expect(resolveReviewConnector({ sourceType: 'GOOGLE_DRIVE', driveInboxItemId: 'missing' }, inbox)).toBeNull()
+  })
+
+  it('resolves recovered Drive, Gmail, watched-folder, and manual runs from one source-consistent identity', () => {
+    const recoveredInbox = {
+      drive: [{ ...driveRow, id: 'drive-run-item', importRunId: 'drive-run' }],
+      gmail: [{ ...gmailRow, id: 'gmail-run-item', importRunId: 'gmail-run' }],
+      watched: [{ ...watchedRow, id: 'folder-run-item', importRunId: 'folder-run' }],
+    }
+
+    expect(resolveReviewConnector({ sourceType: 'GOOGLE_DRIVE', importRunId: 'drive-run' }, recoveredInbox)).toEqual({ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' })
+    expect(resolveReviewConnector({ sourceType: 'GMAIL', importRunId: 'gmail-run' }, recoveredInbox)).toEqual({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary' })
+    expect(resolveReviewConnector({ sourceType: 'LOCAL_FOLDER', importRunId: 'folder-run' }, recoveredInbox)).toEqual({ connectorKind: 'WATCHED_FOLDER', connectionKey: 'folder-primary' })
+    expect(resolveReviewConnector({ sourceType: 'MANUAL_UPLOAD', importRunId: 'manual-run' }, recoveredInbox)).toEqual({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })
+  })
+
+  it.each([
+    ['mixed connector kinds', { sourceType: 'GOOGLE_DRIVE', importRunId: 'mixed-run' }, {
+      drive: [{ ...driveRow, importRunId: 'mixed-run' }], gmail: [{ ...gmailRow, importRunId: 'mixed-run' }], watched: [],
+    }],
+    ['ambiguous Drive keys', { sourceType: 'GOOGLE_DRIVE', importRunId: 'ambiguous-run' }, {
+      drive: [{ ...driveRow, importRunId: 'ambiguous-run' }, { ...driveRow, id: 'drive-item-2', connectionId: 'drive-secondary', importRunId: 'ambiguous-run' }], gmail: [], watched: [],
+    }],
+    ['source mismatch', { sourceType: 'GMAIL', importRunId: 'drive-run' }, {
+      drive: [{ ...driveRow, importRunId: 'drive-run' }], gmail: [], watched: [],
+    }],
+    ['manual source with native row', { sourceType: 'MANUAL_UPLOAD', importRunId: 'mixed-manual-run' }, {
+      drive: [{ ...driveRow, importRunId: 'mixed-manual-run' }], gmail: [], watched: [],
+    }],
+  ] as const)('fails closed for recovered %s', (_label, source, rows) => {
+    expect(resolveReviewConnector(source, rows)).toBeNull()
+    expect(isReviewConnectorResolutionValid(source, rows)).toBe(false)
+    expect(filterReviewAccountOptions(source, [account('drive-bank')], [binding({
+      connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', allowedAccountIds: ['drive-bank'],
+    })], rows)).toEqual([])
   })
 
   it('narrows only the source whose exact connector identity has a binding', () => {

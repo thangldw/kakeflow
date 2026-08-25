@@ -497,7 +497,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       const args = connectorBindingListArgs(householdId)
       return invokeValidated(invoke, 'connector_bindings_list', (value) => parseConnectorBindings(value, args.householdId), args)
     },
-    upsertConnectorBinding: async (input) => invokeValidated(invoke, 'connector_binding_upsert', parseConnectorBinding, { input: parseUpsertConnectorBindingInput(input) }),
+    upsertConnectorBinding: async (input) => {
+      const parsedInput = parseUpsertConnectorBindingInput(input)
+      return invokeValidated(invoke, 'connector_binding_upsert', (value) => parseUpsertConnectorBindingResponse(value, parsedInput), { input: parsedInput })
+    },
     deleteConnectorBinding: async (input) => { await invokeValidated(invoke, 'connector_binding_delete', parseVoid, { input: parseDeleteConnectorBindingInput(input) }) },
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
     selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
@@ -2107,6 +2110,14 @@ function parseUpsertConnectorBindingInput(value: UpsertConnectorBindingInputDto)
     ? null
     : asPositiveSafeInteger(record.expectedVersion, 'connector binding')
   return { ...common, expectedVersion }
+}
+
+function parseUpsertConnectorBindingResponse(value: unknown, input: UpsertConnectorBindingInputDto): ConnectorBindingDto {
+  const binding = parseConnectorBinding(value)
+  if (binding.householdId !== input.householdId
+    || binding.connectorKind !== input.connectorKind
+    || binding.connectionKey !== input.connectionKey) throw new TypeError('connector binding')
+  return binding
 }
 
 function parseDeleteConnectorBindingInput(value: DeleteConnectorBindingInputDto): DeleteConnectorBindingInputDto {
