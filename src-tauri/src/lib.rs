@@ -11,6 +11,7 @@ pub mod connector_commands;
 pub mod connector_control;
 pub mod connector_projection;
 pub mod connector_refresh;
+mod connector_refresh_worker;
 pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_pdf_ocr;
@@ -4803,6 +4804,11 @@ pub fn run() {
                 bundled_executable: bundled_ocr_available.then_some(bundled_ocr),
                 bundled_tessdata: bundled_ocr_available.then_some(bundled_tessdata),
             });
+            app.manage(if setup_smoke_config.is_none() {
+                connector_refresh_worker::BackgroundConnectorRefresh::start(app.handle().clone())
+            } else {
+                connector_refresh_worker::BackgroundConnectorRefresh::disabled()
+            });
             if setup_smoke_config.is_none() {
                 app.manage(folder_discovery::BackgroundFolderDiscovery::start(
                     app.handle().clone(),
@@ -4834,6 +4840,9 @@ pub fn run() {
             connector_commands::connector_bindings_list,
             connector_commands::connector_binding_upsert,
             connector_commands::connector_binding_delete,
+            connector_commands::connector_refresh_one,
+            connector_commands::connector_refresh_all,
+            connector_commands::connector_refresh_batch_get,
             local_sync_foundation_status,
             principal_member_binding_update,
             relay_status,
