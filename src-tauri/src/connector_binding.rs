@@ -488,19 +488,21 @@ fn resolve_run_connector(
 ) -> Result<Option<(ConnectorKind, String)>, ConnectorBindingError> {
     let mut statement = connection
         .prepare(
-            "SELECT DISTINCT source_type FROM source_documents
-             WHERE import_run_id=?1 AND household_id=?2 ORDER BY source_type",
+            "SELECT DISTINCT household_id,source_type FROM source_documents
+             WHERE import_run_id=?1 ORDER BY household_id,source_type",
         )
         .map_err(db_error)?;
-    let source_types = statement
-        .query_map(params![run_id, household_id], |row| row.get::<_, String>(0))
+    let source_scopes = statement
+        .query_map([run_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(db_error)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(db_error)?;
-    if source_types.len() != 1 {
+    if source_scopes.len() != 1 || source_scopes[0].0 != household_id {
         return Err(ConnectorBindingError::ImportBindingChanged);
     }
-    match source_types[0].as_str() {
+    match source_scopes[0].1.as_str() {
         "MANUAL_UPLOAD" => Ok(Some((ConnectorKind::ManualImport, "manual-import".into()))),
         "GOOGLE_DRIVE" => resolve_native_key(
             connection,
@@ -1210,6 +1212,76 @@ mod tests {
     }
 
     #[test]
+    fn binding_account_identity_update_cannot_bypass_the_256_account_limit() {
+        with_database(|connection| {
+            connection
+                .execute_batch(
+                    "INSERT INTO connector_bindings
+                       (household_id,connector_kind,connection_key,version)
+                     VALUES('family','GOOGLE_DRIVE','drive',1),
+                           ('family','MANUAL_IMPORT','manual-import',1);",
+                )
+                .unwrap();
+            for index in 0..257 {
+                let account_id = format!("move-account-{index:03}");
+                connection
+                    .execute(
+                        "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                         VALUES(?1,'family',?2,'ASSET','BANK')",
+                        params![account_id, format!("Move account {index:03}")],
+                    )
+                    .unwrap();
+                let (kind, key) = if index < 256 {
+                    ("GOOGLE_DRIVE", "drive")
+                } else {
+                    ("MANUAL_IMPORT", "manual-import")
+                };
+                connection
+                    .execute(
+                        "INSERT INTO connector_binding_accounts
+                           (household_id,connector_kind,connection_key,account_id)
+                         VALUES('family',?1,?2,?3)",
+                        params![kind, key, account_id],
+                    )
+                    .unwrap();
+            }
+
+            let moved = connection.execute(
+                "UPDATE connector_binding_accounts
+                 SET connector_kind='GOOGLE_DRIVE',connection_key='drive'
+                 WHERE household_id='family' AND connector_kind='MANUAL_IMPORT'
+                   AND connection_key='manual-import' AND account_id='move-account-256'",
+                [],
+            );
+            assert!(moved.is_err(), "binding account identity must be immutable");
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT count(*) FROM connector_binding_accounts
+                         WHERE household_id='family' AND connector_kind='GOOGLE_DRIVE'
+                           AND connection_key='drive'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                256
+            );
+            assert_eq!(
+                connection
+                    .query_row(
+                        "SELECT count(*) FROM connector_binding_accounts
+                         WHERE household_id='family' AND connector_kind='MANUAL_IMPORT'
+                           AND connection_key='manual-import'",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1
+            );
+        });
+    }
+
+    #[test]
     fn staged_source_links_resolve_all_connector_kinds_exactly() {
         with_database(|connection| {
             for (kind, key) in [
@@ -1253,6 +1325,141 @@ mod tests {
                 .unwrap();
             assert!(matches!(
                 validate_import_binding(connection, "manual-run"),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+        });
+    }
+
+    #[test]
+    fn missing_or_ambiguous_native_inbox_links_fail_closed() {
+        with_database(|connection| {
+            seed_import_run(connection, "missing-link-run", "GOOGLE_DRIVE", "bank", '6');
+            assert!(matches!(
+                validate_import_binding(connection, "missing-link-run"),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+
+            seed_import_run(
+                connection,
+                "ambiguous-link-run",
+                "GOOGLE_DRIVE",
+                "bank",
+                '7',
+            );
+            connection
+                .execute(
+                    "INSERT INTO google_drive_connections
+                       (id,household_id,client_id_fingerprint,status)
+                     VALUES('drive-two','family',?1,'AUTHORIZING')",
+                    [HASH_B],
+                )
+                .unwrap();
+            connection
+                .execute_batch(&format!(
+                    "INSERT INTO google_drive_nodes
+                       (connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download)
+                     VALUES('drive','ambiguous-one','one.csv','text/csv','{first}',0,1),
+                           ('drive-two','ambiguous-two','two.csv','text/csv','{second}',0,1);
+                     INSERT INTO google_drive_inbox
+                       (id,household_id,connection_id,file_id,generation_fingerprint,file_name,
+                        media_type,content_sha256,state,import_run_id)
+                     VALUES('{first}','family','drive','ambiguous-one','{first}','one.csv',
+                            'text/csv','{source_sha}','STAGED','ambiguous-link-run'),
+                           ('{second}','family','drive-two','ambiguous-two','{second}','two.csv',
+                            'text/csv','{source_sha}','STAGED','ambiguous-link-run');",
+                    first = "d".repeat(64),
+                    second = "e".repeat(64),
+                    source_sha = "7".repeat(64),
+                ))
+                .unwrap();
+            assert!(matches!(
+                validate_import_binding(connection, "ambiguous-link-run"),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+        });
+    }
+
+    #[test]
+    fn mixed_source_kinds_and_connections_in_one_run_fail_closed() {
+        with_database(|connection| {
+            seed_import_run(connection, "mixed-run", "GOOGLE_DRIVE", "bank", '8');
+            connection
+                .execute_batch(&format!(
+                    "INSERT INTO source_documents
+                       (id,household_id,import_run_id,source_type,original_filename,media_type,
+                        byte_size,sha256,storage_path,audience_visibility)
+                     VALUES('mixed-gmail-document','family','mixed-run','GMAIL','message.eml',
+                            'message/rfc822',10,'{gmail_sha}','vault://{gmail_sha}','SHARED');
+                     INSERT INTO source_records
+                       (id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES('mixed-gmail-record','mixed-gmail-document',1,'{record_hash}','{{}}');
+                     INSERT INTO candidate_sources(candidate_id,source_record_id,evidence_role)
+                     VALUES('mixed-run-candidate','mixed-gmail-record','SUPPORTING');
+                     INSERT INTO google_drive_nodes
+                       (connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download)
+                     VALUES('drive','mixed-drive','drive.csv','text/csv','{drive_inbox}',0,1);
+                     INSERT INTO google_drive_inbox
+                       (id,household_id,connection_id,file_id,generation_fingerprint,file_name,
+                        media_type,content_sha256,state,import_run_id)
+                     VALUES('{drive_inbox}','family','drive','mixed-drive','{drive_inbox}',
+                            'drive.csv','text/csv','{drive_sha}','STAGED','mixed-run');
+                     INSERT INTO gmail_inbox
+                       (id,household_id,connection_id,provider_message_id,generation_fingerprint,
+                        message_history_id,internal_date_ms,file_name,content_sha256,state,import_run_id)
+                     VALUES('{gmail_inbox}','family','gmail','mixed-message','{gmail_inbox}',
+                            '1',1,'message.eml','{gmail_sha}','STAGED','mixed-run');",
+                    gmail_sha = "9".repeat(64),
+                    record_hash = "f".repeat(64),
+                    drive_inbox = "d".repeat(64),
+                    drive_sha = "8".repeat(64),
+                    gmail_inbox = "e".repeat(64),
+                ))
+                .unwrap();
+            assert!(matches!(
+                validate_import_binding(connection, "mixed-run"),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+        });
+    }
+
+    #[test]
+    fn a_cross_household_source_mapping_cannot_hide_behind_a_valid_native_link() {
+        with_database(|connection| {
+            upsert_binding(
+                connection,
+                &input(ConnectorKind::GoogleDrive, "drive", vec!["bank".into()]),
+            )
+            .unwrap();
+            seed_import_run(connection, "cross-source-run", "GOOGLE_DRIVE", "bank", '6');
+            connection
+                .execute_batch(&format!(
+                    "INSERT INTO google_drive_nodes
+                       (connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download)
+                     VALUES('drive','cross-source','drive.csv','text/csv','{inbox_id}',0,1);
+                     INSERT INTO google_drive_inbox
+                       (id,household_id,connection_id,file_id,generation_fingerprint,file_name,
+                        media_type,content_sha256,state,import_run_id)
+                     VALUES('{inbox_id}','family','drive','cross-source','{inbox_id}',
+                            'drive.csv','text/csv','{family_sha}','STAGED','cross-source-run');
+                     INSERT INTO source_documents
+                       (id,household_id,import_run_id,source_type,original_filename,media_type,
+                        byte_size,sha256,storage_path,audience_visibility)
+                     VALUES('cross-household-document','other','cross-source-run','GOOGLE_DRIVE',
+                            'other.csv','text/csv',10,'{other_sha}','vault://{other_sha}','SHARED');
+                     INSERT INTO source_records
+                       (id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES('cross-household-record','cross-household-document',1,'{record_hash}','{{}}');
+                     INSERT INTO candidate_sources(candidate_id,source_record_id,evidence_role)
+                     VALUES('cross-source-run-candidate','cross-household-record','SUPPORTING');",
+                    inbox_id = "d".repeat(64),
+                    family_sha = "6".repeat(64),
+                    other_sha = "7".repeat(64),
+                    record_hash = "e".repeat(64),
+                ))
+                .unwrap();
+
+            assert!(matches!(
+                validate_import_binding(connection, "cross-source-run"),
                 Err(ConnectorBindingError::ImportBindingChanged)
             ));
         });

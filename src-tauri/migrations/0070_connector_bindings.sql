@@ -110,6 +110,10 @@ END;
 
 CREATE TRIGGER trg_connector_binding_accounts_scope_update
 BEFORE UPDATE ON connector_binding_accounts BEGIN
+  SELECT CASE WHEN NEW.household_id!=OLD.household_id
+      OR NEW.connector_kind!=OLD.connector_kind OR NEW.connection_key!=OLD.connection_key
+      OR NEW.account_id!=OLD.account_id
+    THEN RAISE(ABORT,'connector binding account identity is immutable') END;
   SELECT CASE WHEN NOT EXISTS(
     SELECT 1 FROM accounts a
     WHERE a.id=NEW.account_id AND a.household_id=NEW.household_id AND a.is_archived=0
