@@ -10,6 +10,7 @@ pub mod connector_binding;
 pub mod connector_commands;
 pub mod connector_control;
 pub mod connector_projection;
+pub mod connector_refresh;
 pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_pdf_ocr;
