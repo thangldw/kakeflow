@@ -91,6 +91,7 @@ import type {
   ConnectorAvailabilityDto,
   ConnectorBindingSummaryDto,
   ConnectorCapabilityDto,
+  ConnectorCursorDto,
   ConnectorHealthDto,
   ConnectorKindDto,
   ConnectorLifecycleDto,
@@ -2032,13 +2033,13 @@ const CONNECTOR_SUMMARY_FIELDS = new Set([
 ])
 const CONNECTOR_PAGE_FIELDS = new Set(['schemaVersion', 'items', 'nextCursor'])
 const CONNECTOR_BINDING_FIELDS = new Set(['allowedAccountCount', 'parserProfileConfigured', 'version'])
+const CONNECTOR_CURSOR_FIELDS = new Set(['connectorKind', 'connectionKey'])
 const UTF8_ENCODER = new TextEncoder()
 
-function connectorListArgs(householdId: string, cursor?: string, limit?: number): Record<string, unknown> {
+function connectorListArgs(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Record<string, unknown> {
   if (typeof householdId !== 'string' || householdId.length === 0) throw new TypeError('household id')
-  if (typeof cursor !== 'undefined' && (typeof cursor !== 'string' || cursor.length === 0)) throw new TypeError('connector cursor')
   if (typeof limit !== 'undefined' && (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) throw new TypeError('connector limit')
-  return { householdId, cursor: cursor ?? null, limit: limit ?? null }
+  return { householdId, cursor: typeof cursor === 'undefined' ? null : asConnectorCursor(cursor), limit: limit ?? null }
 }
 
 function parseConnectorSummaryPage(value: unknown): ConnectorSummaryPageDto {
@@ -2158,9 +2159,26 @@ function asNullableConnectorTimestamp(value: unknown): string | null {
   return timestamp
 }
 
-function asNullableConnectorCursor(value: unknown): string | null {
+function asNullableConnectorCursor(value: unknown): ConnectorCursorDto | null {
   if (value === null) return null
-  return asRequiredString(value)
+  return parseConnectorCursor(value)
+}
+
+function asConnectorCursor(value: unknown): ConnectorCursorDto {
+  try {
+    return parseConnectorCursor(value)
+  } catch {
+    throw new TypeError('connector cursor')
+  }
+}
+
+function parseConnectorCursor(value: unknown): ConnectorCursorDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_CURSOR_FIELDS, 'connector cursor')
+  return {
+    connectorKind: asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector cursor'),
+    connectionKey: asConnectorIdentifier(record.connectionKey, 128, 'connector cursor'),
+  }
 }
 
 function assertExactFields(record: Record<string, unknown>, allowed: ReadonlySet<string>, label: string): void {

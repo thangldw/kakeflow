@@ -954,10 +954,14 @@ export interface ConnectorSummaryDto {
   readonly bindingSummary: ConnectorBindingSummaryDto | null
   readonly configurationDestination: ConfigurationDestinationDto
 }
+export interface ConnectorCursorDto {
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+}
 export interface ConnectorSummaryPageDto {
   readonly schemaVersion: 1
   readonly items: readonly ConnectorSummaryDto[]
-  readonly nextCursor: string | null
+  readonly nextCursor: ConnectorCursorDto | null
 }
 
 export type AppCommand =
@@ -1224,7 +1228,7 @@ export interface PlatformClient {
   updateSourceDocumentAudience(input: UpdateSourceDocumentAudienceInputDto): Promise<SourceDocumentViewDto>
   querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>
   listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
-  listConnectorSummaries(householdId: string, cursor?: string, limit?: number): Promise<ConnectorSummaryPageDto>
+  listConnectorSummaries(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Promise<ConnectorSummaryPageDto>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   selectIcloudFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
