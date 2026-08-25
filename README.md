@@ -4,9 +4,9 @@
 
 Local-first household finance for desktop and the browser, built for Japan.
 
-Version 1.2.0 is the current stable desktop milestone.
+Version 1.2.1 is the current stable desktop milestone.
 
-[Download v1.2.0](https://github.com/thangldw/kakeflow/releases/tag/v1.2.0) · [Product website](https://thangldw.github.io/kakeflow/) · [PWA evidence](docs/assets/demo/kakeflow-receipt-to-provenance.mp4) · [Documentation](docs/README.md) · [Changelog](CHANGELOG.md)
+[Download v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1) · [Open the PWA](https://thangldw.github.io/kakeflow/app/) · [Product website](https://thangldw.github.io/kakeflow/) · [PWA evidence](docs/assets/demo/kakeflow-receipt-to-provenance.mp4) · [Documentation](docs/README.md) · [Changelog](CHANGELOG.md)
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#FFFFFF","fontFamily":"Arial, sans-serif","lineColor":"#667085","primaryTextColor":"#172B4D"}}}%%
@@ -33,7 +33,7 @@ Receipt images are processed locally with bundled PP-OCRv5 models. The receipt n
 
 The PWA foundation provides an account-free encrypted browser vault, household and account setup, local receipt OCR, source comparison, explicit approval, balanced double-entry posting, provenance, offline reload, and authenticated encrypted export/restore. IndexedDB stores encrypted events and projections; OPFS stores encrypted evidence where available, with an encrypted IndexedDB fallback. It does not yet provide desktop connectors, multi-device sync, native backup compatibility, or the complete desktop feature set.
 
-Version 1.2.0 checks the signed stable update channel after startup and also exposes a manual check in Settings. Release QA includes synthetic receipt images and the local `/ocr-regression.html` PP-OCRv5 model gate. The [public landing page](https://thangldw.github.io/kakeflow/) presents one synthetic Tanaka-family journey from receipt review through budgets and investments, with separate Japanese, English and Vietnamese animations.
+Version 1.2.1 checks the signed stable update channel after startup and also exposes a manual check in Settings. Release QA includes synthetic receipt images and the local `/ocr-regression.html` PP-OCRv5 model gate. The [public landing page](https://thangldw.github.io/kakeflow/) presents one synthetic Tanaka-family journey from receipt review through budgets and investments, with separate Japanese, English and Vietnamese animations.
 
 Requirements: Node.js 20.19+ or 22.12+, Rust 1.97 and Tauri 2 platform dependencies.
 
@@ -47,7 +47,7 @@ npm run test:pwa:e2e
 cd src-tauri && cargo fmt --all -- --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-KakeFlow does not initiate payments or treat extracted records as confirmed accounting. Ambiguous or unsupported data remains blocked for human review. This repository is the only canonical source and release location; verified downloads are published through [GitHub Releases](https://github.com/thangldw/kakeflow/releases/tag/v1.2.0).
+KakeFlow does not initiate payments or treat extracted records as confirmed accounting. Ambiguous or unsupported data remains blocked for human review. This repository is the only canonical source and release location; verified downloads are published through [GitHub Releases](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1).
 
 ## Tiếng Việt
 
@@ -57,7 +57,7 @@ KakeFlow nhập dữ liệu ngân hàng, thẻ, ví, chứng khoán, bảng tín
 
 PWA foundation có vault trình duyệt mã hóa, không cần account; hỗ trợ tạo household/account, OCR biên lai local, đối chiếu nguồn, duyệt rõ ràng, bút toán kép cân bằng, provenance, reload offline và export/restore mã hóa có xác thực. Event/projection được mã hóa trong IndexedDB; evidence dùng OPFS khi có và fallback sang IndexedDB mã hóa. PWA chưa có connector desktop, đồng bộ đa thiết bị, tương thích backup native hoặc toàn bộ tính năng desktop.
 
-Bản v1.2.0 tự kiểm tra kênh cập nhật ổn định có chữ ký sau khi khởi động và cho phép kiểm tra thủ công trong Cài đặt. QA release có ảnh biên lai tổng hợp cùng trang `/ocr-regression.html` chạy trực tiếp PP-OCRv5. [Landing page chính thức](https://thangldw.github.io/kakeflow/) trình bày một hành trình giả lập của gia đình Tanaka từ duyệt biên lai đến ngân sách và đầu tư, với GIF riêng cho Nhật, Anh và Việt.
+Bản v1.2.1 tự kiểm tra kênh cập nhật ổn định có chữ ký sau khi khởi động và cho phép kiểm tra thủ công trong Cài đặt. QA release có ảnh biên lai tổng hợp cùng trang `/ocr-regression.html` chạy trực tiếp PP-OCRv5. [Landing page chính thức](https://thangldw.github.io/kakeflow/) trình bày một hành trình giả lập của gia đình Tanaka từ duyệt biên lai đến ngân sách và đầu tư, với GIF riêng cho Nhật, Anh và Việt.
 
 Ứng dụng không thực hiện thanh toán và không coi dữ liệu trích xuất là bút toán đã xác nhận. Dữ liệu mơ hồ hoặc chưa hỗ trợ luôn bị khóa để người dùng duyệt. Repo này là nguồn mã và nơi phát hành canonical duy nhất. Dùng các lệnh ở phần English để kiểm thử và build.
 
@@ -69,7 +69,7 @@ KakeFlow は、ユーザーが提供した銀行、カード、ウォレット�
 
 PWA foundation は account 不要の暗号化 browser vault、household／account 設定、端末内 receipt OCR、原本比較、明示的承認、貸借一致の複式記帳、provenance、offline reload、認証付き暗号化 export／restore を提供します。event／projection は IndexedDB、evidence は利用可能な場合 OPFS、fallback は暗号化 IndexedDB に保存します。desktop connector、multi-device sync、native backup 互換、desktop 全機能は未対応です。
 
-v1.2.0 は起動後に署名済み stable update channel を確認し、設定画面からの手動確認にも対応します。release QA には合成レシート画像と、PP-OCRv5 を直接実行する `/ocr-regression.html` を含みます。[公式 landing page](https://thangldw.github.io/kakeflow/) は、田中家の合成シナリオをレシート確認から予算・投資まで、日本語・英語・ベトナム語別 GIF で紹介します。
+v1.2.1 は起動後に署名済み stable update channel を確認し、設定画面からの手動確認にも対応します。release QA には合成レシート画像と、PP-OCRv5 を直接実行する `/ocr-regression.html` を含みます。[公式 landing page](https://thangldw.github.io/kakeflow/) は、田中家の合成シナリオをレシート確認から予算・投資まで、日本語・英語・ベトナム語別 GIF で紹介します。
 
 支払いを開始せず、抽出結果を確定仕訳として扱いません。曖昧または未対応のデータは人による確認までブロックされます。本 repository が唯一の canonical source／release location です。テストとビルドには English セクションのコマンドを使用してください。
 
