@@ -290,6 +290,15 @@ impl ConnectorSummaryDto {
                 .all(|capability| descriptor.capabilities.contains(capability))
             || (self.availability == ConnectorAvailability::RuntimeUnsupported
                 && !self.capabilities.is_empty())
+            || (self.lifecycle != ConnectorLifecycle::Connected
+                && self.capabilities.iter().any(|capability| {
+                    matches!(
+                        capability,
+                        ConnectorCapability::RefreshNow
+                            | ConnectorCapability::Schedule
+                            | ConnectorCapability::Retry
+                    )
+                }))
             || (self.health == ConnectorHealth::Running
                 && !self.capabilities.contains(&ConnectorCapability::RefreshNow))
             || (self.health == ConnectorHealth::RetryBackoff
@@ -393,7 +402,7 @@ fn is_rfc3339_utc(value: &str) -> bool {
         && (1..=days_in_month(year, month)).contains(&day)
         && hour <= 23
         && minute <= 59
-        && second <= 60
+        && second <= 59
 }
 
 fn number(bytes: &[u8]) -> u32 {
@@ -532,7 +541,15 @@ mod tests {
         );
 
         let mut value = summary();
+        value.last_success_at = Some("2026-08-25T12:34:60Z".into());
+        assert_eq!(
+            value.validate().unwrap_err(),
+            ConnectorContractError::InvalidTimestamp
+        );
+
+        let mut value = summary();
         value.lifecycle = ConnectorLifecycle::Disconnected;
+        value.capabilities = vec![ConnectorCapability::Configure];
         assert_eq!(
             value.validate().unwrap_err(),
             ConnectorContractError::ImpossibleState
@@ -571,6 +588,29 @@ mod tests {
                 .unwrap()
                 .supports_web
         );
+    }
+
+    #[test]
+    fn disconnected_or_configuring_sources_cannot_execute_connected_only_operations() {
+        for lifecycle in [
+            ConnectorLifecycle::Disconnected,
+            ConnectorLifecycle::Configuring,
+        ] {
+            for capability in [
+                ConnectorCapability::RefreshNow,
+                ConnectorCapability::Schedule,
+                ConnectorCapability::Retry,
+            ] {
+                let mut value = summary();
+                value.lifecycle = lifecycle;
+                value.health = ConnectorHealth::NeverRefreshed;
+                value.capabilities = vec![ConnectorCapability::Configure, capability];
+                assert_eq!(
+                    value.validate().unwrap_err(),
+                    ConnectorContractError::InconsistentCapabilities
+                );
+            }
+        }
     }
 
     #[test]
