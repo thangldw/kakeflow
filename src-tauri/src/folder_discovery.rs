@@ -342,9 +342,9 @@ fn scan_keys(
             continue;
         }
         let state = app.state::<AppState>();
-        let refresh =
-            state.with_connection(|connection| Ok(refresh_registered(connection, &key.0, &key.1)));
-        let Ok(Ok(FolderRefreshResult::Scanned { scan, .. })) = refresh else {
+        let Ok(FolderRefreshResult::Scanned { scan, .. }) =
+            refresh_registered_state(state.inner(), &key.0, &key.1)
+        else {
             // Preserve the last good snapshot. A temporarily unavailable sync
             // folder must not become a remove/create storm when it reconnects.
             continue;
@@ -364,6 +364,178 @@ fn scan_keys(
     }
 }
 
+pub(crate) trait RegisteredFolderScanner {
+    fn scan(
+        &self,
+        plan: &watched_folders::RegisteredFolderScanPlan,
+    ) -> Result<Vec<watched_folders::WatchedFileMetadataDto>, watched_folders::WatchedFolderError>;
+}
+
+struct FilesystemRegisteredFolderScanner;
+
+impl RegisteredFolderScanner for FilesystemRegisteredFolderScanner {
+    fn scan(
+        &self,
+        plan: &watched_folders::RegisteredFolderScanPlan,
+    ) -> Result<Vec<watched_folders::WatchedFileMetadataDto>, watched_folders::WatchedFolderError>
+    {
+        watched_folders::scan_prepared_registered(plan)
+    }
+}
+
+enum PreparedFolderRefresh {
+    Scan {
+        before: u64,
+        plan: watched_folders::RegisteredFolderScanPlan,
+    },
+    RecordedFailure(FolderRefreshResult),
+}
+
+pub(crate) fn refresh_registered_state(
+    state: &AppState,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<FolderRefreshResult, FolderRefreshInfrastructureError> {
+    refresh_registered_state_with_scanner(
+        state,
+        household_id,
+        watched_folder_id,
+        &FilesystemRegisteredFolderScanner,
+    )
+}
+
+pub(crate) fn refresh_registered_state_with_scanner(
+    state: &AppState,
+    household_id: &str,
+    watched_folder_id: &str,
+    scanner: &impl RegisteredFolderScanner,
+) -> Result<FolderRefreshResult, FolderRefreshInfrastructureError> {
+    let prepared = state
+        .with_connection(|connection| {
+            Ok(prepare_registered_refresh(
+                connection,
+                household_id,
+                watched_folder_id,
+            ))
+        })
+        .map_err(|_| FolderRefreshInfrastructureError::PersistenceUnavailable)??;
+    let (before, plan) = match prepared {
+        PreparedFolderRefresh::Scan { before, plan } => (before, plan),
+        PreparedFolderRefresh::RecordedFailure(result) => return Ok(result),
+    };
+
+    // Filesystem traversal is bounded by the watched-folder scanner, but it is
+    // deliberately outside AppState's sole SQLite mutex so refresh heartbeats
+    // and shutdown persistence remain live throughout the traversal.
+    let scan_result = scanner.scan(&plan);
+    state
+        .with_connection(|connection| {
+            Ok(finish_prepared_refresh(
+                connection,
+                household_id,
+                watched_folder_id,
+                before,
+                &plan,
+                scan_result,
+            ))
+        })
+        .map_err(|_| FolderRefreshInfrastructureError::PersistenceUnavailable)?
+}
+
+fn prepare_registered_refresh(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<PreparedFolderRefresh, FolderRefreshInfrastructureError> {
+    let before = inbox_generation_count(connection, household_id, watched_folder_id)?;
+    match watched_folders::prepare_registered_scan(connection, household_id, watched_folder_id) {
+        Ok(plan) => Ok(PreparedFolderRefresh::Scan { before, plan }),
+        Err(watched_folders::WatchedFolderError::Database) => {
+            Err(FolderRefreshInfrastructureError::PersistenceUnavailable)
+        }
+        Err(error) => {
+            let outcome = folder_error_outcome(&error);
+            record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+            Ok(PreparedFolderRefresh::RecordedFailure(
+                FolderRefreshResult::RecordedFailure(outcome),
+            ))
+        }
+    }
+}
+
+fn finish_prepared_refresh(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+    before: u64,
+    plan: &watched_folders::RegisteredFolderScanPlan,
+    scan_result: Result<
+        Vec<watched_folders::WatchedFileMetadataDto>,
+        watched_folders::WatchedFolderError,
+    >,
+) -> Result<FolderRefreshResult, FolderRefreshInfrastructureError> {
+    match watched_folders::validate_registered_scan_plan(connection, plan) {
+        Ok(()) => {}
+        Err(watched_folders::WatchedFolderError::Database) => {
+            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+        }
+        Err(
+            error @ (watched_folders::WatchedFolderError::NotFound
+            | watched_folders::WatchedFolderError::Conflict),
+        ) => {
+            // The registration changed while the mutex was released. Do not
+            // reconcile or write an observation against stale configuration.
+            return Ok(FolderRefreshResult::RecordedFailure(folder_error_outcome(
+                &error,
+            )));
+        }
+        Err(error) => {
+            // The exact registration still exists, so a root safety failure is
+            // a safe runtime observation even though reconcile must not run.
+            let outcome = folder_error_outcome(&error);
+            record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+            return Ok(FolderRefreshResult::RecordedFailure(outcome));
+        }
+    }
+    let files = match scan_result {
+        Ok(files) => files,
+        Err(watched_folders::WatchedFolderError::Database) => {
+            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+        }
+        Err(error) => {
+            let outcome = folder_error_outcome(&error);
+            record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+            return Ok(FolderRefreshResult::RecordedFailure(outcome));
+        }
+    };
+    let scan = watched_folders::WatchedFolderScanDto {
+        watched_folder_id: watched_folder_id.to_owned(),
+        files,
+    };
+    if let Err(error) =
+        watched_file_inbox::reconcile_scan(connection, household_id, watched_folder_id, &scan.files)
+    {
+        if error == watched_file_inbox::WatchedFileInboxError::Database {
+            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+        }
+        let outcome = RefreshOutcome::NeedsAction {
+            error_code: "FOLDER_RECONCILE_REQUIRED".to_owned(),
+        };
+        record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+        return Ok(FolderRefreshResult::RecordedFailure(outcome));
+    }
+    let after = inbox_generation_count(connection, household_id, watched_folder_id)?;
+    let changed_count = after.saturating_sub(before);
+    let outcome = if changed_count == 0 {
+        RefreshOutcome::NoChanges
+    } else {
+        RefreshOutcome::Succeeded { changed_count }
+    };
+    record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+    Ok(FolderRefreshResult::Scanned { scan, outcome })
+}
+
+#[cfg(test)]
 pub(crate) fn refresh_registered(
     connection: &rusqlite::Connection,
     household_id: &str,
@@ -549,18 +721,20 @@ fn file_change(
 #[cfg(test)]
 mod tests {
     use super::{
-        diff_snapshots, keys_for_native_paths, refresh_registered, ChangeKind,
-        FolderDiscoveryEventDto, FolderKey, FolderRefreshResult, FolderSnapshot, Registrations,
-        StopSignal,
+        diff_snapshots, keys_for_native_paths, refresh_registered,
+        refresh_registered_state_with_scanner, ChangeKind, FolderDiscoveryEventDto, FolderKey,
+        FolderRefreshResult, FolderSnapshot, RegisteredFolderScanner, Registrations, StopSignal,
     };
     use crate::{
-        connector_refresh::RefreshOutcome,
+        connector_control::ConnectorKind,
+        connector_refresh::{self, RefreshItemStatus, RefreshOutcome, RefreshTarget},
         persistence::AppState,
-        watched_folders::{self, WatchedFileMetadataDto},
+        watched_folders::{self, RegisteredFolderScanPlan, WatchedFileMetadataDto},
     };
     use std::collections::BTreeSet;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
 
     fn file(path: &str, bytes: u64, modified: u64) -> WatchedFileMetadataDto {
@@ -575,6 +749,56 @@ mod tests {
 
     fn key(household: &str, folder: &str) -> FolderKey {
         (household.to_owned(), folder.to_owned())
+    }
+
+    #[derive(Default)]
+    struct BlockingScanGate {
+        started: Mutex<bool>,
+        started_changed: Condvar,
+        released: Mutex<bool>,
+        released_changed: Condvar,
+    }
+
+    struct BlockingScanner {
+        gate: Arc<BlockingScanGate>,
+        calls: AtomicUsize,
+        files: Vec<WatchedFileMetadataDto>,
+    }
+
+    impl BlockingScanner {
+        fn wait_until_started(&self) {
+            let started = self.gate.started.lock().unwrap();
+            drop(
+                self.gate
+                    .started_changed
+                    .wait_while(started, |started| !*started)
+                    .unwrap(),
+            );
+        }
+
+        fn release(&self) {
+            *self.gate.released.lock().unwrap() = true;
+            self.gate.released_changed.notify_all();
+        }
+    }
+
+    impl RegisteredFolderScanner for BlockingScanner {
+        fn scan(
+            &self,
+            _plan: &RegisteredFolderScanPlan,
+        ) -> Result<Vec<WatchedFileMetadataDto>, watched_folders::WatchedFolderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            *self.gate.started.lock().unwrap() = true;
+            self.gate.started_changed.notify_all();
+            let released = self.gate.released.lock().unwrap();
+            drop(
+                self.gate
+                    .released_changed
+                    .wait_while(released, |released| !*released)
+                    .unwrap(),
+            );
+            Ok(self.files.clone())
+        }
     }
 
     #[test]
@@ -658,6 +882,183 @@ mod tests {
         signal.stop();
         assert!(worker.join().unwrap());
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn blocking_scan_releases_database_for_multiple_renewals_and_completes_original_result_once() {
+        let state = Arc::new(AppState::in_memory(b"folder-unlocked-scan-key").unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let canonical_directory = std::fs::canonicalize(directory.path()).unwrap();
+        let (folder_id, batch, claim) = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                let folder =
+                    watched_folders::register(connection, "home", "Bank", &canonical_directory)
+                        .unwrap();
+                let batch = connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[RefreshTarget {
+                        connector_kind: ConnectorKind::WatchedFolder,
+                        connection_key: folder.id.clone(),
+                    }],
+                )
+                .unwrap();
+                let claim = connector_refresh::claim_next(connection, "home", &batch.batch_id)
+                    .unwrap()
+                    .unwrap();
+                Ok((folder.id, batch, claim))
+            })
+            .unwrap();
+        let scanner = Arc::new(BlockingScanner {
+            gate: Arc::new(BlockingScanGate::default()),
+            calls: AtomicUsize::new(0),
+            files: vec![file("bank.csv", 10, 1)],
+        });
+        let scan_state = Arc::clone(&state);
+        let scan_scanner = Arc::clone(&scanner);
+        let scan_folder_id = folder_id.clone();
+        let scan = std::thread::spawn(move || {
+            refresh_registered_state_with_scanner(
+                scan_state.as_ref(),
+                "home",
+                &scan_folder_id,
+                scan_scanner.as_ref(),
+            )
+        });
+        scanner.wait_until_started();
+
+        for _ in 0..2 {
+            state
+                .with_connection(|connection| {
+                    connector_refresh::heartbeat_item(
+                        connection,
+                        "home",
+                        &claim.batch_id,
+                        &claim.item_id,
+                        &claim.lease_token,
+                        claim.attempt_generation,
+                    )
+                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+                })
+                .unwrap();
+        }
+        scanner.release();
+        let result = scan.join().unwrap().unwrap();
+        let outcome = match result {
+            FolderRefreshResult::Scanned { outcome, .. } => outcome,
+            FolderRefreshResult::RecordedFailure(_) => panic!("scan must preserve success"),
+        };
+        assert_eq!(outcome, RefreshOutcome::Succeeded { changed_count: 1 });
+        assert_eq!(scanner.calls.load(Ordering::SeqCst), 1);
+
+        state
+            .with_connection(|connection| {
+                connector_refresh::complete_item(
+                    connection,
+                    "home",
+                    &claim.batch_id,
+                    &claim.item_id,
+                    &claim.lease_token,
+                    claim.attempt_generation,
+                    &outcome,
+                )
+                .unwrap();
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].attempt_generation, 1);
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::Succeeded);
+                assert_eq!(loaded.items[0].changed_count, 1);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn removal_or_path_change_during_unlocked_scan_never_reconciles_stale_files() {
+        for remove_registration in [false, true] {
+            let state = Arc::new(AppState::in_memory(b"folder-stale-scan-key").unwrap());
+            let first = tempfile::tempdir().unwrap();
+            let second = tempfile::tempdir().unwrap();
+            let first = std::fs::canonicalize(first.path()).unwrap();
+            let second = std::fs::canonicalize(second.path()).unwrap();
+            let folder_id = state
+                .with_connection(|connection| {
+                    connection
+                        .execute("INSERT INTO households(id,name) VALUES('home','Home')", [])
+                        .unwrap();
+                    Ok(
+                        watched_folders::register(connection, "home", "Bank", &first)
+                            .unwrap()
+                            .id,
+                    )
+                })
+                .unwrap();
+            let scanner = Arc::new(BlockingScanner {
+                gate: Arc::new(BlockingScanGate::default()),
+                calls: AtomicUsize::new(0),
+                files: vec![file("stale.csv", 10, 1)],
+            });
+            let scan_state = Arc::clone(&state);
+            let scan_scanner = Arc::clone(&scanner);
+            let scan_folder_id = folder_id.clone();
+            let scan = std::thread::spawn(move || {
+                refresh_registered_state_with_scanner(
+                    scan_state.as_ref(),
+                    "home",
+                    &scan_folder_id,
+                    scan_scanner.as_ref(),
+                )
+            });
+            scanner.wait_until_started();
+            state
+                .with_connection(|connection| {
+                    if remove_registration {
+                        watched_folders::remove(connection, "home", &folder_id).unwrap();
+                    } else {
+                        connection
+                            .execute(
+                                "UPDATE watched_folders SET canonical_path=?1
+                                 WHERE household_id='home' AND id=?2",
+                                rusqlite::params![second.to_str().unwrap(), folder_id],
+                            )
+                            .unwrap();
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            scanner.release();
+
+            assert!(matches!(
+                scan.join().unwrap().unwrap(),
+                FolderRefreshResult::RecordedFailure(RefreshOutcome::NeedsAction {
+                    ref error_code
+                }) if error_code == "FOLDER_CONFIGURATION_REQUIRED"
+            ));
+            state
+                .with_connection(|connection| {
+                    assert_eq!(
+                        connection.query_row(
+                            "SELECT count(*) FROM watched_file_inbox WHERE relative_path='stale.csv'",
+                            [],
+                            |row| row.get::<_, u64>(0),
+                        )?,
+                        0
+                    );
+                    assert_eq!(
+                        connection.query_row(
+                            "SELECT count(*) FROM connector_runtime_observations
+                             WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'
+                               AND connection_key=?1",
+                            [&folder_id],
+                            |row| row.get::<_, u64>(0),
+                        )?,
+                        0
+                    );
+                    Ok(())
+                })
+                .unwrap();
+        }
     }
 
     #[test]
