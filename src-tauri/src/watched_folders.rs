@@ -169,6 +169,38 @@ pub(crate) struct RegisteredFolderScanPlan {
     root_identity: DirectoryIdentity,
 }
 
+/// Opaque output from the production no-follow traversal. Callers can neither
+/// construct it without scanning nor replace the observed root identity.
+#[derive(Debug)]
+pub(crate) struct RegisteredFolderScanResult {
+    files: Vec<WatchedFileMetadataDto>,
+    observed_root_identity: DirectoryIdentity,
+}
+
+impl RegisteredFolderScanResult {
+    pub(crate) fn into_scan(self, watched_folder_id: &str) -> WatchedFolderScanDto {
+        WatchedFolderScanDto {
+            watched_folder_id: watched_folder_id.to_owned(),
+            files: self.files,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum RegisteredFolderScanValidationError {
+    ObservedRootChanged,
+    Watched(WatchedFolderError),
+}
+
+impl RegisteredFolderScanValidationError {
+    pub(crate) fn into_watched(self) -> WatchedFolderError {
+        match self {
+            Self::ObservedRootChanged => WatchedFolderError::FolderUnavailable,
+            Self::Watched(error) => error,
+        }
+    }
+}
+
 pub(crate) fn list_enabled_registrations(
     connection: &Connection,
 ) -> Result<Vec<EnabledWatchedFolder>, WatchedFolderError> {
@@ -418,12 +450,10 @@ pub fn scan_registered(
     watched_folder_id: &str,
 ) -> Result<WatchedFolderScanDto, WatchedFolderError> {
     let plan = prepare_registered_scan(connection, household_id, watched_folder_id)?;
-    let files = scan_prepared_registered(&plan)?;
-    validate_registered_scan_plan(connection, &plan)?;
-    Ok(WatchedFolderScanDto {
-        watched_folder_id: watched_folder_id.to_owned(),
-        files,
-    })
+    let scan = scan_prepared_registered(&plan)?;
+    validate_registered_scan_plan(connection, &plan, &scan)
+        .map_err(RegisteredFolderScanValidationError::into_watched)?;
+    Ok(scan.into_scan(watched_folder_id))
 }
 
 pub(crate) fn prepare_registered_scan(
@@ -474,13 +504,25 @@ pub(crate) fn prepare_registered_scan(
 
 pub(crate) fn scan_prepared_registered(
     plan: &RegisteredFolderScanPlan,
-) -> Result<Vec<WatchedFileMetadataDto>, WatchedFolderError> {
+) -> Result<RegisteredFolderScanResult, WatchedFolderError> {
     scan_directory(&plan.canonical_root)
 }
 
 /// Rebind an unlocked traversal to the exact enabled registration and root
 /// identity that authorized it. This must run immediately before reconcile.
 pub(crate) fn validate_registered_scan_plan(
+    connection: &Connection,
+    plan: &RegisteredFolderScanPlan,
+    scan: &RegisteredFolderScanResult,
+) -> Result<(), RegisteredFolderScanValidationError> {
+    if scan.observed_root_identity != plan.root_identity {
+        return Err(RegisteredFolderScanValidationError::ObservedRootChanged);
+    }
+    validate_registered_scan_configuration(connection, plan)
+        .map_err(RegisteredFolderScanValidationError::Watched)
+}
+
+pub(crate) fn validate_registered_scan_configuration(
     connection: &Connection,
     plan: &RegisteredFolderScanPlan,
 ) -> Result<(), WatchedFolderError> {
@@ -710,12 +752,23 @@ fn verify_path_matches_open_file(
     Ok(verification_metadata)
 }
 
-fn scan_directory(root: &Path) -> Result<Vec<WatchedFileMetadataDto>, WatchedFolderError> {
+fn scan_directory(root: &Path) -> Result<RegisteredFolderScanResult, WatchedFolderError> {
+    scan_directory_with_observer(root, |_| {})
+}
+
+fn scan_directory_with_observer(
+    root: &Path,
+    mut after_directory: impl FnMut(&Path),
+) -> Result<RegisteredFolderScanResult, WatchedFolderError> {
+    let observed_root_identity = validate_scan_directory(root, root)?;
     let mut pending = vec![(root.to_path_buf(), 0_usize)];
     let mut visited_entries = 0_usize;
     let mut files = Vec::new();
 
     while let Some((directory, depth)) = pending.pop() {
+        if validate_scan_directory(root, root)? != observed_root_identity {
+            return Err(WatchedFolderError::FolderUnavailable);
+        }
         let directory_identity = validate_scan_directory(root, &directory)?;
         for entry in fs::read_dir(&directory).map_err(|_| WatchedFolderError::FolderUnavailable)? {
             let entry = entry.map_err(|_| WatchedFolderError::FolderUnavailable)?;
@@ -788,9 +841,16 @@ fn scan_directory(root: &Path) -> Result<Vec<WatchedFileMetadataDto>, WatchedFol
         if validate_scan_directory(root, &directory)? != directory_identity {
             return Err(WatchedFolderError::FolderUnavailable);
         }
+        after_directory(&directory);
+    }
+    if validate_scan_directory(root, root)? != observed_root_identity {
+        return Err(WatchedFolderError::FolderUnavailable);
     }
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
-    Ok(files)
+    Ok(RegisteredFolderScanResult {
+        files,
+        observed_root_identity,
+    })
 }
 
 fn modified_unix_ms(metadata: &fs::Metadata) -> Option<u64> {
@@ -1087,7 +1147,7 @@ mod tests {
             .unwrap();
         fs::File::create(root.join("ignore.txt")).unwrap();
 
-        let files = scan_directory(&root).unwrap();
+        let files = scan_directory(&root).unwrap().files;
         assert_eq!(files.len(), 4);
         assert_eq!(files[0].relative_path, "bank.csv");
         assert_eq!(files[0].byte_size, 11);
@@ -1098,6 +1158,30 @@ mod tests {
         assert_eq!(files[3].relative_path, "wallet.tsv");
         assert_eq!(files[3].media_type, "text/tab-separated-values");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn root_replacement_after_directory_enumeration_is_rejected() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("root");
+        let replacement = parent.path().join("replacement");
+        let parked = parent.path().join("parked");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&replacement).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let replacement = fs::canonicalize(replacement).unwrap();
+        let mut swapped = false;
+
+        let result = scan_directory_with_observer(&root, |_| {
+            if !swapped {
+                fs::rename(&root, &parked).unwrap();
+                fs::rename(&replacement, &root).unwrap();
+                swapped = true;
+            }
+        });
+        assert!(matches!(result, Err(WatchedFolderError::FolderUnavailable)));
+        fs::rename(&root, &replacement).unwrap();
+        fs::rename(&parked, &root).unwrap();
     }
 
     #[cfg(unix)]
@@ -1115,7 +1199,7 @@ mod tests {
 
         fs::File::create(root.join("receipt.pdf")).unwrap();
         symlink(root.join("receipt.pdf"), root.join("linked.pdf")).unwrap();
-        let files = scan_directory(&root).unwrap();
+        let files = scan_directory(&root).unwrap().files;
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].relative_path, "receipt.pdf");
         fs::remove_file(linked_root).unwrap();
