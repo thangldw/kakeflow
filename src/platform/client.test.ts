@@ -150,7 +150,7 @@ describe('platform client', () => {
           bindingSummary: null, configurationDestination: 'IMPORT_INBOX',
         },
       ],
-      nextCursor: 'WATCHED_FOLDER:watched-inbox',
+      nextCursor: { connectorKind: 'WATCHED_FOLDER', connectionKey: 'watched-inbox' },
     }
     const invokeSpy = vi.fn()
     const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => {
@@ -158,12 +158,20 @@ describe('platform client', () => {
       return page as T
     } })
 
-    await expect(client.listConnectorSummaries('family', 'GMAIL:gmail-primary', 25)).resolves.toEqual(page)
+    await expect(client.listConnectorSummaries('family', { connectorKind: 'GMAIL', connectionKey: 'gmail-primary' }, 25)).resolves.toEqual(page)
     expect(invokeSpy).toHaveBeenCalledWith('connector_control_list', {
-      householdId: 'family', cursor: 'GMAIL:gmail-primary', limit: 25,
+      householdId: 'family', cursor: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary' }, limit: 25,
     })
     await expect(client.listConnectorSummaries('family', undefined, 0)).rejects.toThrow('connector limit')
     await expect(client.listConnectorSummaries('family', undefined, 101)).rejects.toThrow('connector limit')
+    for (const cursor of [
+      'provider-cursor-secret',
+      { connectorKind: 'DROPBOX', connectionKey: 'drive-primary' },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129) },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', providerCursor: 'provider-cursor-secret' },
+    ]) {
+      await expect(client.listConnectorSummaries('family', cursor as never)).rejects.toThrow('connector cursor')
+    }
 
     const invalidPages = [
       { name: 'unknown enum', value: { ...page, items: [{ ...page.items[0], connectorKind: 'DROPBOX' }] } },
@@ -179,6 +187,10 @@ describe('platform client', () => {
       { name: 'manual health on a non-manual connector', value: { ...page, items: [{ ...page.items[0], health: 'MANUAL' }] } },
       { name: 'provider cursor field', value: { ...page, items: [{ ...page.items[0], cursor: 'provider-cursor-secret' }] } },
       { name: 'provider path field', value: { ...page, items: [{ ...page.items[0], absolutePath: '/Users/private/statement.csv' }] } },
+      { name: 'provider-secret next cursor', value: { ...page, nextCursor: 'provider-cursor-secret' } },
+      { name: 'malformed next cursor', value: { ...page, nextCursor: { connectorKind: 'DROPBOX', connectionKey: 'drive-primary' } } },
+      { name: 'oversized next cursor', value: { ...page, nextCursor: { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129) } } },
+      { name: 'provider field in next cursor', value: { ...page, nextCursor: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', providerCursor: 'provider-cursor-secret' } } },
     ]
     for (const { value } of invalidPages) {
       const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => value as T })
