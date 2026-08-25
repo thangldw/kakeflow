@@ -41,6 +41,21 @@ pub(crate) enum FolderRefreshInfrastructureError {
     PersistenceUnavailable,
 }
 
+#[derive(Debug)]
+pub(crate) enum RegisteredFolderStateScanError {
+    StateAccess,
+    Watched(watched_folders::WatchedFolderError),
+}
+
+impl RegisteredFolderStateScanError {
+    pub(crate) fn public_message(&self) -> &'static str {
+        match self {
+            Self::StateAccess => "Watched folder database access failed",
+            Self::Watched(error) => error.public_message(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ChangeKind {
@@ -368,7 +383,7 @@ pub(crate) trait RegisteredFolderScanner {
     fn scan(
         &self,
         plan: &watched_folders::RegisteredFolderScanPlan,
-    ) -> Result<Vec<watched_folders::WatchedFileMetadataDto>, watched_folders::WatchedFolderError>;
+    ) -> Result<watched_folders::RegisteredFolderScanResult, watched_folders::WatchedFolderError>;
 }
 
 struct FilesystemRegisteredFolderScanner;
@@ -377,10 +392,71 @@ impl RegisteredFolderScanner for FilesystemRegisteredFolderScanner {
     fn scan(
         &self,
         plan: &watched_folders::RegisteredFolderScanPlan,
-    ) -> Result<Vec<watched_folders::WatchedFileMetadataDto>, watched_folders::WatchedFolderError>
+    ) -> Result<watched_folders::RegisteredFolderScanResult, watched_folders::WatchedFolderError>
     {
         watched_folders::scan_prepared_registered(plan)
     }
+}
+
+pub(crate) fn scan_registered_state(
+    state: &AppState,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<watched_folders::WatchedFolderScanDto, RegisteredFolderStateScanError> {
+    scan_registered_state_with_scanner(
+        state,
+        household_id,
+        watched_folder_id,
+        &FilesystemRegisteredFolderScanner,
+    )
+}
+
+pub(crate) fn scan_registered_state_with_scanner(
+    state: &AppState,
+    household_id: &str,
+    watched_folder_id: &str,
+    scanner: &impl RegisteredFolderScanner,
+) -> Result<watched_folders::WatchedFolderScanDto, RegisteredFolderStateScanError> {
+    let plan = state
+        .with_connection(|connection| {
+            Ok(watched_folders::prepare_registered_scan(
+                connection,
+                household_id,
+                watched_folder_id,
+            ))
+        })
+        .map_err(|_| RegisteredFolderStateScanError::StateAccess)?
+        .map_err(RegisteredFolderStateScanError::Watched)?;
+    let scanned = scanner
+        .scan(&plan)
+        .map_err(RegisteredFolderStateScanError::Watched)?;
+    state
+        .with_connection(|connection| {
+            Ok(finish_registered_state_scan(
+                connection,
+                household_id,
+                watched_folder_id,
+                &plan,
+                scanned,
+            ))
+        })
+        .map_err(|_| RegisteredFolderStateScanError::StateAccess)?
+        .map_err(RegisteredFolderStateScanError::Watched)
+}
+
+fn finish_registered_state_scan(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+    plan: &watched_folders::RegisteredFolderScanPlan,
+    scanned: watched_folders::RegisteredFolderScanResult,
+) -> Result<watched_folders::WatchedFolderScanDto, watched_folders::WatchedFolderError> {
+    watched_folders::validate_registered_scan_plan(connection, plan, &scanned)
+        .map_err(watched_folders::RegisteredFolderScanValidationError::into_watched)?;
+    let scan = scanned.into_scan(watched_folder_id);
+    watched_file_inbox::reconcile_scan(connection, household_id, watched_folder_id, &scan.files)
+        .map_err(|_| watched_folders::WatchedFolderError::Database)?;
+    Ok(scan)
 }
 
 enum PreparedFolderRefresh {
@@ -470,26 +546,68 @@ fn finish_prepared_refresh(
     before: u64,
     plan: &watched_folders::RegisteredFolderScanPlan,
     scan_result: Result<
-        Vec<watched_folders::WatchedFileMetadataDto>,
+        watched_folders::RegisteredFolderScanResult,
         watched_folders::WatchedFolderError,
     >,
 ) -> Result<FolderRefreshResult, FolderRefreshInfrastructureError> {
-    match watched_folders::validate_registered_scan_plan(connection, plan) {
-        Ok(()) => {}
+    let scanned = match scan_result {
+        Ok(scanned) => scanned,
         Err(watched_folders::WatchedFolderError::Database) => {
             return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
         }
-        Err(
+        Err(error) => {
+            match watched_folders::validate_registered_scan_configuration(connection, plan) {
+                Ok(()) => {}
+                Err(watched_folders::WatchedFolderError::Database) => {
+                    return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+                }
+                Err(
+                    validation_error @ (watched_folders::WatchedFolderError::NotFound
+                    | watched_folders::WatchedFolderError::Conflict),
+                ) => {
+                    return Ok(FolderRefreshResult::RecordedFailure(folder_error_outcome(
+                        &validation_error,
+                    )));
+                }
+                Err(validation_error) => {
+                    let outcome = folder_error_outcome(&validation_error);
+                    record_folder_observation(
+                        connection,
+                        household_id,
+                        watched_folder_id,
+                        &outcome,
+                    )?;
+                    return Ok(FolderRefreshResult::RecordedFailure(outcome));
+                }
+            }
+            let outcome = folder_error_outcome(&error);
+            record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+            return Ok(FolderRefreshResult::RecordedFailure(outcome));
+        }
+    };
+    match watched_folders::validate_registered_scan_plan(connection, plan, &scanned) {
+        Ok(()) => {}
+        Err(watched_folders::RegisteredFolderScanValidationError::ObservedRootChanged) => {
+            return Ok(FolderRefreshResult::RecordedFailure(folder_error_outcome(
+                &watched_folders::WatchedFolderError::FolderUnavailable,
+            )));
+        }
+        Err(watched_folders::RegisteredFolderScanValidationError::Watched(
+            watched_folders::WatchedFolderError::Database,
+        )) => {
+            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+        }
+        Err(watched_folders::RegisteredFolderScanValidationError::Watched(
             error @ (watched_folders::WatchedFolderError::NotFound
             | watched_folders::WatchedFolderError::Conflict),
-        ) => {
+        )) => {
             // The registration changed while the mutex was released. Do not
             // reconcile or write an observation against stale configuration.
             return Ok(FolderRefreshResult::RecordedFailure(folder_error_outcome(
                 &error,
             )));
         }
-        Err(error) => {
+        Err(watched_folders::RegisteredFolderScanValidationError::Watched(error)) => {
             // The exact registration still exists, so a root safety failure is
             // a safe runtime observation even though reconcile must not run.
             let outcome = folder_error_outcome(&error);
@@ -497,21 +615,7 @@ fn finish_prepared_refresh(
             return Ok(FolderRefreshResult::RecordedFailure(outcome));
         }
     }
-    let files = match scan_result {
-        Ok(files) => files,
-        Err(watched_folders::WatchedFolderError::Database) => {
-            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
-        }
-        Err(error) => {
-            let outcome = folder_error_outcome(&error);
-            record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
-            return Ok(FolderRefreshResult::RecordedFailure(outcome));
-        }
-    };
-    let scan = watched_folders::WatchedFolderScanDto {
-        watched_folder_id: watched_folder_id.to_owned(),
-        files,
-    };
+    let scan = scanned.into_scan(watched_folder_id);
     if let Err(error) =
         watched_file_inbox::reconcile_scan(connection, household_id, watched_folder_id, &scan.files)
     {
@@ -723,13 +827,16 @@ mod tests {
     use super::{
         diff_snapshots, keys_for_native_paths, refresh_registered,
         refresh_registered_state_with_scanner, ChangeKind, FolderDiscoveryEventDto, FolderKey,
-        FolderRefreshResult, FolderSnapshot, RegisteredFolderScanner, Registrations, StopSignal,
+        FolderRefreshInfrastructureError, FolderRefreshResult, FolderSnapshot,
+        RegisteredFolderScanner, Registrations, StopSignal,
     };
     use crate::{
         connector_control::ConnectorKind,
         connector_refresh::{self, RefreshItemStatus, RefreshOutcome, RefreshTarget},
         persistence::AppState,
-        watched_folders::{self, RegisteredFolderScanPlan, WatchedFileMetadataDto},
+        watched_folders::{
+            self, RegisteredFolderScanPlan, RegisteredFolderScanResult, WatchedFileMetadataDto,
+        },
     };
     use std::collections::BTreeSet;
     use std::path::PathBuf;
@@ -762,7 +869,6 @@ mod tests {
     struct BlockingScanner {
         gate: Arc<BlockingScanGate>,
         calls: AtomicUsize,
-        files: Vec<WatchedFileMetadataDto>,
     }
 
     impl BlockingScanner {
@@ -785,8 +891,8 @@ mod tests {
     impl RegisteredFolderScanner for BlockingScanner {
         fn scan(
             &self,
-            _plan: &RegisteredFolderScanPlan,
-        ) -> Result<Vec<WatchedFileMetadataDto>, watched_folders::WatchedFolderError> {
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             *self.gate.started.lock().unwrap() = true;
             self.gate.started_changed.notify_all();
@@ -797,7 +903,38 @@ mod tests {
                     .wait_while(released, |released| !*released)
                     .unwrap(),
             );
-            Ok(self.files.clone())
+            watched_folders::scan_prepared_registered(plan)
+        }
+    }
+
+    struct SwapRestoreScanner {
+        registered_root: PathBuf,
+        replacement_root: PathBuf,
+        parked_root: PathBuf,
+    }
+
+    impl RegisteredFolderScanner for SwapRestoreScanner {
+        fn scan(
+            &self,
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
+            std::fs::rename(&self.registered_root, &self.parked_root).unwrap();
+            std::fs::rename(&self.replacement_root, &self.registered_root).unwrap();
+            let scanned = watched_folders::scan_prepared_registered(plan);
+            std::fs::rename(&self.registered_root, &self.replacement_root).unwrap();
+            std::fs::rename(&self.parked_root, &self.registered_root).unwrap();
+            scanned
+        }
+    }
+
+    struct DatabaseFailureScanner;
+
+    impl RegisteredFolderScanner for DatabaseFailureScanner {
+        fn scan(
+            &self,
+            _plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
+            Err(watched_folders::WatchedFolderError::Database)
         }
     }
 
@@ -888,6 +1025,7 @@ mod tests {
     fn blocking_scan_releases_database_for_multiple_renewals_and_completes_original_result_once() {
         let state = Arc::new(AppState::in_memory(b"folder-unlocked-scan-key").unwrap());
         let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("bank.csv"), b"date,amount\n").unwrap();
         let canonical_directory = std::fs::canonicalize(directory.path()).unwrap();
         let (folder_id, batch, claim) = state
             .with_connection(|connection| {
@@ -913,7 +1051,6 @@ mod tests {
         let scanner = Arc::new(BlockingScanner {
             gate: Arc::new(BlockingScanGate::default()),
             calls: AtomicUsize::new(0),
-            files: vec![file("bank.csv", 10, 1)],
         });
         let scan_state = Arc::clone(&state);
         let scan_scanner = Arc::clone(&scanner);
@@ -980,6 +1117,7 @@ mod tests {
             let state = Arc::new(AppState::in_memory(b"folder-stale-scan-key").unwrap());
             let first = tempfile::tempdir().unwrap();
             let second = tempfile::tempdir().unwrap();
+            std::fs::write(first.path().join("stale.csv"), b"stale").unwrap();
             let first = std::fs::canonicalize(first.path()).unwrap();
             let second = std::fs::canonicalize(second.path()).unwrap();
             let folder_id = state
@@ -997,7 +1135,6 @@ mod tests {
             let scanner = Arc::new(BlockingScanner {
                 gate: Arc::new(BlockingScanGate::default()),
                 calls: AtomicUsize::new(0),
-                files: vec![file("stale.csv", 10, 1)],
             });
             let scan_state = Arc::clone(&state);
             let scan_scanner = Arc::clone(&scanner);
@@ -1059,6 +1196,104 @@ mod tests {
                 })
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn restored_registered_root_cannot_reconcile_files_scanned_from_replacement_identity() {
+        let state = AppState::in_memory(b"folder-root-swap-key").unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let registered_root = parent.path().join("registered");
+        let replacement_root = parent.path().join("replacement");
+        let parked_root = parent.path().join("parked");
+        std::fs::create_dir(&registered_root).unwrap();
+        std::fs::create_dir(&replacement_root).unwrap();
+        std::fs::write(registered_root.join("original.csv"), b"original").unwrap();
+        std::fs::write(replacement_root.join("replacement.csv"), b"replacement").unwrap();
+        let registered_root = std::fs::canonicalize(registered_root).unwrap();
+        let replacement_root = std::fs::canonicalize(replacement_root).unwrap();
+        let folder_id = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(
+                    watched_folders::register(connection, "home", "Bank", &registered_root)
+                        .unwrap()
+                        .id,
+                )
+            })
+            .unwrap();
+        let scanner = SwapRestoreScanner {
+            registered_root,
+            replacement_root,
+            parked_root,
+        };
+
+        assert!(matches!(
+            refresh_registered_state_with_scanner(&state, "home", &folder_id, &scanner).unwrap(),
+            FolderRefreshResult::RecordedFailure(RefreshOutcome::FailedRetryable {
+                ref error_code
+            }) if error_code == "FOLDER_UNAVAILABLE"
+        ));
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM watched_file_inbox WHERE household_id='home'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn scanner_database_failure_remains_infrastructure_and_writes_no_observation() {
+        let state = AppState::in_memory(b"folder-scanner-database-key").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(directory.path()).unwrap();
+        let folder_id = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(watched_folders::register(connection, "home", "Bank", &root)
+                    .unwrap()
+                    .id)
+            })
+            .unwrap();
+
+        assert!(matches!(
+            refresh_registered_state_with_scanner(
+                &state,
+                "home",
+                &folder_id,
+                &DatabaseFailureScanner,
+            ),
+            Err(FolderRefreshInfrastructureError::PersistenceUnavailable)
+        ));
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

@@ -679,7 +679,7 @@ mod tests {
         },
         gmail_store, google_drive_store,
         persistence::AppState,
-        watched_folders::{self, RegisteredFolderScanPlan, WatchedFileMetadataDto},
+        watched_folders::{self, RegisteredFolderScanPlan, RegisteredFolderScanResult},
     };
     use rusqlite::{params, Connection};
     use std::cell::{Cell, RefCell};
@@ -1569,8 +1569,8 @@ mod tests {
     impl folder_discovery::RegisteredFolderScanner for BlockingWatchedScanner {
         fn scan(
             &self,
-            _plan: &RegisteredFolderScanPlan,
-        ) -> Result<Vec<WatchedFileMetadataDto>, watched_folders::WatchedFolderError> {
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             *self.gate.started.lock().unwrap() = true;
             self.gate.started_changed.notify_all();
@@ -1581,13 +1581,7 @@ mod tests {
                     .wait_while(released, |released| !*released)
                     .unwrap(),
             );
-            Ok(vec![WatchedFileMetadataDto {
-                relative_path: "bank.csv".to_owned(),
-                file_name: "bank.csv".to_owned(),
-                media_type: "text/csv".to_owned(),
-                byte_size: 10,
-                modified_unix_ms: Some(1),
-            }])
+            watched_folders::scan_prepared_registered(plan)
         }
     }
 
@@ -1696,6 +1690,7 @@ mod tests {
     fn blocking_watched_scan_keeps_lease_renewing_and_persists_original_result_without_replay() {
         let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
         let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("bank.csv"), b"date,amount\n").unwrap();
         let canonical_directory = std::fs::canonicalize(directory.path()).unwrap();
         let batch = state
             .with_connection(|connection| {
