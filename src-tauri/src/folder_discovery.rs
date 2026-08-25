@@ -453,10 +453,14 @@ fn finish_registered_state_scan(
 ) -> Result<watched_folders::WatchedFolderScanDto, watched_folders::WatchedFolderError> {
     watched_folders::validate_registered_scan_plan(connection, plan, &scanned)
         .map_err(watched_folders::RegisteredFolderScanValidationError::into_watched)?;
-    let scan = scanned.into_scan(watched_folder_id);
-    watched_file_inbox::reconcile_scan(connection, household_id, watched_folder_id, &scan.files)
-        .map_err(|_| watched_folders::WatchedFolderError::Database)?;
-    Ok(scan)
+    watched_file_inbox::reconcile_scan(
+        connection,
+        household_id,
+        watched_folder_id,
+        scanned.files(),
+    )
+    .map_err(|_| watched_folders::WatchedFolderError::Database)?;
+    Ok(scanned.into_scan(watched_folder_id))
 }
 
 enum PreparedFolderRefresh {
@@ -615,10 +619,12 @@ fn finish_prepared_refresh(
             return Ok(FolderRefreshResult::RecordedFailure(outcome));
         }
     }
-    let scan = scanned.into_scan(watched_folder_id);
-    if let Err(error) =
-        watched_file_inbox::reconcile_scan(connection, household_id, watched_folder_id, &scan.files)
-    {
+    if let Err(error) = watched_file_inbox::reconcile_scan(
+        connection,
+        household_id,
+        watched_folder_id,
+        scanned.files(),
+    ) {
         if error == watched_file_inbox::WatchedFileInboxError::Database {
             return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
         }
@@ -628,6 +634,7 @@ fn finish_prepared_refresh(
         record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
         return Ok(FolderRefreshResult::RecordedFailure(outcome));
     }
+    let scan = scanned.into_scan(watched_folder_id);
     let after = inbox_generation_count(connection, household_id, watched_folder_id)?;
     let changed_count = after.saturating_sub(before);
     let outcome = if changed_count == 0 {
@@ -924,6 +931,57 @@ mod tests {
             std::fs::rename(&self.registered_root, &self.replacement_root).unwrap();
             std::fs::rename(&self.parked_root, &self.registered_root).unwrap();
             scanned
+        }
+    }
+
+    struct BetweenIdentityAndEnumerationSwapScanner {
+        registered_root: PathBuf,
+        replacement_root: PathBuf,
+        parked_root: PathBuf,
+    }
+
+    impl RegisteredFolderScanner for BetweenIdentityAndEnumerationSwapScanner {
+        fn scan(
+            &self,
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
+            let mut swapped = false;
+            let scanned =
+                watched_folders::scan_prepared_registered_with_root_observer(plan, || {
+                    std::fs::rename(&self.registered_root, &self.parked_root).unwrap();
+                    std::fs::rename(&self.replacement_root, &self.registered_root).unwrap();
+                    swapped = true;
+                });
+            if swapped {
+                std::fs::rename(&self.registered_root, &self.replacement_root).unwrap();
+                std::fs::rename(&self.parked_root, &self.registered_root).unwrap();
+            }
+            scanned
+        }
+    }
+
+    struct RestoredBeforeFinalCheckScanner {
+        registered_root: PathBuf,
+        replacement_root: PathBuf,
+        parked_root: PathBuf,
+    }
+
+    impl RegisteredFolderScanner for RestoredBeforeFinalCheckScanner {
+        fn scan(
+            &self,
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
+            watched_folders::scan_prepared_registered_with_root_observers(
+                plan,
+                || {
+                    std::fs::rename(&self.registered_root, &self.parked_root).unwrap();
+                    std::fs::rename(&self.replacement_root, &self.registered_root).unwrap();
+                },
+                || {
+                    std::fs::rename(&self.registered_root, &self.replacement_root).unwrap();
+                    std::fs::rename(&self.parked_root, &self.registered_root).unwrap();
+                },
+            )
         }
     }
 
@@ -1233,6 +1291,121 @@ mod tests {
                 ref error_code
             }) if error_code == "FOLDER_UNAVAILABLE"
         ));
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM watched_file_inbox WHERE household_id='home'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn root_swap_between_identity_and_enumeration_writes_no_inbox_or_observation() {
+        let state = AppState::in_memory(b"folder-between-open-enumerate-swap-key").unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let registered_root = parent.path().join("registered");
+        let replacement_root = parent.path().join("replacement");
+        let parked_root = parent.path().join("parked");
+        std::fs::create_dir(&registered_root).unwrap();
+        std::fs::create_dir(&replacement_root).unwrap();
+        std::fs::write(registered_root.join("original.csv"), b"original").unwrap();
+        std::fs::write(replacement_root.join("replacement.csv"), b"replacement").unwrap();
+        let registered_root = std::fs::canonicalize(registered_root).unwrap();
+        let replacement_root = std::fs::canonicalize(replacement_root).unwrap();
+        let folder_id = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(
+                    watched_folders::register(connection, "home", "Bank", &registered_root)
+                        .unwrap()
+                        .id,
+                )
+            })
+            .unwrap();
+        let scanner = BetweenIdentityAndEnumerationSwapScanner {
+            registered_root,
+            replacement_root,
+            parked_root,
+        };
+
+        assert!(matches!(
+            refresh_registered_state_with_scanner(&state, "home", &folder_id, &scanner).unwrap(),
+            FolderRefreshResult::RecordedFailure(RefreshOutcome::FailedRetryable {
+                ref error_code
+            }) if error_code == "FOLDER_UNAVAILABLE"
+        ));
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM watched_file_inbox WHERE household_id='home'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn restored_root_swap_cannot_redirect_pinned_enumeration_to_replacement_files() {
+        let state = AppState::in_memory(b"folder-pinned-enumeration-key").unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let registered_root = parent.path().join("registered");
+        let replacement_root = parent.path().join("replacement");
+        let parked_root = parent.path().join("parked");
+        std::fs::create_dir(&registered_root).unwrap();
+        std::fs::create_dir(&replacement_root).unwrap();
+        std::fs::write(registered_root.join("ignored.txt"), b"original").unwrap();
+        std::fs::write(replacement_root.join("replacement.csv"), b"replacement").unwrap();
+        let registered_root = std::fs::canonicalize(registered_root).unwrap();
+        let replacement_root = std::fs::canonicalize(replacement_root).unwrap();
+        let folder_id = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(
+                    watched_folders::register(connection, "home", "Bank", &registered_root)
+                        .unwrap()
+                        .id,
+                )
+            })
+            .unwrap();
+        let scanner = RestoredBeforeFinalCheckScanner {
+            registered_root,
+            replacement_root,
+            parked_root,
+        };
+
+        let scan = super::scan_registered_state_with_scanner(&state, "home", &folder_id, &scanner)
+            .unwrap();
+        assert!(scan.files.is_empty());
         state
             .with_connection(|connection| {
                 assert_eq!(
