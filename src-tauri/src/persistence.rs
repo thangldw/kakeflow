@@ -1738,16 +1738,69 @@ fn validate_restored_semantics(
                 OR b.skipped_manual_count NOT BETWEEN 0 AND 10000
                 OR b.failed_count NOT BETWEEN 0 AND 10000
                 OR b.changed_count NOT BETWEEN 0 AND 9007199254740991
-                OR length(b.created_at) NOT BETWEEN 20 AND 32
-                OR substr(b.created_at,-1)!='Z' OR datetime(b.created_at) IS NULL
-                OR length(b.updated_at) NOT BETWEEN 20 AND 32
-                OR substr(b.updated_at,-1)!='Z' OR datetime(b.updated_at) IS NULL
+                OR NOT (
+                  (length(b.created_at)=20 OR length(b.created_at) BETWEEN 22 AND 32)
+                  AND substr(b.created_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',b.created_at) IS NOT NULL
+                  AND substr(b.created_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(b.created_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',b.created_at)
+                  AND (length(b.created_at)=20 OR (
+                    substr(b.created_at,20,1)='.'
+                    AND substr(b.created_at,21,length(b.created_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR NOT (
+                  (length(b.updated_at)=20 OR length(b.updated_at) BETWEEN 22 AND 32)
+                  AND substr(b.updated_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',b.updated_at) IS NOT NULL
+                  AND substr(b.updated_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(b.updated_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',b.updated_at)
+                  AND (length(b.updated_at)=20 OR (
+                    substr(b.updated_at,20,1)='.'
+                    AND substr(b.updated_at,21,length(b.updated_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR (b.completed_at IS NOT NULL AND NOT (
+                  (length(b.completed_at)=20
+                   OR length(b.completed_at) BETWEEN 22 AND 32)
+                  AND substr(b.completed_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',b.completed_at) IS NOT NULL
+                  AND substr(b.completed_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(b.completed_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',b.completed_at)
+                  AND (length(b.completed_at)=20 OR (
+                    substr(b.completed_at,20,1)='.'
+                    AND substr(b.completed_at,21,length(b.completed_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (strftime('%Y%m%d%H%M%S',b.updated_at)
+                      || CASE WHEN length(b.updated_at)=20 THEN '00000000000'
+                           ELSE substr(substr(b.updated_at,21,length(b.updated_at)-21)
+                                       ||'00000000000',1,11) END)
+                   < (strftime('%Y%m%d%H%M%S',b.created_at)
+                      || CASE WHEN length(b.created_at)=20 THEN '00000000000'
+                           ELSE substr(substr(b.created_at,21,length(b.created_at)-21)
+                                       ||'00000000000',1,11) END)
                 OR (b.completed_at IS NOT NULL AND (
-                     length(b.completed_at) NOT BETWEEN 20 AND 32
-                     OR substr(b.completed_at,-1)!='Z'
-                     OR datetime(b.completed_at) IS NULL))
-                OR b.updated_at<b.created_at
-                OR (b.completed_at IS NOT NULL AND b.completed_at<b.created_at)
+                  (strftime('%Y%m%d%H%M%S',b.completed_at)
+                    || CASE WHEN length(b.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(b.completed_at,21,length(b.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',b.created_at)
+                       || CASE WHEN length(b.created_at)=20 THEN '00000000000'
+                            ELSE substr(substr(b.created_at,21,length(b.created_at)-21)
+                                        ||'00000000000',1,11) END)
+                  OR (strftime('%Y%m%d%H%M%S',b.completed_at)
+                    || CASE WHEN length(b.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(b.completed_at,21,length(b.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',b.updated_at)
+                       || CASE WHEN length(b.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(b.updated_at,21,length(b.updated_at)-21)
+                                        ||'00000000000',1,11) END)
+                ))
                 OR b.terminal_count!=b.succeeded_count+b.no_changes_count
                                           +b.skipped_manual_count+b.failed_count
                 OR b.terminal_count>b.total_count
@@ -1786,33 +1839,135 @@ fn validate_restored_semantics(
                 OR (i.lease_token IS NOT NULL AND (
                      length(i.lease_token)!=64
                      OR i.lease_token GLOB '*[^0-9a-f]*'))
-                OR (i.lease_expires_at IS NOT NULL AND (
-                     length(i.lease_expires_at) NOT BETWEEN 20 AND 32
-                     OR substr(i.lease_expires_at,-1)!='Z'
-                     OR datetime(i.lease_expires_at) IS NULL))
+                OR (i.lease_expires_at IS NOT NULL AND NOT (
+                  (length(i.lease_expires_at)=20
+                   OR length(i.lease_expires_at) BETWEEN 22 AND 32)
+                  AND substr(i.lease_expires_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.lease_expires_at) IS NOT NULL
+                  AND substr(i.lease_expires_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.lease_expires_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.lease_expires_at)
+                  AND (length(i.lease_expires_at)=20 OR (
+                    substr(i.lease_expires_at,20,1)='.'
+                    AND substr(i.lease_expires_at,21,length(i.lease_expires_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
                 OR i.changed_count NOT BETWEEN 0 AND 9007199254740991
                 OR (i.last_error_code IS NOT NULL AND (
                      length(i.last_error_code) NOT BETWEEN 1 AND 64
                      OR i.last_error_code GLOB '*[^A-Z0-9_]*'))
-                OR length(i.created_at) NOT BETWEEN 20 AND 32
-                OR substr(i.created_at,-1)!='Z' OR datetime(i.created_at) IS NULL
-                OR length(i.updated_at) NOT BETWEEN 20 AND 32
-                OR substr(i.updated_at,-1)!='Z' OR datetime(i.updated_at) IS NULL
+                OR NOT (
+                  (length(i.created_at)=20 OR length(i.created_at) BETWEEN 22 AND 32)
+                  AND substr(i.created_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.created_at) IS NOT NULL
+                  AND substr(i.created_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.created_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.created_at)
+                  AND (length(i.created_at)=20 OR (
+                    substr(i.created_at,20,1)='.'
+                    AND substr(i.created_at,21,length(i.created_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR NOT (
+                  (length(i.updated_at)=20 OR length(i.updated_at) BETWEEN 22 AND 32)
+                  AND substr(i.updated_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.updated_at) IS NOT NULL
+                  AND substr(i.updated_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.updated_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.updated_at)
+                  AND (length(i.updated_at)=20 OR (
+                    substr(i.updated_at,20,1)='.'
+                    AND substr(i.updated_at,21,length(i.updated_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR (i.started_at IS NOT NULL AND NOT (
+                  (length(i.started_at)=20 OR length(i.started_at) BETWEEN 22 AND 32)
+                  AND substr(i.started_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.started_at) IS NOT NULL
+                  AND substr(i.started_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.started_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.started_at)
+                  AND (length(i.started_at)=20 OR (
+                    substr(i.started_at,20,1)='.'
+                    AND substr(i.started_at,21,length(i.started_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (i.completed_at IS NOT NULL AND NOT (
+                  (length(i.completed_at)=20
+                   OR length(i.completed_at) BETWEEN 22 AND 32)
+                  AND substr(i.completed_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.completed_at) IS NOT NULL
+                  AND substr(i.completed_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.completed_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.completed_at)
+                  AND (length(i.completed_at)=20 OR (
+                    substr(i.completed_at,20,1)='.'
+                    AND substr(i.completed_at,21,length(i.completed_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (strftime('%Y%m%d%H%M%S',i.updated_at)
+                      || CASE WHEN length(i.updated_at)=20 THEN '00000000000'
+                           ELSE substr(substr(i.updated_at,21,length(i.updated_at)-21)
+                                       ||'00000000000',1,11) END)
+                   < (strftime('%Y%m%d%H%M%S',i.created_at)
+                      || CASE WHEN length(i.created_at)=20 THEN '00000000000'
+                           ELSE substr(substr(i.created_at,21,length(i.created_at)-21)
+                                       ||'00000000000',1,11) END)
                 OR (i.started_at IS NOT NULL AND (
-                     length(i.started_at) NOT BETWEEN 20 AND 32
-                     OR substr(i.started_at,-1)!='Z'
-                     OR datetime(i.started_at) IS NULL))
+                  (strftime('%Y%m%d%H%M%S',i.started_at)
+                    || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',i.created_at)
+                       || CASE WHEN length(i.created_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.created_at,21,length(i.created_at)-21)
+                                        ||'00000000000',1,11) END)
+                  OR (strftime('%Y%m%d%H%M%S',i.started_at)
+                    || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',i.updated_at)
+                       || CASE WHEN length(i.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.updated_at,21,length(i.updated_at)-21)
+                                        ||'00000000000',1,11) END)
+                ))
                 OR (i.completed_at IS NOT NULL AND (
-                     length(i.completed_at) NOT BETWEEN 20 AND 32
-                     OR substr(i.completed_at,-1)!='Z'
-                     OR datetime(i.completed_at) IS NULL))
-                OR i.updated_at<i.created_at
-                OR (i.started_at IS NOT NULL AND (
-                     i.started_at<i.created_at OR i.started_at>i.updated_at))
-                OR (i.completed_at IS NOT NULL AND (
-                     i.completed_at<i.created_at OR i.completed_at>i.updated_at))
-                OR (i.completed_at IS NOT NULL AND i.started_at IS NOT NULL
-                    AND i.completed_at<i.started_at)
+                  (strftime('%Y%m%d%H%M%S',i.completed_at)
+                    || CASE WHEN length(i.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.completed_at,21,length(i.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',i.created_at)
+                       || CASE WHEN length(i.created_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.created_at,21,length(i.created_at)-21)
+                                        ||'00000000000',1,11) END)
+                  OR (strftime('%Y%m%d%H%M%S',i.completed_at)
+                    || CASE WHEN length(i.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.completed_at,21,length(i.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',i.updated_at)
+                       || CASE WHEN length(i.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.updated_at,21,length(i.updated_at)-21)
+                                        ||'00000000000',1,11) END)
+                ))
+                OR (i.completed_at IS NOT NULL AND i.started_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',i.completed_at)
+                    || CASE WHEN length(i.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.completed_at,21,length(i.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',i.started_at)
+                       || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                        ||'00000000000',1,11) END))
+                OR (i.lease_expires_at IS NOT NULL AND i.started_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',i.lease_expires_at)
+                    || CASE WHEN length(i.lease_expires_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.lease_expires_at,21,
+                                            length(i.lease_expires_at)-21)
+                                     ||'00000000000',1,11) END)
+                    <= (strftime('%Y%m%d%H%M%S',i.started_at)
+                        || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                             ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                         ||'00000000000',1,11) END))
                 OR NOT (
                   (i.status='PENDING' AND i.connector_kind!='MANUAL_IMPORT'
                    AND i.lease_token IS NULL AND i.lease_expires_at IS NULL
@@ -1860,31 +2015,106 @@ fn validate_restored_semantics(
                 OR instr(o.connection_key,'/')!=0
                 OR (o.connector_kind='MANUAL_IMPORT'
                     AND o.connection_key!='manual-import')
-                OR (o.last_attempt_at IS NOT NULL AND (
-                     length(o.last_attempt_at) NOT BETWEEN 20 AND 32
-                     OR substr(o.last_attempt_at,-1)!='Z'
-                     OR datetime(o.last_attempt_at) IS NULL))
-                OR (o.last_success_at IS NOT NULL AND (
-                     length(o.last_success_at) NOT BETWEEN 20 AND 32
-                     OR substr(o.last_success_at,-1)!='Z'
-                     OR datetime(o.last_success_at) IS NULL))
-                OR (o.freshness_deadline_at IS NOT NULL AND (
-                     length(o.freshness_deadline_at) NOT BETWEEN 20 AND 32
-                     OR substr(o.freshness_deadline_at,-1)!='Z'
-                     OR datetime(o.freshness_deadline_at) IS NULL))
-                OR (o.next_due_at IS NOT NULL AND (
-                     length(o.next_due_at) NOT BETWEEN 20 AND 32
-                     OR substr(o.next_due_at,-1)!='Z'
-                     OR datetime(o.next_due_at) IS NULL))
+                OR (o.last_attempt_at IS NOT NULL AND NOT (
+                  (length(o.last_attempt_at)=20
+                   OR length(o.last_attempt_at) BETWEEN 22 AND 32)
+                  AND substr(o.last_attempt_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.last_attempt_at) IS NOT NULL
+                  AND substr(o.last_attempt_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.last_attempt_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.last_attempt_at)
+                  AND (length(o.last_attempt_at)=20 OR (
+                    substr(o.last_attempt_at,20,1)='.'
+                    AND substr(o.last_attempt_at,21,length(o.last_attempt_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (o.last_success_at IS NOT NULL AND NOT (
+                  (length(o.last_success_at)=20
+                   OR length(o.last_success_at) BETWEEN 22 AND 32)
+                  AND substr(o.last_success_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.last_success_at) IS NOT NULL
+                  AND substr(o.last_success_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.last_success_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.last_success_at)
+                  AND (length(o.last_success_at)=20 OR (
+                    substr(o.last_success_at,20,1)='.'
+                    AND substr(o.last_success_at,21,length(o.last_success_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (o.freshness_deadline_at IS NOT NULL AND NOT (
+                  (length(o.freshness_deadline_at)=20
+                   OR length(o.freshness_deadline_at) BETWEEN 22 AND 32)
+                  AND substr(o.freshness_deadline_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.freshness_deadline_at) IS NOT NULL
+                  AND substr(o.freshness_deadline_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.freshness_deadline_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.freshness_deadline_at)
+                  AND (length(o.freshness_deadline_at)=20 OR (
+                    substr(o.freshness_deadline_at,20,1)='.'
+                    AND substr(o.freshness_deadline_at,21,
+                               length(o.freshness_deadline_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (o.next_due_at IS NOT NULL AND NOT (
+                  (length(o.next_due_at)=20 OR length(o.next_due_at) BETWEEN 22 AND 32)
+                  AND substr(o.next_due_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.next_due_at) IS NOT NULL
+                  AND substr(o.next_due_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.next_due_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.next_due_at)
+                  AND (length(o.next_due_at)=20 OR (
+                    substr(o.next_due_at,20,1)='.'
+                    AND substr(o.next_due_at,21,length(o.next_due_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
                 OR o.pending_review_count NOT BETWEEN 0 AND 9007199254740991
                 OR o.consecutive_failures NOT BETWEEN 0 AND 10000
                 OR (o.last_error_code IS NOT NULL AND (
                      length(o.last_error_code) NOT BETWEEN 1 AND 64
                      OR o.last_error_code GLOB '*[^A-Z0-9_]*'))
-                OR length(o.updated_at) NOT BETWEEN 20 AND 32
-                OR substr(o.updated_at,-1)!='Z' OR datetime(o.updated_at) IS NULL
-                OR (o.last_success_at IS NOT NULL AND o.last_attempt_at IS NOT NULL
-                    AND o.last_success_at>o.last_attempt_at)
+                OR NOT (
+                  (length(o.updated_at)=20 OR length(o.updated_at) BETWEEN 22 AND 32)
+                  AND substr(o.updated_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.updated_at) IS NOT NULL
+                  AND substr(o.updated_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.updated_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.updated_at)
+                  AND (length(o.updated_at)=20 OR (
+                    substr(o.updated_at,20,1)='.'
+                    AND substr(o.updated_at,21,length(o.updated_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR (o.last_success_at IS NOT NULL AND o.last_attempt_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',o.last_success_at)
+                    || CASE WHEN length(o.last_success_at)=20 THEN '00000000000'
+                         ELSE substr(substr(o.last_success_at,21,
+                                            length(o.last_success_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',o.last_attempt_at)
+                       || CASE WHEN length(o.last_attempt_at)=20 THEN '00000000000'
+                            ELSE substr(substr(o.last_attempt_at,21,
+                                               length(o.last_attempt_at)-21)
+                                        ||'00000000000',1,11) END))
+                OR (o.last_attempt_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',o.last_attempt_at)
+                    || CASE WHEN length(o.last_attempt_at)=20 THEN '00000000000'
+                         ELSE substr(substr(o.last_attempt_at,21,
+                                            length(o.last_attempt_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',o.updated_at)
+                       || CASE WHEN length(o.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(o.updated_at,21,length(o.updated_at)-21)
+                                        ||'00000000000',1,11) END))
+                OR (o.last_success_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',o.last_success_at)
+                    || CASE WHEN length(o.last_success_at)=20 THEN '00000000000'
+                         ELSE substr(substr(o.last_success_at,21,
+                                            length(o.last_success_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',o.updated_at)
+                       || CASE WHEN length(o.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(o.updated_at,21,length(o.updated_at)-21)
+                                        ||'00000000000',1,11) END))
              LIMIT 1",
         )?;
         reject_if_exists(
@@ -5518,6 +5748,181 @@ mod tests {
                 Ok(())
             })
             .expect("malformed refresh restore audits should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_accept_mixed_precision_utc_chronology() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES
+                       ('family','Family'),('other','Other');
+                     PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                        created_at,updated_at,completed_at)
+                     VALUES('terminal','family','COMPLETE',1,1,1,
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.300Z',
+                            '2026-08-25T00:00:00.200Z');
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        created_at,started_at,completed_at,updated_at)
+                     VALUES('terminal','terminal-item','GMAIL','gmail','NO_CHANGES',1,
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.100Z',
+                            '2026-08-25T00:00:00.200Z','2026-08-25T00:00:00.300Z');
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,created_at,updated_at)
+                     VALUES('running','other','ACTIVE',1,
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.100Z');
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        lease_token,created_at,started_at,lease_expires_at,updated_at)
+                     VALUES('running','running-item','GOOGLE_DRIVE','drive','RUNNING',1,
+                            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00.200Z','2026-08-25T00:00:00.100Z');
+                     INSERT INTO connector_runtime_observations
+                       (household_id,connector_kind,connection_key,last_success_at,last_attempt_at,
+                        updated_at)
+                     VALUES('family','GMAIL','observation',
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.100Z',
+                            '2026-08-25T00:00:00.200Z'),
+                           ('family','GMAIL','observation-precision',
+                            '2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00.00000000001Z',
+                            '2026-08-25T00:00:00.200Z');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_ok());
+                Ok(())
+            })
+            .expect("valid mixed-precision restore audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_reversed_mixed_precision_utc_chronology() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                let cases = [
+                    (
+                        "batch update",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,created_at,updated_at)
+                         VALUES('refresh','family','ACTIVE',1,
+                                '2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00Z')",
+                    ),
+                    (
+                        "batch completion",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,created_at,updated_at,
+                            completed_at)
+                         VALUES('refresh','family','COMPLETE',0,
+                                '2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00.300Z',
+                                '2026-08-25T00:00:00Z')",
+                    ),
+                    (
+                        "item completion",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                            created_at,updated_at,completed_at)
+                         VALUES('refresh','family','COMPLETE',1,1,1,
+                                '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00Z',
+                                '2026-08-25T00:00:00Z');
+                         INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                            created_at,started_at,completed_at,updated_at)
+                         VALUES('refresh','item','GMAIL','gmail','NO_CHANGES',1,
+                                '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00Z','2026-08-25T00:00:00Z')",
+                    ),
+                    (
+                        "lease expiry",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,created_at,updated_at)
+                         VALUES('refresh','family','ACTIVE',1,
+                                '2026-08-24T23:59:59.900Z',
+                                '2026-08-25T00:00:00.300Z');
+                         INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                            lease_token,created_at,started_at,lease_expires_at,updated_at)
+                         VALUES('refresh','item','GOOGLE_DRIVE','drive','RUNNING',1,
+                                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                                '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.200Z',
+                                '2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00.300Z')",
+                    ),
+                    (
+                        "observation attempt",
+                        "INSERT INTO connector_runtime_observations
+                           (household_id,connector_kind,connection_key,last_success_at,
+                            last_attempt_at,updated_at)
+                         VALUES('family','GMAIL','observation',
+                                '2026-08-25T00:00:00.100Z','2026-08-25T00:00:00Z',
+                                '2026-08-25T00:00:00.300Z')",
+                    ),
+                    (
+                        "observation update",
+                        "INSERT INTO connector_runtime_observations
+                           (household_id,connector_kind,connection_key,last_success_at,
+                            last_attempt_at,updated_at)
+                         VALUES('family','GMAIL','observation',
+                                '2026-08-25T00:00:00Z',
+                                '2026-08-25T00:00:00.200Z',
+                                '2026-08-25T00:00:00.100Z')",
+                    ),
+                ];
+                for (case, sql) in cases {
+                    connection.execute_batch("PRAGMA ignore_check_constraints=ON")?;
+                    connection.execute_batch(sql)?;
+                    connection.execute_batch("PRAGMA ignore_check_constraints=OFF")?;
+                    assert!(
+                        validate_restored_semantics(connection, 71).is_err(),
+                        "restore accepted reversed {case} chronology"
+                    );
+                    connection.execute("DELETE FROM connector_refresh_batches", [])?;
+                    connection.execute("DELETE FROM connector_runtime_observations", [])?;
+                }
+                Ok(())
+            })
+            .expect("reversed restore chronology audits should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_calendar_invalid_refresh_timestamps() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                for timestamp in ["2026-02-30T00:00:00Z", "2026-08-25T24:00:00Z"] {
+                    connection.execute_batch("PRAGMA ignore_check_constraints=ON")?;
+                    connection.execute(
+                        "INSERT INTO connector_runtime_observations
+                           (household_id,connector_kind,connection_key,last_attempt_at,updated_at)
+                         VALUES('family','GMAIL','invalid-date',?1,
+                                '2026-09-01T00:00:00Z')",
+                        [timestamp],
+                    )?;
+                    connection.execute_batch("PRAGMA ignore_check_constraints=OFF")?;
+                    assert!(
+                        validate_restored_semantics(connection, 71).is_err(),
+                        "restore accepted invalid timestamp {timestamp}"
+                    );
+                    connection.execute("DELETE FROM connector_runtime_observations", [])?;
+                }
+                Ok(())
+            })
+            .expect("invalid refresh timestamp audit should remain queryable");
     }
 
     #[test]
