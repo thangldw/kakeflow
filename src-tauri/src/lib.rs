@@ -6,6 +6,7 @@ pub mod backup;
 pub mod brokerage;
 pub mod card_settlement_mapping;
 pub mod change_package;
+pub mod connector_control;
 pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_pdf_ocr;
