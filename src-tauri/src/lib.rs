@@ -6,6 +6,7 @@ pub mod backup;
 pub mod brokerage;
 pub mod card_settlement_mapping;
 pub mod change_package;
+pub mod connector_binding;
 pub mod connector_commands;
 pub mod connector_control;
 pub mod connector_projection;
@@ -4829,6 +4830,9 @@ pub fn run() {
             app_health,
             app_status,
             connector_commands::connector_control_list,
+            connector_commands::connector_bindings_list,
+            connector_commands::connector_binding_upsert,
+            connector_commands::connector_binding_delete,
             local_sync_foundation_status,
             principal_member_binding_update,
             relay_status,
