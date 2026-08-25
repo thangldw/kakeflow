@@ -1,6 +1,6 @@
 # KakeFlow Connector Control Center Design
 
-**Status:** Approved in chat; awaiting written-spec review
+**Status:** Approved
 
 **Date:** 2026-08-25
 
