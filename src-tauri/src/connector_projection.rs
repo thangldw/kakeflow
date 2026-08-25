@@ -3,7 +3,8 @@ use crate::{
         ConfigurationDestination, ConnectorAvailability, ConnectorCapability, ConnectorHealth,
         ConnectorKind, ConnectorLifecycle, ConnectorRegistry, ConnectorSummaryDto,
     },
-    gmail_command_service, gmail_store, google_drive_command_service, google_drive_store,
+    folder_discovery, gmail_command_service, gmail_store, google_drive_command_service,
+    google_drive_store,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -190,7 +191,7 @@ impl<'a> ConnectionProjectionService<'a> {
         let adapters: [&dyn ConnectorAdapter; 4] = [
             &GoogleDriveAdapter { now: &now },
             &GmailAdapter { now: &now },
-            &WatchedFolderAdapter,
+            &WatchedFolderAdapter { now: &now },
             &ManualImportAdapter,
         ];
         let fetch_limit = usize::from(limit) + 1;
@@ -389,9 +390,11 @@ impl ConnectorAdapter for GmailAdapter<'_> {
     }
 }
 
-struct WatchedFolderAdapter;
+struct WatchedFolderAdapter<'a> {
+    now: &'a str,
+}
 
-impl ConnectorAdapter for WatchedFolderAdapter {
+impl ConnectorAdapter for WatchedFolderAdapter<'_> {
     fn list_summaries(
         &self,
         connection: &Connection,
@@ -413,6 +416,13 @@ impl ConnectorAdapter for WatchedFolderAdapter {
                 } else {
                     ConnectorLifecycle::Disconnected
                 };
+                let runtime = project_watched_folder_runtime(
+                    connection,
+                    household_id,
+                    &source.id,
+                    lifecycle,
+                    self.now,
+                )?;
                 let pending_review_count = pending_count(
                     connection,
                     "watched_file_inbox",
@@ -431,21 +441,109 @@ impl ConnectorAdapter for WatchedFolderAdapter {
                     ),
                     availability: ConnectorAvailability::Available,
                     lifecycle,
-                    health: ConnectorHealth::NeverRefreshed,
+                    health: runtime.health,
                     capabilities: capabilities(ConnectorKind::WatchedFolder, lifecycle),
-                    last_attempt_at: None,
-                    last_success_at: None,
-                    freshness_deadline_at: None,
-                    next_due_at: None,
+                    last_attempt_at: runtime.last_attempt_at,
+                    last_success_at: runtime.last_success_at,
+                    freshness_deadline_at: runtime.freshness_deadline_at,
+                    next_due_at: runtime.next_due_at,
                     pending_review_count,
-                    consecutive_failures: 0,
-                    last_error_code: None,
+                    consecutive_failures: runtime.consecutive_failures,
+                    last_error_code: runtime.last_error_code,
                     binding_summary: None,
                     configuration_destination: ConfigurationDestination::WatchedFolderSettings,
                 })
             })
             .collect()
     }
+}
+
+fn project_watched_folder_runtime(
+    connection: &Connection,
+    household_id: &str,
+    connection_key: &str,
+    lifecycle: ConnectorLifecycle,
+    now: &str,
+) -> Result<ScheduleProjection, ConnectorProjectionError> {
+    let observation = connection
+        .query_row(
+            "SELECT last_attempt_at,last_success_at,consecutive_failures,last_error_code
+             FROM connector_runtime_observations
+             WHERE household_id=?1 AND connector_kind='WATCHED_FOLDER' AND connection_key=?2",
+            params![household_id, connection_key],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| ConnectorProjectionError::Database)?;
+    let Some((last_attempt_at, last_success_at, consecutive_failures, last_error_code)) =
+        observation
+    else {
+        return Ok(empty_schedule());
+    };
+    let consecutive_failures = consecutive_failures.min(u64::from(u8::MAX)) as u8;
+    let freshness_deadline_at = last_success_at
+        .as_deref()
+        .map(|timestamp| timestamp_after_poll_interval(connection, timestamp))
+        .transpose()?;
+    let next_due_at = last_attempt_at
+        .as_deref()
+        .map(|timestamp| timestamp_after_poll_interval(connection, timestamp))
+        .transpose()?;
+    let deadline_is_stale = freshness_deadline_at
+        .as_deref()
+        .map(|deadline| timestamp_is_before(connection, deadline, now))
+        .transpose()?
+        .unwrap_or(false);
+    let health = if lifecycle != ConnectorLifecycle::Connected {
+        ConnectorHealth::NeverRefreshed
+    } else if last_error_code.as_deref().is_some_and(|code| {
+        matches!(
+            code,
+            "FOLDER_SCAN_LIMIT" | "FOLDER_CONFIGURATION_REQUIRED" | "FOLDER_RECONCILE_REQUIRED"
+        )
+    }) {
+        ConnectorHealth::NeedsAction
+    } else if last_error_code.is_some() {
+        ConnectorHealth::RetryBackoff
+    } else if deadline_is_stale {
+        ConnectorHealth::Stale
+    } else if last_success_at.is_some() {
+        ConnectorHealth::Fresh
+    } else {
+        ConnectorHealth::NeverRefreshed
+    };
+    Ok(ScheduleProjection {
+        health,
+        last_attempt_at,
+        last_success_at,
+        freshness_deadline_at,
+        next_due_at,
+        consecutive_failures,
+        last_error_code,
+    })
+}
+
+fn timestamp_after_poll_interval(
+    connection: &Connection,
+    timestamp: &str,
+) -> Result<String, ConnectorProjectionError> {
+    connection
+        .query_row(
+            "SELECT strftime('%Y-%m-%dT%H:%M:%fZ',?1,?2)",
+            params![
+                timestamp,
+                format!("+{} seconds", folder_discovery::POLL_INTERVAL_SECONDS)
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|_| ConnectorProjectionError::InvalidProjection)
 }
 
 struct ManualImportAdapter;
@@ -1214,6 +1312,109 @@ mod tests {
                 assert!(display.starts_with(&format!("{} · ", "L".repeat(80))));
                 assert!(display.contains('日'));
                 assert!(display.len() <= 256);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn watched_freshness_is_derived_from_safe_observation_and_fixed_poll_policy() {
+        let state = migrated_state();
+        state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                connection.execute(
+                    "INSERT INTO watched_folders(
+                         id,household_id,label,canonical_path,source_type,provider
+                     ) VALUES('folder','home','Bank','/safe/bank','LOCAL_FOLDER','LOCAL')",
+                    [],
+                )?;
+                connection.execute(
+                    "INSERT INTO connector_runtime_observations(
+                         household_id,connector_kind,connection_key,last_attempt_at,last_success_at,
+                         consecutive_failures,updated_at
+                     ) VALUES('home','WATCHED_FOLDER','folder','2026-08-25T11:59:55.000Z',
+                              '2026-08-25T11:59:55.000Z',0,'2026-08-25T11:59:55.000Z')",
+                    [],
+                )?;
+                let service = ConnectionProjectionService::new(&FixedClock);
+                let fresh = service
+                    .list_page(connection, "home", None, Some(10))
+                    .unwrap();
+                let watched = fresh
+                    .items
+                    .iter()
+                    .find(|item| item.connector_kind == ConnectorKind::WatchedFolder)
+                    .unwrap();
+                assert_eq!(watched.health, ConnectorHealth::Fresh);
+                assert_eq!(
+                    watched.freshness_deadline_at.as_deref(),
+                    Some("2026-08-25T12:00:05.000Z")
+                );
+                assert_eq!(
+                    watched.next_due_at.as_deref(),
+                    Some("2026-08-25T12:00:05.000Z")
+                );
+
+                connection.execute(
+                    "UPDATE connector_runtime_observations SET
+                         last_attempt_at='2026-08-25T11:59:59.000Z',consecutive_failures=1,
+                         last_error_code='FOLDER_UNAVAILABLE',updated_at='2026-08-25T11:59:59.000Z'
+                     WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'
+                       AND connection_key='folder'",
+                    [],
+                )?;
+                let retrying = service
+                    .list_page(connection, "home", None, Some(10))
+                    .unwrap();
+                let watched = retrying
+                    .items
+                    .iter()
+                    .find(|item| item.connector_kind == ConnectorKind::WatchedFolder)
+                    .unwrap();
+                assert_eq!(watched.health, ConnectorHealth::RetryBackoff);
+                assert_eq!(watched.consecutive_failures, 1);
+                assert_eq!(
+                    watched.last_error_code.as_deref(),
+                    Some("FOLDER_UNAVAILABLE")
+                );
+                assert_eq!(
+                    watched.next_due_at.as_deref(),
+                    Some("2026-08-25T12:00:09.000Z")
+                );
+
+                connection.execute(
+                    "UPDATE connector_runtime_observations SET
+                         last_error_code='FOLDER_CONFIGURATION_REQUIRED'
+                     WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'
+                       AND connection_key='folder'",
+                    [],
+                )?;
+                let action = service
+                    .list_page(connection, "home", None, Some(10))
+                    .unwrap();
+                let watched = action
+                    .items
+                    .iter()
+                    .find(|item| item.connector_kind == ConnectorKind::WatchedFolder)
+                    .unwrap();
+                assert_eq!(watched.health, ConnectorHealth::NeedsAction);
+
+                connection.execute(
+                    "UPDATE connector_runtime_observations SET consecutive_failures=10000
+                     WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'
+                       AND connection_key='folder'",
+                    [],
+                )?;
+                let bounded = service
+                    .list_page(connection, "home", None, Some(10))
+                    .unwrap();
+                let watched = bounded
+                    .items
+                    .iter()
+                    .find(|item| item.connector_kind == ConnectorKind::WatchedFolder)
+                    .unwrap();
+                assert_eq!(watched.consecutive_failures, u8::MAX);
                 Ok(())
             })
             .unwrap();

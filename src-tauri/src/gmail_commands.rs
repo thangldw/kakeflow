@@ -412,7 +412,7 @@ pub async fn gmail_sync_now(
     .map_err(|_| "Gmail sync worker stopped".to_owned())?
 }
 
-fn sync_now_blocking(
+pub(crate) fn sync_now_blocking(
     app: &AppHandle,
     household: &str,
     connection_id: &str,

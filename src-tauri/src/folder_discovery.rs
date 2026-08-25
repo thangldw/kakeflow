@@ -1,4 +1,6 @@
-use crate::{persistence::AppState, watched_file_inbox, watched_folders};
+use crate::{
+    connector_refresh::RefreshOutcome, persistence::AppState, watched_file_inbox, watched_folders,
+};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -14,15 +16,30 @@ pub const EVENT_NAME: &str = "kakeflow://watched-folder-discovery";
 // Native notifications are advisory. Every registered folder is still
 // reconciled at a bounded interval so network/sync folders and unavailable OS
 // watcher backends recover without restarting the application.
-const POLL_INTERVAL: Duration = Duration::from_secs(10);
 const REGISTRATION_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const NATIVE_DEBOUNCE: Duration = Duration::from_millis(400);
 const WORKER_TICK: Duration = Duration::from_millis(100);
 const NATIVE_CHANNEL_CAPACITY: usize = 512;
 
+pub(crate) const POLL_INTERVAL_SECONDS: u64 = 10;
+
 type FolderKey = (String, String);
 type FolderSnapshot = BTreeMap<String, watched_folders::WatchedFileMetadataDto>;
 type Registrations = BTreeMap<FolderKey, PathBuf>;
+
+#[derive(Debug)]
+pub(crate) enum FolderRefreshResult {
+    Scanned {
+        scan: watched_folders::WatchedFolderScanDto,
+        outcome: RefreshOutcome,
+    },
+    RecordedFailure(RefreshOutcome),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FolderRefreshInfrastructureError {
+    PersistenceUnavailable,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -161,7 +178,7 @@ fn run_worker(app: AppHandle, stop: Arc<StopSignal>) {
         if now >= next_poll {
             let all = registrations.keys().cloned().collect::<BTreeSet<_>>();
             scan_keys(&app, &registrations, &mut snapshots, &all);
-            next_poll = now + POLL_INTERVAL;
+            next_poll = now + Duration::from_secs(POLL_INTERVAL_SECONDS);
         }
 
         if stop.wait(WORKER_TICK) {
@@ -325,17 +342,9 @@ fn scan_keys(
             continue;
         }
         let state = app.state::<AppState>();
-        let scan = state.with_connection(|connection| {
-            let result = watched_folders::scan_registered(connection, &key.0, &key.1);
-            if let Ok(scan) = &result {
-                // A native notification and a periodic poll converge through
-                // the same metadata-keyed upsert, so duplicate signals cannot
-                // create duplicate Inbox generations.
-                let _ = watched_file_inbox::reconcile_scan(connection, &key.0, &key.1, &scan.files);
-            }
-            Ok(result)
-        });
-        let Ok(Ok(scan)) = scan else {
+        let refresh =
+            state.with_connection(|connection| Ok(refresh_registered(connection, &key.0, &key.1)));
+        let Ok(Ok(FolderRefreshResult::Scanned { scan, .. })) = refresh else {
             // Preserve the last good snapshot. A temporarily unavailable sync
             // folder must not become a remove/create storm when it reconnects.
             continue;
@@ -353,6 +362,137 @@ fn scan_keys(
             emit_changes(app, key, changes);
         }
     }
+}
+
+pub(crate) fn refresh_registered(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<FolderRefreshResult, FolderRefreshInfrastructureError> {
+    let before = inbox_generation_count(connection, household_id, watched_folder_id)?;
+    let scan = match watched_folders::scan_registered(connection, household_id, watched_folder_id) {
+        Ok(scan) => scan,
+        Err(watched_folders::WatchedFolderError::Database) => {
+            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+        }
+        Err(error) => {
+            let outcome = folder_error_outcome(&error);
+            record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+            return Ok(FolderRefreshResult::RecordedFailure(outcome));
+        }
+    };
+    if let Err(error) =
+        watched_file_inbox::reconcile_scan(connection, household_id, watched_folder_id, &scan.files)
+    {
+        if error == watched_file_inbox::WatchedFileInboxError::Database {
+            return Err(FolderRefreshInfrastructureError::PersistenceUnavailable);
+        }
+        let outcome = RefreshOutcome::NeedsAction {
+            error_code: "FOLDER_RECONCILE_REQUIRED".to_owned(),
+        };
+        record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+        return Ok(FolderRefreshResult::RecordedFailure(outcome));
+    }
+    let after = inbox_generation_count(connection, household_id, watched_folder_id)?;
+    let changed_count = after.saturating_sub(before);
+    let outcome = if changed_count == 0 {
+        RefreshOutcome::NoChanges
+    } else {
+        RefreshOutcome::Succeeded { changed_count }
+    };
+    record_folder_observation(connection, household_id, watched_folder_id, &outcome)?;
+    Ok(FolderRefreshResult::Scanned { scan, outcome })
+}
+
+fn inbox_generation_count(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<u64, FolderRefreshInfrastructureError> {
+    connection
+        .query_row(
+            "SELECT count(*) FROM watched_file_inbox
+             WHERE household_id=?1 AND watched_folder_id=?2",
+            rusqlite::params![household_id, watched_folder_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| FolderRefreshInfrastructureError::PersistenceUnavailable)
+}
+
+fn folder_error_outcome(error: &watched_folders::WatchedFolderError) -> RefreshOutcome {
+    match error {
+        watched_folders::WatchedFolderError::FolderUnavailable => RefreshOutcome::FailedRetryable {
+            error_code: "FOLDER_UNAVAILABLE".to_owned(),
+        },
+        watched_folders::WatchedFolderError::CloudFileUnavailable => {
+            RefreshOutcome::FailedRetryable {
+                error_code: "CLOUD_FILE_UNAVAILABLE".to_owned(),
+            }
+        }
+        watched_folders::WatchedFolderError::ScanLimit => RefreshOutcome::NeedsAction {
+            error_code: "FOLDER_SCAN_LIMIT".to_owned(),
+        },
+        watched_folders::WatchedFolderError::InvalidInput
+        | watched_folders::WatchedFolderError::SymlinkNotAllowed
+        | watched_folders::WatchedFolderError::NotFound
+        | watched_folders::WatchedFolderError::Conflict => RefreshOutcome::NeedsAction {
+            error_code: "FOLDER_CONFIGURATION_REQUIRED".to_owned(),
+        },
+        watched_folders::WatchedFolderError::Database => RefreshOutcome::FailedRetryable {
+            error_code: "FOLDER_REFRESH_FAILED".to_owned(),
+        },
+    }
+}
+
+fn record_folder_observation(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+    outcome: &RefreshOutcome,
+) -> Result<(), FolderRefreshInfrastructureError> {
+    let pending_review_count = connection
+        .query_row(
+            "SELECT count(*) FROM watched_file_inbox
+             WHERE household_id=?1 AND watched_folder_id=?2
+               AND state IN ('DISCOVERED','READY','NEEDS_MAPPING','FAILED')",
+            rusqlite::params![household_id, watched_folder_id],
+            |row| row.get::<_, u64>(0),
+        )
+        .map_err(|_| FolderRefreshInfrastructureError::PersistenceUnavailable)?;
+    let (succeeded, error_code) = match outcome {
+        RefreshOutcome::Succeeded { .. } | RefreshOutcome::NoChanges => (true, None),
+        RefreshOutcome::FailedRetryable { error_code }
+        | RefreshOutcome::NeedsAction { error_code } => (false, Some(error_code.as_str())),
+    };
+    connection
+        .execute(
+            "INSERT INTO connector_runtime_observations(
+                 household_id,connector_kind,connection_key,last_attempt_at,last_success_at,
+                 pending_review_count,consecutive_failures,last_error_code,updated_at
+             ) VALUES(?1,'WATCHED_FOLDER',?2,
+                 strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                 CASE WHEN ?3 THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') END,
+                 ?4,CASE WHEN ?3 THEN 0 ELSE 1 END,?5,
+                 strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+             ON CONFLICT(household_id,connector_kind,connection_key) DO UPDATE SET
+                 last_attempt_at=excluded.last_attempt_at,
+                 last_success_at=CASE WHEN ?3 THEN excluded.last_success_at
+                                      ELSE connector_runtime_observations.last_success_at END,
+                 pending_review_count=excluded.pending_review_count,
+                 consecutive_failures=CASE WHEN ?3 THEN 0
+                   ELSE min(connector_runtime_observations.consecutive_failures+1,255) END,
+                 last_error_code=excluded.last_error_code,
+                 updated_at=excluded.updated_at",
+            rusqlite::params![
+                household_id,
+                watched_folder_id,
+                succeeded,
+                pending_review_count,
+                error_code,
+            ],
+        )
+        .map(|_| ())
+        .map_err(|_| FolderRefreshInfrastructureError::PersistenceUnavailable)
 }
 
 fn emit_changes(app: &AppHandle, key: &FolderKey, changes: Vec<FileChangeDto>) {
@@ -409,10 +549,15 @@ fn file_change(
 #[cfg(test)]
 mod tests {
     use super::{
-        diff_snapshots, keys_for_native_paths, ChangeKind, FolderDiscoveryEventDto, FolderKey,
-        FolderSnapshot, Registrations, StopSignal,
+        diff_snapshots, keys_for_native_paths, refresh_registered, ChangeKind,
+        FolderDiscoveryEventDto, FolderKey, FolderRefreshResult, FolderSnapshot, Registrations,
+        StopSignal,
     };
-    use crate::watched_folders::WatchedFileMetadataDto;
+    use crate::{
+        connector_refresh::RefreshOutcome,
+        persistence::AppState,
+        watched_folders::{self, WatchedFileMetadataDto},
+    };
     use std::collections::BTreeSet;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -513,5 +658,97 @@ mod tests {
         signal.stop();
         assert!(worker.join().unwrap());
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn registered_refresh_is_idempotent_and_persists_only_safe_runtime_observations() {
+        let state = AppState::in_memory(b"folder-refresh-observation-key").unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("bank.csv"),
+            b"date,amount\n2026-08-25,1\n",
+        )
+        .unwrap();
+        let canonical_directory = std::fs::canonicalize(directory.path()).unwrap();
+        state
+            .with_connection(|connection| {
+                connection
+                    .execute("INSERT INTO households(id,name) VALUES('home','Home')", [])
+                    .unwrap();
+                let folder =
+                    watched_folders::register(connection, "home", "Bank", &canonical_directory)
+                        .unwrap();
+
+                let first = refresh_registered(connection, "home", &folder.id).unwrap();
+                assert!(matches!(
+                    first,
+                    FolderRefreshResult::Scanned {
+                        outcome: RefreshOutcome::Succeeded { changed_count: 1 },
+                        ..
+                    }
+                ));
+                let second = refresh_registered(connection, "home", &folder.id).unwrap();
+                assert!(matches!(
+                    second,
+                    FolderRefreshResult::Scanned {
+                        outcome: RefreshOutcome::NoChanges,
+                        ..
+                    }
+                ));
+                assert_eq!(
+                    connection
+                        .query_row(
+                            "SELECT count(*) FROM watched_file_inbox
+                             WHERE household_id='home' AND watched_folder_id=?1",
+                            [&folder.id],
+                            |row| row.get::<_, u64>(0),
+                        )
+                        .unwrap(),
+                    1
+                );
+                let successful_observation = connection
+                    .query_row(
+                        "SELECT last_attempt_at,last_success_at,consecutive_failures,last_error_code
+                         FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'
+                           AND connection_key=?1",
+                        [&folder.id],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<String>>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, u64>(2)?,
+                                row.get::<_, Option<String>>(3)?,
+                            ))
+                        },
+                    )
+                    .unwrap();
+                assert!(successful_observation.0.is_some());
+                assert!(successful_observation.1.is_some());
+                assert_eq!(successful_observation.2, 0);
+                assert_eq!(successful_observation.3, None);
+
+                std::fs::remove_dir_all(&canonical_directory).unwrap();
+                let failed = refresh_registered(connection, "home", &folder.id).unwrap();
+                assert!(matches!(
+                    failed,
+                    FolderRefreshResult::RecordedFailure(RefreshOutcome::FailedRetryable {
+                        ref error_code
+                    }) if error_code == "FOLDER_UNAVAILABLE"
+                ));
+                let failure_observation = connection
+                    .query_row(
+                        "SELECT consecutive_failures,last_error_code
+                         FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'
+                           AND connection_key=?1",
+                        [&folder.id],
+                        |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
+                    )
+                    .unwrap();
+                assert_eq!(failure_observation, (1, "FOLDER_UNAVAILABLE".to_owned()));
+                Ok(())
+            })
+            .unwrap();
     }
 }

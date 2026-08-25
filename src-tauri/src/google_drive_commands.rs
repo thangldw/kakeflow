@@ -564,29 +564,29 @@ pub async fn google_drive_sync_now(
     connection_id: String,
 ) -> Result<SyncScheduleDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        google_drive_sync_now_blocking(&app, household_id, connection_id)
+        google_drive_sync_now_blocking(&app, &household_id, &connection_id)
     })
     .await
     .map_err(|_| "Google Drive sync worker stopped".to_owned())?
 }
 
-fn google_drive_sync_now_blocking(
+pub(crate) fn google_drive_sync_now_blocking(
     app: &AppHandle,
-    household_id: String,
-    connection_id: String,
+    household_id: &str,
+    connection_id: &str,
 ) -> Result<SyncScheduleDto, String> {
     let state = app.state::<AppState>();
     let (lease, restore_disabled) = state
         .with_connection(|connection| {
             let schedule =
-                crate::google_drive_store::load_schedule(connection, &household_id, &connection_id)
+                crate::google_drive_store::load_schedule(connection, household_id, connection_id)
                     .map_err(|_| rusqlite::Error::InvalidQuery)?;
             let restore_disabled = !schedule.enabled;
             if restore_disabled {
                 crate::google_drive_store::configure_schedule(
                     connection,
-                    &household_id,
-                    &connection_id,
+                    household_id,
+                    connection_id,
                     true,
                     schedule.interval_minutes,
                 )
@@ -598,15 +598,12 @@ fn google_drive_sync_now_blocking(
                      suspended_until=NULL,suspension_reason=NULL,
                      updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
                  WHERE connection_id=?1 AND enabled=1 AND lease_token IS NULL",
-                [&connection_id],
+                [connection_id],
             )?;
-            let lease = crate::google_drive_store::claim_due_sync(
-                connection,
-                &household_id,
-                &connection_id,
-            )
-            .map_err(|_| rusqlite::Error::InvalidQuery)?
-            .ok_or(rusqlite::Error::InvalidQuery)?;
+            let lease =
+                crate::google_drive_store::claim_due_sync(connection, household_id, connection_id)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?
+                    .ok_or(rusqlite::Error::InvalidQuery)?;
             Ok((lease, restore_disabled))
         })
         .map_err(|_| "Google Drive synchronization could not start".to_owned())?;
@@ -618,7 +615,7 @@ fn google_drive_sync_now_blocking(
                 "UPDATE google_drive_sync_schedules SET enabled=0,next_due_at=NULL,
                      updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
                  WHERE connection_id=?1 AND lease_token IS NULL",
-                [&connection_id],
+                [connection_id],
             )?;
             Ok(())
         });
