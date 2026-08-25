@@ -914,8 +914,17 @@ fn google_drive_disconnect_blocking(
     }
     let disconnected = state
         .with_connection(|connection| {
-            google_drive_command_service::disconnect(connection, &household_id, &connection_id)
-                .map_err(|_| rusqlite::Error::InvalidQuery.into())
+            let disconnected =
+                google_drive_command_service::disconnect(connection, &household_id, &connection_id)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            crate::connector_binding::delete_active_binding(
+                connection,
+                &household_id,
+                crate::connector_control::ConnectorKind::GoogleDrive,
+                &connection_id,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            Ok(disconnected)
         })
         .map_err(|_| "Google Drive connection could not be disconnected".to_owned())?;
     credential_store

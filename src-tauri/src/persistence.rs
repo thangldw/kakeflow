@@ -172,6 +172,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0069_japanese_expense_categories.sql"
     )),
+    M::up(include_str!("../migrations/0070_connector_bindings.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -404,6 +405,9 @@ pub fn clear_restored_device_local_state(
     let version = schema_version(&connection)?;
     if version >= 8 {
         let transaction = connection.transaction()?;
+        if version >= 70 {
+            transaction.execute("DELETE FROM connector_bindings", [])?;
+        }
         transaction.execute("DELETE FROM watched_folders", [])?;
         if version >= 31 {
             transaction.execute("DELETE FROM local_sync_contexts", [])?;
@@ -1774,6 +1778,164 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_70_preserves_released_connectors_evidence_and_posted_provenance() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        Migrations::new(MIGRATIONS[..69].to_vec())
+            .to_latest(&mut connection)
+            .expect("released schema 69");
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('bank','family','Bank','ASSET','BANK'),
+                       ('expense','family','Expense','EXPENSE','OTHER');
+
+                 INSERT INTO import_runs(id,household_id,status,adapter_id,adapter_version)
+                 VALUES('drive-run','family','POSTED','test','1'),
+                       ('gmail-run','family','REVIEW_REQUIRED','test','1'),
+                       ('folder-run','family','REVIEW_REQUIRED','test','1');
+                 INSERT INTO source_documents
+                   (id,household_id,import_run_id,source_type,original_filename,media_type,
+                    byte_size,sha256,storage_path)
+                 VALUES('drive-doc','family','drive-run','GOOGLE_DRIVE','drive.csv','text/csv',10,
+                        '{drive_sha}','vault://{drive_sha}'),
+                       ('gmail-doc','family','gmail-run','GMAIL','message.eml','message/rfc822',20,
+                        '{gmail_sha}','vault://{gmail_sha}'),
+                       ('folder-doc','family','folder-run','LOCAL_FOLDER','folder.csv','text/csv',30,
+                        '{folder_sha}','vault://{folder_sha}');
+                 INSERT INTO source_records(id,source_document_id,row_number,record_hash,raw_payload_json)
+                 VALUES('drive-record','drive-doc',1,'{record_sha}','{{}}'),
+                       ('gmail-record','gmail-doc',1,'{gmail_record_sha}','{{}}'),
+                       ('folder-record','folder-doc',1,'{folder_record_sha}','{{}}');
+                 INSERT INTO transaction_candidates
+                   (id,household_id,account_id,occurred_on,amount_jpy,direction,review_status)
+                 VALUES('drive-candidate','family','bank','2026-08-25',100,'OUT','POSTED');
+                 INSERT INTO candidate_sources(candidate_id,source_record_id,evidence_role)
+                 VALUES('drive-candidate','drive-record','PRIMARY');
+                 INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES('posted-transaction','family','2026-08-25','EXPENSE','POSTED');
+                 INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES('posted-debit','posted-transaction','expense','DEBIT',100,1),
+                       ('posted-credit','posted-transaction','bank','CREDIT',100,2);
+                 INSERT INTO transaction_sources(transaction_id,source_record_id,candidate_id)
+                 VALUES('posted-transaction','drive-record','drive-candidate');
+
+                 INSERT INTO google_drive_connections(id,household_id,client_id_fingerprint,status)
+                 VALUES('drive','family','{drive_fingerprint}','AUTHORIZING');
+                 INSERT INTO google_drive_sync_schedules(connection_id,enabled,interval_minutes,last_result)
+                 VALUES('drive',0,30,'DISABLED');
+                 INSERT INTO google_drive_nodes
+                   (connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download)
+                 VALUES('drive','drive-file','drive.csv','text/csv','{drive_generation}',0,1);
+                 INSERT INTO google_drive_inbox
+                   (id,household_id,connection_id,file_id,generation_fingerprint,file_name,media_type,
+                    content_sha256,state,import_run_id)
+                 VALUES('{drive_inbox}','family','drive','drive-file','{drive_generation}',
+                        'drive.csv','text/csv','{drive_sha}','STAGED','drive-run');
+                 INSERT INTO google_drive_source_links(inbox_id,source_document_id)
+                 VALUES('{drive_inbox}','drive-doc');
+
+                 INSERT INTO gmail_connections(id,household_id,client_id_fingerprint,status)
+                 VALUES('gmail','family','{gmail_fingerprint}','AUTHORIZING');
+                 INSERT INTO gmail_sync_schedules(connection_id,enabled,interval_minutes,last_result)
+                 VALUES('gmail',0,30,'DISABLED');
+                 INSERT INTO gmail_inbox
+                   (id,household_id,connection_id,provider_message_id,generation_fingerprint,
+                    message_history_id,internal_date_ms,file_name,content_sha256,state,import_run_id)
+                 VALUES('{gmail_inbox}','family','gmail','message','{gmail_generation}',
+                        '1',1,'message.eml','{gmail_sha}','STAGED','gmail-run');
+                 INSERT INTO gmail_source_links(inbox_id,source_document_id)
+                 VALUES('{gmail_inbox}','gmail-doc');
+
+                 INSERT INTO watched_folders(id,household_id,label,canonical_path,source_type,provider)
+                 VALUES('folder','family','Inbox','/device/inbox','LOCAL_FOLDER','LOCAL');
+                 INSERT INTO watched_file_inbox
+                   (id,household_id,watched_folder_id,relative_path,file_name,media_type,byte_size,
+                    fingerprint,state,import_run_id)
+                 VALUES('{folder_inbox}','family','folder','folder.csv','folder.csv','text/csv',30,
+                        '{folder_generation}','STAGED','folder-run');",
+                drive_sha = "1".repeat(64),
+                gmail_sha = "2".repeat(64),
+                folder_sha = "3".repeat(64),
+                record_sha = "4".repeat(64),
+                gmail_record_sha = "5".repeat(64),
+                folder_record_sha = "6".repeat(64),
+                drive_fingerprint = "a".repeat(64),
+                gmail_fingerprint = "b".repeat(64),
+                drive_generation = "c".repeat(64),
+                gmail_generation = "d".repeat(64),
+                folder_generation = "e".repeat(64),
+                drive_inbox = "7".repeat(64),
+                gmail_inbox = "8".repeat(64),
+                folder_inbox = "9".repeat(64),
+            ))
+            .expect("seed released connector and provenance graph");
+
+        let snapshots = [
+            "SELECT id,name,base_currency,created_at,updated_at FROM households ORDER BY id",
+            "SELECT id,household_id,name,account_kind,account_subtype,is_archived FROM accounts ORDER BY id",
+            "SELECT id,household_id,status,adapter_id,adapter_version,started_at,completed_at FROM import_runs ORDER BY id",
+            "SELECT id,household_id,import_run_id,source_type,original_filename,media_type,byte_size,sha256,storage_path FROM source_documents ORDER BY id",
+            "SELECT id,source_document_id,row_number,record_hash,raw_payload_json FROM source_records ORDER BY id",
+            "SELECT id,household_id,account_id,occurred_on,amount_jpy,direction,review_status FROM transaction_candidates ORDER BY id",
+            "SELECT id,household_id,occurred_on,transaction_type,status FROM transactions ORDER BY id",
+            "SELECT id,transaction_id,account_id,entry_side,amount_jpy,line_number FROM journal_entries ORDER BY id",
+            "SELECT transaction_id,source_record_id,candidate_id FROM transaction_sources ORDER BY transaction_id,source_record_id",
+            "SELECT id,household_id,status,client_id_fingerprint FROM google_drive_connections ORDER BY id",
+            "SELECT connection_id,enabled,interval_minutes,last_result FROM google_drive_sync_schedules ORDER BY connection_id",
+            "SELECT id,household_id,connection_id,file_id,generation_fingerprint,state,import_run_id FROM google_drive_inbox ORDER BY id",
+            "SELECT id,household_id,status,client_id_fingerprint FROM gmail_connections ORDER BY id",
+            "SELECT connection_id,enabled,interval_minutes,last_result FROM gmail_sync_schedules ORDER BY connection_id",
+            "SELECT id,household_id,connection_id,provider_message_id,generation_fingerprint,state,import_run_id FROM gmail_inbox ORDER BY id",
+            "SELECT id,household_id,label,canonical_path,source_type,provider,is_enabled FROM watched_folders ORDER BY id",
+            "SELECT id,household_id,watched_folder_id,relative_path,fingerprint,state,import_run_id FROM watched_file_inbox ORDER BY id",
+        ];
+        let before = snapshots
+            .iter()
+            .map(|query| selected_values(&connection, query))
+            .collect::<Vec<_>>();
+
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .expect("migrate released database to latest");
+
+        let after = snapshots
+            .iter()
+            .map(|query| selected_values(&connection, query))
+            .collect::<Vec<_>>();
+        assert_eq!(after, before);
+        for table in ["connector_bindings", "connector_binding_accounts"] {
+            assert_eq!(
+                connection
+                    .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0,
+                "{table} starts empty"
+            );
+        }
+        assert_eq!(schema_version(&connection).unwrap(), 70);
+        assert!(integrity_check(&connection).unwrap());
+    }
+
+    fn selected_values(connection: &Connection, query: &str) -> Vec<Vec<rusqlite::types::Value>> {
+        let mut statement = connection.prepare(query).unwrap();
+        let column_count = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..column_count)
+                    .map(|column| row.get(column))
+                    .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
     }
 
     #[test]
@@ -4806,6 +4968,34 @@ mod tests {
         state
             .with_connection(|connection| {
                 connection.execute("INSERT INTO households (id, name) VALUES ('family', 'Family')", [])?;
+                connection.execute_batch(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK'),
+                           ('expense','family','Expense','EXPENSE','OTHER');
+                     INSERT INTO import_runs(id,household_id,status,adapter_id,adapter_version)
+                     VALUES('run','family','POSTED','test','1');
+                     INSERT INTO source_documents
+                       (id,household_id,import_run_id,source_type,original_filename,media_type,
+                        byte_size,sha256,storage_path)
+                     VALUES('document','family','run','MANUAL_UPLOAD','statement.csv','text/csv',10,
+                            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                            'vault://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                     INSERT INTO source_records(id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES('record','document',1,
+                            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}');
+                     INSERT INTO transaction_candidates
+                       (id,household_id,account_id,occurred_on,amount_jpy,direction,review_status)
+                     VALUES('candidate','family','bank','2026-08-25',100,'OUT','POSTED');
+                     INSERT INTO candidate_sources(candidate_id,source_record_id,evidence_role)
+                     VALUES('candidate','record','PRIMARY');
+                     INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                     VALUES('transaction','family','2026-08-25','EXPENSE','POSTED');
+                     INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES('debit','transaction','expense','DEBIT',100,1),
+                           ('credit','transaction','bank','CREDIT',100,2);
+                     INSERT INTO transaction_sources(transaction_id,source_record_id,candidate_id)
+                     VALUES('transaction','record','candidate');",
+                )?;
                 connection.execute(
                     "INSERT INTO watched_folders (id, household_id, label, canonical_path) VALUES ('folder', 'family', 'Inbox', '/device/private/inbox')",
                     [],
@@ -4821,6 +5011,20 @@ mod tests {
                        (id,household_id,client_id_fingerprint,status)
                      VALUES('gmail','family',?1,'AUTHORIZING')",
                     ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO connector_bindings
+                       (household_id,connector_kind,connection_key,version)
+                     VALUES('family','GOOGLE_DRIVE','drive',1),
+                           ('family','GMAIL','gmail',1),
+                           ('family','WATCHED_FOLDER','folder',1),
+                           ('family','MANUAL_IMPORT','manual-import',1);
+                     INSERT INTO connector_binding_accounts
+                       (household_id,connector_kind,connection_key,account_id)
+                     VALUES('family','GOOGLE_DRIVE','drive','bank'),
+                           ('family','GMAIL','gmail','bank'),
+                           ('family','WATCHED_FOLDER','folder','bank'),
+                           ('family','MANUAL_IMPORT','manual-import','bank');",
                 )?;
                 Ok(())
             })
@@ -4847,6 +5051,30 @@ mod tests {
             })
             .expect("count Gmail connections");
         assert_eq!(gmail_count, 0);
+        let binding_count: i64 = connection
+            .query_row("SELECT count(*) FROM connector_bindings", [], |row| {
+                row.get(0)
+            })
+            .expect("count connector bindings");
+        assert_eq!(binding_count, 0);
+        for table in [
+            "source_documents",
+            "source_records",
+            "transaction_candidates",
+            "transactions",
+            "journal_entries",
+            "transaction_sources",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .expect("count preserved provenance"),
+                if table == "journal_entries" { 2 } else { 1 },
+                "{table} must survive portable restore"
+            );
+        }
         drop(connection);
         let _ = fs::remove_dir_all(test_directory);
     }

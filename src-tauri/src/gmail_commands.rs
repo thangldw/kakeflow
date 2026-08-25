@@ -626,9 +626,16 @@ pub async fn gmail_disconnect(
         let dto = app
             .state::<AppState>()
             .with_connection(|c| {
-                gmail_store::disconnect(c, &household_id, &connection_id)
-                    .map(gmail_command_service::project_connection)
-                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+                let disconnected = gmail_store::disconnect(c, &household_id, &connection_id)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                crate::connector_binding::delete_active_binding(
+                    c,
+                    &household_id,
+                    crate::connector_control::ConnectorKind::Gmail,
+                    &connection_id,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(gmail_command_service::project_connection(disconnected))
             })
             .map_err(|_| "Gmail connection could not be disconnected".to_owned())?;
         app.state::<GmailCredentialStore>()
