@@ -319,6 +319,14 @@ impl HeartbeatStop {
     }
 }
 
+struct HeartbeatStopGuard(Arc<HeartbeatStop>);
+
+impl Drop for HeartbeatStopGuard {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
+}
+
 fn execute_with_heartbeat(
     persistence: &(impl RefreshPersistence + Sync),
     executor: &impl ConnectorRefreshExecutor,
@@ -331,7 +339,7 @@ fn execute_with_heartbeat(
     thread::scope(|scope| {
         let heartbeat_stop = Arc::clone(&stop);
         let heartbeat_failure = Arc::clone(&heartbeat_failed);
-        scope.spawn(move || {
+        let heartbeat = scope.spawn(move || {
             while !heartbeat_stop.wait(heartbeat_interval) {
                 if persistence.heartbeat(household_id, claim).is_err() {
                     heartbeat_failure.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -339,9 +347,15 @@ fn execute_with_heartbeat(
                 }
             }
         });
-        let outcome = executor.execute(household_id, claim);
-        stop.stop();
-        outcome
+        let stop_guard = HeartbeatStopGuard(Arc::clone(&stop));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            executor.execute(household_id, claim)
+        }));
+        drop(stop_guard);
+        match (heartbeat.join(), outcome) {
+            (Ok(()), Ok(outcome)) => outcome,
+            _ => Err(RefreshInfrastructureError::PersistenceUnavailable),
+        }
     })
     .and_then(|outcome| {
         if heartbeat_failed.load(std::sync::atomic::Ordering::SeqCst) {
@@ -466,21 +480,16 @@ impl NativeConnectorRefreshExecutor<'_> {
         household_id: &str,
         claim: &ConnectorRefreshClaimDto,
     ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
-        self.app
-            .state::<AppState>()
-            .with_connection(|connection| {
-                Ok(folder_discovery::refresh_registered(
-                    connection,
-                    household_id,
-                    &claim.connection_key,
-                ))
-            })
-            .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)?
-            .map(|result| match result {
-                folder_discovery::FolderRefreshResult::Scanned { outcome, .. }
-                | folder_discovery::FolderRefreshResult::RecordedFailure(outcome) => outcome,
-            })
-            .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
+        folder_discovery::refresh_registered_state(
+            self.app.state::<AppState>().inner(),
+            household_id,
+            &claim.connection_key,
+        )
+        .map(|result| match result {
+            folder_discovery::FolderRefreshResult::Scanned { outcome, .. }
+            | folder_discovery::FolderRefreshResult::RecordedFailure(outcome) => outcome,
+        })
+        .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
     }
 }
 
@@ -670,6 +679,7 @@ mod tests {
         },
         gmail_store, google_drive_store,
         persistence::AppState,
+        watched_folders::{self, RegisteredFolderScanPlan, WatchedFileMetadataDto},
     };
     use rusqlite::{params, Connection};
     use std::cell::{Cell, RefCell};
@@ -1471,6 +1481,73 @@ mod tests {
             .unwrap();
     }
 
+    struct PanicExecutor;
+
+    impl ConnectorRefreshExecutor for PanicExecutor {
+        fn execute(
+            &self,
+            _household_id: &str,
+            _claim: &ConnectorRefreshClaimDto,
+        ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
+            panic!("synthetic provider panic")
+        }
+    }
+
+    #[test]
+    fn executor_panic_stops_and_joins_heartbeat_without_completion_or_next_claim() {
+        let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
+        let batch = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[
+                        target(ConnectorKind::GoogleDrive, "drive"),
+                        target(ConnectorKind::Gmail, "gmail"),
+                    ],
+                )
+                .unwrap())
+            })
+            .unwrap();
+        let persistence = Arc::new(LogicalLeasePersistence {
+            state: Arc::clone(&state),
+            clock: Arc::new(AtomicU64::new(0)),
+            deadline: AtomicU64::new(3),
+            heartbeat_calls: AtomicUsize::new(0),
+            completion_calls: AtomicUsize::new(0),
+            fail_heartbeat_at: None,
+            completed_outcome: Mutex::new(None),
+        });
+        let run_persistence = Arc::clone(&persistence);
+        let batch_id = batch.batch_id.clone();
+        let worker = std::thread::spawn(move || {
+            run_batch_controlled(
+                run_persistence.as_ref(),
+                &PanicExecutor,
+                &NeverStopped,
+                "home",
+                &batch_id,
+                Duration::from_millis(1),
+            )
+        });
+
+        assert_eq!(
+            worker.join().expect("executor panic must be converted"),
+            Err(RefreshInfrastructureError::PersistenceUnavailable)
+        );
+        assert_eq!(persistence.completion_calls.load(Ordering::SeqCst), 0);
+        state
+            .with_connection(|connection| {
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::Running);
+                assert_eq!(loaded.items[1].status, RefreshItemStatus::Pending);
+                Ok(())
+            })
+            .unwrap();
+    }
+
     #[derive(Default)]
     struct BlockingGate {
         started: Mutex<bool>,
@@ -1482,6 +1559,214 @@ mod tests {
     struct BlockingExecutor {
         gate: Arc<BlockingGate>,
         calls: AtomicUsize,
+    }
+
+    struct BlockingWatchedScanner {
+        gate: Arc<BlockingGate>,
+        calls: AtomicUsize,
+    }
+
+    impl folder_discovery::RegisteredFolderScanner for BlockingWatchedScanner {
+        fn scan(
+            &self,
+            _plan: &RegisteredFolderScanPlan,
+        ) -> Result<Vec<WatchedFileMetadataDto>, watched_folders::WatchedFolderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            *self.gate.started.lock().unwrap() = true;
+            self.gate.started_changed.notify_all();
+            let released = self.gate.released.lock().unwrap();
+            drop(
+                self.gate
+                    .release_changed
+                    .wait_while(released, |released| !*released)
+                    .unwrap(),
+            );
+            Ok(vec![WatchedFileMetadataDto {
+                relative_path: "bank.csv".to_owned(),
+                file_name: "bank.csv".to_owned(),
+                media_type: "text/csv".to_owned(),
+                byte_size: 10,
+                modified_unix_ms: Some(1),
+            }])
+        }
+    }
+
+    struct BlockingWatchedExecutor {
+        state: Arc<AppState>,
+        scanner: Arc<BlockingWatchedScanner>,
+        calls: AtomicUsize,
+    }
+
+    impl ConnectorRefreshExecutor for BlockingWatchedExecutor {
+        fn execute(
+            &self,
+            household_id: &str,
+            claim: &ConnectorRefreshClaimDto,
+        ) -> Result<RefreshOutcome, RefreshInfrastructureError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            folder_discovery::refresh_registered_state_with_scanner(
+                self.state.as_ref(),
+                household_id,
+                &claim.connection_key,
+                self.scanner.as_ref(),
+            )
+            .map(|result| match result {
+                folder_discovery::FolderRefreshResult::Scanned { outcome, .. }
+                | folder_discovery::FolderRefreshResult::RecordedFailure(outcome) => outcome,
+            })
+            .map_err(|_| RefreshInfrastructureError::PersistenceUnavailable)
+        }
+    }
+
+    struct ObservedAppStatePersistence {
+        state: Arc<AppState>,
+        heartbeat_calls: AtomicUsize,
+        heartbeat_wait: Mutex<()>,
+        heartbeat_changed: Condvar,
+        completion_calls: AtomicUsize,
+    }
+
+    impl ObservedAppStatePersistence {
+        fn wait_for_heartbeats(&self, minimum: usize, timeout: Duration) -> bool {
+            let guard = self.heartbeat_wait.lock().unwrap();
+            let (_guard, _wait) = self
+                .heartbeat_changed
+                .wait_timeout_while(guard, timeout, |_| {
+                    self.heartbeat_calls.load(Ordering::SeqCst) < minimum
+                })
+                .unwrap();
+            self.heartbeat_calls.load(Ordering::SeqCst) >= minimum
+        }
+    }
+
+    impl RefreshPersistence for ObservedAppStatePersistence {
+        fn recover_expired(
+            &self,
+            household_id: &str,
+            batch_id: &str,
+        ) -> Result<u64, RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).recover_expired(household_id, batch_id)
+        }
+
+        fn claim_next(
+            &self,
+            household_id: &str,
+            batch_id: &str,
+        ) -> Result<Option<ConnectorRefreshClaimDto>, RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).claim_next(household_id, batch_id)
+        }
+
+        fn heartbeat(
+            &self,
+            household_id: &str,
+            claim: &ConnectorRefreshClaimDto,
+        ) -> Result<(), RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).heartbeat(household_id, claim)?;
+            let _guard = self.heartbeat_wait.lock().unwrap();
+            self.heartbeat_calls.fetch_add(1, Ordering::SeqCst);
+            self.heartbeat_changed.notify_all();
+            Ok(())
+        }
+
+        fn complete_item(
+            &self,
+            household_id: &str,
+            claim: &ConnectorRefreshClaimDto,
+            outcome: &RefreshOutcome,
+        ) -> Result<ConnectorRefreshBatchDto, RefreshInfrastructureError> {
+            let batch = AppStateRefreshPersistence::new(&self.state).complete_item(
+                household_id,
+                claim,
+                outcome,
+            )?;
+            self.completion_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(batch)
+        }
+
+        fn load_batch(
+            &self,
+            household_id: &str,
+            batch_id: &str,
+        ) -> Result<LoadedConnectorRefreshBatchDto, RefreshInfrastructureError> {
+            AppStateRefreshPersistence::new(&self.state).load_batch(household_id, batch_id)
+        }
+    }
+
+    #[test]
+    fn blocking_watched_scan_keeps_lease_renewing_and_persists_original_result_without_replay() {
+        let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        let canonical_directory = std::fs::canonicalize(directory.path()).unwrap();
+        let batch = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                let folder =
+                    watched_folders::register(connection, "home", "Bank", &canonical_directory)
+                        .unwrap();
+                Ok(connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[target(ConnectorKind::WatchedFolder, &folder.id)],
+                )
+                .unwrap())
+            })
+            .unwrap();
+        let gate = Arc::new(BlockingGate::default());
+        let scanner = Arc::new(BlockingWatchedScanner {
+            gate: Arc::clone(&gate),
+            calls: AtomicUsize::new(0),
+        });
+        let executor = Arc::new(BlockingWatchedExecutor {
+            state: Arc::clone(&state),
+            scanner: Arc::clone(&scanner),
+            calls: AtomicUsize::new(0),
+        });
+        let persistence = Arc::new(ObservedAppStatePersistence {
+            state: Arc::clone(&state),
+            heartbeat_calls: AtomicUsize::new(0),
+            heartbeat_wait: Mutex::new(()),
+            heartbeat_changed: Condvar::new(),
+            completion_calls: AtomicUsize::new(0),
+        });
+        let run_persistence = Arc::clone(&persistence);
+        let run_executor = Arc::clone(&executor);
+        let batch_id = batch.batch_id.clone();
+        let worker = std::thread::spawn(move || {
+            run_batch_controlled(
+                run_persistence.as_ref(),
+                run_executor.as_ref(),
+                &NeverStopped,
+                "home",
+                &batch_id,
+                Duration::from_millis(4),
+            )
+        });
+        let started = gate.started.lock().unwrap();
+        drop(
+            gate.started_changed
+                .wait_while(started, |started| !*started)
+                .unwrap(),
+        );
+        let renewed_twice = persistence.wait_for_heartbeats(2, Duration::from_secs(2));
+        *gate.released.lock().unwrap() = true;
+        gate.release_changed.notify_all();
+
+        assert!(renewed_twice, "watched traversal blocked lease renewal");
+        assert_eq!(worker.join().unwrap().unwrap(), RunBatchState::Drained);
+        assert!(persistence.heartbeat_calls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(persistence.completion_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(scanner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        state
+            .with_connection(|connection| {
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].attempt_generation, 1);
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::Succeeded);
+                assert_eq!(loaded.items[0].changed_count, 1);
+                Ok(())
+            })
+            .unwrap();
     }
 
     impl ConnectorRefreshExecutor for BlockingExecutor {

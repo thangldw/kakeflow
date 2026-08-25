@@ -153,6 +153,22 @@ pub(crate) struct EnabledWatchedFolder {
     pub provider: WatchedFolderProvider,
 }
 
+/// An internal, device-local capability for one registered-folder traversal.
+/// The canonical root and fencing metadata must never cross the native DTO
+/// boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct RegisteredFolderScanPlan {
+    household_id: String,
+    watched_folder_id: String,
+    label: String,
+    canonical_root: PathBuf,
+    source_type: WatchedFolderSourceType,
+    provider: WatchedFolderProvider,
+    created_at: String,
+    updated_at: String,
+    root_identity: DirectoryIdentity,
+}
+
 pub(crate) fn list_enabled_registrations(
     connection: &Connection,
 ) -> Result<Vec<EnabledWatchedFolder>, WatchedFolderError> {
@@ -401,12 +417,110 @@ pub fn scan_registered(
     household_id: &str,
     watched_folder_id: &str,
 ) -> Result<WatchedFolderScanDto, WatchedFolderError> {
-    validate_lookup(household_id, watched_folder_id)?;
-    let root = registered_root(connection, household_id, watched_folder_id)?;
+    let plan = prepare_registered_scan(connection, household_id, watched_folder_id)?;
+    let files = scan_prepared_registered(&plan)?;
+    validate_registered_scan_plan(connection, &plan)?;
     Ok(WatchedFolderScanDto {
         watched_folder_id: watched_folder_id.to_owned(),
-        files: scan_directory(&root)?,
+        files,
     })
+}
+
+pub(crate) fn prepare_registered_scan(
+    connection: &Connection,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<RegisteredFolderScanPlan, WatchedFolderError> {
+    validate_lookup(household_id, watched_folder_id)?;
+    let stored: Option<(String, String, String, String, String, String)> = connection
+        .query_row(
+            "SELECT label,canonical_path,source_type,provider,created_at,updated_at
+             FROM watched_folders
+             WHERE id=?1 AND household_id=?2 AND is_enabled=1",
+            params![watched_folder_id, household_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| WatchedFolderError::Database)?;
+    let (label, stored_path, stored_source_type, stored_provider, created_at, updated_at) =
+        stored.ok_or(WatchedFolderError::NotFound)?;
+    let source_type = WatchedFolderSourceType::from_database(&stored_source_type)
+        .ok_or(WatchedFolderError::Database)?;
+    let provider = WatchedFolderProvider::from_database(&stored_provider)
+        .ok_or(WatchedFolderError::Database)?;
+    let canonical_root = validate_selected_directory(Path::new(&stored_path))?;
+    let root_identity = validate_scan_directory(&canonical_root, &canonical_root)?;
+    Ok(RegisteredFolderScanPlan {
+        household_id: household_id.to_owned(),
+        watched_folder_id: watched_folder_id.to_owned(),
+        label,
+        canonical_root,
+        source_type,
+        provider,
+        created_at,
+        updated_at,
+        root_identity,
+    })
+}
+
+pub(crate) fn scan_prepared_registered(
+    plan: &RegisteredFolderScanPlan,
+) -> Result<Vec<WatchedFileMetadataDto>, WatchedFolderError> {
+    scan_directory(&plan.canonical_root)
+}
+
+/// Rebind an unlocked traversal to the exact enabled registration and root
+/// identity that authorized it. This must run immediately before reconcile.
+pub(crate) fn validate_registered_scan_plan(
+    connection: &Connection,
+    plan: &RegisteredFolderScanPlan,
+) -> Result<(), WatchedFolderError> {
+    let stored: Option<(String, String, String, String, String, String)> = connection
+        .query_row(
+            "SELECT label,canonical_path,source_type,provider,created_at,updated_at
+             FROM watched_folders
+             WHERE id=?1 AND household_id=?2 AND is_enabled=1",
+            params![plan.watched_folder_id, plan.household_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| WatchedFolderError::Database)?;
+    let (label, stored_path, stored_source_type, stored_provider, created_at, updated_at) =
+        stored.ok_or(WatchedFolderError::NotFound)?;
+    if label != plan.label
+        || stored_path != plan.canonical_root.to_string_lossy()
+        || stored_source_type != plan.source_type.as_str()
+        || stored_provider != plan.provider.as_str()
+        || created_at != plan.created_at
+        || updated_at != plan.updated_at
+    {
+        return Err(WatchedFolderError::Conflict);
+    }
+    let canonical_root = validate_selected_directory(Path::new(&stored_path))?;
+    if canonical_root != plan.canonical_root
+        || validate_scan_directory(&canonical_root, &canonical_root)? != plan.root_identity
+    {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    Ok(())
 }
 
 pub fn read_registered_file(
@@ -485,14 +599,6 @@ pub fn read_registered_file(
         modified_unix_ms: modified_unix_ms(&final_handle_metadata),
         file_bytes,
     })
-}
-
-fn registered_root(
-    connection: &Connection,
-    household_id: &str,
-    watched_folder_id: &str,
-) -> Result<PathBuf, WatchedFolderError> {
-    registered_root_with_source(connection, household_id, watched_folder_id).map(|(root, _)| root)
 }
 
 fn registered_root_with_source(
