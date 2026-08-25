@@ -4,16 +4,39 @@ use crate::{
         ConnectorKind, ConnectorLifecycle, ConnectorRegistry, ConnectorSummaryDto,
     },
     gmail_command_service, gmail_store, google_drive_command_service, google_drive_store,
-    watched_folders,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
+use std::path::Path;
 use thiserror::Error;
 
 const DEFAULT_PAGE_LIMIT: u16 = 100;
 const MAX_PAGE_LIMIT: u16 = 100;
 const MAX_CONNECTION_KEY_BYTES: usize = 128;
+
+#[cfg(test)]
+thread_local! {
+    static MATERIALIZED_SOURCE_ROWS: std::cell::RefCell<std::collections::BTreeMap<ConnectorKind, usize>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+#[cfg(test)]
+fn record_materialized_source_rows(kind: ConnectorKind, count: usize) {
+    MATERIALIZED_SOURCE_ROWS.with(|counts| {
+        counts.borrow_mut().insert(kind, count);
+    });
+}
+
+#[cfg(test)]
+fn reset_materialized_source_rows() {
+    MATERIALIZED_SOURCE_ROWS.with(|counts| counts.borrow_mut().clear());
+}
+
+#[cfg(test)]
+fn materialized_source_rows(kind: ConnectorKind) -> usize {
+    MATERIALIZED_SOURCE_ROWS.with(|counts| counts.borrow().get(&kind).copied().unwrap_or_default())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,15 +250,27 @@ impl ConnectorAdapter for GoogleDriveAdapter<'_> {
         after_key: Option<&ConnectorCursorDto>,
         limit: usize,
     ) -> Result<Vec<ConnectorSummaryDto>, ConnectorProjectionError> {
-        let mut connections =
-            google_drive_command_service::list_connections(connection, household_id)
-                .map_err(|_| ConnectorProjectionError::Database)?;
-        connections.sort_by(|left, right| left.id.cmp(&right.id));
-        connections
+        let Some(after_key) = adapter_after_key(ConnectorKind::GoogleDrive, after_key) else {
+            return Ok(Vec::new());
+        };
+        let connection_ids = list_bounded_source_ids(
+            connection,
+            "google_drive_connections",
+            household_id,
+            after_key,
+            limit,
+        )?;
+        #[cfg(test)]
+        record_materialized_source_rows(ConnectorKind::GoogleDrive, connection_ids.len());
+        connection_ids
             .into_iter()
-            .filter(|source| is_after(ConnectorKind::GoogleDrive, &source.id, after_key))
-            .take(limit)
-            .map(|source| {
+            .map(|connection_id| {
+                let source = google_drive_command_service::load_connection(
+                    connection,
+                    household_id,
+                    &connection_id,
+                )
+                .map_err(|_| ConnectorProjectionError::Database)?;
                 let lifecycle = lifecycle_from_drive_status(&source.status);
                 let schedule = match google_drive_command_service::get_schedule(
                     connection,
@@ -294,15 +329,25 @@ impl ConnectorAdapter for GmailAdapter<'_> {
         after_key: Option<&ConnectorCursorDto>,
         limit: usize,
     ) -> Result<Vec<ConnectorSummaryDto>, ConnectorProjectionError> {
-        let mut connections = gmail_store::list_connections(connection, household_id)
-            .map_err(|_| ConnectorProjectionError::Database)?;
-        connections.sort_by(|left, right| left.id.cmp(&right.id));
-        connections
+        let Some(after_key) = adapter_after_key(ConnectorKind::Gmail, after_key) else {
+            return Ok(Vec::new());
+        };
+        let connection_ids = list_bounded_source_ids(
+            connection,
+            "gmail_connections",
+            household_id,
+            after_key,
+            limit,
+        )?;
+        #[cfg(test)]
+        record_materialized_source_rows(ConnectorKind::Gmail, connection_ids.len());
+        connection_ids
             .into_iter()
-            .map(gmail_command_service::project_connection)
-            .filter(|source| is_after(ConnectorKind::Gmail, &source.id, after_key))
-            .take(limit)
-            .map(|source| {
+            .map(|connection_id| {
+                let source = gmail_command_service::project_connection(
+                    gmail_store::load_connection(connection, household_id, &connection_id)
+                        .map_err(|_| ConnectorProjectionError::Database)?,
+                );
                 let lifecycle = lifecycle_from_gmail_status(&source.status);
                 let schedule =
                     match gmail_store::load_schedule(connection, household_id, &source.id) {
@@ -354,13 +399,14 @@ impl ConnectorAdapter for WatchedFolderAdapter {
         after_key: Option<&ConnectorCursorDto>,
         limit: usize,
     ) -> Result<Vec<ConnectorSummaryDto>, ConnectorProjectionError> {
-        let mut folders = watched_folders::list(connection, household_id)
-            .map_err(|_| ConnectorProjectionError::Database)?;
-        folders.sort_by(|left, right| left.id.cmp(&right.id));
+        let Some(after_key) = adapter_after_key(ConnectorKind::WatchedFolder, after_key) else {
+            return Ok(Vec::new());
+        };
+        let folders = list_bounded_watched_folders(connection, household_id, after_key, limit)?;
+        #[cfg(test)]
+        record_materialized_source_rows(ConnectorKind::WatchedFolder, folders.len());
         folders
             .into_iter()
-            .filter(|source| is_after(ConnectorKind::WatchedFolder, &source.id, after_key))
-            .take(limit)
             .map(|source| {
                 let lifecycle = if source.is_enabled {
                     ConnectorLifecycle::Connected
@@ -675,6 +721,81 @@ fn lifecycle_from_gmail_status(status: &str) -> ConnectorLifecycle {
 
 fn summary_key(summary: &ConnectorSummaryDto) -> (ConnectorKind, &str) {
     (summary.connector_kind, &summary.connection_key)
+}
+
+fn adapter_after_key<'a>(
+    kind: ConnectorKind,
+    cursor: Option<&'a ConnectorCursorDto>,
+) -> Option<Option<&'a str>> {
+    match cursor {
+        None => Some(None),
+        Some(cursor) if kind < cursor.connector_kind => None,
+        Some(cursor) if kind == cursor.connector_kind => Some(Some(&cursor.connection_key)),
+        Some(_) => Some(None),
+    }
+}
+
+fn list_bounded_source_ids(
+    connection: &Connection,
+    table: &str,
+    household_id: &str,
+    after_key: Option<&str>,
+    limit: usize,
+) -> Result<Vec<String>, ConnectorProjectionError> {
+    let sql = format!(
+        "SELECT id FROM {table}
+         WHERE household_id=?1 AND (?2 IS NULL OR id>?2)
+         ORDER BY id LIMIT ?3"
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|_| ConnectorProjectionError::Database)?;
+    let rows = statement
+        .query_map(params![household_id, after_key, limit], |row| row.get(0))
+        .map_err(|_| ConnectorProjectionError::Database)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|_| ConnectorProjectionError::Database)?;
+    Ok(rows)
+}
+
+struct WatchedFolderProjectionRow {
+    id: String,
+    label: String,
+    display_name: String,
+    is_enabled: bool,
+}
+
+fn list_bounded_watched_folders(
+    connection: &Connection,
+    household_id: &str,
+    after_key: Option<&str>,
+    limit: usize,
+) -> Result<Vec<WatchedFolderProjectionRow>, ConnectorProjectionError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id,label,canonical_path,is_enabled FROM watched_folders
+             WHERE household_id=?1 AND (?2 IS NULL OR id>?2)
+             ORDER BY id LIMIT ?3",
+        )
+        .map_err(|_| ConnectorProjectionError::Database)?;
+    let rows = statement
+        .query_map(params![household_id, after_key, limit], |row| {
+            let canonical_path: String = row.get(2)?;
+            Ok(WatchedFolderProjectionRow {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                display_name: Path::new(&canonical_path)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Selected folder")
+                    .to_owned(),
+                is_enabled: row.get(3)?,
+            })
+        })
+        .map_err(|_| ConnectorProjectionError::Database)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|_| ConnectorProjectionError::Database)?;
+    Ok(rows)
 }
 
 fn is_after(kind: ConnectorKind, key: &str, cursor: Option<&ConnectorCursorDto>) -> bool {
@@ -1009,6 +1130,7 @@ mod tests {
                 assert_eq!(second.items.len(), 6);
                 assert_eq!(second.items[0].connection_key, "folder-100");
                 assert_eq!(second.items[5].connection_key, "manual-import");
+                assert_eq!(materialized_source_rows(ConnectorKind::WatchedFolder), 5);
                 assert!(second.next_cursor.is_none());
                 Ok(())
             })
@@ -1092,6 +1214,49 @@ mod tests {
                 assert!(display.starts_with(&format!("{} · ", "L".repeat(80))));
                 assert!(display.contains('日'));
                 assert!(display.len() <= 256);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn each_storage_query_materializes_at_most_limit_plus_one_source_rows() {
+        let state = migrated_state();
+        state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                for index in 0..20 {
+                    connection.execute(
+                        "INSERT INTO google_drive_connections(id,household_id,client_id_fingerprint,status) VALUES(?1,'home',?2,'DISCONNECTED')",
+                        rusqlite::params![
+                            format!("drive-{index:03}"),
+                            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        ],
+                    )?;
+                    connection.execute(
+                        "INSERT INTO gmail_connections(id,household_id,client_id_fingerprint,status) VALUES(?1,'home',?2,'DISCONNECTED')",
+                        rusqlite::params![
+                            format!("gmail-{index:03}"),
+                            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        ],
+                    )?;
+                    connection.execute(
+                        "INSERT INTO watched_folders(id,household_id,label,canonical_path,source_type,provider) VALUES(?1,'home',?2,?3,'LOCAL_FOLDER','LOCAL')",
+                        rusqlite::params![
+                            format!("folder-{index:03}"),
+                            format!("Folder {index:03}"),
+                            format!("/safe/folder-{index:03}"),
+                        ],
+                    )?;
+                }
+
+                reset_materialized_source_rows();
+                ConnectionProjectionService::new(&FixedClock)
+                    .list_page(connection, "home", None, Some(3))
+                    .unwrap();
+                assert_eq!(materialized_source_rows(ConnectorKind::GoogleDrive), 4);
+                assert_eq!(materialized_source_rows(ConnectorKind::Gmail), 4);
+                assert_eq!(materialized_source_rows(ConnectorKind::WatchedFolder), 4);
                 Ok(())
             })
             .unwrap();
