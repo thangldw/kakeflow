@@ -17,16 +17,50 @@ CREATE TABLE connector_refresh_batches (
     failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count BETWEEN 0 AND 10000),
     changed_count INTEGER NOT NULL DEFAULT 0 CHECK(changed_count BETWEEN 0 AND 9007199254740991),
     created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      CHECK(length(created_at) BETWEEN 20 AND 32 AND substr(created_at,-1)='Z' AND datetime(created_at) IS NOT NULL),
+      CHECK((length(created_at)=20 OR length(created_at) BETWEEN 22 AND 32)
+        AND substr(created_at,-1)='Z'
+        AND strftime('%Y-%m-%dT%H:%M:%S',created_at) IS NOT NULL
+        AND substr(created_at,12,2) BETWEEN '00' AND '23'
+        AND substr(created_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',created_at)
+        AND (length(created_at)=20 OR (substr(created_at,20,1)='.'
+          AND substr(created_at,21,length(created_at)-21) NOT GLOB '*[^0-9]*'))),
     updated_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      CHECK(length(updated_at) BETWEEN 20 AND 32 AND substr(updated_at,-1)='Z' AND datetime(updated_at) IS NOT NULL),
+      CHECK((length(updated_at)=20 OR length(updated_at) BETWEEN 22 AND 32)
+        AND substr(updated_at,-1)='Z'
+        AND strftime('%Y-%m-%dT%H:%M:%S',updated_at) IS NOT NULL
+        AND substr(updated_at,12,2) BETWEEN '00' AND '23'
+        AND substr(updated_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',updated_at)
+        AND (length(updated_at)=20 OR (substr(updated_at,20,1)='.'
+          AND substr(updated_at,21,length(updated_at)-21) NOT GLOB '*[^0-9]*'))),
     completed_at TEXT CHECK(
-      completed_at IS NULL OR (length(completed_at) BETWEEN 20 AND 32
-      AND substr(completed_at,-1)='Z' AND datetime(completed_at) IS NOT NULL)
+      completed_at IS NULL OR ((length(completed_at)=20 OR length(completed_at) BETWEEN 22 AND 32)
+      AND substr(completed_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',completed_at) IS NOT NULL
+      AND substr(completed_at,12,2) BETWEEN '00' AND '23'
+      AND substr(completed_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',completed_at)
+      AND (length(completed_at)=20 OR (substr(completed_at,20,1)='.'
+        AND substr(completed_at,21,length(completed_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     UNIQUE(batch_id,household_id),
-    CHECK(updated_at>=created_at),
-    CHECK(completed_at IS NULL OR completed_at>=created_at),
+    CHECK(
+      strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+      >= strftime('%Y%m%d%H%M%S',created_at)
+        || CASE WHEN length(created_at)=20 THEN '00000000000'
+             ELSE substr(substr(created_at,21,length(created_at)-21)||'00000000000',1,11) END
+    ),
+    CHECK(completed_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',completed_at)
+        || CASE WHEN length(completed_at)=20 THEN '00000000000'
+             ELSE substr(substr(completed_at,21,length(completed_at)-21)||'00000000000',1,11) END
+      BETWEEN strftime('%Y%m%d%H%M%S',created_at)
+        || CASE WHEN length(created_at)=20 THEN '00000000000'
+             ELSE substr(substr(created_at,21,length(created_at)-21)||'00000000000',1,11) END
+      AND strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+    )),
     CHECK(terminal_count=succeeded_count+no_changes_count+skipped_manual_count+failed_count),
     CHECK(terminal_count<=total_count),
     CHECK(
@@ -67,8 +101,14 @@ CREATE TABLE connector_refresh_batch_items (
       lease_token IS NULL OR (length(lease_token)=64 AND lease_token NOT GLOB '*[^0-9a-f]*')
     ),
     lease_expires_at TEXT CHECK(
-      lease_expires_at IS NULL OR (length(lease_expires_at) BETWEEN 20 AND 32
-      AND substr(lease_expires_at,-1)='Z' AND datetime(lease_expires_at) IS NOT NULL)
+      lease_expires_at IS NULL OR ((length(lease_expires_at)=20
+        OR length(lease_expires_at) BETWEEN 22 AND 32)
+      AND substr(lease_expires_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',lease_expires_at) IS NOT NULL
+      AND substr(lease_expires_at,12,2) BETWEEN '00' AND '23'
+      AND substr(lease_expires_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',lease_expires_at)
+      AND (length(lease_expires_at)=20 OR (substr(lease_expires_at,20,1)='.'
+        AND substr(lease_expires_at,21,length(lease_expires_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     changed_count INTEGER NOT NULL DEFAULT 0 CHECK(changed_count BETWEEN 0 AND 9007199254740991),
     last_error_code TEXT CHECK(
@@ -76,24 +116,88 @@ CREATE TABLE connector_refresh_batch_items (
       AND last_error_code NOT GLOB '*[^A-Z0-9_]*')
     ),
     created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      CHECK(length(created_at) BETWEEN 20 AND 32 AND substr(created_at,-1)='Z' AND datetime(created_at) IS NOT NULL),
+      CHECK((length(created_at)=20 OR length(created_at) BETWEEN 22 AND 32)
+        AND substr(created_at,-1)='Z'
+        AND strftime('%Y-%m-%dT%H:%M:%S',created_at) IS NOT NULL
+        AND substr(created_at,12,2) BETWEEN '00' AND '23'
+        AND substr(created_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',created_at)
+        AND (length(created_at)=20 OR (substr(created_at,20,1)='.'
+          AND substr(created_at,21,length(created_at)-21) NOT GLOB '*[^0-9]*'))),
     updated_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      CHECK(length(updated_at) BETWEEN 20 AND 32 AND substr(updated_at,-1)='Z' AND datetime(updated_at) IS NOT NULL),
+      CHECK((length(updated_at)=20 OR length(updated_at) BETWEEN 22 AND 32)
+        AND substr(updated_at,-1)='Z'
+        AND strftime('%Y-%m-%dT%H:%M:%S',updated_at) IS NOT NULL
+        AND substr(updated_at,12,2) BETWEEN '00' AND '23'
+        AND substr(updated_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',updated_at)
+        AND (length(updated_at)=20 OR (substr(updated_at,20,1)='.'
+          AND substr(updated_at,21,length(updated_at)-21) NOT GLOB '*[^0-9]*'))),
     started_at TEXT CHECK(
-      started_at IS NULL OR (length(started_at) BETWEEN 20 AND 32
-      AND substr(started_at,-1)='Z' AND datetime(started_at) IS NOT NULL)
+      started_at IS NULL OR ((length(started_at)=20 OR length(started_at) BETWEEN 22 AND 32)
+      AND substr(started_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',started_at) IS NOT NULL
+      AND substr(started_at,12,2) BETWEEN '00' AND '23'
+      AND substr(started_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',started_at)
+      AND (length(started_at)=20 OR (substr(started_at,20,1)='.'
+        AND substr(started_at,21,length(started_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     completed_at TEXT CHECK(
-      completed_at IS NULL OR (length(completed_at) BETWEEN 20 AND 32
-      AND substr(completed_at,-1)='Z' AND datetime(completed_at) IS NOT NULL)
+      completed_at IS NULL OR ((length(completed_at)=20 OR length(completed_at) BETWEEN 22 AND 32)
+      AND substr(completed_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',completed_at) IS NOT NULL
+      AND substr(completed_at,12,2) BETWEEN '00' AND '23'
+      AND substr(completed_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',completed_at)
+      AND (length(completed_at)=20 OR (substr(completed_at,20,1)='.'
+        AND substr(completed_at,21,length(completed_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     PRIMARY KEY(batch_id,item_id),
     UNIQUE(batch_id,connector_kind,connection_key),
-    CHECK(updated_at>=created_at),
+    CHECK(
+      strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+      >= strftime('%Y%m%d%H%M%S',created_at)
+        || CASE WHEN length(created_at)=20 THEN '00000000000'
+             ELSE substr(substr(created_at,21,length(created_at)-21)||'00000000000',1,11) END
+    ),
     CHECK(connector_kind!='MANUAL_IMPORT' OR connection_key='manual-import'),
-    CHECK(started_at IS NULL OR (started_at>=created_at AND started_at<=updated_at)),
-    CHECK(completed_at IS NULL OR (completed_at>=created_at AND completed_at<=updated_at)),
-    CHECK(completed_at IS NULL OR started_at IS NULL OR completed_at>=started_at),
+    CHECK(started_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',started_at)
+        || CASE WHEN length(started_at)=20 THEN '00000000000'
+             ELSE substr(substr(started_at,21,length(started_at)-21)||'00000000000',1,11) END
+      BETWEEN strftime('%Y%m%d%H%M%S',created_at)
+        || CASE WHEN length(created_at)=20 THEN '00000000000'
+             ELSE substr(substr(created_at,21,length(created_at)-21)||'00000000000',1,11) END
+      AND strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+    )),
+    CHECK(completed_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',completed_at)
+        || CASE WHEN length(completed_at)=20 THEN '00000000000'
+             ELSE substr(substr(completed_at,21,length(completed_at)-21)||'00000000000',1,11) END
+      BETWEEN strftime('%Y%m%d%H%M%S',created_at)
+        || CASE WHEN length(created_at)=20 THEN '00000000000'
+             ELSE substr(substr(created_at,21,length(created_at)-21)||'00000000000',1,11) END
+      AND strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+    )),
+    CHECK(completed_at IS NULL OR started_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',completed_at)
+        || CASE WHEN length(completed_at)=20 THEN '00000000000'
+             ELSE substr(substr(completed_at,21,length(completed_at)-21)||'00000000000',1,11) END
+      >= strftime('%Y%m%d%H%M%S',started_at)
+        || CASE WHEN length(started_at)=20 THEN '00000000000'
+             ELSE substr(substr(started_at,21,length(started_at)-21)||'00000000000',1,11) END
+    )),
+    CHECK(lease_expires_at IS NULL OR started_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',lease_expires_at)
+        || CASE WHEN length(lease_expires_at)=20 THEN '00000000000'
+             ELSE substr(substr(lease_expires_at,21,length(lease_expires_at)-21)||'00000000000',1,11) END
+      > strftime('%Y%m%d%H%M%S',started_at)
+        || CASE WHEN length(started_at)=20 THEN '00000000000'
+             ELSE substr(substr(started_at,21,length(started_at)-21)||'00000000000',1,11) END
+    )),
     CHECK(
       (status='PENDING' AND connector_kind!='MANUAL_IMPORT'
        AND lease_token IS NULL AND lease_expires_at IS NULL
@@ -160,20 +264,43 @@ CREATE TABLE connector_runtime_observations (
       AND connection_key NOT GLOB '*[^!-~]*' AND instr(connection_key,'/')=0
     ),
     last_attempt_at TEXT CHECK(
-      last_attempt_at IS NULL OR (length(last_attempt_at) BETWEEN 20 AND 32
-      AND substr(last_attempt_at,-1)='Z' AND datetime(last_attempt_at) IS NOT NULL)
+      last_attempt_at IS NULL OR ((length(last_attempt_at)=20
+        OR length(last_attempt_at) BETWEEN 22 AND 32)
+      AND substr(last_attempt_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',last_attempt_at) IS NOT NULL
+      AND substr(last_attempt_at,12,2) BETWEEN '00' AND '23'
+      AND substr(last_attempt_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',last_attempt_at)
+      AND (length(last_attempt_at)=20 OR (substr(last_attempt_at,20,1)='.'
+        AND substr(last_attempt_at,21,length(last_attempt_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     last_success_at TEXT CHECK(
-      last_success_at IS NULL OR (length(last_success_at) BETWEEN 20 AND 32
-      AND substr(last_success_at,-1)='Z' AND datetime(last_success_at) IS NOT NULL)
+      last_success_at IS NULL OR ((length(last_success_at)=20
+        OR length(last_success_at) BETWEEN 22 AND 32)
+      AND substr(last_success_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',last_success_at) IS NOT NULL
+      AND substr(last_success_at,12,2) BETWEEN '00' AND '23'
+      AND substr(last_success_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',last_success_at)
+      AND (length(last_success_at)=20 OR (substr(last_success_at,20,1)='.'
+        AND substr(last_success_at,21,length(last_success_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     freshness_deadline_at TEXT CHECK(
-      freshness_deadline_at IS NULL OR (length(freshness_deadline_at) BETWEEN 20 AND 32
-      AND substr(freshness_deadline_at,-1)='Z' AND datetime(freshness_deadline_at) IS NOT NULL)
+      freshness_deadline_at IS NULL OR ((length(freshness_deadline_at)=20
+        OR length(freshness_deadline_at) BETWEEN 22 AND 32)
+      AND substr(freshness_deadline_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',freshness_deadline_at) IS NOT NULL
+      AND substr(freshness_deadline_at,12,2) BETWEEN '00' AND '23'
+      AND substr(freshness_deadline_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',freshness_deadline_at)
+      AND (length(freshness_deadline_at)=20 OR (substr(freshness_deadline_at,20,1)='.'
+        AND substr(freshness_deadline_at,21,length(freshness_deadline_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     next_due_at TEXT CHECK(
-      next_due_at IS NULL OR (length(next_due_at) BETWEEN 20 AND 32
-      AND substr(next_due_at,-1)='Z' AND datetime(next_due_at) IS NOT NULL)
+      next_due_at IS NULL OR ((length(next_due_at)=20 OR length(next_due_at) BETWEEN 22 AND 32)
+      AND substr(next_due_at,-1)='Z'
+      AND strftime('%Y-%m-%dT%H:%M:%S',next_due_at) IS NOT NULL
+      AND substr(next_due_at,12,2) BETWEEN '00' AND '23'
+      AND substr(next_due_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',next_due_at)
+      AND (length(next_due_at)=20 OR (substr(next_due_at,20,1)='.'
+        AND substr(next_due_at,21,length(next_due_at)-21) NOT GLOB '*[^0-9]*')))
     ),
     pending_review_count INTEGER NOT NULL DEFAULT 0
       CHECK(pending_review_count BETWEEN 0 AND 9007199254740991),
@@ -184,8 +311,37 @@ CREATE TABLE connector_runtime_observations (
       AND last_error_code NOT GLOB '*[^A-Z0-9_]*')
     ),
     updated_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      CHECK(length(updated_at) BETWEEN 20 AND 32 AND substr(updated_at,-1)='Z' AND datetime(updated_at) IS NOT NULL),
+      CHECK((length(updated_at)=20 OR length(updated_at) BETWEEN 22 AND 32)
+        AND substr(updated_at,-1)='Z'
+        AND strftime('%Y-%m-%dT%H:%M:%S',updated_at) IS NOT NULL
+        AND substr(updated_at,12,2) BETWEEN '00' AND '23'
+        AND substr(updated_at,1,19)=strftime('%Y-%m-%dT%H:%M:%S',updated_at)
+        AND (length(updated_at)=20 OR (substr(updated_at,20,1)='.'
+          AND substr(updated_at,21,length(updated_at)-21) NOT GLOB '*[^0-9]*'))),
     PRIMARY KEY(household_id,connector_kind,connection_key),
     CHECK(connector_kind!='MANUAL_IMPORT' OR connection_key='manual-import'),
-    CHECK(last_success_at IS NULL OR last_attempt_at IS NULL OR last_success_at<=last_attempt_at)
+    CHECK(last_success_at IS NULL OR last_attempt_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',last_success_at)
+        || CASE WHEN length(last_success_at)=20 THEN '00000000000'
+             ELSE substr(substr(last_success_at,21,length(last_success_at)-21)||'00000000000',1,11) END
+      <= strftime('%Y%m%d%H%M%S',last_attempt_at)
+        || CASE WHEN length(last_attempt_at)=20 THEN '00000000000'
+             ELSE substr(substr(last_attempt_at,21,length(last_attempt_at)-21)||'00000000000',1,11) END
+    )),
+    CHECK(last_attempt_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',last_attempt_at)
+        || CASE WHEN length(last_attempt_at)=20 THEN '00000000000'
+             ELSE substr(substr(last_attempt_at,21,length(last_attempt_at)-21)||'00000000000',1,11) END
+      <= strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+    )),
+    CHECK(last_success_at IS NULL OR (
+      strftime('%Y%m%d%H%M%S',last_success_at)
+        || CASE WHEN length(last_success_at)=20 THEN '00000000000'
+             ELSE substr(substr(last_success_at,21,length(last_success_at)-21)||'00000000000',1,11) END
+      <= strftime('%Y%m%d%H%M%S',updated_at)
+        || CASE WHEN length(updated_at)=20 THEN '00000000000'
+             ELSE substr(substr(updated_at,21,length(updated_at)-21)||'00000000000',1,11) END
+    ))
 ) STRICT, WITHOUT ROWID;

@@ -845,6 +845,33 @@ mod tests {
         .expect("complete item")
     }
 
+    fn expire_claimed_item(connection: &Connection, claim: &ConnectorRefreshClaimDto) {
+        connection
+            .execute(
+                "DELETE FROM connector_refresh_batch_items WHERE item_id=?1",
+                [&claim.item_id],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO connector_refresh_batch_items
+                   (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                    lease_token,created_at,started_at,lease_expires_at,updated_at)
+                 VALUES(?1,?2,?3,?4,'RUNNING',?5,?6,
+                        '2000-01-01T00:00:00Z','2000-01-01T00:00:00.100Z',
+                        '2000-01-01T00:00:00.200Z','2000-01-01T00:00:00.300Z')",
+                params![
+                    claim.batch_id.as_str(),
+                    claim.item_id.as_str(),
+                    connector_kind_sql(claim.connector_kind),
+                    claim.connection_key.as_str(),
+                    claim.attempt_generation,
+                    claim.lease_token.as_str(),
+                ],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn snapshot_is_unique_deterministic_and_manual_is_explicitly_terminal() {
         with_database(|connection| {
@@ -1079,6 +1106,174 @@ mod tests {
     }
 
     #[test]
+    fn schema_compares_whole_and_fractional_utc_timestamps_chronologically() {
+        with_database(|connection| {
+            connection
+                .execute_batch(
+                    "INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                        created_at,updated_at,completed_at)
+                     VALUES('valid-terminal','family','COMPLETE',1,1,1,
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.300Z',
+                            '2026-08-25T00:00:00.200Z');
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        created_at,started_at,completed_at,updated_at)
+                     VALUES('valid-terminal','valid-terminal-item','GMAIL','gmail','NO_CHANGES',1,
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.100Z',
+                            '2026-08-25T00:00:00.200Z','2026-08-25T00:00:00.300Z');
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,created_at,updated_at)
+                     VALUES('valid-running','other','ACTIVE',1,
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.100Z');
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        lease_token,created_at,started_at,lease_expires_at,updated_at)
+                     VALUES('valid-running','valid-running-item','GOOGLE_DRIVE','drive','RUNNING',1,
+                            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00.200Z','2026-08-25T00:00:00.100Z');
+                     INSERT INTO connector_runtime_observations
+                       (household_id,connector_kind,connection_key,last_success_at,last_attempt_at,
+                        updated_at)
+                     VALUES('family','GMAIL','observation-valid',
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.100Z',
+                            '2026-08-25T00:00:00.200Z'),
+                           ('family','GMAIL','observation-valid-precision',
+                            '2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00.00000000001Z',
+                            '2026-08-25T00:00:00.200Z');",
+                )
+                .expect("valid mixed-precision UTC chronology");
+        });
+    }
+
+    #[test]
+    fn schema_rejects_reversed_mixed_precision_utc_chronology() {
+        with_database(|connection| {
+            let reversed_batch = connection.execute(
+                "INSERT INTO connector_refresh_batches
+                   (batch_id,household_id,status,total_count,created_at,updated_at,completed_at)
+                 VALUES('reversed-batch','family','COMPLETE',0,
+                        '2026-08-25T00:00:00.100Z','2026-08-25T00:00:00.300Z',
+                        '2026-08-25T00:00:00Z')",
+                [],
+            );
+            let reversed_batch_update = connection.execute(
+                "INSERT INTO connector_refresh_batches
+                   (batch_id,household_id,status,total_count,created_at,updated_at)
+                 VALUES('reversed-batch-update','fourth','ACTIVE',1,
+                        '2026-08-25T00:00:00.100Z','2026-08-25T00:00:00Z')",
+                [],
+            );
+            connection
+                .execute(
+                    "INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                        created_at,updated_at,completed_at)
+                     VALUES('terminal-parent','other','COMPLETE',1,1,1,
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00Z')",
+                    [],
+                )
+                .unwrap();
+            let reversed_terminal = connection.execute(
+                "INSERT INTO connector_refresh_batch_items
+                   (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                    created_at,started_at,completed_at,updated_at)
+                 VALUES('terminal-parent','terminal-item','GMAIL','gmail','NO_CHANGES',1,
+                        '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.100Z',
+                        '2026-08-25T00:00:00Z','2026-08-25T00:00:00Z')",
+                [],
+            );
+            connection
+                .execute(
+                    "INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,created_at,updated_at)
+                     VALUES('running-parent','third','ACTIVE',1,
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.300Z')",
+                    [],
+                )
+                .unwrap();
+            let reversed_expiry = connection.execute(
+                "INSERT INTO connector_refresh_batch_items
+                   (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                    lease_token,created_at,started_at,lease_expires_at,updated_at)
+                 VALUES('running-parent','running-item','GOOGLE_DRIVE','drive','RUNNING',1,
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                        '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.200Z',
+                        '2026-08-25T00:00:00.100Z','2026-08-25T00:00:00.300Z')",
+                [],
+            );
+            let reversed_observation = connection.execute(
+                "INSERT INTO connector_runtime_observations
+                   (household_id,connector_kind,connection_key,last_success_at,last_attempt_at,
+                    updated_at)
+                 VALUES('family','GMAIL','observation-reversed',
+                        '2026-08-25T00:00:00.100Z','2026-08-25T00:00:00Z',
+                        '2026-08-25T00:00:00.300Z')",
+                [],
+            );
+            let reversed_precision = connection.execute(
+                "INSERT INTO connector_runtime_observations
+                   (household_id,connector_kind,connection_key,last_success_at,last_attempt_at,
+                    updated_at)
+                 VALUES('family','GMAIL','observation-reversed-precision',
+                        '2026-08-25T00:00:00.00000000002Z',
+                        '2026-08-25T00:00:00.00000000001Z',
+                        '2026-08-25T00:00:00.00000000003Z')",
+                [],
+            );
+            let reversed_observation_update = connection.execute(
+                "INSERT INTO connector_runtime_observations
+                   (household_id,connector_kind,connection_key,last_success_at,last_attempt_at,
+                    updated_at)
+                 VALUES('family','GMAIL','observation-reversed-update',
+                        '2026-08-25T00:00:00Z','2026-08-25T00:00:00.200Z',
+                        '2026-08-25T00:00:00.100Z')",
+                [],
+            );
+
+            assert!(reversed_batch.is_err());
+            assert!(reversed_batch_update.is_err());
+            assert!(reversed_terminal.is_err());
+            assert!(reversed_expiry.is_err());
+            assert!(reversed_observation.is_err());
+            assert!(reversed_precision.is_err());
+            assert!(reversed_observation_update.is_err());
+        });
+    }
+
+    #[test]
+    fn schema_rejects_calendar_invalid_utc_timestamps() {
+        with_database(|connection| {
+            let invalid_batch = connection.execute(
+                "INSERT INTO connector_refresh_batches
+                   (batch_id,household_id,status,total_count,created_at,updated_at)
+                 VALUES('invalid-date','family','ACTIVE',1,
+                        '2026-02-30T00:00:00Z','2026-03-02T00:00:00Z')",
+                [],
+            );
+            let invalid_observation = connection.execute(
+                "INSERT INTO connector_runtime_observations
+                   (household_id,connector_kind,connection_key,last_attempt_at)
+                 VALUES('other','GMAIL','invalid-date','2026-02-30T00:00:00Z')",
+                [],
+            );
+            let invalid_hour = connection.execute(
+                "INSERT INTO connector_runtime_observations
+                   (household_id,connector_kind,connection_key,last_attempt_at,updated_at)
+                 VALUES('other','GMAIL','invalid-hour','2026-08-25T24:00:00Z',
+                        '2026-09-01T00:00:00Z')",
+                [],
+            );
+            assert!(invalid_batch.is_err());
+            assert!(invalid_observation.is_err());
+            assert!(invalid_hour.is_err());
+        });
+    }
+
+    #[test]
     fn claims_are_ordered_and_heartbeat_completion_and_recovery_are_generation_fenced() {
         with_database(|connection| {
             let batch = create_batch(
@@ -1200,14 +1395,7 @@ mod tests {
                 );
             }
 
-            connection
-                .execute(
-                    "UPDATE connector_refresh_batch_items
-                     SET lease_expires_at='2000-01-01T00:00:00.000Z'
-                     WHERE batch_id=?1 AND item_id=?2",
-                    params![batch.batch_id, first.item_id],
-                )
-                .unwrap();
+            expire_claimed_item(connection, &first);
             assert_eq!(
                 recover_expired(connection, "family", &batch.batch_id).unwrap(),
                 1
@@ -1528,14 +1716,7 @@ mod tests {
             let running = claim_next(connection, "family", &batch.batch_id)
                 .unwrap()
                 .unwrap();
-            connection
-                .execute(
-                    "UPDATE connector_refresh_batch_items
-                     SET lease_expires_at='2000-01-01T00:00:00.000Z'
-                     WHERE item_id=?1",
-                    [&running.item_id],
-                )
-                .unwrap();
+            expire_claimed_item(connection, &running);
             let expired = load_batch(connection, "family", &batch.batch_id).unwrap();
             assert_eq!(
                 heartbeat_item(
