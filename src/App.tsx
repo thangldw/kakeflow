@@ -128,6 +128,9 @@ import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
 import { APP_VERSION } from './version'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
 import { AuditReadinessPage, GlobalLedgerSearch, MonthlyContextNotes, PlanningTools, SecondaryCurrencySummary } from './features/gemini/GeminiFeatureSuite'
+import { ConnectorControlCenter } from './features/connectors/ConnectorControlCenter'
+import { loadAllConnectorSummaries } from './features/connectors/connectorControlModel'
+import type { ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const hasRakutenStatementMismatch = (item: Pick<ImportPreview, 'issues'>) => item.issues.some((issue) => issue.code === 'RAKUTEN_PDF_TOTAL_MISMATCH')
@@ -466,11 +469,12 @@ function Topbar({ page, openMenu, onGlobalSearch, onManualEntry, onImport, month
   )
 }
 
-function PageHeader({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children?: React.ReactNode }) {
+function PageHeader({ eyebrow, title, description, headingId, children }: { eyebrow: string; title: string; description: string; headingId?: string; children?: React.ReactNode }) {
   const { text } = useI18n()
+  const resolvedHeadingId = headingId ?? (title === localize("インポート Inbox") ? 'connector-import-inbox' : undefined)
   return (
     <div className="page-header">
-      <div><p>{text(eyebrow)}</p><h1>{text(title)}</h1><span>{text(description)}</span></div>
+      <div><p>{text(eyebrow)}</p><h1 id={resolvedHeadingId} tabIndex={resolvedHeadingId ? -1 : undefined}>{text(title)}</h1><span>{text(description)}</span></div>
       <div className="page-actions">{children}</div>
     </div>
   )
@@ -3217,8 +3221,44 @@ function SyncSettingsPanels({ householdId, members }: { readonly householdId: st
   </>
 }
 
+function SettingsConnectorControl({ householdId, onConfigure }: { readonly householdId: string | null; readonly onConfigure: (destination: ConfigurationDestinationDto) => void }) {
+  const [summaries, setSummaries] = useState<readonly ConnectorSummaryDto[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!householdId) { setSummaries([]); setLoading(false); setError(null); return }
+    let active = true
+    setSummaries([]); setLoading(true); setError(null)
+    void loadAllConnectorSummaries((cursor) => platformClient.listConnectorSummaries(householdId, cursor, 100))
+      .then((items) => { if (active) setSummaries(items) })
+      .catch(() => { if (active) setError('CONNECTOR_SUMMARY_UNAVAILABLE') })
+      .finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [householdId])
+
+  return <ConnectorControlCenter summaries={summaries} loading={loading} error={error} onConfigure={onConfigure} />
+}
+
 function SettingsDisclosure({ title, description, children }: { readonly title: string; readonly description: string; readonly children: React.ReactNode }) {
   return <details className="panel settings-disclosure"><summary><span><strong>{title}</strong><small>{description}</small></span><ChevronDown size={17} /></summary><div className="settings-disclosure-content">{children}</div></details>
+}
+
+const CONNECTOR_DESTINATION_ID: Readonly<Record<ConfigurationDestinationDto, string>> = {
+  GOOGLE_DRIVE_SETTINGS: 'connector-settings-google-drive',
+  GMAIL_SETTINGS: 'connector-settings-gmail',
+  WATCHED_FOLDER_SETTINGS: 'connector-settings-watched-folder',
+  IMPORT_INBOX: 'connector-import-inbox',
+}
+
+function revealConnectorDestination(destination: ConfigurationDestinationDto): void {
+  const target = document.getElementById(CONNECTOR_DESTINATION_ID[destination])
+  if (!target) return
+  const disclosure = target.closest('details')
+  if (disclosure) disclosure.open = true
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const heading = target.matches('h1, h2, h3') ? target : target.querySelector<HTMLElement>('h1, h2, h3')
+  heading?.focus({ preventScroll: true })
 }
 
 function IcloudDriveInboxSettingsPanel({ householdId }: { readonly householdId: string | null }) {
@@ -3246,7 +3286,7 @@ function IcloudDriveInboxSettingsPanel({ householdId }: { readonly householdId: 
       setNotice(localize("iCloud Drive フォルダーを接続できませんでした。macOS または Windows の iCloud Drive がローカルに同期済みか確認してください。"))
     } finally { setBusy(false) }
   }
-  return <section className="panel settings-panel" aria-labelledby="icloud-inbox-settings-title"><div><h2 id="icloud-inbox-settings-title">iCloud Drive Inbox</h2><p>{localize("Apple API への直接接続ではありません。macOS、または Windows の iCloud Drive が端末へ同期したフォルダーをKakeFlowがローカルで監視します。")}</p>{folders.map((folder) => <small key={folder.id}>{localize("接続済み ・ iCloud Drive ・")} {folder.displayName}</small>)}</div><div className="backup-form"><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri' || !householdId} onClick={() => void connect()}>{busy ? localize("iCloud Drive を接続中…") : localize("iCloud Drive を接続")}</button><small>{localize("新着ファイルは確認候補になり、台帳へ自動反映されません。")}</small>{notice && <p role="status">{notice}</p>}</div></section>
+  return <section id="connector-settings-watched-folder" className="panel settings-panel" aria-labelledby="icloud-inbox-settings-title"><div><h2 id="icloud-inbox-settings-title" tabIndex={-1}>iCloud Drive Inbox</h2><p>{localize("Apple API への直接接続ではありません。macOS、または Windows の iCloud Drive が端末へ同期したフォルダーをKakeFlowがローカルで監視します。")}</p>{folders.map((folder) => <small key={folder.id}>{localize("接続済み ・ iCloud Drive ・")} {folder.displayName}</small>)}</div><div className="backup-form"><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri' || !householdId} onClick={() => void connect()}>{busy ? localize("iCloud Drive を接続中…") : localize("iCloud Drive を接続")}</button><small>{localize("新着ファイルは確認候補になり、台帳へ自動反映されません。")}</small>{notice && <p role="status">{notice}</p>}</div></section>
 }
 
 function App() {
@@ -3627,6 +3667,10 @@ function App() {
     setPage('transactions')
     globalThis.setTimeout(() => globalThis.dispatchEvent(new CustomEvent('kakeflow:manual-entry')), 0)
   }
+  const openConnectorConfiguration = (destination: ConfigurationDestinationDto) => {
+    if (destination === 'IMPORT_INBOX') setPage('import')
+    globalThis.setTimeout(() => revealConnectorDestination(destination), 0)
+  }
   const toggleSidebar = () => setSidebarCollapsed((current) => {
     const next = !current
     globalThis.localStorage?.setItem('kakeflow.sidebar-collapsed', String(next))
@@ -3650,7 +3694,7 @@ function App() {
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     audit: <AuditReadinessPage counts={importCounts} onOpenImport={() => setPage('import')} onOpenTransactions={() => setPage('transactions')} />,
-    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><AppUpdatePanel enabled={platformClient.runtime === 'tauri'} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SettingsConnectorControl householdId={activeHouseholdId} onConfigure={openConnectorConfiguration} /><AppUpdatePanel enabled={platformClient.runtime === 'tauri'} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
   }[page]
   const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))
   const completeHouseholdCreation = (household: HouseholdDto) => {
