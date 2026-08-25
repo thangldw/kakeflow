@@ -173,6 +173,9 @@ const MIGRATIONS: &[M<'static>] = &[
         "../migrations/0069_japanese_expense_categories.sql"
     )),
     M::up(include_str!("../migrations/0070_connector_bindings.sql")),
+    M::up(include_str!(
+        "../migrations/0071_connector_refresh_batches.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -405,6 +408,13 @@ pub fn clear_restored_device_local_state(
     let version = schema_version(&connection)?;
     if version >= 8 {
         let transaction = connection.transaction()?;
+        if version >= 71 {
+            transaction.execute("DELETE FROM connector_runtime_observations", [])?;
+            transaction.execute(
+                "DELETE FROM connector_refresh_batches WHERE status='ACTIVE'",
+                [],
+            )?;
+        }
         if version >= 70 {
             transaction.execute("DELETE FROM connector_bindings", [])?;
         }
@@ -1712,6 +1722,31 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 71 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_refresh_batches b
+             LEFT JOIN (
+               SELECT batch_id,count(*) AS total_count,
+                      sum(status IN ('SUCCEEDED','NO_CHANGES','SKIPPED_MANUAL',
+                                     'FAILED_RETRYABLE','NEEDS_ACTION')) AS terminal_count,
+                      sum(status='SUCCEEDED') AS succeeded_count,
+                      sum(status='NO_CHANGES') AS no_changes_count,
+                      sum(status='SKIPPED_MANUAL') AS skipped_manual_count,
+                      sum(status IN ('FAILED_RETRYABLE','NEEDS_ACTION')) AS failed_count,
+                      sum(changed_count) AS changed_count
+               FROM connector_refresh_batch_items GROUP BY batch_id
+             ) i ON i.batch_id=b.batch_id
+             WHERE b.total_count!=COALESCE(i.total_count,0)
+                OR b.terminal_count!=COALESCE(i.terminal_count,0)
+                OR b.succeeded_count!=COALESCE(i.succeeded_count,0)
+                OR b.no_changes_count!=COALESCE(i.no_changes_count,0)
+                OR b.skipped_manual_count!=COALESCE(i.skipped_manual_count,0)
+                OR b.failed_count!=COALESCE(i.failed_count,0)
+                OR b.changed_count!=COALESCE(i.changed_count,0)
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -1781,13 +1816,13 @@ mod tests {
     }
 
     #[test]
-    fn migration_70_preserves_released_connectors_evidence_and_posted_provenance() {
+    fn migration_71_preserves_released_connectors_bindings_evidence_and_posted_provenance() {
         let mut connection = Connection::open_in_memory().expect("in-memory database");
         apply_key(&connection, TEST_KEY).expect("SQLCipher key");
         configure_connection(&connection).expect("connection configuration");
-        Migrations::new(MIGRATIONS[..69].to_vec())
+        Migrations::new(MIGRATIONS[..70].to_vec())
             .to_latest(&mut connection)
-            .expect("released schema 69");
+            .expect("released schema 70");
         connection
             .execute_batch(&format!(
                 "INSERT INTO households(id,name) VALUES('family','Family');
@@ -1858,7 +1893,20 @@ mod tests {
                    (id,household_id,watched_folder_id,relative_path,file_name,media_type,byte_size,
                     fingerprint,state,import_run_id)
                  VALUES('{folder_inbox}','family','folder','folder.csv','folder.csv','text/csv',30,
-                        '{folder_generation}','STAGED','folder-run');",
+                        '{folder_generation}','STAGED','folder-run');
+
+                 INSERT INTO connector_bindings
+                   (household_id,connector_kind,connection_key,version)
+                 VALUES('family','GOOGLE_DRIVE','drive',1),
+                       ('family','GMAIL','gmail',1),
+                       ('family','WATCHED_FOLDER','folder',1),
+                       ('family','MANUAL_IMPORT','manual-import',1);
+                 INSERT INTO connector_binding_accounts
+                   (household_id,connector_kind,connection_key,account_id)
+                 VALUES('family','GOOGLE_DRIVE','drive','bank'),
+                       ('family','GMAIL','gmail','bank'),
+                       ('family','WATCHED_FOLDER','folder','bank'),
+                       ('family','MANUAL_IMPORT','manual-import','bank');",
                 drive_sha = "1".repeat(64),
                 gmail_sha = "2".repeat(64),
                 folder_sha = "3".repeat(64),
@@ -1898,6 +1946,8 @@ mod tests {
             "SELECT inbox_id,source_document_id,evidence_role,linked_at FROM gmail_source_links ORDER BY inbox_id,source_document_id",
             "SELECT id,household_id,label,canonical_path,source_type,provider,is_enabled FROM watched_folders ORDER BY id",
             "SELECT id,household_id,watched_folder_id,relative_path,fingerprint,state,import_run_id FROM watched_file_inbox ORDER BY id",
+            "SELECT household_id,connector_kind,connection_key,parser_profile_id,parser_profile_version,version,created_at,updated_at FROM connector_bindings ORDER BY household_id,connector_kind,connection_key",
+            "SELECT household_id,connector_kind,connection_key,account_id FROM connector_binding_accounts ORDER BY household_id,connector_kind,connection_key,account_id",
         ];
         let before = snapshots
             .iter()
@@ -1913,7 +1963,11 @@ mod tests {
             .map(|query| selected_values(&connection, query))
             .collect::<Vec<_>>();
         assert_eq!(after, before);
-        for table in ["connector_bindings", "connector_binding_accounts"] {
+        for table in [
+            "connector_refresh_batches",
+            "connector_refresh_batch_items",
+            "connector_runtime_observations",
+        ] {
             assert_eq!(
                 connection
                     .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
@@ -1924,7 +1978,7 @@ mod tests {
                 "{table} starts empty"
             );
         }
-        assert_eq!(schema_version(&connection).unwrap(), 70);
+        assert_eq!(schema_version(&connection).unwrap(), 71);
         assert!(integrity_check(&connection).unwrap());
     }
 
@@ -5028,7 +5082,24 @@ mod tests {
                      VALUES('family','GOOGLE_DRIVE','drive','bank'),
                            ('family','GMAIL','gmail','bank'),
                            ('family','WATCHED_FOLDER','folder','bank'),
-                           ('family','MANUAL_IMPORT','manual-import','bank');",
+                           ('family','MANUAL_IMPORT','manual-import','bank');
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,
+                        succeeded_count,completed_at)
+                     VALUES('active-refresh','family','ACTIVE',1,0,0,NULL),
+                           ('historical-refresh','family','COMPLETE',1,1,1,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        changed_count,started_at,completed_at)
+                     VALUES('active-refresh','active-item','GOOGLE_DRIVE','drive','PENDING',0,0,NULL,NULL),
+                           ('historical-refresh','historical-item','GOOGLE_DRIVE','drive',
+                            'SUCCEEDED',1,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     INSERT INTO connector_runtime_observations
+                       (household_id,connector_kind,connection_key,pending_review_count,
+                        consecutive_failures)
+                     VALUES('family','GOOGLE_DRIVE','drive',2,1);",
                 )?;
                 Ok(())
             })
@@ -5061,6 +5132,48 @@ mod tests {
             })
             .expect("count connector bindings");
         assert_eq!(binding_count, 0);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_refresh_batches WHERE status='ACTIVE'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count active refresh batches"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_runtime_observations",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count runtime observations"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_refresh_batches
+                     WHERE batch_id='historical-refresh' AND status='COMPLETE'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count historical refresh evidence"),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_refresh_batch_items
+                     WHERE batch_id='historical-refresh' AND status='SUCCEEDED'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count historical refresh items"),
+            1
+        );
         for table in [
             "source_documents",
             "source_records",
@@ -5081,6 +5194,35 @@ mod tests {
         }
         drop(connection);
         let _ = fs::remove_dir_all(test_directory);
+    }
+
+    #[test]
+    fn restored_semantics_reject_refresh_batch_aggregate_mismatch() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count)
+                     VALUES('refresh','family','ACTIVE',2);
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status)
+                     VALUES('refresh','item','GMAIL','gmail','PENDING');",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_err());
+
+                connection.execute(
+                    "UPDATE connector_refresh_batches SET total_count=1 WHERE batch_id='refresh'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_ok());
+                Ok(())
+            })
+            .expect("restore refresh audit should remain queryable");
     }
 
     #[test]
