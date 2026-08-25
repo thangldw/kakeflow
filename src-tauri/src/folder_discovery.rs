@@ -934,12 +934,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     struct BetweenIdentityAndEnumerationSwapScanner {
         registered_root: PathBuf,
         replacement_root: PathBuf,
         parked_root: PathBuf,
     }
 
+    #[cfg(unix)]
     impl RegisteredFolderScanner for BetweenIdentityAndEnumerationSwapScanner {
         fn scan(
             &self,
@@ -960,12 +962,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     struct RestoredBeforeFinalCheckScanner {
         registered_root: PathBuf,
         replacement_root: PathBuf,
         parked_root: PathBuf,
     }
 
+    #[cfg(unix)]
     impl RegisteredFolderScanner for RestoredBeforeFinalCheckScanner {
         fn scan(
             &self,
@@ -983,6 +987,153 @@ mod tests {
                 },
             )
         }
+    }
+
+    #[cfg(windows)]
+    struct InPlaceChildJunctionMutationScanner {
+        registered_root: PathBuf,
+        watched_child: PathBuf,
+        replacement_root: PathBuf,
+    }
+
+    #[cfg(windows)]
+    impl RegisteredFolderScanner for InPlaceChildJunctionMutationScanner {
+        fn scan(
+            &self,
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
+            let mutated = std::cell::Cell::new(false);
+            let restored = std::cell::Cell::new(false);
+            let result = watched_folders::scan_prepared_registered_with_directory_observer(
+                plan,
+                |scanned_directory| {
+                    if scanned_directory == self.registered_root.as_path() && !mutated.get() {
+                        set_test_junction(&self.watched_child, &self.replacement_root);
+                        mutated.set(true);
+                    } else if scanned_directory == self.watched_child.as_path()
+                        && mutated.get()
+                        && !restored.get()
+                    {
+                        delete_test_junction(&self.watched_child);
+                        restored.set(true);
+                    }
+                },
+            );
+            if mutated.get() && !restored.get() {
+                delete_test_junction(&self.watched_child);
+            }
+            result
+        }
+    }
+
+    #[cfg(windows)]
+    fn open_test_reparse_directory(path: &std::path::Path) -> std::fs::File {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)
+            .unwrap()
+    }
+
+    #[cfg(windows)]
+    fn test_junction_substitute_name(target: &std::path::Path) -> (Vec<u16>, Vec<u16>) {
+        use std::os::windows::ffi::OsStrExt as _;
+
+        let target = target.as_os_str().encode_wide().collect::<Vec<_>>();
+        let verbatim_prefix = r"\\?\".encode_utf16().collect::<Vec<_>>();
+        let display = target
+            .strip_prefix(verbatim_prefix.as_slice())
+            .unwrap_or(&target)
+            .to_vec();
+        let mut substitute = r"\??\".encode_utf16().collect::<Vec<_>>();
+        substitute.extend_from_slice(&display);
+        (substitute, display)
+    }
+
+    #[cfg(windows)]
+    fn set_test_junction(directory: &std::path::Path, target: &std::path::Path) {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::System::IO::DeviceIoControl;
+
+        const FSCTL_SET_REPARSE_POINT: u32 = 589_988;
+        const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+        let (substitute, display) = test_junction_substitute_name(target);
+        let substitute_bytes = u16::try_from(substitute.len() * 2).unwrap();
+        let display_bytes = u16::try_from(display.len() * 2).unwrap();
+        let display_offset = substitute_bytes.checked_add(2).unwrap();
+        let path_bytes = usize::from(display_offset) + usize::from(display_bytes) + 2;
+        let reparse_data_length = u16::try_from(8 + path_bytes).unwrap();
+        let mut buffer = vec![0_u8; 8 + usize::from(reparse_data_length)];
+        buffer[0..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+        buffer[4..6].copy_from_slice(&reparse_data_length.to_le_bytes());
+        buffer[8..10].copy_from_slice(&0_u16.to_le_bytes());
+        buffer[10..12].copy_from_slice(&substitute_bytes.to_le_bytes());
+        buffer[12..14].copy_from_slice(&display_offset.to_le_bytes());
+        buffer[14..16].copy_from_slice(&display_bytes.to_le_bytes());
+        for (index, character) in substitute.into_iter().enumerate() {
+            let offset = 16 + index * 2;
+            buffer[offset..offset + 2].copy_from_slice(&character.to_le_bytes());
+        }
+        for (index, character) in display.into_iter().enumerate() {
+            let offset = 16 + usize::from(display_offset) + index * 2;
+            buffer[offset..offset + 2].copy_from_slice(&character.to_le_bytes());
+        }
+
+        let directory = open_test_reparse_directory(directory);
+        let mut returned = 0_u32;
+        // SAFETY: the directory handle and immutable input buffer remain live
+        // for the synchronous control request; there is no output buffer.
+        let succeeded = unsafe {
+            DeviceIoControl(
+                directory.as_raw_handle(),
+                FSCTL_SET_REPARSE_POINT,
+                buffer.as_ptr().cast(),
+                u32::try_from(buffer.len()).unwrap(),
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(succeeded, 0, "failed to create the junction test fixture");
+    }
+
+    #[cfg(windows)]
+    fn delete_test_junction(directory: &std::path::Path) {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::System::IO::DeviceIoControl;
+
+        const FSCTL_DELETE_REPARSE_POINT: u32 = 589_996;
+        const IO_REPARSE_TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+        let directory = open_test_reparse_directory(directory);
+        let mut buffer = [0_u8; 8];
+        buffer[0..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+        let mut returned = 0_u32;
+        // SAFETY: the directory handle and fixed input buffer remain live for
+        // the synchronous control request; there is no output buffer.
+        let succeeded = unsafe {
+            DeviceIoControl(
+                directory.as_raw_handle(),
+                FSCTL_DELETE_REPARSE_POINT,
+                buffer.as_ptr().cast(),
+                u32::try_from(buffer.len()).unwrap(),
+                std::ptr::null_mut(),
+                0,
+                &mut returned,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(succeeded, 0, "failed to remove the junction test fixture");
     }
 
     struct DatabaseFailureScanner;
@@ -1315,6 +1466,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_swap_between_identity_and_enumeration_writes_no_inbox_or_observation() {
         let state = AppState::in_memory(b"folder-between-open-enumerate-swap-key").unwrap();
@@ -1374,6 +1526,7 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn restored_root_swap_cannot_redirect_pinned_enumeration_to_replacement_files() {
         let state = AppState::in_memory(b"folder-pinned-enumeration-key").unwrap();
@@ -1401,6 +1554,63 @@ mod tests {
             registered_root,
             replacement_root,
             parked_root,
+        };
+
+        let scan = super::scan_registered_state_with_scanner(&state, "home", &folder_id, &scanner)
+            .unwrap();
+        assert!(scan.files.is_empty());
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM watched_file_inbox WHERE household_id='home'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn in_place_child_junction_mutation_cannot_redirect_pinned_enumeration_or_write_state() {
+        let state = AppState::in_memory(b"folder-windows-junction-mutation-key").unwrap();
+        let parent = tempfile::tempdir().unwrap();
+        let registered_root = parent.path().join("registered");
+        let replacement_root = parent.path().join("replacement");
+        std::fs::create_dir(&registered_root).unwrap();
+        std::fs::create_dir(registered_root.join("child")).unwrap();
+        std::fs::create_dir(&replacement_root).unwrap();
+        std::fs::write(replacement_root.join("replacement.csv"), b"replacement").unwrap();
+        let registered_root = std::fs::canonicalize(registered_root).unwrap();
+        let watched_child = registered_root.join("child");
+        let replacement_root = std::fs::canonicalize(replacement_root).unwrap();
+        let folder_id = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                Ok(
+                    watched_folders::register(connection, "home", "Bank", &registered_root)
+                        .unwrap()
+                        .id,
+                )
+            })
+            .unwrap();
+        let scanner = InPlaceChildJunctionMutationScanner {
+            registered_root,
+            watched_child,
+            replacement_root,
         };
 
         let scan = super::scan_registered_state_with_scanner(&state, "home", &folder_id, &scanner)

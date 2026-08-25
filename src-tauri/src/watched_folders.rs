@@ -536,6 +536,14 @@ pub(crate) fn scan_prepared_registered_with_root_observers(
     )
 }
 
+#[cfg(all(test, windows))]
+pub(crate) fn scan_prepared_registered_with_directory_observer(
+    plan: &RegisteredFolderScanPlan,
+    after_directory: impl FnMut(&Path),
+) -> Result<RegisteredFolderScanResult, WatchedFolderError> {
+    scan_directory_with_observers(&plan.canonical_root, || {}, after_directory, || {})
+}
+
 /// Rebind an unlocked traversal to the exact enabled registration and root
 /// identity that authorized it. This must run immediately before reconcile.
 pub(crate) fn validate_registered_scan_plan(
@@ -741,10 +749,10 @@ fn open_regular_file_bound_to_path(
     let handle_metadata = file
         .metadata()
         .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    let identity = file_identity(&file, &handle_metadata)?;
     if !handle_metadata.is_file() || handle_metadata.len() != path_metadata.len() {
         return Err(WatchedFolderError::FolderUnavailable);
     }
-    let identity = file_identity(&file, &handle_metadata)?;
     verify_path_matches_open_file(
         root,
         path,
@@ -770,10 +778,11 @@ fn verify_path_matches_open_file(
     let verification_metadata = verification_file
         .metadata()
         .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    let verification_identity = file_identity(&verification_file, &verification_metadata)?;
     if !verification_metadata.is_file()
         || verification_metadata.len() != expected_size
         || verification_metadata.modified().ok() != expected_modified
-        || file_identity(&verification_file, &verification_metadata)? != *expected_identity
+        || verification_identity != *expected_identity
     {
         return Err(WatchedFolderError::FolderUnavailable);
     }
@@ -808,9 +817,8 @@ fn scan_directory_with_observers(
         return Ok(invalidated_scan_result(observed_root_identity));
     }
     let mut pending = vec![(root_pin.try_clone()?, PathBuf::new(), 0_usize)];
-    // Windows pathname enumeration is safe only while every ancestor handle
-    // denies delete sharing. Retaining the same pins on Unix also makes the
-    // traversal lifetime explicit without changing its fd-relative behavior.
+    // Retain every opened directory through final validation and reconcile so
+    // both Unix fd-relative and Windows handle-relative traversal stay bound.
     let mut retained_directory_pins = vec![root_pin];
     let mut visited_entries = 0_usize;
     let mut files = Vec::new();
@@ -820,9 +828,8 @@ fn scan_directory_with_observers(
             return Ok(invalidated_scan_result(observed_root_identity));
         }
         if relative_directory.as_os_str().is_empty() {
-            // The root is already pinned. Any pathname replacement after this
-            // point cannot redirect Unix fd-relative enumeration or Windows
-            // enumeration protected by non-delete-sharing ancestor handles.
+            // The root is already pinned. Enumeration on either platform is
+            // relative to that opened root rather than reopening its pathname.
             after_root_open();
         }
         let absolute_directory = root.join(&relative_directory);
@@ -860,10 +867,10 @@ fn scan_directory_with_observers(
             let stable_metadata = stable_file
                 .metadata()
                 .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+            let stable_identity = file_identity(&stable_file, &stable_metadata)?;
             if !stable_metadata.is_file() {
                 return Err(WatchedFolderError::FolderUnavailable);
             }
-            let stable_identity = file_identity(&stable_file, &stable_metadata)?;
             let final_metadata = directory.verify_file(
                 &absolute_path,
                 &entry.name,
@@ -1093,10 +1100,11 @@ impl PinnedScanDirectory {
         let verification_metadata = verification_file
             .metadata()
             .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+        let verification_identity = file_identity(&verification_file, &verification_metadata)?;
         if !verification_metadata.is_file()
             || verification_metadata.len() != expected_size
             || verification_metadata.modified().ok() != expected_modified
-            || file_identity(&verification_file, &verification_metadata)? != *expected_identity
+            || verification_identity != *expected_identity
         {
             return Err(WatchedFolderError::FolderUnavailable);
         }
@@ -1198,72 +1206,310 @@ compile_error!("watched-folder fd-relative traversal requires a supported Unix e
 impl PinnedScanDirectory {
     fn read_entries(
         &self,
-        absolute_path: &Path,
+        _absolute_path: &Path,
         max_entries: usize,
     ) -> Result<Vec<PinnedEntry>, WatchedFolderError> {
-        let _pin = &self.handle;
+        use std::os::windows::ffi::OsStringExt as _;
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Wdk::Storage::FileSystem::{
+            FileIdBothDirectoryInformation, NtQueryDirectoryFile,
+        };
+        use windows_sys::Win32::Foundation::{STATUS_NO_MORE_FILES, STATUS_SUCCESS};
+        use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+        const BUFFER_BYTES: usize = 64 * 1024;
+
         let mut entries = Vec::new();
-        for entry in
-            fs::read_dir(absolute_path).map_err(|_| WatchedFolderError::FolderUnavailable)?
-        {
-            let entry = entry.map_err(|_| WatchedFolderError::FolderUnavailable)?;
-            if entries.len() >= max_entries {
-                return Err(WatchedFolderError::ScanLimit);
-            }
-            let file_type = entry
-                .file_type()
-                .map_err(|_| WatchedFolderError::FolderUnavailable)?;
-            let kind = if file_type.is_symlink() {
-                PinnedEntryKind::Symlink
-            } else if file_type.is_dir() {
-                PinnedEntryKind::Directory
-            } else if file_type.is_file() {
-                PinnedEntryKind::File
-            } else {
-                PinnedEntryKind::Other
+        let mut buffer = vec![0_u64; BUFFER_BYTES / std::mem::size_of::<u64>()];
+        let mut restart_scan = true;
+        loop {
+            let mut io_status = IO_STATUS_BLOCK::default();
+            // SAFETY: the synchronous pinned directory handle remains live,
+            // and the aligned output buffer is writable for its full length.
+            let status = unsafe {
+                NtQueryDirectoryFile(
+                    self.handle.as_raw_handle(),
+                    std::ptr::null_mut(),
+                    None,
+                    std::ptr::null(),
+                    &mut io_status,
+                    buffer.as_mut_ptr().cast(),
+                    u32::try_from(BUFFER_BYTES)
+                        .map_err(|_| WatchedFolderError::FolderUnavailable)?,
+                    FileIdBothDirectoryInformation,
+                    false,
+                    std::ptr::null(),
+                    restart_scan,
+                )
             };
-            entries.push(PinnedEntry {
-                name: entry.file_name(),
-                kind,
-            });
+            if status == STATUS_NO_MORE_FILES {
+                break;
+            }
+            if status != STATUS_SUCCESS
+                || io_status.Information == 0
+                || io_status.Information > BUFFER_BYTES
+            {
+                return Err(WatchedFolderError::FolderUnavailable);
+            }
+            // SAFETY: NtQueryDirectoryFile initialized exactly Information
+            // bytes in the live u64-aligned backing allocation.
+            let initialized = unsafe {
+                std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), io_status.Information)
+            };
+            let remaining = max_entries
+                .checked_sub(entries.len())
+                .ok_or(WatchedFolderError::ScanLimit)?;
+            entries.extend(
+                parse_windows_directory_buffer(initialized, remaining)?
+                    .into_iter()
+                    .map(|entry| PinnedEntry {
+                        name: std::ffi::OsString::from_wide(&entry.name),
+                        kind: entry.kind,
+                    }),
+            );
+            restart_scan = false;
         }
         Ok(entries)
     }
 
     fn open_child(
         &self,
-        absolute_path: &Path,
-        _name: &std::ffi::OsStr,
+        _absolute_path: &Path,
+        name: &std::ffi::OsStr,
     ) -> Result<Self, WatchedFolderError> {
-        let handle = open_directory_no_follow(absolute_path)?;
+        let handle = open_windows_relative_no_follow(&self.handle, name, true)?;
         let identity = directory_identity_from_handle(&handle)?;
         Ok(Self { handle, identity })
     }
 
     fn open_file(
         &self,
-        absolute_path: &Path,
-        _name: &std::ffi::OsStr,
+        _absolute_path: &Path,
+        name: &std::ffi::OsStr,
     ) -> Result<fs::File, WatchedFolderError> {
-        open_file_no_follow(absolute_path)
+        open_windows_relative_no_follow(&self.handle, name, false)
     }
 
     fn verify_file(
         &self,
-        absolute_path: &Path,
-        _name: &std::ffi::OsStr,
+        _absolute_path: &Path,
+        name: &std::ffi::OsStr,
         expected_identity: &FileIdentity,
         expected_size: u64,
         expected_modified: Option<std::time::SystemTime>,
     ) -> Result<fs::Metadata, WatchedFolderError> {
-        verify_path_matches_open_file(
-            Path::new(""),
-            absolute_path,
-            expected_identity,
-            expected_size,
-            expected_modified,
-        )
+        let verification_file = self.open_file(Path::new(""), name)?;
+        let verification_metadata = verification_file
+            .metadata()
+            .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+        let verification_identity = file_identity(&verification_file, &verification_metadata)?;
+        if !verification_metadata.is_file()
+            || verification_metadata.len() != expected_size
+            || verification_metadata.modified().ok() != expected_modified
+            || verification_identity != *expected_identity
+        {
+            return Err(WatchedFolderError::FolderUnavailable);
+        }
+        Ok(verification_metadata)
     }
+}
+
+#[cfg(any(test, windows))]
+#[derive(Debug)]
+struct WindowsDirectoryEntry {
+    name: Vec<u16>,
+    kind: PinnedEntryKind,
+}
+
+#[cfg(windows)]
+const _: () = {
+    use windows_sys::Wdk::Storage::FileSystem::FILE_ID_BOTH_DIR_INFORMATION;
+
+    assert!(std::mem::offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileAttributes) == 56);
+    assert!(std::mem::offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileNameLength) == 60);
+    assert!(std::mem::offset_of!(FILE_ID_BOTH_DIR_INFORMATION, FileName) == 104);
+};
+
+#[cfg(any(test, windows))]
+fn parse_windows_directory_buffer(
+    buffer: &[u8],
+    max_entries: usize,
+) -> Result<Vec<WindowsDirectoryEntry>, WatchedFolderError> {
+    const FILE_NAME_OFFSET: usize = 104;
+    const FILE_ATTRIBUTES_OFFSET: usize = 56;
+    const FILE_NAME_LENGTH_OFFSET: usize = 60;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    const FILE_ATTRIBUTE_DEVICE: u32 = 0x40;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    fn u32_at(buffer: &[u8], offset: usize) -> Option<u32> {
+        let bytes = buffer.get(offset..offset.checked_add(4)?)?;
+        Some(u32::from_le_bytes(bytes.try_into().ok()?))
+    }
+
+    let mut offset = 0_usize;
+    let mut entries = Vec::new();
+    while offset < buffer.len() {
+        let entry = buffer
+            .get(offset..)
+            .ok_or(WatchedFolderError::FolderUnavailable)?;
+        if entry.len() < FILE_NAME_OFFSET {
+            return Err(WatchedFolderError::FolderUnavailable);
+        }
+        let next_offset =
+            usize::try_from(u32_at(entry, 0).ok_or(WatchedFolderError::FolderUnavailable)?)
+                .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+        let name_bytes = usize::try_from(
+            u32_at(entry, FILE_NAME_LENGTH_OFFSET).ok_or(WatchedFolderError::FolderUnavailable)?,
+        )
+        .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+        if name_bytes % 2 != 0 {
+            return Err(WatchedFolderError::FolderUnavailable);
+        }
+        let minimum_entry_bytes = FILE_NAME_OFFSET
+            .checked_add(name_bytes)
+            .ok_or(WatchedFolderError::FolderUnavailable)?;
+        let entry_bytes = if next_offset == 0 {
+            entry.len()
+        } else {
+            if next_offset % 8 != 0 || next_offset < minimum_entry_bytes {
+                return Err(WatchedFolderError::FolderUnavailable);
+            }
+            next_offset
+        };
+        if entry_bytes > entry.len() || minimum_entry_bytes > entry_bytes {
+            return Err(WatchedFolderError::FolderUnavailable);
+        }
+        let mut name = Vec::with_capacity(name_bytes / 2);
+        for bytes in entry[FILE_NAME_OFFSET..minimum_entry_bytes].chunks_exact(2) {
+            name.push(u16::from_le_bytes([bytes[0], bytes[1]]));
+        }
+        let dot = [u16::from(b'.')];
+        let dot_dot = [u16::from(b'.'), u16::from(b'.')];
+        if name.as_slice() != dot && name.as_slice() != dot_dot {
+            if name.is_empty()
+                || name
+                    .iter()
+                    .any(|character| matches!(*character, 0 | 47 | 58 | 92))
+            {
+                return Err(WatchedFolderError::FolderUnavailable);
+            }
+            if entries.len() >= max_entries {
+                return Err(WatchedFolderError::ScanLimit);
+            }
+            let attributes = u32_at(entry, FILE_ATTRIBUTES_OFFSET)
+                .ok_or(WatchedFolderError::FolderUnavailable)?;
+            let kind = if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                PinnedEntryKind::Symlink
+            } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+                PinnedEntryKind::Directory
+            } else if attributes & FILE_ATTRIBUTE_DEVICE != 0 {
+                PinnedEntryKind::Other
+            } else {
+                PinnedEntryKind::File
+            };
+            entries.push(WindowsDirectoryEntry { name, kind });
+        }
+        if next_offset == 0 {
+            break;
+        }
+        offset = offset
+            .checked_add(next_offset)
+            .ok_or(WatchedFolderError::FolderUnavailable)?;
+    }
+    Ok(entries)
+}
+
+#[cfg(windows)]
+fn open_windows_relative_no_follow(
+    parent: &fs::File,
+    name: &std::ffi::OsStr,
+    directory: bool,
+) -> Result<fs::File, WatchedFolderError> {
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        NtCreateFile, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+    };
+    use windows_sys::Win32::Foundation::{
+        OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE, STATUS_SUCCESS, UNICODE_STRING,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, SYNCHRONIZE,
+    };
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+
+    let mut name = name.encode_wide().collect::<Vec<_>>();
+    if name.is_empty()
+        || name
+            .iter()
+            .any(|character| matches!(*character, 0 | 47 | 58 | 92))
+    {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    let name_bytes = name
+        .len()
+        .checked_mul(2)
+        .and_then(|length| u16::try_from(length).ok())
+        .ok_or(WatchedFolderError::FolderUnavailable)?;
+    let object_name = UNICODE_STRING {
+        Length: name_bytes,
+        MaximumLength: name_bytes,
+        Buffer: name.as_mut_ptr(),
+    };
+    let object_attributes = OBJECT_ATTRIBUTES {
+        Length: u32::try_from(std::mem::size_of::<OBJECT_ATTRIBUTES>())
+            .map_err(|_| WatchedFolderError::FolderUnavailable)?,
+        RootDirectory: parent.as_raw_handle(),
+        ObjectName: &object_name,
+        Attributes: OBJ_CASE_INSENSITIVE | OBJ_DONT_REPARSE,
+        SecurityDescriptor: std::ptr::null(),
+        SecurityQualityOfService: std::ptr::null(),
+    };
+    let mut io_status = IO_STATUS_BLOCK::default();
+    let mut handle = std::ptr::null_mut();
+    let desired_access = FILE_READ_ATTRIBUTES
+        | SYNCHRONIZE
+        | if directory {
+            FILE_LIST_DIRECTORY
+        } else {
+            FILE_READ_DATA
+        };
+    let create_options = FILE_OPEN_REPARSE_POINT
+        | FILE_SYNCHRONOUS_IO_NONALERT
+        | if directory {
+            FILE_DIRECTORY_FILE
+        } else {
+            FILE_NON_DIRECTORY_FILE
+        };
+    // SAFETY: every native descriptor points to live stack-owned storage for
+    // this synchronous call; success transfers the returned owned handle.
+    let status = unsafe {
+        NtCreateFile(
+            &mut handle,
+            desired_access,
+            &object_attributes,
+            &mut io_status,
+            std::ptr::null(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_OPEN,
+            create_options,
+            std::ptr::null(),
+            0,
+        )
+    };
+    if status != STATUS_SUCCESS {
+        return Err(classify_windows_nt_open_status(status));
+    }
+    if handle.is_null() {
+        return Err(WatchedFolderError::FolderUnavailable);
+    }
+    // SAFETY: NtCreateFile returned a new owned handle on STATUS_SUCCESS.
+    Ok(unsafe { fs::File::from_raw_handle(handle) })
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1304,11 +1550,12 @@ fn directory_identity_from_handle(
     let handle_metadata = handle
         .metadata()
         .map_err(|_| WatchedFolderError::FolderUnavailable)?;
+    let identity = file_identity(handle, &handle_metadata)?;
     if !handle_metadata.is_dir() {
         return Err(WatchedFolderError::FolderUnavailable);
     }
     Ok(DirectoryIdentity {
-        identity: file_identity(handle, &handle_metadata)?,
+        identity,
         modified: handle_metadata.modified().ok(),
     })
 }
@@ -1359,7 +1606,7 @@ fn open_file_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError> {
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .open(path)
-        .map_err(|_| WatchedFolderError::SymlinkNotAllowed)
+        .map_err(|error| classify_windows_open_error_code(error.raw_os_error()))
 }
 
 #[cfg(windows)]
@@ -1374,7 +1621,40 @@ fn open_directory_no_follow(path: &Path) -> Result<fs::File, WatchedFolderError>
         .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .open(path)
-        .map_err(|_| WatchedFolderError::SymlinkNotAllowed)
+        .map_err(|error| classify_windows_open_error_code(error.raw_os_error()))
+}
+
+#[cfg(any(test, windows))]
+fn classify_windows_open_error_code(error_code: Option<i32>) -> WatchedFolderError {
+    const ERROR_REPARSE_POINT_ENCOUNTERED: i32 = 4_395;
+    const ERROR_STOPPED_ON_SYMLINK: i32 = 681;
+
+    if matches!(
+        error_code,
+        Some(ERROR_REPARSE_POINT_ENCOUNTERED | ERROR_STOPPED_ON_SYMLINK)
+    ) {
+        WatchedFolderError::SymlinkNotAllowed
+    } else {
+        WatchedFolderError::FolderUnavailable
+    }
+}
+
+#[cfg(any(test, windows))]
+fn classify_windows_nt_open_status(status: i32) -> WatchedFolderError {
+    const STATUS_DIRECTORY_IS_A_REPARSE_POINT: i32 = 0xC000_0281_u32 as i32;
+    const STATUS_REPARSE_POINT_ENCOUNTERED: i32 = 0xC000_050B_u32 as i32;
+    const STATUS_STOPPED_ON_SYMLINK: i32 = 0x8000_002D_u32 as i32;
+
+    if matches!(
+        status,
+        STATUS_DIRECTORY_IS_A_REPARSE_POINT
+            | STATUS_REPARSE_POINT_ENCOUNTERED
+            | STATUS_STOPPED_ON_SYMLINK
+    ) {
+        WatchedFolderError::SymlinkNotAllowed
+    } else {
+        WatchedFolderError::FolderUnavailable
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1586,6 +1866,7 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn root_replacement_after_directory_enumeration_is_rejected() {
         let parent = tempfile::tempdir().unwrap();
@@ -1608,6 +1889,74 @@ mod tests {
         assert!(matches!(result, Err(WatchedFolderError::FolderUnavailable)));
         fs::rename(&root, &replacement).unwrap();
         fs::rename(&parked, &root).unwrap();
+    }
+
+    #[test]
+    fn windows_open_errors_classify_only_confirmed_reparse() {
+        assert!(matches!(
+            classify_windows_open_error_code(Some(4_395)),
+            WatchedFolderError::SymlinkNotAllowed
+        ));
+        assert!(matches!(
+            classify_windows_open_error_code(Some(681)),
+            WatchedFolderError::SymlinkNotAllowed
+        ));
+        for error_code in [None, Some(2), Some(3), Some(32), Some(1_920)] {
+            assert!(matches!(
+                classify_windows_open_error_code(error_code),
+                WatchedFolderError::FolderUnavailable
+            ));
+        }
+        assert!(matches!(
+            classify_windows_nt_open_status(0xC000_050B_u32 as i32),
+            WatchedFolderError::SymlinkNotAllowed
+        ));
+        for status in [0xC000_0281_u32 as i32, 0x8000_002D_u32 as i32] {
+            assert!(matches!(
+                classify_windows_nt_open_status(status),
+                WatchedFolderError::SymlinkNotAllowed
+            ));
+        }
+        for status in [0xC000_0034_u32 as i32, 0xC000_0043_u32 as i32] {
+            assert!(matches!(
+                classify_windows_nt_open_status(status),
+                WatchedFolderError::FolderUnavailable
+            ));
+        }
+    }
+
+    #[test]
+    fn windows_handle_directory_buffer_is_bounded_and_reparse_aware() {
+        fn entry(name: &str, attributes: u32) -> Vec<u8> {
+            let name = name.encode_utf16().collect::<Vec<_>>();
+            let mut buffer = vec![0_u8; 104 + name.len() * 2];
+            buffer[56..60].copy_from_slice(&attributes.to_le_bytes());
+            buffer[60..64].copy_from_slice(&u32::try_from(name.len() * 2).unwrap().to_le_bytes());
+            for (index, character) in name.into_iter().enumerate() {
+                let start = 104 + index * 2;
+                buffer[start..start + 2].copy_from_slice(&character.to_le_bytes());
+            }
+            buffer
+        }
+
+        let directory = parse_windows_directory_buffer(&entry("receipts", 0x10), 1).unwrap();
+        assert_eq!(directory.len(), 1);
+        assert_eq!(String::from_utf16(&directory[0].name).unwrap(), "receipts");
+        assert_eq!(directory[0].kind, PinnedEntryKind::Directory);
+
+        let reparse = parse_windows_directory_buffer(&entry("redirect", 0x10 | 0x400), 1).unwrap();
+        assert_eq!(reparse[0].kind, PinnedEntryKind::Symlink);
+        assert!(matches!(
+            parse_windows_directory_buffer(&entry("too-many.csv", 0), 0),
+            Err(WatchedFolderError::ScanLimit)
+        ));
+
+        let mut malformed = entry("odd.csv", 0);
+        malformed[60..64].copy_from_slice(&1_u32.to_le_bytes());
+        assert!(matches!(
+            parse_windows_directory_buffer(&malformed, 1),
+            Err(WatchedFolderError::FolderUnavailable)
+        ));
     }
 
     #[cfg(unix)]
