@@ -45,3 +45,37 @@ All commands used Node 22 through `/opt/homebrew/opt/node@22/bin`.
 - `npm run i18n:generate` remains externally blocked by Google Translate HTTP 429 because the repository has unrelated untranslated source literals. The exact Task 9 EN/VI entries were manually reviewed, and the catalog/i18n contract passes 5/5.
 - No backend refresh, provider, persistence, evidence, ledger, OAuth, Keychain, or schedule semantics were changed.
 - Rendered native Browser QA remains controller-owned, matching Tasks 4 and 6. The component and integration contracts cover responsive structure and the web/native command boundary; no external rendered viewport claim is made here.
+
+## Review fix round — refresh ownership, async invalidation, and disappearing-row focus
+
+### Findings and implementation
+
+- An `ACTIVE` batch disabled Refresh all and only the connector whose item was pending/running. Other or already-terminal connector cards could expose Refresh/Retry/Disconnect, while `runRefresh` canceled the owned poll before knowing whether a replacement batch had been accepted. The Control Center now disables every refresh, retry, Refresh-all, and disconnect mutation for the full lifetime of any `ACTIVE` batch. Configure remains available. Disconnect is intentionally blocked because removing a connector would mutate the durable connector set represented by the active batch snapshot.
+- `runRefresh` now owns a single in-flight start/poll operation. A concurrent start is ignored without changing the current generation, delay, batch, or error. The current poll is canceled and replaced only after the backend accepts a new batch; a rejected start therefore cannot abandon an existing poll.
+- The summary/binding/account/parser-profile reload request generation is invalidated by the load effect cleanup. Deferred terminal reloads cannot commit after unmount or household change, while ordinary same-household foreground/background reload sequencing remains unchanged.
+- Watched-folder disconnect can remove its card before focus restoration. The fallback now verifies that the card-local Configure control is still connected, then focuses the stable Control Center heading (`tabIndex=-1`) when the row disappeared.
+
+### TDD evidence
+
+- RED, component: the new ACTIVE invariant assertion failed because the other connector's Refresh/Disconnect buttons were enabled. The initial file run also surfaced the host-time-zone mismatch in an existing Japan-time assertion; subsequent commands set `TZ=Asia/Tokyo` to match the reviewed UI contract.
+- RED, App review subset: 2 failed and 2 passed (136 collected, 132 skipped). The deferred unmount reload reached the observable stale commit, and watched-folder removal left focus on `body`. The concurrent-click journey already preserved the poll through terminal under the component's local pending state; the App implementation was still corrected so poll ownership does not depend on that presentation state.
+- GREEN, review regressions: 1/1 component ACTIVE test and 4/4 App tests passed.
+- GREEN, exact affected suite: `src/platform/client.test.ts`, `src/features/connectors/ConnectorControlCenter.test.tsx`, and `src/App.desktop.test.tsx` passed 191/191 across 3 files.
+
+### Verification
+
+All commands used Node 22 through `/opt/homebrew/opt/node@22/bin`; date-rendering test commands used `TZ=Asia/Tokyo`.
+
+- `npm run test:functional`: 128 files, 878/878 passed, including the i18n catalog contract.
+- `npm run lint`: passed.
+- `npm exec -- tsc -b --pretty false`: passed.
+- `npm run build`: passed; existing OpenCV browser-externalization and large-chunk warnings remain informational.
+- `npm run build:pwa`: passed with the same existing warnings and generated the PWA service worker.
+- `git diff --check`: passed before commit.
+
+### Preserved boundaries and remaining concerns
+
+- No DTO, backend, provider, persistence, evidence, ledger, OAuth, Keychain, schedule, or localization semantics changed in this review fix.
+- Manual and runtime-unsupported browser/PWA sources still expose no native refresh/disconnect controls or native command path.
+- No new strings were introduced, so the reviewed EN/VI catalog remains unchanged; the functional catalog contract passed.
+- Rendered native Browser QA remains controller-owned; this round adds deterministic component and desktop integration coverage only.
