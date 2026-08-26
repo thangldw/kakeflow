@@ -914,12 +914,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     struct SwapRestoreScanner {
         registered_root: PathBuf,
         replacement_root: PathBuf,
         parked_root: PathBuf,
     }
 
+    #[cfg(unix)]
     impl RegisteredFolderScanner for SwapRestoreScanner {
         fn scan(
             &self,
@@ -1407,6 +1409,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn restored_registered_root_cannot_reconcile_files_scanned_from_replacement_identity() {
         let state = AppState::in_memory(b"folder-root-swap-key").unwrap();
