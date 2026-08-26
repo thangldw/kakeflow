@@ -963,6 +963,37 @@ export interface ConnectorSummaryPageDto {
   readonly items: readonly ConnectorSummaryDto[]
   readonly nextCursor: ConnectorCursorDto | null
 }
+export type ConnectorRefreshBatchStatusDto = 'ACTIVE' | 'COMPLETE' | 'PARTIAL' | 'FAILED'
+export type ConnectorRefreshItemStatusDto = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'NO_CHANGES' | 'SKIPPED_MANUAL' | 'FAILED_RETRYABLE' | 'NEEDS_ACTION'
+export interface ConnectorRefreshBatchDto {
+  readonly batchId: string
+  readonly householdId: string
+  readonly status: ConnectorRefreshBatchStatusDto
+  readonly totalCount: number
+  readonly terminalCount: number
+  readonly succeededCount: number
+  readonly noChangesCount: number
+  readonly skippedManualCount: number
+  readonly failedCount: number
+  readonly changedCount: number
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly completedAt: string | null
+}
+export interface ConnectorRefreshItemDto {
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly status: ConnectorRefreshItemStatusDto
+  readonly changedCount: number
+  readonly lastErrorCode: string | null
+  readonly updatedAt: string
+  readonly startedAt: string | null
+  readonly completedAt: string | null
+}
+export interface ConnectorRefreshBatchProgressDto extends ConnectorRefreshBatchDto {
+  readonly schemaVersion: 1
+  readonly items: readonly ConnectorRefreshItemDto[]
+}
 export interface ConnectorBindingDto {
   readonly householdId: string
   readonly connectorKind: ConnectorKindDto
@@ -1094,6 +1125,9 @@ export type AppCommand =
   | 'connector_bindings_list'
   | 'connector_binding_upsert'
   | 'connector_binding_delete'
+  | 'connector_refresh_one'
+  | 'connector_refresh_all'
+  | 'connector_refresh_batch_get'
   | 'google_drive_availability'
   | 'google_drive_connections_list'
   | 'google_drive_connect'
@@ -1261,6 +1295,9 @@ export interface PlatformClient {
   listConnectorBindings(householdId: string): Promise<readonly ConnectorBindingDto[]>
   upsertConnectorBinding(input: UpsertConnectorBindingInputDto): Promise<ConnectorBindingDto>
   deleteConnectorBinding(input: DeleteConnectorBindingInputDto): Promise<void>
+  startConnectorRefresh(householdId: string, connectorKind: ConnectorKindDto, connectionKey: string): Promise<ConnectorRefreshBatchDto>
+  startConnectorRefreshAll(householdId: string): Promise<ConnectorRefreshBatchDto>
+  getConnectorRefreshBatch(householdId: string, batchId: string): Promise<ConnectorRefreshBatchProgressDto>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   selectIcloudFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>

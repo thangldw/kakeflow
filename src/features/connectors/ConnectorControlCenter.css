@@ -12,6 +12,15 @@
   gap: 12px;
 }
 
+.connector-control-toolbar,
+.connector-control-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .connector-control-heading h2,
 .connector-control-card h3,
 .connector-control-heading p {
@@ -88,10 +97,22 @@
 
 .connector-control-card {
   display: grid;
+  min-width: 0;
   gap: 14px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
+}
+
+.connector-control-card > *,
+.connector-control-card-heading > *,
+.connector-control-card-heading > div {
+  min-width: 0;
+}
+
+.connector-control-card h3,
+.connector-refresh-items span {
+  overflow-wrap: anywhere;
 }
 
 .connector-control-badge {
@@ -124,11 +145,62 @@
   color: var(--text-muted);
 }
 
+.connector-refresh-progress {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-subtle);
+}
+
+.connector-refresh-progress--partial,
+.connector-refresh-progress--failed {
+  border-color: var(--danger);
+}
+
+.connector-refresh-items {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connector-refresh-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.connector-refresh-items li > :last-child {
+  color: var(--text-muted);
+  text-align: end;
+}
+
 @media (max-width: 760px) {
   .connector-control-heading,
   .connector-control-card-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .connector-control-toolbar,
+  .connector-control-actions,
+  .connector-refresh-items li {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .connector-control-toolbar > .secondary-btn,
+  .connector-control-actions > .secondary-btn {
+    width: 100%;
+  }
+
+  .connector-refresh-items li > :last-child {
+    text-align: start;
   }
 
   .connector-control-list,

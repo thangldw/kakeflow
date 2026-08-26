@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   AccountDto,
   ConnectorBindingDto,
+  ConnectorRefreshBatchProgressDto,
+  ConnectorRefreshItemDto,
   ConnectorSummaryDto,
   ConfigurationDestinationDto,
   DeleteConnectorBindingInputDto,
@@ -24,6 +26,7 @@ interface Props {
   readonly onConfigure: (destination: ConfigurationDestinationDto) => void
   readonly bindingManagementUnavailable?: boolean
   readonly bindingManagement?: ConnectorBindingManagement
+  readonly refreshManagement?: ConnectorRefreshManagement
 }
 
 export interface ConnectorBindingManagement {
@@ -34,6 +37,15 @@ export interface ConnectorBindingManagement {
   readonly onSave: (input: UpsertConnectorBindingInputDto) => Promise<void>
   readonly onRemove: (input: DeleteConnectorBindingInputDto) => Promise<void>
   readonly onReload: () => Promise<void>
+}
+
+export interface ConnectorRefreshManagement {
+  readonly batch: ConnectorRefreshBatchProgressDto | null
+  readonly starting: boolean
+  readonly error: string | null
+  readonly onRefresh: (summary: ConnectorSummaryDto) => Promise<void>
+  readonly onRefreshAll: () => Promise<void>
+  readonly onDisconnect: (summary: ConnectorSummaryDto) => Promise<void>
 }
 
 const FILTERS: readonly ConnectorControlFilter[] = ['ALL', 'STALE', 'NEEDS_ACTION']
@@ -55,21 +67,55 @@ const stateLabel: Readonly<Record<ConnectorPrimaryState, string>> = {
   DISCONNECTED: '未接続',
 }
 
-export function ConnectorControlCenter({ summaries, loading, error, onConfigure, bindingManagementUnavailable = false, bindingManagement }: Props) {
+export function ConnectorControlCenter({ summaries, loading, error, onConfigure, bindingManagementUnavailable = false, bindingManagement, refreshManagement }: Props) {
   const { localeCode, text } = useI18n()
   const [filter, setFilter] = useState<ConnectorControlFilter>('ALL')
   const [editingIdentity, setEditingIdentity] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const restoreFocus = useRef<{ readonly trigger: HTMLButtonElement; readonly card: HTMLElement | null } | null>(null)
   const totals = aggregateConnectorSummaries(summaries)
   const visible = filterConnectorSummaries(summaries, filter)
+  const refreshAllAvailable = refreshManagement !== undefined && summaries.some(canRefresh)
+  const activeRefresh = refreshManagement?.batch?.status === 'ACTIVE'
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(localeCode, { dateStyle: 'short', timeStyle: 'short' }), [localeCode])
   const formatDate = (value: string | null, emptyLabel: string) => value === null ? emptyLabel : dateFormatter.format(new Date(value))
   const formatPendingCount = (count: number) => text('{count}件').replace('{count}', count.toLocaleString(localeCode))
+  const refreshErrorLabel = refreshManagement?.error === 'CONNECTOR_DISCONNECT_UNAVAILABLE'
+    ? text('コネクタの接続を解除できませんでした。')
+    : text('コネクタの更新を開始できませんでした。')
+
+  useEffect(() => {
+    if (pendingAction !== null || restoreFocus.current === null) return
+    const { trigger, card } = restoreFocus.current
+    restoreFocus.current = null
+    const destination = trigger.isConnected && !trigger.disabled
+      ? trigger
+      : card?.querySelector<HTMLButtonElement>('[data-connector-configure]')
+    destination?.focus()
+  }, [pendingAction])
+
+  const perform = async (action: string, trigger: HTMLButtonElement, operation: () => Promise<void>) => {
+    if (pendingAction !== null) return
+    restoreFocus.current = { trigger, card: trigger.closest('article') }
+    setPendingAction(action)
+    try {
+      await operation()
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const disconnect = async (summary: ConnectorSummaryDto, trigger: HTMLButtonElement) => {
+    const message = text('{label}の接続を解除しますか？取り込み済みの証跡と台帳は保持されます。').replace('{label}', summary.displayLabel)
+    if (!globalThis.confirm(message)) return
+    await perform(`disconnect:${connectorIdentity(summary)}`, trigger, () => refreshManagement!.onDisconnect(summary))
+  }
 
   return <section className="panel connector-control" aria-labelledby="connector-control-title">
     <div className="connector-control-heading">
       <div>
         <h2 id="connector-control-title">{text('コネクタ管理センター')}</h2>
-        <p>{text('接続状態とレビュー待ちを一か所で確認します。認証、スケジュール、接続解除は各設定画面で管理します。')}</p>
+        <p>{text('接続状態、更新、レビュー待ちを一か所で管理します。認証とスケジュールは各設定画面で管理します。')}</p>
       </div>
       <p className="connector-control-review-note">{text('更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。')}</p>
     </div>
@@ -81,9 +127,15 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
       <div><dt>{text('要対応')}</dt><dd>{totals.needsAction}</dd></div>
     </dl>
 
-    <div className="connector-control-filters" role="group" aria-label={text('コネクタを絞り込む')}>
-      {FILTERS.map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{text(filterLabel[value])}</button>)}
+    <div className="connector-control-toolbar">
+      <div className="connector-control-filters" role="group" aria-label={text('コネクタを絞り込む')}>
+        {FILTERS.map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{text(filterLabel[value])}</button>)}
+      </div>
+      {refreshAllAvailable && <button className="secondary-btn" type="button" disabled={refreshManagement.starting || activeRefresh || pendingAction !== null} onClick={(event) => void perform('refresh-all', event.currentTarget, refreshManagement.onRefreshAll)}>{text('すべて更新')}</button>}
     </div>
+
+    {refreshManagement?.error && <p className="connector-control-state" role="alert">{refreshErrorLabel}</p>}
+    {refreshManagement?.batch && <ConnectorRefreshProgress batch={refreshManagement.batch} summaries={summaries} />}
 
     {loading ? <p className="connector-control-state" role="status">{text('コネクタの状態を読み込んでいます…')}</p>
       : error !== null ? <p className="connector-control-state" role="alert">{text('コネクタの状態を読み込めませんでした。')}</p>
@@ -91,11 +143,17 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
           : visible.length === 0 ? <p className="connector-control-state">{text('この条件に一致するコネクタはありません。')}</p>
             : <div className="connector-control-list">{visible.map((summary) => {
               const primaryState = primaryConnectorState(summary)
+              const identity = connectorIdentity(summary)
+              const sameConnectorActive = refreshManagement?.batch?.status === 'ACTIVE'
+                && refreshManagement.batch.items.some((item) => connectorIdentity(item) === identity && (item.status === 'PENDING' || item.status === 'RUNNING'))
+              const refreshLabel = summary.health === 'RETRY_BACKOFF' && summary.capabilities.includes('RETRY') ? text('再試行') : text('更新')
               return <article className="connector-control-card" aria-label={summary.displayLabel} key={`${summary.connectorKind}:${summary.connectionKey}`}>
                 <div className="connector-control-card-heading">
                   <div><h3>{summary.displayLabel}</h3><span className={`connector-control-badge connector-control-badge--${primaryState.toLowerCase()}`}>{text(stateLabel[primaryState])}</span></div>
-                  <div>
-                    <button className="secondary-btn" type="button" onClick={() => onConfigure(summary.configurationDestination)}>{text('設定を開く')}</button>
+                  <div className="connector-control-actions">
+                    {refreshManagement && canRefresh(summary) && <button className="secondary-btn" type="button" disabled={refreshManagement.starting || sameConnectorActive || pendingAction !== null} onClick={(event) => void perform(`refresh:${identity}`, event.currentTarget, () => refreshManagement.onRefresh(summary))}>{refreshLabel}</button>}
+                    <button className="secondary-btn" data-connector-configure type="button" onClick={() => onConfigure(summary.configurationDestination)}>{text('設定を開く')}</button>
+                    {refreshManagement && canDisconnect(summary) && <button className="secondary-btn" type="button" disabled={sameConnectorActive || pendingAction !== null} onClick={(event) => void disconnect(summary, event.currentTarget)}>{text('接続解除')}</button>}
                     {bindingManagement && summary.capabilities.includes('ACCOUNT_BINDING') && <button className="secondary-btn" type="button" onClick={() => setEditingIdentity(`${summary.connectorKind}:${summary.connectionKey}`)}>{text('レビュー範囲を管理')}</button>}
                   </div>
                 </div>
@@ -115,6 +173,63 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
               </article>
             })}</div>}
   </section>
+}
+
+function ConnectorRefreshProgress({ batch, summaries }: { readonly batch: ConnectorRefreshBatchProgressDto; readonly summaries: readonly ConnectorSummaryDto[] }) {
+  const { localeCode, text } = useI18n()
+  const summaryByIdentity = new Map(summaries.map((summary) => [connectorIdentity(summary), summary]))
+  const headline = batch.status === 'ACTIVE'
+    ? text('更新の進行: {completed} / {total}').replace('{completed}', batch.terminalCount.toLocaleString(localeCode)).replace('{total}', batch.totalCount.toLocaleString(localeCode))
+    : batch.status === 'COMPLETE'
+      ? text('すべての更新が完了しました。')
+      : batch.status === 'PARTIAL'
+        ? text('一部の更新に対応が必要です。')
+        : text('更新を完了できませんでした。項目ごとの対応を確認してください。')
+
+  return <section className={`connector-refresh-progress connector-refresh-progress--${batch.status.toLowerCase()}`} role="status" aria-live="polite" aria-label={text('コネクタ更新の進行状況')}>
+    <strong>{headline}</strong>
+    <ol className="connector-refresh-items">
+      {batch.items.map((item) => <li key={connectorIdentity(item)}>
+        <span>{summaryByIdentity.get(connectorIdentity(item))?.displayLabel ?? connectorKindLabel(item.connectorKind, text)}</span>
+        <span>{refreshItemLabel(item, localeCode, text)}</span>
+      </li>)}
+    </ol>
+  </section>
+}
+
+function connectorIdentity(value: Pick<ConnectorSummaryDto | ConnectorRefreshItemDto, 'connectorKind' | 'connectionKey'>): string {
+  return `${value.connectorKind}:${value.connectionKey}`
+}
+
+function canRefresh(summary: ConnectorSummaryDto): boolean {
+  return summary.availability === 'AVAILABLE'
+    && summary.lifecycle === 'CONNECTED'
+    && summary.connectorKind !== 'MANUAL_IMPORT'
+    && summary.capabilities.includes('REFRESH_NOW')
+}
+
+function canDisconnect(summary: ConnectorSummaryDto): boolean {
+  return summary.availability === 'AVAILABLE'
+    && summary.lifecycle === 'CONNECTED'
+    && summary.connectorKind !== 'MANUAL_IMPORT'
+    && summary.capabilities.includes('DISCONNECT')
+}
+
+function connectorKindLabel(kind: ConnectorRefreshItemDto['connectorKind'], text: (value: string) => string): string {
+  if (kind === 'GOOGLE_DRIVE') return 'Google Drive'
+  if (kind === 'GMAIL') return 'Gmail'
+  if (kind === 'WATCHED_FOLDER') return text('同期フォルダー')
+  return text('手動インポート')
+}
+
+function refreshItemLabel(item: ConnectorRefreshItemDto, localeCode: string, text: (value: string) => string): string {
+  if (item.status === 'PENDING') return text('待機中')
+  if (item.status === 'RUNNING') return text('更新中')
+  if (item.status === 'SUCCEEDED') return text('{count}件を検出').replace('{count}', item.changedCount.toLocaleString(localeCode))
+  if (item.status === 'NO_CHANGES') return text('変更なし')
+  if (item.status === 'SKIPPED_MANUAL') return text('手動で取り込み')
+  if (item.status === 'FAILED_RETRYABLE') return text('再試行できます')
+  return text('設定を確認してください')
 }
 
 function ConnectorBindingEditor({ summary, management }: {

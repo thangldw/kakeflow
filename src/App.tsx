@@ -138,7 +138,7 @@ import {
   isStagedReviewBindingValid,
 } from './features/connectors/connectorBindingModel'
 import type { ReviewInboxRows } from './features/connectors/connectorBindingModel'
-import type { ConnectorBindingDto, ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
+import type { ConnectorBindingDto, ConnectorRefreshBatchProgressDto, ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
 
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const hasRakutenStatementMismatch = (item: Pick<ImportPreview, 'issues'>) => item.issues.some((issue) => issue.code === 'RAKUTEN_PDF_TOTAL_MISMATCH')
@@ -3336,15 +3336,24 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
   const [parserProfiles, setParserProfiles] = useState<readonly DelimitedParserProfileDto[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshBatch, setRefreshBatch] = useState<ConnectorRefreshBatchProgressDto | null>(null)
+  const [refreshStarting, setRefreshStarting] = useState(false)
+  const [refreshError, setRefreshError] = useState<string | null>(null)
   const loadRequest = useRef(0)
+  const refreshGeneration = useRef(0)
+  const refreshDelay = useRef<{ readonly timeout: ReturnType<typeof globalThis.setTimeout>; readonly resolve: () => void } | null>(null)
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (background = false) => {
     const request = ++loadRequest.current
     if (!householdId) {
       setSummaries([]); setBindings([]); setAccounts([]); setParserProfiles([]); setLoading(false); setError(null)
       return
     }
-    setSummaries([]); setLoading(true); setError(null)
+    if (!background) {
+      setSummaries([])
+      setLoading(true)
+    }
+    setError(null)
     try {
       if (platformClient.runtime === 'tauri') {
         const [nextSummaries, nextBindings, nextAccounts, nextProfiles] = await Promise.all([
@@ -3369,10 +3378,92 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
     } catch {
       if (request === loadRequest.current) setError('CONNECTOR_SUMMARY_UNAVAILABLE')
     } finally {
-      if (request === loadRequest.current) setLoading(false)
+      if (!background && request === loadRequest.current) setLoading(false)
     }
   }, [householdId])
   useEffect(() => { void reload() }, [reload])
+
+  const cancelRefreshPolling = useCallback(() => {
+    refreshGeneration.current += 1
+    const delay = refreshDelay.current
+    if (delay !== null) {
+      globalThis.clearTimeout(delay.timeout)
+      refreshDelay.current = null
+      delay.resolve()
+    }
+    return refreshGeneration.current
+  }, [])
+  useEffect(() => {
+    cancelRefreshPolling()
+    setRefreshBatch(null)
+    setRefreshStarting(false)
+    setRefreshError(null)
+    return () => { cancelRefreshPolling() }
+  }, [cancelRefreshPolling, householdId])
+
+  const waitForRefreshPoll = useCallback((generation: number) => new Promise<void>((resolve) => {
+    if (generation !== refreshGeneration.current) {
+      resolve()
+      return
+    }
+    const timeout = globalThis.setTimeout(() => {
+      if (refreshDelay.current?.timeout === timeout) refreshDelay.current = null
+      resolve()
+    }, 500)
+    refreshDelay.current = { timeout, resolve }
+  }), [])
+
+  const pollRefresh = useCallback(async (refreshHouseholdId: string, batchId: string, generation: number) => {
+    while (generation === refreshGeneration.current) {
+      const next = await platformClient.getConnectorRefreshBatch(refreshHouseholdId, batchId)
+      if (generation !== refreshGeneration.current) return
+      setRefreshBatch(next)
+      if (next.status !== 'ACTIVE') {
+        await reload(true)
+        return
+      }
+      await waitForRefreshPoll(generation)
+    }
+  }, [reload, waitForRefreshPoll])
+
+  const runRefresh = useCallback(async (start: (refreshHouseholdId: string) => ReturnType<typeof platformClient.startConnectorRefreshAll>) => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    const generation = cancelRefreshPolling()
+    setRefreshBatch(null)
+    setRefreshStarting(true)
+    setRefreshError(null)
+    try {
+      const started = await start(householdId)
+      if (generation !== refreshGeneration.current) return
+      await pollRefresh(householdId, started.batchId, generation)
+    } catch {
+      if (generation === refreshGeneration.current) setRefreshError('CONNECTOR_REFRESH_UNAVAILABLE')
+    } finally {
+      if (generation === refreshGeneration.current) setRefreshStarting(false)
+    }
+  }, [cancelRefreshPolling, householdId, pollRefresh])
+
+  const refreshOne = useCallback(async (summary: ConnectorSummaryDto) => {
+    await runRefresh((refreshHouseholdId) => platformClient.startConnectorRefresh(refreshHouseholdId, summary.connectorKind, summary.connectionKey))
+  }, [runRefresh])
+  const refreshAll = useCallback(async () => {
+    await runRefresh((refreshHouseholdId) => platformClient.startConnectorRefreshAll(refreshHouseholdId))
+  }, [runRefresh])
+  const disconnect = useCallback(async (summary: ConnectorSummaryDto) => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    const generation = refreshGeneration.current
+    setRefreshError(null)
+    try {
+      if (summary.connectorKind === 'GOOGLE_DRIVE') await platformClient.disconnectGoogleDrive(householdId, summary.connectionKey)
+      else if (summary.connectorKind === 'GMAIL') await platformClient.disconnectGmail(householdId, summary.connectionKey)
+      else if (summary.connectorKind === 'WATCHED_FOLDER') await platformClient.removeWatchedFolder(householdId, summary.connectionKey)
+      else return
+      if (generation !== refreshGeneration.current) return
+      await reload(true)
+    } catch {
+      if (generation === refreshGeneration.current) setRefreshError('CONNECTOR_DISCONNECT_UNAVAILABLE')
+    }
+  }, [householdId, reload])
   const saveBinding = useCallback(async (input: Parameters<typeof platformClient.upsertConnectorBinding>[0]) => {
     await platformClient.upsertConnectorBinding(input)
     await reload()
@@ -3384,6 +3475,8 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
 
   return <ConnectorControlCenter summaries={summaries} loading={loading} error={error} onConfigure={onConfigure} bindingManagementUnavailable={platformClient.runtime !== 'tauri'} bindingManagement={householdId && platformClient.runtime === 'tauri' ? {
     householdId, bindings, accounts, parserProfiles, onSave: saveBinding, onRemove: removeBinding, onReload: reload,
+  } : undefined} refreshManagement={householdId && platformClient.runtime === 'tauri' ? {
+    batch: refreshBatch, starting: refreshStarting, error: refreshError, onRefresh: refreshOne, onRefreshAll: refreshAll, onDisconnect: disconnect,
   } : undefined} />
 }
 

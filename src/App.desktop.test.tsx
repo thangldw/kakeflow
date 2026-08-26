@@ -97,6 +97,7 @@ const desktop = vi.hoisted(() => ({
   retryGoogleDriveInboxItem: vi.fn(),
   ignoreGoogleDriveInboxItem: vi.fn(),
   reopenGoogleDriveInboxItem: vi.fn(),
+  disconnectGmail: vi.fn(),
   listGmailInbox: vi.fn(),
   readGmailInboxFile: vi.fn(),
   retryGmailInboxItem: vi.fn(),
@@ -106,6 +107,9 @@ const desktop = vi.hoisted(() => ({
   listConnectorBindings: vi.fn(),
   upsertConnectorBinding: vi.fn(),
   deleteConnectorBinding: vi.fn(),
+  startConnectorRefresh: vi.fn(),
+  startConnectorRefreshAll: vi.fn(),
+  getConnectorRefreshBatch: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -214,6 +218,7 @@ vi.mock('./platform', async () => {
       retryGoogleDriveInboxItem: desktop.retryGoogleDriveInboxItem,
       ignoreGoogleDriveInboxItem: desktop.ignoreGoogleDriveInboxItem,
       reopenGoogleDriveInboxItem: desktop.reopenGoogleDriveInboxItem,
+      disconnectGmail: desktop.disconnectGmail,
       listGmailInbox: desktop.listGmailInbox,
       readGmailInboxFile: desktop.readGmailInboxFile,
       retryGmailInboxItem: desktop.retryGmailInboxItem,
@@ -223,6 +228,9 @@ vi.mock('./platform', async () => {
       listConnectorBindings: desktop.listConnectorBindings,
       upsertConnectorBinding: desktop.upsertConnectorBinding,
       deleteConnectorBinding: desktop.deleteConnectorBinding,
+      startConnectorRefresh: desktop.startConnectorRefresh,
+      startConnectorRefreshAll: desktop.startConnectorRefreshAll,
+      getConnectorRefreshBatch: desktop.getConnectorRefreshBatch,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -286,6 +294,25 @@ const connectorSummary = (overrides: Record<string, unknown> = {}) => ({
   lastErrorCode: null,
   bindingSummary: null,
   configurationDestination: 'GOOGLE_DRIVE_SETTINGS',
+  ...overrides,
+})
+
+const refreshBatch = (overrides: Record<string, unknown> = {}) => ({
+  schemaVersion: 1,
+  batchId: 'batch-1',
+  householdId: 'family',
+  status: 'ACTIVE',
+  totalCount: 1,
+  terminalCount: 0,
+  succeededCount: 0,
+  noChangesCount: 0,
+  skippedManualCount: 0,
+  failedCount: 0,
+  changedCount: 0,
+  createdAt: '2026-08-25T00:00:00Z',
+  updatedAt: '2026-08-25T00:00:00Z',
+  completedAt: null,
+  items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'RUNNING', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T00:00:00Z', startedAt: '2026-08-25T00:00:00Z', completedAt: null }],
   ...overrides,
 })
 
@@ -376,6 +403,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.retryGoogleDriveInboxItem.mockReset()
     desktop.ignoreGoogleDriveInboxItem.mockReset()
     desktop.reopenGoogleDriveInboxItem.mockReset()
+    desktop.disconnectGmail.mockReset().mockResolvedValue(undefined)
     desktop.listGmailInbox.mockReset().mockResolvedValue([])
     desktop.readGmailInboxFile.mockReset()
     desktop.retryGmailInboxItem.mockReset()
@@ -385,6 +413,9 @@ describe('KakeFlow desktop read models', () => {
     desktop.listConnectorBindings.mockReset().mockResolvedValue([])
     desktop.upsertConnectorBinding.mockReset()
     desktop.deleteConnectorBinding.mockReset()
+    desktop.startConnectorRefresh.mockReset()
+    desktop.startConnectorRefreshAll.mockReset()
+    desktop.getConnectorRefreshBatch.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -1980,6 +2011,131 @@ describe('KakeFlow desktop read models', () => {
     expect(screen.queryByText('drive-primary')).not.toBeInTheDocument()
   })
 
+  it('polls an individual refresh every 500 ms only while ACTIVE, reloads terminal state, and keeps item failures local', async () => {
+    const projected = connectorSummary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY'] })
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [projected], nextCursor: null })
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch
+      .mockResolvedValueOnce(refreshBatch())
+      .mockResolvedValueOnce(refreshBatch({
+        status: 'FAILED', terminalCount: 1, failedCount: 1, updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+        items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'RATE_LIMITED', updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+      }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    const refresh = within(card).getByRole('button', { name: '更新' })
+    fireEvent.click(refresh)
+
+    await waitFor(() => expect(desktop.startConnectorRefresh).toHaveBeenCalledWith('family', 'GOOGLE_DRIVE', 'drive-primary'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('0 / 1'))
+    expect(refresh).toBeDisabled()
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(2), { timeout: 1_500 })
+    expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('再試行できます')
+    expect(screen.queryByText('コネクタの更新を開始できませんでした。')).not.toBeInTheDocument()
+    expect(desktop.listConnectorSummaries.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2)
+    await waitFor(() => expect(refresh).toHaveFocus())
+  })
+
+  it('starts Refresh all and stops immediately when the first progress result is terminal', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
+    desktop.startConnectorRefreshAll.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch({
+      status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 2, updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+      items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 2, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+    }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const refreshAll = await screen.findByRole('button', { name: 'すべて更新' })
+    fireEvent.click(refreshAll)
+
+    await waitFor(() => expect(desktop.startConnectorRefreshAll).toHaveBeenCalledWith('family'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('すべての更新が完了しました。'))
+    expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(refreshAll).toHaveFocus())
+  })
+
+  it('cancels ACTIVE polling when the household changes', async () => {
+    desktop.listHouseholds.mockResolvedValue([
+      { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+      { id: 'family-2', name: '佐藤家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+    ])
+    desktop.listConnectorSummaries.mockImplementation(async (householdId: string) => ({ schemaVersion: 1, items: householdId === 'family' ? [connectorSummary()] : [], nextCursor: null }))
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch())
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    fireEvent.click(within(card).getByRole('button', { name: '更新' }))
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: '世帯を切り替える' }), { target: { value: 'family-2' } })
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 600))
+    })
+    expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce()
+  })
+
+  it('cleans up the ACTIVE refresh poll on unmount', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch())
+
+    const view = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    fireEvent.click(within(card).getByRole('button', { name: '更新' }))
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce())
+
+    view.unmount()
+    await act(async () => { await new Promise((resolve) => globalThis.setTimeout(resolve, 600)) })
+    expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['GOOGLE_DRIVE', desktop.disconnectGoogleDrive, 'drive-primary'],
+    ['GMAIL', desktop.disconnectGmail, 'gmail-primary'],
+    ['WATCHED_FOLDER', desktop.removeWatchedFolder, 'folder-primary'],
+  ] as const)('confirms and delegates %s disconnect to its existing typed command, then reloads summaries and bindings', async (connectorKind, disconnect, connectionKey) => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({
+      connectorKind, connectionKey, displayLabel: `${connectorKind} source`, capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW'],
+      configurationDestination: connectorKind === 'GOOGLE_DRIVE' ? 'GOOGLE_DRIVE_SETTINGS' : connectorKind === 'GMAIL' ? 'GMAIL_SETTINGS' : 'WATCHED_FOLDER_SETTINGS',
+    })], nextCursor: null })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: `${connectorKind} source` })
+    fireEvent.click(within(card).getByRole('button', { name: '接続解除' }))
+
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith('family', connectionKey))
+    expect(globalThis.confirm).toHaveBeenCalledWith(`${connectorKind} sourceの接続を解除しますか？取り込み済みの証跡と台帳は保持されます。`)
+    await waitFor(() => expect(desktop.listConnectorBindings.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2))
+  })
+
   it('opens the existing connector disclosure, scrolls its exact panel, and focuses its heading', async () => {
     desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
     const scrollIntoView = vi.fn()
@@ -1991,7 +2147,7 @@ describe('KakeFlow desktop read models', () => {
     const disclosure = screen.getByText('コネクタ').closest('details')
     expect(disclosure).not.toHaveAttribute('open')
     const card = await screen.findByRole('article', { name: 'Household statements' })
-    expect(within(card).getAllByRole('button')).toHaveLength(1)
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
 
     fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
 
@@ -2013,7 +2169,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
     const disclosure = screen.getByText('コネクタ').closest('details')
     const card = await screen.findByRole('article', { name: 'Receipt mail' })
-    expect(within(card).getAllByRole('button')).toHaveLength(1)
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
 
     fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
 
@@ -2033,7 +2189,7 @@ describe('KakeFlow desktop read models', () => {
     await screen.findByText('生協')
     fireEvent.click(screen.getByRole('button', { name: '設定' }))
     const card = await screen.findByRole('article', { name: 'Household Inbox' })
-    expect(within(card).getAllByRole('button')).toHaveLength(1)
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
     fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
 
     const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })

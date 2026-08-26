@@ -215,6 +215,86 @@ describe('platform client', () => {
     }
   })
 
+  it('strictly reconstructs refresh batches and invokes the three refresh commands exactly', async () => {
+    const started = {
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 2, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:00:00Z', completedAt: null,
+    } as const
+    const progress = {
+      schemaVersion: 1, ...started, status: 'PARTIAL', terminalCount: 2, succeededCount: 1, failedCount: 1,
+      changedCount: 3, updatedAt: '2026-08-25T10:00:02Z', completedAt: '2026-08-25T10:00:02Z',
+      items: [
+        { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 3, lastErrorCode: null, updatedAt: '2026-08-25T10:00:01Z', startedAt: '2026-08-25T10:00:00Z', completedAt: '2026-08-25T10:00:01Z' },
+        { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'RATE_LIMITED', updatedAt: '2026-08-25T10:00:02Z', startedAt: '2026-08-25T10:00:01Z', completedAt: '2026-08-25T10:00:02Z' },
+      ],
+    } as const
+    const invokeSpy = vi.fn(async (command: AppCommand, args?: Record<string, unknown>) => {
+      void args
+      return command === 'connector_refresh_batch_get' ? progress : started
+    })
+    const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      return await invokeSpy(command, args) as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.startConnectorRefresh('family', 'GOOGLE_DRIVE', 'drive-primary')).resolves.toEqual(started)
+    await expect(client.startConnectorRefreshAll('family')).resolves.toEqual(started)
+    await expect(client.getConnectorRefreshBatch('family', 'batch-1')).resolves.toEqual(progress)
+    expect(invokeSpy.mock.calls).toEqual([
+      ['connector_refresh_one', { input: { householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' } }],
+      ['connector_refresh_all', { householdId: 'family' }],
+      ['connector_refresh_batch_get', { householdId: 'family', batchId: 'batch-1' }],
+    ])
+  })
+
+  it('rejects malformed refresh batch and item contracts before exposing progress', async () => {
+    const valid = {
+      schemaVersion: 1, batchId: 'batch-1', householdId: 'family', status: 'COMPLETE', totalCount: 2, terminalCount: 2,
+      succeededCount: 1, noChangesCount: 0, skippedManualCount: 1, failedCount: 0, changedCount: 3,
+      createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:00:02Z', completedAt: '2026-08-25T10:00:02Z',
+      items: [
+        { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 3, lastErrorCode: null, updatedAt: '2026-08-25T10:00:01Z', startedAt: '2026-08-25T10:00:00Z', completedAt: '2026-08-25T10:00:01Z' },
+        { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', status: 'SKIPPED_MANUAL', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T10:00:02Z', startedAt: null, completedAt: '2026-08-25T10:00:02Z' },
+      ],
+    }
+    const invalid = [
+      { ...valid, providerCursor: 'secret' },
+      { ...valid, householdId: 'another-family' },
+      { ...valid, batchId: 'another-batch' },
+      { ...valid, status: 'UNKNOWN' },
+      { ...valid, totalCount: 10_001 },
+      { ...valid, terminalCount: 1 },
+      { ...valid, failedCount: 1 },
+      { ...valid, completedAt: null },
+      { ...valid, updatedAt: '2026-08-25T19:00:02+09:00' },
+      { ...valid, items: [valid.items[1], valid.items[0]] },
+      { ...valid, items: [valid.items[0], valid.items[0]] },
+      { ...valid, items: [{ ...valid.items[0], absolutePath: '/Users/private/statement.csv' }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], connectorKind: 'DROPBOX' }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], status: 'SUCCEEDED', changedCount: 0 }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: null }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], lastErrorCode: 'provider/private/path' }, valid.items[1]] },
+      { ...valid, items: [valid.items[0], { ...valid.items[1], connectorKind: 'GMAIL' }] },
+    ]
+    for (const response of invalid) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(client.getConnectorRefreshBatch('family', 'batch-1')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'connector_refresh_batch_get',
+      })
+    }
+  })
+
+  it('keeps native refresh commands unreachable in the browser runtime', async () => {
+    const invoke = vi.fn()
+    const client = createPlatformClient({ tauri: false, invoke })
+
+    await expect(client.startConnectorRefresh('family', 'GOOGLE_DRIVE', 'drive-primary')).rejects.toMatchObject({ command: 'connector_refresh_one' })
+    await expect(client.startConnectorRefreshAll('family')).rejects.toMatchObject({ command: 'connector_refresh_all' })
+    await expect(client.getConnectorRefreshBatch('family', 'batch-1')).rejects.toMatchObject({ command: 'connector_refresh_batch_get' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('reconstructs connector bindings field by field and invokes optimistic mutations exactly', async () => {
     const binding = {
       householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
