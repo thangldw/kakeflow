@@ -3341,6 +3341,7 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
   const [refreshError, setRefreshError] = useState<string | null>(null)
   const loadRequest = useRef(0)
   const refreshGeneration = useRef(0)
+  const refreshOperationInFlight = useRef(false)
   const refreshDelay = useRef<{ readonly timeout: ReturnType<typeof globalThis.setTimeout>; readonly resolve: () => void } | null>(null)
 
   const reload = useCallback(async (background = false) => {
@@ -3381,7 +3382,10 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
       if (!background && request === loadRequest.current) setLoading(false)
     }
   }, [householdId])
-  useEffect(() => { void reload() }, [reload])
+  useEffect(() => {
+    void reload()
+    return () => { loadRequest.current += 1 }
+  }, [reload])
 
   const cancelRefreshPolling = useCallback(() => {
     refreshGeneration.current += 1
@@ -3395,10 +3399,14 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
   }, [])
   useEffect(() => {
     cancelRefreshPolling()
+    refreshOperationInFlight.current = false
     setRefreshBatch(null)
     setRefreshStarting(false)
     setRefreshError(null)
-    return () => { cancelRefreshPolling() }
+    return () => {
+      cancelRefreshPolling()
+      refreshOperationInFlight.current = false
+    }
   }, [cancelRefreshPolling, householdId])
 
   const waitForRefreshPoll = useCallback((generation: number) => new Promise<void>((resolve) => {
@@ -3427,19 +3435,27 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
   }, [reload, waitForRefreshPoll])
 
   const runRefresh = useCallback(async (start: (refreshHouseholdId: string) => ReturnType<typeof platformClient.startConnectorRefreshAll>) => {
-    if (!householdId || platformClient.runtime !== 'tauri') return
-    const generation = cancelRefreshPolling()
-    setRefreshBatch(null)
+    if (!householdId || platformClient.runtime !== 'tauri' || refreshOperationInFlight.current) return
+    const startingGeneration = refreshGeneration.current
+    refreshOperationInFlight.current = true
     setRefreshStarting(true)
     setRefreshError(null)
+    let acceptedGeneration: number | null = null
     try {
       const started = await start(householdId)
-      if (generation !== refreshGeneration.current) return
-      await pollRefresh(householdId, started.batchId, generation)
+      if (startingGeneration !== refreshGeneration.current) return
+      acceptedGeneration = cancelRefreshPolling()
+      setRefreshBatch(null)
+      await pollRefresh(householdId, started.batchId, acceptedGeneration)
     } catch {
+      const generation = acceptedGeneration ?? startingGeneration
       if (generation === refreshGeneration.current) setRefreshError('CONNECTOR_REFRESH_UNAVAILABLE')
     } finally {
-      if (generation === refreshGeneration.current) setRefreshStarting(false)
+      const generation = acceptedGeneration ?? startingGeneration
+      if (generation === refreshGeneration.current) {
+        refreshOperationInFlight.current = false
+        setRefreshStarting(false)
+      }
     }
   }, [cancelRefreshPolling, householdId, pollRefresh])
 

@@ -88,9 +88,13 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
     if (pendingAction !== null || restoreFocus.current === null) return
     const { trigger, card } = restoreFocus.current
     restoreFocus.current = null
+    const cardConfigure = card?.querySelector<HTMLButtonElement>('[data-connector-configure]')
+    const stableHeading = document.getElementById('connector-control-title')
     const destination = trigger.isConnected && !trigger.disabled
       ? trigger
-      : card?.querySelector<HTMLButtonElement>('[data-connector-configure]')
+      : cardConfigure?.isConnected
+        ? cardConfigure
+        : stableHeading
     destination?.focus()
   }, [pendingAction])
 
@@ -114,7 +118,7 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
   return <section className="panel connector-control" aria-labelledby="connector-control-title">
     <div className="connector-control-heading">
       <div>
-        <h2 id="connector-control-title">{text('コネクタ管理センター')}</h2>
+        <h2 id="connector-control-title" tabIndex={-1}>{text('コネクタ管理センター')}</h2>
         <p>{text('接続状態、更新、レビュー待ちを一か所で管理します。認証とスケジュールは各設定画面で管理します。')}</p>
       </div>
       <p className="connector-control-review-note">{text('更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。')}</p>
@@ -144,16 +148,14 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
             : <div className="connector-control-list">{visible.map((summary) => {
               const primaryState = primaryConnectorState(summary)
               const identity = connectorIdentity(summary)
-              const sameConnectorActive = refreshManagement?.batch?.status === 'ACTIVE'
-                && refreshManagement.batch.items.some((item) => connectorIdentity(item) === identity && (item.status === 'PENDING' || item.status === 'RUNNING'))
               const refreshLabel = summary.health === 'RETRY_BACKOFF' && summary.capabilities.includes('RETRY') ? text('再試行') : text('更新')
               return <article className="connector-control-card" aria-label={summary.displayLabel} key={`${summary.connectorKind}:${summary.connectionKey}`}>
                 <div className="connector-control-card-heading">
                   <div><h3>{summary.displayLabel}</h3><span className={`connector-control-badge connector-control-badge--${primaryState.toLowerCase()}`}>{text(stateLabel[primaryState])}</span></div>
                   <div className="connector-control-actions">
-                    {refreshManagement && canRefresh(summary) && <button className="secondary-btn" type="button" disabled={refreshManagement.starting || sameConnectorActive || pendingAction !== null} onClick={(event) => void perform(`refresh:${identity}`, event.currentTarget, () => refreshManagement.onRefresh(summary))}>{refreshLabel}</button>}
+                    {refreshManagement && canRefresh(summary) && <button className="secondary-btn" type="button" disabled={refreshManagement.starting || activeRefresh || pendingAction !== null} onClick={(event) => void perform(`refresh:${identity}`, event.currentTarget, () => refreshManagement.onRefresh(summary))}>{refreshLabel}</button>}
                     <button className="secondary-btn" data-connector-configure type="button" onClick={() => onConfigure(summary.configurationDestination)}>{text('設定を開く')}</button>
-                    {refreshManagement && canDisconnect(summary) && <button className="secondary-btn" type="button" disabled={sameConnectorActive || pendingAction !== null} onClick={(event) => void disconnect(summary, event.currentTarget)}>{text('接続解除')}</button>}
+                    {refreshManagement && canDisconnect(summary) && <button className="secondary-btn" type="button" disabled={activeRefresh || pendingAction !== null} onClick={(event) => void disconnect(summary, event.currentTarget)}>{text('接続解除')}</button>}
                     {bindingManagement && summary.capabilities.includes('ACCOUNT_BINDING') && <button className="secondary-btn" type="button" onClick={() => setEditingIdentity(`${summary.connectorKind}:${summary.connectionKey}`)}>{text('レビュー範囲を管理')}</button>}
                   </div>
                 </div>

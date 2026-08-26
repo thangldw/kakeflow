@@ -136,13 +136,14 @@ describe('ConnectorControlCenter', () => {
     expect(within(card).queryByRole('button', { name: /認証|更新|同期|スケジュール|解除/ })).not.toBeInTheDocument()
   })
 
-  it('shows polite ACTIVE progress in deterministic order and disables the connector currently running', () => {
+  it('shows polite ACTIVE progress in deterministic order and blocks every refresh or disconnect mutation until terminal', () => {
     const onRefresh = vi.fn().mockResolvedValue(undefined)
+    const onDisconnect = vi.fn().mockResolvedValue(undefined)
     render(<ConnectorControlCenter summaries={[
       summary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY'] }),
       summary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', health: 'RUNNING', capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY'], configurationDestination: 'GMAIL_SETTINGS' }),
     ]} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{
-      batch: refreshBatch(), starting: false, error: null, onRefresh, onRefreshAll: vi.fn(), onDisconnect: vi.fn(),
+      batch: refreshBatch(), starting: false, error: null, onRefresh, onRefreshAll: vi.fn(), onDisconnect,
     }} />)
 
     const progress = screen.getByRole('status', { name: 'コネクタ更新の進行状況' })
@@ -154,9 +155,22 @@ describe('ConnectorControlCenter', () => {
       expect.stringContaining('Receipt mail'),
     ])
     expect(within(items[0]).getByText('3件を検出')).toBeInTheDocument()
-    const runningCard = screen.getByRole('article', { name: 'Receipt mail' })
-    expect(within(runningCard).getByRole('button', { name: '更新' })).toBeDisabled()
+    const cards = [
+      screen.getByRole('article', { name: 'Household statements' }),
+      screen.getByRole('article', { name: 'Receipt mail' }),
+    ]
+    for (const card of cards) {
+      const refresh = within(card).getByRole('button', { name: '更新' })
+      const disconnect = within(card).getByRole('button', { name: '接続解除' })
+      expect(refresh).toBeDisabled()
+      expect(disconnect).toBeDisabled()
+      fireEvent.click(refresh)
+      fireEvent.click(disconnect)
+      expect(within(card).getByRole('button', { name: '設定を開く' })).toBeEnabled()
+    }
     expect(screen.getByRole('button', { name: 'すべて更新' })).toBeDisabled()
+    expect(onRefresh).not.toHaveBeenCalled()
+    expect(onDisconnect).not.toHaveBeenCalled()
     expect(document.body.textContent).not.toContain('gmail-primary')
   })
 
