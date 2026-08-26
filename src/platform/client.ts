@@ -96,6 +96,11 @@ import type {
   ConnectorHealthDto,
   ConnectorKindDto,
   ConnectorLifecycleDto,
+  ConnectorRefreshBatchDto,
+  ConnectorRefreshBatchProgressDto,
+  ConnectorRefreshBatchStatusDto,
+  ConnectorRefreshItemDto,
+  ConnectorRefreshItemStatusDto,
   ConnectorSummaryDto,
   ConnectorSummaryPageDto,
   ConfigurationDestinationDto,
@@ -314,6 +319,9 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       listConnectorBindings: async () => [],
       upsertConnectorBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_binding_upsert') },
       deleteConnectorBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_binding_delete') },
+      startConnectorRefresh: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_refresh_one') },
+      startConnectorRefreshAll: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_refresh_all') },
+      getConnectorRefreshBatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_refresh_batch_get') },
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
       selectIcloudFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'icloud_folder_select') },
@@ -502,6 +510,19 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       return invokeValidated(invoke, 'connector_binding_upsert', (value) => parseUpsertConnectorBindingResponse(value, parsedInput), { input: parsedInput })
     },
     deleteConnectorBinding: async (input) => { await invokeValidated(invoke, 'connector_binding_delete', parseVoid, { input: parseDeleteConnectorBindingInput(input) }) },
+    startConnectorRefresh: (householdId, connectorKind, connectionKey) => {
+      const input = connectorRefreshOneInput(householdId, connectorKind, connectionKey)
+      return invokeValidated(invoke, 'connector_refresh_one', (value) => parseConnectorRefreshBatch(value, input.householdId), { input })
+    },
+    startConnectorRefreshAll: (householdId) => {
+      const expectedHouseholdId = asConnectorBindingIdentifier(householdId, 128, 'connector refresh')
+      return invokeValidated(invoke, 'connector_refresh_all', (value) => parseConnectorRefreshBatch(value, expectedHouseholdId), { householdId: expectedHouseholdId })
+    },
+    getConnectorRefreshBatch: (householdId, batchId) => {
+      const expectedHouseholdId = asConnectorBindingIdentifier(householdId, 128, 'connector refresh')
+      const expectedBatchId = asConnectorBindingIdentifier(batchId, 64, 'connector refresh')
+      return invokeValidated(invoke, 'connector_refresh_batch_get', (value) => parseConnectorRefreshProgress(value, expectedHouseholdId, expectedBatchId), { householdId: expectedHouseholdId, batchId: expectedBatchId })
+    },
     listWatchedFolders: (householdId) => invokeValidated(invoke, 'watched_folders_list', parseWatchedFolders, { householdId }),
     selectWatchedFolder: (householdId, label) => invokeValidated(invoke, 'watched_folder_select', parseNullableWatchedFolder, { householdId, label }),
     selectIcloudFolder: (householdId, label) => invokeValidated(invoke, 'icloud_folder_select', parseNullableWatchedFolder, { householdId, label }),
@@ -2066,6 +2087,22 @@ const CONNECTOR_BINDING_UPSERT_FIELDS = new Set([
   'expectedVersion',
 ])
 const CONNECTOR_BINDING_DELETE_FIELDS = new Set(['householdId', 'connectorKind', 'connectionKey', 'expectedVersion'])
+const CONNECTOR_REFRESH_BATCH_STATUSES = new Set<ConnectorRefreshBatchStatusDto>(['ACTIVE', 'COMPLETE', 'PARTIAL', 'FAILED'])
+const CONNECTOR_REFRESH_ITEM_STATUSES = new Set<ConnectorRefreshItemStatusDto>(['PENDING', 'RUNNING', 'SUCCEEDED', 'NO_CHANGES', 'SKIPPED_MANUAL', 'FAILED_RETRYABLE', 'NEEDS_ACTION'])
+const CONNECTOR_REFRESH_BATCH_FIELDS = new Set([
+  'batchId', 'householdId', 'status', 'totalCount', 'terminalCount', 'succeededCount', 'noChangesCount',
+  'skippedManualCount', 'failedCount', 'changedCount', 'createdAt', 'updatedAt', 'completedAt',
+])
+const CONNECTOR_REFRESH_PROGRESS_FIELDS = new Set([...CONNECTOR_REFRESH_BATCH_FIELDS, 'schemaVersion', 'items'])
+const CONNECTOR_REFRESH_ITEM_FIELDS = new Set([
+  'connectorKind', 'connectionKey', 'status', 'changedCount', 'lastErrorCode', 'updatedAt', 'startedAt', 'completedAt',
+])
+const CONNECTOR_KIND_ORDER: Readonly<Record<ConnectorKindDto, number>> = {
+  GOOGLE_DRIVE: 0,
+  GMAIL: 1,
+  WATCHED_FOLDER: 2,
+  MANUAL_IMPORT: 3,
+}
 const UTF8_ENCODER = new TextEncoder()
 
 function connectorListArgs(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Record<string, unknown> {
@@ -2076,6 +2113,126 @@ function connectorListArgs(householdId: string, cursor?: ConnectorCursorDto, lim
 
 function connectorBindingListArgs(householdId: string): { readonly householdId: string } {
   return { householdId: asConnectorBindingIdentifier(householdId, 128, 'connector binding') }
+}
+
+function connectorRefreshOneInput(householdId: string, connectorKind: ConnectorKindDto, connectionKey: string) {
+  const parsedKind = asConnectorEnum(connectorKind, CONNECTOR_KINDS, 'connector refresh')
+  if (parsedKind === 'MANUAL_IMPORT') throw new TypeError('connector refresh')
+  return {
+    householdId: asConnectorBindingIdentifier(householdId, 128, 'connector refresh'),
+    connectorKind: parsedKind,
+    connectionKey: asConnectorIdentifier(connectionKey, 128, 'connector refresh'),
+  }
+}
+
+function parseConnectorRefreshProgress(value: unknown, expectedHouseholdId: string, expectedBatchId: string): ConnectorRefreshBatchProgressDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_REFRESH_PROGRESS_FIELDS, 'connector refresh')
+  if (record.schemaVersion !== 1 || !Array.isArray(record.items) || record.items.length > 10_000) throw new TypeError('connector refresh')
+  const batch = parseConnectorRefreshBatchRecord(record, expectedHouseholdId, expectedBatchId)
+  const items = record.items.map(parseConnectorRefreshItem)
+  if (items.length !== batch.totalCount) throw new TypeError('connector refresh')
+  const identities = new Set<string>()
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    const identity = `${item.connectorKind}\u0000${item.connectionKey}`
+    if (identities.has(identity)) throw new TypeError('connector refresh')
+    identities.add(identity)
+    if (index > 0 && compareConnectorIdentity(items[index - 1], item) >= 0) throw new TypeError('connector refresh')
+  }
+  const succeededCount = items.filter(({ status }) => status === 'SUCCEEDED').length
+  const noChangesCount = items.filter(({ status }) => status === 'NO_CHANGES').length
+  const skippedManualCount = items.filter(({ status }) => status === 'SKIPPED_MANUAL').length
+  const failedCount = items.filter(({ status }) => status === 'FAILED_RETRYABLE' || status === 'NEEDS_ACTION').length
+  const terminalCount = succeededCount + noChangesCount + skippedManualCount + failedCount
+  const changedCount = items.reduce((total, item) => total + item.changedCount, 0)
+  if (!Number.isSafeInteger(changedCount)
+    || terminalCount !== batch.terminalCount
+    || succeededCount !== batch.succeededCount
+    || noChangesCount !== batch.noChangesCount
+    || skippedManualCount !== batch.skippedManualCount
+    || failedCount !== batch.failedCount
+    || changedCount !== batch.changedCount) throw new TypeError('connector refresh')
+  return { schemaVersion: 1, ...batch, items }
+}
+
+function parseConnectorRefreshBatch(value: unknown, expectedHouseholdId: string): ConnectorRefreshBatchDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_REFRESH_BATCH_FIELDS, 'connector refresh')
+  return parseConnectorRefreshBatchRecord(record, expectedHouseholdId)
+}
+
+function parseConnectorRefreshBatchRecord(record: Record<string, unknown>, expectedHouseholdId: string, expectedBatchId?: string): ConnectorRefreshBatchDto {
+  const batchId = asConnectorBindingIdentifier(record.batchId, 64, 'connector refresh')
+  const householdId = asConnectorBindingIdentifier(record.householdId, 128, 'connector refresh')
+  const status = asConnectorEnum(record.status, CONNECTOR_REFRESH_BATCH_STATUSES, 'connector refresh')
+  const totalCount = asBoundedInteger(record.totalCount, 10_000)
+  const terminalCount = asBoundedInteger(record.terminalCount, 10_000)
+  const succeededCount = asBoundedInteger(record.succeededCount, 10_000)
+  const noChangesCount = asBoundedInteger(record.noChangesCount, 10_000)
+  const skippedManualCount = asBoundedInteger(record.skippedManualCount, 10_000)
+  const failedCount = asBoundedInteger(record.failedCount, 10_000)
+  const changedCount = asSafeInteger(record.changedCount)
+  const createdAt = asConnectorTimestamp(record.createdAt)
+  const updatedAt = asConnectorTimestamp(record.updatedAt)
+  const completedAt = asNullableConnectorTimestamp(record.completedAt)
+  if (householdId !== expectedHouseholdId || (expectedBatchId !== undefined && batchId !== expectedBatchId)
+    || terminalCount !== succeededCount + noChangesCount + skippedManualCount + failedCount
+    || terminalCount > totalCount
+    || Date.parse(updatedAt) < Date.parse(createdAt)
+    || (completedAt !== null && (Date.parse(completedAt) < Date.parse(createdAt) || Date.parse(completedAt) > Date.parse(updatedAt)))) {
+    throw new TypeError('connector refresh')
+  }
+  const active = status === 'ACTIVE'
+  if ((active && (completedAt !== null || terminalCount >= totalCount))
+    || (!active && (completedAt === null || terminalCount !== totalCount))
+    || (status === 'COMPLETE' && failedCount !== 0)
+    || (status === 'PARTIAL' && (failedCount === 0 || succeededCount + noChangesCount === 0))
+    || (status === 'FAILED' && (failedCount === 0 || succeededCount + noChangesCount !== 0))) {
+    throw new TypeError('connector refresh')
+  }
+  return {
+    batchId, householdId, status, totalCount, terminalCount, succeededCount, noChangesCount,
+    skippedManualCount, failedCount, changedCount, createdAt, updatedAt, completedAt,
+  }
+}
+
+function parseConnectorRefreshItem(value: unknown): ConnectorRefreshItemDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_REFRESH_ITEM_FIELDS, 'connector refresh item')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector refresh item')
+  const connectionKey = asConnectorIdentifier(record.connectionKey, 128, 'connector refresh item')
+  const status = asConnectorEnum(record.status, CONNECTOR_REFRESH_ITEM_STATUSES, 'connector refresh item')
+  const changedCount = asSafeInteger(record.changedCount)
+  const lastErrorCode = record.lastErrorCode === null ? null : asStableConnectorErrorCode(record.lastErrorCode)
+  const updatedAt = asConnectorTimestamp(record.updatedAt)
+  const startedAt = asNullableConnectorTimestamp(record.startedAt)
+  const completedAt = asNullableConnectorTimestamp(record.completedAt)
+  if ((connectorKind === 'MANUAL_IMPORT') !== (status === 'SKIPPED_MANUAL')
+    || (connectorKind === 'MANUAL_IMPORT' && connectionKey !== 'manual-import')
+    || (startedAt !== null && Date.parse(startedAt) > Date.parse(updatedAt))
+    || (completedAt !== null && (Date.parse(completedAt) > Date.parse(updatedAt) || (startedAt !== null && Date.parse(completedAt) < Date.parse(startedAt))))) {
+    throw new TypeError('connector refresh item')
+  }
+  const pendingShape = status === 'PENDING' && changedCount === 0 && lastErrorCode === null && startedAt === null && completedAt === null
+  const runningShape = status === 'RUNNING' && changedCount === 0 && lastErrorCode === null && startedAt !== null && completedAt === null
+  const succeededShape = status === 'SUCCEEDED' && changedCount > 0 && lastErrorCode === null && startedAt !== null && completedAt !== null
+  const noChangesShape = status === 'NO_CHANGES' && changedCount === 0 && lastErrorCode === null && startedAt !== null && completedAt !== null
+  const skippedShape = status === 'SKIPPED_MANUAL' && changedCount === 0 && lastErrorCode === null && startedAt === null && completedAt !== null
+  const failedShape = (status === 'FAILED_RETRYABLE' || status === 'NEEDS_ACTION') && changedCount === 0 && lastErrorCode !== null && startedAt !== null && completedAt !== null
+  if (!pendingShape && !runningShape && !succeededShape && !noChangesShape && !skippedShape && !failedShape) throw new TypeError('connector refresh item')
+  return { connectorKind, connectionKey, status, changedCount, lastErrorCode, updatedAt, startedAt, completedAt }
+}
+
+function compareConnectorIdentity(left: Pick<ConnectorRefreshItemDto, 'connectorKind' | 'connectionKey'>, right: Pick<ConnectorRefreshItemDto, 'connectorKind' | 'connectionKey'>): number {
+  return CONNECTOR_KIND_ORDER[left.connectorKind] - CONNECTOR_KIND_ORDER[right.connectorKind]
+    || (left.connectionKey < right.connectionKey ? -1 : left.connectionKey > right.connectionKey ? 1 : 0)
+}
+
+function asStableConnectorErrorCode(value: unknown): string {
+  const code = asRequiredString(value)
+  if (code.length > 64 || !/^[A-Z0-9_]+$/.test(code)) throw new TypeError('connector refresh item')
+  return code
 }
 
 function parseConnectorBindings(value: unknown, expectedHouseholdId: string): readonly ConnectorBindingDto[] {

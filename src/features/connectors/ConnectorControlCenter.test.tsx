@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AccountDto, ConnectorBindingDto, ConnectorSummaryDto, ConfigurationDestinationDto } from '../../platform/types'
+import type { AccountDto, ConnectorBindingDto, ConnectorRefreshBatchProgressDto, ConnectorSummaryDto, ConfigurationDestinationDto } from '../../platform/types'
 import type { DelimitedParserProfileDto } from '../parser-profiles/delimitedParserProfilePlatform'
 import { I18nProvider } from '../../i18n'
 import { ConnectorControlCenter } from './ConnectorControlCenter'
@@ -44,6 +44,28 @@ const binding = (overrides: Partial<ConnectorBindingDto> = {}): ConnectorBinding
   householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'never-render-this-provider-id',
   allowedAccountIds: ['family-bank'], parserProfileId: 'profile-bank', parserProfileVersion: 2,
   version: 7, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+  ...overrides,
+})
+
+const refreshBatch = (overrides: Partial<ConnectorRefreshBatchProgressDto> = {}): ConnectorRefreshBatchProgressDto => ({
+  schemaVersion: 1,
+  batchId: 'batch-1',
+  householdId: 'family',
+  status: 'ACTIVE',
+  totalCount: 2,
+  terminalCount: 1,
+  succeededCount: 1,
+  noChangesCount: 0,
+  skippedManualCount: 0,
+  failedCount: 0,
+  changedCount: 3,
+  createdAt: '2026-08-25T00:00:00Z',
+  updatedAt: '2026-08-25T00:00:01Z',
+  completedAt: null,
+  items: [
+    { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'never-render-this-provider-id', status: 'SUCCEEDED', changedCount: 3, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' },
+    { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', status: 'RUNNING', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:01Z', completedAt: null },
+  ],
   ...overrides,
 })
 
@@ -112,6 +134,93 @@ describe('ConnectorControlCenter', () => {
     fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
     expect(onConfigure).toHaveBeenCalledWith('GOOGLE_DRIVE_SETTINGS')
     expect(within(card).queryByRole('button', { name: /認証|更新|同期|スケジュール|解除/ })).not.toBeInTheDocument()
+  })
+
+  it('shows polite ACTIVE progress in deterministic order and disables the connector currently running', () => {
+    const onRefresh = vi.fn().mockResolvedValue(undefined)
+    render(<ConnectorControlCenter summaries={[
+      summary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY'] }),
+      summary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', health: 'RUNNING', capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY'], configurationDestination: 'GMAIL_SETTINGS' }),
+    ]} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{
+      batch: refreshBatch(), starting: false, error: null, onRefresh, onRefreshAll: vi.fn(), onDisconnect: vi.fn(),
+    }} />)
+
+    const progress = screen.getByRole('status', { name: 'コネクタ更新の進行状況' })
+    expect(progress).toHaveAttribute('aria-live', 'polite')
+    expect(progress).toHaveTextContent('1 / 2')
+    const items = within(progress).getAllByRole('listitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining('Household statements'),
+      expect.stringContaining('Receipt mail'),
+    ])
+    expect(within(items[0]).getByText('3件を検出')).toBeInTheDocument()
+    const runningCard = screen.getByRole('article', { name: 'Receipt mail' })
+    expect(within(runningCard).getByRole('button', { name: '更新' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'すべて更新' })).toBeDisabled()
+    expect(document.body.textContent).not.toContain('gmail-primary')
+  })
+
+  it('renders complete, partial, and failed terminal summaries with distinct retryable and needs-action outcomes', () => {
+    const management = {
+      starting: false, error: null, onRefresh: vi.fn(), onRefreshAll: vi.fn(), onDisconnect: vi.fn(),
+    }
+    const terminalItems = [
+      { connectorKind: 'GOOGLE_DRIVE' as const, connectionKey: 'never-render-this-provider-id', status: 'FAILED_RETRYABLE' as const, changedCount: 0, lastErrorCode: 'RATE_LIMITED', updatedAt: '2026-08-25T00:00:02Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:02Z' },
+      { connectorKind: 'GMAIL' as const, connectionKey: 'gmail-primary', status: 'NEEDS_ACTION' as const, changedCount: 0, lastErrorCode: 'AUTH_REQUIRED', updatedAt: '2026-08-25T00:00:03Z', startedAt: '2026-08-25T00:00:02Z', completedAt: '2026-08-25T00:00:03Z' },
+    ]
+    const summaries = [
+      summary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'] }),
+      summary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', health: 'NEEDS_ACTION', capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'], configurationDestination: 'GMAIL_SETTINGS' }),
+    ]
+    const { rerender } = render(<ConnectorControlCenter summaries={summaries} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{ ...management, batch: refreshBatch({ status: 'COMPLETE', terminalCount: 2, succeededCount: 1, items: [refreshBatch().items[0], { ...refreshBatch().items[1], status: 'NO_CHANGES', startedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:02Z' }], completedAt: '2026-08-25T00:00:02Z' }) }} />)
+    expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('すべての更新が完了しました。')
+
+    rerender(<ConnectorControlCenter summaries={summaries} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{ ...management, batch: refreshBatch({ status: 'PARTIAL', terminalCount: 2, succeededCount: 0, failedCount: 2, changedCount: 0, items: terminalItems, completedAt: '2026-08-25T00:00:03Z' }) }} />)
+    const partial = screen.getByRole('status', { name: 'コネクタ更新の進行状況' })
+    expect(partial).toHaveTextContent('一部の更新に対応が必要です。')
+    expect(partial).toHaveTextContent('再試行できます')
+    expect(partial).toHaveTextContent('設定を確認してください')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    rerender(<ConnectorControlCenter summaries={summaries} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{ ...management, batch: refreshBatch({ status: 'FAILED', terminalCount: 2, succeededCount: 0, failedCount: 2, changedCount: 0, items: terminalItems, completedAt: '2026-08-25T00:00:03Z' }) }} />)
+    expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('更新を完了できませんでした。項目ごとの対応を確認してください。')
+  })
+
+  it('restores focus after refresh and confirms disconnect before delegating the typed action', async () => {
+    let finishRefresh: (() => void) | undefined
+    const onRefresh = vi.fn(() => new Promise<void>((resolve) => { finishRefresh = resolve }))
+    const onDisconnect = vi.fn().mockResolvedValue(undefined)
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    render(<ConnectorControlCenter summaries={[summary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW'] })]} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{
+      batch: null, starting: false, error: null, onRefresh, onRefreshAll: vi.fn(), onDisconnect,
+    }} />)
+
+    const refresh = screen.getByRole('button', { name: '更新' })
+    fireEvent.click(refresh)
+    expect(refresh).toBeDisabled()
+    await act(async () => { finishRefresh?.(); await Promise.resolve() })
+    expect(refresh).toHaveFocus()
+
+    const disconnect = screen.getByRole('button', { name: '接続解除' })
+    fireEvent.click(disconnect)
+    expect(confirm).toHaveBeenCalledWith('Household statementsの接続を解除しますか？取り込み済みの証跡と台帳は保持されます。')
+    expect(onDisconnect).not.toHaveBeenCalled()
+    confirm.mockReturnValue(true)
+    await act(async () => { fireEvent.click(disconnect); await Promise.resolve() })
+    expect(onDisconnect).toHaveBeenCalledWith(expect.objectContaining({ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'never-render-this-provider-id' }))
+  })
+
+  it('exposes no refresh, retry, disconnect, or refresh-all action for manual and runtime-unsupported sources', () => {
+    render(<ConnectorControlCenter summaries={[
+      summary({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import', lifecycle: 'CONNECTED', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'], lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null, configurationDestination: 'IMPORT_INBOX' }),
+      summary({ connectionKey: 'native-only', displayLabel: 'Native source', availability: 'RUNTIME_UNSUPPORTED', lifecycle: 'DISCONNECTED', health: 'NEVER_REFRESHED', capabilities: [] }),
+    ]} loading={false} error={null} onConfigure={() => undefined} refreshManagement={{
+      batch: null, starting: false, error: null, onRefresh: vi.fn(), onRefreshAll: vi.fn(), onDisconnect: vi.fn(),
+    }} />)
+
+    expect(screen.queryByRole('button', { name: /^(更新|再試行|接続解除|すべて更新)$/ })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '設定を開く' })).toHaveLength(2)
   })
 
   it('edits loaded bindings only through explicit Save and Remove actions with the loaded version', async () => {
