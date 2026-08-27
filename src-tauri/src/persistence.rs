@@ -176,6 +176,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0071_connector_refresh_batches.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0072_connector_binding_generations.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -2141,6 +2144,32 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 72 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_binding_generations g
+             LEFT JOIN households h ON h.id=g.household_id
+             WHERE h.id IS NULL
+                OR g.connector_kind NOT IN (
+                     'GOOGLE_DRIVE','GMAIL','WATCHED_FOLDER','MANUAL_IMPORT')
+                OR length(g.connection_key) NOT BETWEEN 1 AND 128
+                OR g.connection_key!=trim(g.connection_key)
+                OR (g.connector_kind='MANUAL_IMPORT'
+                    AND g.connection_key!='manual-import')
+                OR g.generation NOT BETWEEN 1 AND 9007199254740991
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_bindings b
+             LEFT JOIN connector_binding_generations g
+               ON g.household_id=b.household_id
+              AND g.connector_kind=b.connector_kind
+              AND g.connection_key=b.connection_key
+             WHERE g.household_id IS NULL OR g.generation<b.version
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -2210,7 +2239,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_71_preserves_released_connectors_bindings_evidence_and_posted_provenance() {
+    fn migration_72_preserves_released_connectors_bindings_evidence_and_posted_provenance() {
         let mut connection = Connection::open_in_memory().expect("in-memory database");
         apply_key(&connection, TEST_KEY).expect("SQLCipher key");
         configure_connection(&connection).expect("connection configuration");
@@ -2372,7 +2401,18 @@ mod tests {
                 "{table} starts empty"
             );
         }
-        assert_eq!(schema_version(&connection).unwrap(), 71);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_binding_generations
+                     WHERE generation=1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(schema_version(&connection).unwrap(), 72);
         assert!(integrity_check(&connection).unwrap());
     }
 

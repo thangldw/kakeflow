@@ -16,7 +16,7 @@ The same test fails if batch items are rendered in reverse order; this mutation 
 | --- | --- |
 | Registry | Manual import, watched folder, Google Drive, and Gmail are the four ordered import-source kinds. |
 | Delegation | Configure, refresh, retry, and disconnect delegate to each source adapter and its authoritative lease/worker; the Control Center stores no provider workflow. |
-| Binding | Review snapshots explicitly distinguish an unbound source from an exact binding version. Unbound review stays valid only while still unbound; deletion, replacement, ambiguity, cross-household scope, or stale account/parser state after a bound review fails closed until explicit remapping and approval. |
+| Binding | Review snapshots contain the connector identity, optional binding version, and a monotonic lifecycle generation retained as a tombstone. Unbound create-delete and bound delete-recreate ABA sequences therefore fail closed, as do replacement, ambiguity, cross-household scope, and stale account/parser state. |
 | Durable batch | A bounded snapshot of at most 10,000 sources runs sequentially; each redacted result commits before the next item. Generation fencing recovers expired work without advancing a source cursor or replaying committed work. |
 | PWA | The production PWA projects only local manual import and bundles no native provider client, credential state, refresh worker, binding editor, or native path DTO. |
 

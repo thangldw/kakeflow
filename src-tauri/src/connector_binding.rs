@@ -96,7 +96,8 @@ pub struct DeleteConnectorBindingInput {
 pub struct ImportBindingExpectation {
     pub connector_kind: ConnectorKind,
     pub connection_key: String,
-    pub version: u64,
+    pub version: Option<u64>,
+    pub generation: u64,
 }
 
 #[derive(Deserialize)]
@@ -163,7 +164,8 @@ struct DeleteConnectorBindingWire {
 struct ImportBindingExpectationWire {
     connector_kind: ConnectorKindInput,
     connection_key: String,
-    version: u64,
+    version: Option<u64>,
+    generation: u64,
 }
 
 impl<'de> Deserialize<'de> for DeleteConnectorBindingInput {
@@ -191,6 +193,7 @@ impl<'de> Deserialize<'de> for ImportBindingExpectation {
             connector_kind: wire.connector_kind.into(),
             connection_key: wire.connection_key,
             version: wire.version,
+            generation: wire.generation,
         })
     }
 }
@@ -440,15 +443,17 @@ pub fn review_binding_expectation(
     else {
         return Ok(None);
     };
-    Ok(
-        load_binding_optional(connection, &household_id, connector_kind, &connection_key)?.map(
-            |binding| ImportBindingExpectation {
-                connector_kind,
-                connection_key,
-                version: binding.version,
-            },
-        ),
-    )
+    let generation =
+        current_generation(connection, &household_id, connector_kind, &connection_key)?;
+    let version =
+        load_binding_optional(connection, &household_id, connector_kind, &connection_key)?
+            .map(|binding| binding.version);
+    Ok(Some(ImportBindingExpectation {
+        connector_kind,
+        connection_key,
+        version,
+        generation,
+    }))
 }
 
 pub fn validate_import_binding_at_review(
@@ -475,32 +480,33 @@ pub fn validate_import_binding_at_review(
             Err(ConnectorBindingError::ImportBindingChanged)
         };
     };
-    if let Some(expected) = expected {
-        validate_identity(
-            &household_id,
-            expected.connector_kind,
-            &expected.connection_key,
-        )?;
-        validate_version(expected.version)?;
-        if expected.connector_kind != connector_kind || expected.connection_key != connection_key {
-            return Err(ConnectorBindingError::ImportBindingChanged);
-        }
-    }
-    let binding =
-        load_binding_optional(connection, &household_id, connector_kind, &connection_key)?;
-    let Some(binding) = binding else {
-        return if expected.is_none() {
-            Ok(())
-        } else {
-            Err(ConnectorBindingError::ImportBindingChanged)
-        };
-    };
     let Some(expected) = expected else {
         return Err(ConnectorBindingError::ImportBindingChanged);
     };
-    if binding.version != expected.version {
+    validate_identity(
+        &household_id,
+        expected.connector_kind,
+        &expected.connection_key,
+    )?;
+    if let Some(version) = expected.version {
+        validate_version(version)?;
+    }
+    validate_generation(expected.generation)?;
+    if expected.connector_kind != connector_kind || expected.connection_key != connection_key {
         return Err(ConnectorBindingError::ImportBindingChanged);
     }
+    let generation =
+        current_generation(connection, &household_id, connector_kind, &connection_key)?;
+    if generation != expected.generation {
+        return Err(ConnectorBindingError::ImportBindingChanged);
+    }
+    let binding =
+        load_binding_optional(connection, &household_id, connector_kind, &connection_key)?;
+    let binding = match (binding, expected.version) {
+        (None, None) => return Ok(()),
+        (Some(binding), Some(version)) if binding.version == version => binding,
+        _ => return Err(ConnectorBindingError::ImportBindingChanged),
+    };
     if binding.allowed_account_ids.is_empty()
         || !connector_exists(connection, &household_id, connector_kind, &connection_key)?
     {
@@ -737,6 +743,15 @@ fn validate_version(version: u64) -> Result<(), ConnectorBindingError> {
     Ok(())
 }
 
+fn validate_generation(generation: u64) -> Result<(), ConnectorBindingError> {
+    if generation > MAX_SAFE_VERSION {
+        return Err(ConnectorBindingError::InvalidInput(
+            "Binding generation is invalid",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_scope(
     connection: &Connection,
     household_id: &str,
@@ -850,6 +865,28 @@ fn current_version(
             |row| row.get(0),
         )
         .optional()
+        .map_err(db_error)
+}
+
+fn current_generation(
+    connection: &Connection,
+    household_id: &str,
+    connector_kind: ConnectorKind,
+    connection_key: &str,
+) -> Result<u64, ConnectorBindingError> {
+    connection
+        .query_row(
+            "SELECT generation FROM connector_binding_generations
+             WHERE household_id=?1 AND connector_kind=?2 AND connection_key=?3",
+            params![
+                household_id,
+                connector_kind_sql(connector_kind),
+                connection_key
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map(|generation| generation.unwrap_or(0))
         .map_err(db_error)
 }
 
@@ -1439,7 +1476,8 @@ mod tests {
             let expected = review_binding_expectation(connection, "reviewed-run")
                 .unwrap()
                 .expect("bound review expectation");
-            assert_eq!(expected.version, created.version);
+            assert_eq!(expected.version, Some(created.version));
+            assert_eq!(expected.generation, 1);
             validate_import_binding_at_review(connection, "reviewed-run", Some(&expected)).unwrap();
 
             delete_active_binding(
@@ -1463,6 +1501,10 @@ mod tests {
                 ),
             )
             .unwrap();
+            assert!(matches!(
+                validate_import_binding_at_review(connection, "reviewed-run", Some(&expected)),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
             let mut update = input(
                 ConnectorKind::ManualImport,
                 "manual-import",
@@ -1481,11 +1523,12 @@ mod tests {
     fn unbound_manual_review_remains_valid_but_cannot_ignore_a_later_binding() {
         with_database(|connection| {
             seed_import_run(connection, "unbound-run", "MANUAL_UPLOAD", "bank", '0');
-            assert_eq!(
-                review_binding_expectation(connection, "unbound-run").unwrap(),
-                None
-            );
-            validate_import_binding_at_review(connection, "unbound-run", None).unwrap();
+            let expected = review_binding_expectation(connection, "unbound-run")
+                .unwrap()
+                .expect("unbound connector identity must be snapshotted");
+            assert_eq!(expected.version, None);
+            assert_eq!(expected.generation, 0);
+            validate_import_binding_at_review(connection, "unbound-run", Some(&expected)).unwrap();
 
             upsert_binding(
                 connection,
@@ -1497,7 +1540,18 @@ mod tests {
             )
             .unwrap();
             assert!(matches!(
-                validate_import_binding_at_review(connection, "unbound-run", None),
+                validate_import_binding_at_review(connection, "unbound-run", Some(&expected)),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+            delete_active_binding(
+                connection,
+                "family",
+                ConnectorKind::ManualImport,
+                "manual-import",
+            )
+            .unwrap();
+            assert!(matches!(
+                validate_import_binding_at_review(connection, "unbound-run", Some(&expected)),
                 Err(ConnectorBindingError::ImportBindingChanged)
             ));
         });
@@ -1520,22 +1574,32 @@ mod tests {
                 ImportBindingExpectation {
                     connector_kind: ConnectorKind::Gmail,
                     connection_key: "manual-import".into(),
-                    version: 1,
+                    version: Some(1),
+                    generation: 1,
                 },
                 ImportBindingExpectation {
                     connector_kind: ConnectorKind::ManualImport,
                     connection_key: "other".into(),
-                    version: 1,
+                    version: Some(1),
+                    generation: 1,
                 },
                 ImportBindingExpectation {
                     connector_kind: ConnectorKind::ManualImport,
                     connection_key: "manual-import".into(),
-                    version: 0,
+                    version: Some(0),
+                    generation: 1,
                 },
                 ImportBindingExpectation {
                     connector_kind: ConnectorKind::ManualImport,
                     connection_key: "manual-import".into(),
-                    version: MAX_SAFE_VERSION + 1,
+                    version: Some(MAX_SAFE_VERSION + 1),
+                    generation: 1,
+                },
+                ImportBindingExpectation {
+                    connector_kind: ConnectorKind::ManualImport,
+                    connection_key: "manual-import".into(),
+                    version: Some(1),
+                    generation: MAX_SAFE_VERSION + 1,
                 },
             ] {
                 assert!(validate_import_binding_at_review(
