@@ -6,7 +6,17 @@ VCPKG_COMMIT="b5229343b4b80264ed51e89c6a7dcd0cbe85e9cc"
 TESSERACT_VERSION="5.5.2"
 TESSDATA_VERSION="4.1.0"
 TRIPLET="arm64-osx-kakeflow"
-CACHE_ROOT="${KAKEFLOW_OCR_BUILD_CACHE:-${HOME}/Library/Caches/KakeFlow/ocr-build}"
+NEUTRAL_TEMP_ROOT="${TMPDIR:-/tmp}"
+CACHE_ROOT="${KAKEFLOW_OCR_BUILD_CACHE:-${NEUTRAL_TEMP_ROOT%/}/kakeflow-ocr-build-${TRIPLET}}"
+CACHE_ROOT="$(node -e 'process.stdout.write(require("node:path").resolve(process.argv[1]))' "${CACHE_ROOT}")"
+PORTABLE_CACHE_ROOT="${CACHE_ROOT//\\//}"
+PORTABLE_HOME="${HOME//\\//}"
+case "${PORTABLE_CACHE_ROOT}/" in
+  "${PORTABLE_HOME}/"*|/Users/*|[A-Za-z]:/Users/*)
+    echo "KAKEFLOW_OCR_BUILD_CACHE must use a neutral non-personal build root." >&2
+    exit 1
+    ;;
+esac
 VCPKG_ROOT="${CACHE_ROOT}/vcpkg"
 INSTALL_ROOT="${CACHE_ROOT}/installed"
 STAGE_ROOT="${ROOT}/src-tauri/generated-resources/ocr"
@@ -37,6 +47,7 @@ rm -rf "${INSTALL_ROOT}"
   --x-install-root="${INSTALL_ROOT}" \
   --overlay-triplets="${ROOT}/packaging/ocr/triplets" \
   --triplet="${TRIPLET}" \
+  --binarysource=clear \
   --clean-after-build \
   --disable-metrics
 

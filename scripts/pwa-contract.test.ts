@@ -15,6 +15,7 @@ const nativePathKeyPattern = /(?:folderPath|relativePath|watchedFolderId|absolut
 const keychainPattern = /Keychain/u
 const providerCatalogPattern = /(?:GOOGLE_DRIVE|GMAIL|WATCHED_FOLDER|Google Drive|Gmail|同期フォルダー)/u
 const unusedConnectorCatalogPattern = /(?:["'](?:REFRESH_NOW|RETRY|DISCONNECT|DISCONNECTED|ACCOUNT_BINDING)["']|すべて更新|接続解除|レビュー範囲を管理|レビュー対象口座|読み取りプロファイル|コネクタ更新の進行状況)/u
+const personalBuildRootMarkers = ['/Users/', 'C:\\Users\\']
 
 interface JavascriptArtifact {
   readonly file: string
@@ -127,6 +128,19 @@ describe('production PWA contract', () => {
     expect(javascriptArtifacts.flatMap((artifact) => (
       forbiddenJavascriptFindings(artifact).map((finding) => `${artifact.file}: ${finding}`)
     ))).toEqual([])
+  })
+
+  it('ships tracked and production WASM without a personal build root', async () => {
+    const files = await filesBelow(dist)
+    const productionWasm = files.find((file) => /^assets\/kakeflow_core_bg-.*\.wasm$/u.test(file))
+    expect(productionWasm).toBeDefined()
+    const [trackedBytes, productionBytes] = await Promise.all([
+      readFile(resolve(root, 'src/platform/pwa/core-wasm/kakeflow_core_bg.wasm')),
+      readFile(resolve(dist, productionWasm!)),
+    ])
+    for (const bytes of [trackedBytes, productionBytes]) {
+      expect(personalBuildRootMarkers.filter((marker) => bytes.includes(Buffer.from(marker)))).toEqual([])
+    }
   })
 
   it('discovers forbidden module JavaScript artifacts', async () => {

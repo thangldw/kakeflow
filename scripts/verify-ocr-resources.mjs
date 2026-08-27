@@ -4,7 +4,7 @@ import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { assertOcrManifestContract, hostOcrTarget, inspectPeX64Imports, isAllowedStaticWindowsImport, tesseractSmokeArguments } from './ocr-resource-contract.mjs'
+import { assertOcrManifestContract, hostOcrTarget, inspectPeX64Imports, isAllowedStaticWindowsImport, personalBuildPathFindings, tesseractSmokeArguments } from './ocr-resource-contract.mjs'
 
 const execFile = promisify(execFileCallback)
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
@@ -46,6 +46,8 @@ for (const [relative, metadata] of Object.entries(manifest.files ?? {})) {
 }
 const executable = path.join(resourceRoot, expected.executable)
 await access(executable)
+const personalBuildRoots = personalBuildPathFindings(await readFile(executable))
+assert(personalBuildRoots.length === 0, `Packaged Tesseract contains personal build roots: ${personalBuildRoots.join(', ')}`)
 if (target === 'macos-arm64') {
   assert(((await stat(executable)).mode & 0o111) !== 0, 'Packaged Tesseract is not executable')
 }

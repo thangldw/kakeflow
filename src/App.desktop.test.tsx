@@ -245,7 +245,8 @@ import App, { ImportPage } from './App'
 import { I18nProvider } from './i18n'
 import { PlatformIpcError } from './platform'
 import { previewImportFiles } from './features/import/importService'
-import type { ImportPreviewDto } from './platform/types'
+import type { StartImportRequest } from './features/import/importMapper'
+import type { ImportPreviewDto, PostingDecisionDto } from './platform/types'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
   FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
@@ -2187,39 +2188,117 @@ describe('KakeFlow desktop read models', () => {
     desktop.listPendingReviews
       .mockResolvedValueOnce({ householdId: 'synthetic-household', runs: [mismatchedRun] })
       .mockResolvedValue({ householdId: 'synthetic-household', runs: [] })
-    desktop.previewImport.mockImplementation(async (runId: string) => ({
-      summary: { runId, documentId: `${runId}-document`, status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
-      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'synthetic-source-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
-      candidates: [{
-        id: 'synthetic-candidate', accountId: runId === 'synthetic-mismatch-run' ? 'synthetic-other-cash' : 'synthetic-cash',
-        occurredOn: '2026-08-25', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'SYNTHETIC ITEM', merchantRaw: 'Synthetic merchant',
-        externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true,
-        suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
-        extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null,
-        audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
-      }],
-    }))
-    desktop.startImport.mockResolvedValue({ runId: 'synthetic-post-run', documentId: 'synthetic-post-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false })
-    desktop.commitImport.mockResolvedValue({ runId: 'synthetic-post-run', postedCount: 1 })
-    desktop.queryTransactions.mockImplementation(async ({ pageSize }: { pageSize: number }) => ({
-      items: [{ id: 'synthetic-posted-transaction', occurredOn: '2026-08-25', postedOn: null, transactionType: 'EXPENSE', payee: 'Synthetic merchant', description: 'Synthetic item', amountJpy: 1200, status: 'POSTED', calculationTarget: true, attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, labels: [], tags: [] }],
-      page: 1, pageSize, totalItems: 1, totalPages: 1,
-    }))
-    desktop.getTransactionDetail.mockResolvedValue({
-      id: 'synthetic-posted-transaction', householdId: 'synthetic-household', occurredOn: '2026-08-25', postedOn: null,
-      transactionType: 'EXPENSE', payee: 'Synthetic merchant', description: 'Synthetic item', calculationTarget: true,
-      attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
-      status: 'POSTED', createdAt: '2026-08-25T00:00:03Z', updatedAt: '2026-08-25T00:00:03Z', editable: true,
-      entries: [
-        { id: 'synthetic-debit', accountId: 'synthetic-household-other-expense', accountName: 'Synthetic expense', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 1200, lineNumber: 1 },
-        { id: 'synthetic-credit', accountId: 'synthetic-cash', accountName: 'Synthetic cash', accountKind: 'ASSET', side: 'CREDIT', amountJpy: 1200, lineNumber: 2 },
-      ],
-      sourceEvidence: [{ sourceRecordId: 'synthetic-record', sourceDocumentId: 'synthetic-post-document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-08-25T00:00:03Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
+    let capturedImport: StartImportRequest | null = null
+    let capturedCandidate: ImportPreviewDto['candidates'][number] | null = null
+    let capturedDecision: PostingDecisionDto | null = null
+    let committed = false
+    desktop.previewImport.mockImplementation(async (runId: string) => {
+      const sourceCandidate = runId === 'synthetic-mismatch-run' ? null : capturedImport?.candidates[0]
+      const candidate = sourceCandidate ? {
+        ...sourceCandidate,
+        reviewStatus: 'READY' as const,
+        evidenceCount: sourceCandidate.evidence.length,
+        evidenceRoles: sourceCandidate.evidence.map(({ role }) => role),
+        issues: [], receiptReview: null,
+      } : {
+        id: 'synthetic-mismatch-candidate', accountId: 'synthetic-other-cash',
+        occurredOn: '2026-08-25', postedOn: null, amountJpy: 1200, direction: 'OUT' as const,
+        descriptionRaw: 'SYNTHETIC ITEM', merchantRaw: 'Synthetic merchant', externalTransactionId: null,
+        externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+        institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
+        extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD' as const,
+        attributedMemberId: null, audienceVisibility: 'SHARED' as const, audienceMemberId: null,
+        reviewStatus: 'READY' as const, evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview: null,
+      }
+      if (sourceCandidate) capturedCandidate = candidate
+      const source = capturedImport && runId !== 'synthetic-mismatch-run' ? capturedImport : null
+      return {
+        summary: {
+          runId,
+          documentId: source?.documentId ?? 'synthetic-mismatch-document',
+          status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false,
+        },
+        source: {
+          sourceType: source?.sourceType ?? 'MANUAL_UPLOAD',
+          originalFilename: source?.originalFilename ?? 'synthetic-source.csv',
+          mediaType: source?.mediaType ?? 'text/csv', byteSize: source?.byteSize ?? 42,
+          sha256: source?.sha256 ?? 'synthetic-source-hash', audienceVisibility: 'SHARED', audienceMemberId: null,
+        },
+        candidates: [candidate],
+      }
     })
+    desktop.startImport.mockImplementation(async (request: StartImportRequest) => {
+      capturedImport = request
+      return {
+        runId: request.runId, documentId: request.documentId, status: 'REVIEW_REQUIRED',
+        recordCount: request.records.length, candidateCount: request.candidates.length, reusedExisting: false,
+      }
+    })
+    desktop.commitImport.mockImplementation(async (runId: string, decisions: readonly PostingDecisionDto[]) => {
+      const decision = decisions[0]
+      if (!capturedImport || !capturedCandidate || runId !== capturedImport.runId || decision?.candidateId !== capturedCandidate.id) {
+        throw new Error('commit does not match the staged synthetic import')
+      }
+      const debit = decision.entries.filter(({ side }) => side === 'DEBIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)
+      const credit = decision.entries.filter(({ side }) => side === 'CREDIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)
+      if (debit !== credit) throw new Error('synthetic decision is not balanced')
+      capturedDecision = decision
+      committed = true
+      return { runId, postedCount: 1 }
+    })
+    desktop.queryTransactions.mockImplementation(async ({ pageSize }: { pageSize: number }) => ({
+      items: committed && capturedCandidate && capturedDecision ? [{
+        id: capturedDecision.transactionId,
+        occurredOn: capturedCandidate.occurredOn, postedOn: capturedCandidate.postedOn,
+        transactionType: capturedDecision.transactionType, payee: capturedDecision.payee,
+        description: capturedDecision.description, amountJpy: capturedCandidate.amountJpy,
+        status: 'POSTED', calculationTarget: capturedDecision.calculationTarget,
+        attributionKind: capturedDecision.attributionKind, attributedMemberId: capturedDecision.attributedMemberId,
+        attributedMemberName: null, audienceVisibility: capturedDecision.audienceVisibility,
+        audienceMemberId: capturedDecision.audienceMemberId, audienceMemberName: null, labels: [], tags: [],
+      }] : [],
+      page: 1, pageSize, totalItems: committed ? 1 : 0, totalPages: committed ? 1 : 0,
+    }))
+    desktop.getTransactionDetail.mockImplementation(async (householdId: string, transactionId: string) => {
+      if (!committed || !capturedImport || !capturedCandidate || !capturedDecision || householdId !== capturedImport.householdId || transactionId !== capturedDecision.transactionId) {
+        throw new Error('transaction is not committed')
+      }
+      const sourceRecordId = capturedImport.candidates[0].evidence[0].sourceRecordId
+      const sourceRecord = capturedImport.records.find(({ id }) => id === sourceRecordId)
+      if (!sourceRecord) throw new Error('committed source provenance is missing')
+      return {
+        id: capturedDecision.transactionId, householdId, occurredOn: capturedCandidate.occurredOn,
+        postedOn: capturedCandidate.postedOn, transactionType: capturedDecision.transactionType,
+        payee: capturedDecision.payee, description: capturedDecision.description,
+        calculationTarget: capturedDecision.calculationTarget, attributionKind: capturedDecision.attributionKind,
+        attributedMemberId: capturedDecision.attributedMemberId, attributedMemberName: null,
+        audienceVisibility: capturedDecision.audienceVisibility, audienceMemberId: capturedDecision.audienceMemberId,
+        audienceMemberName: null, status: 'POSTED', createdAt: '2026-08-25T00:00:03Z',
+        updatedAt: '2026-08-25T00:00:03Z', editable: true,
+        entries: capturedDecision.entries.map((entry, index) => {
+          const account = accounts.find(({ id }) => id === entry.accountId)
+          if (!account) throw new Error(`committed account is missing: ${entry.accountId}`)
+          return { ...entry, accountName: account.name, accountKind: account.accountKind, lineNumber: index + 1 }
+        }),
+        sourceEvidence: [{
+          sourceRecordId, sourceDocumentId: capturedImport.documentId, sourceType: capturedImport.sourceType,
+          originalFilename: capturedImport.originalFilename, mediaType: capturedImport.mediaType,
+          rowNumber: sourceRecord.rowNumber, importedAt: '2026-08-25T00:00:03Z', evidenceRole: 'PRIMARY',
+          audienceVisibility: capturedImport.audienceVisibility, audienceMemberId: capturedImport.audienceMemberId,
+          audienceMemberName: null,
+        }],
+      }
+    })
+    const committedState = () => {
+      if (!capturedImport || !capturedCandidate || !capturedDecision) throw new Error('synthetic commit state is incomplete')
+      return { importRequest: capturedImport, candidate: capturedCandidate, decision: capturedDecision }
+    }
 
     const { container } = render(<App />)
-    await screen.findByText('Synthetic merchant')
-    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const settings = await screen.findByRole('button', { name: '設定' })
+    expect(screen.queryByText('Synthetic merchant')).not.toBeInTheDocument()
+    expect(desktop.getTransactionDetail).not.toHaveBeenCalled()
+    fireEvent.click(settings)
     const refreshAll = await screen.findByRole('button', { name: 'すべて更新' })
     expect(screen.getByRole('article', { name: 'Synthetic source alpha' })).toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'Synthetic source beta' })).toBeInTheDocument()
@@ -2266,21 +2345,25 @@ describe('KakeFlow desktop read models', () => {
 
     const commit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
     expect(commit).toBeDisabled()
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Synthetic merchantを承認' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'SYNTHETIC ITEMを承認' }))
     expect(commit).toBeEnabled()
     fireEvent.click(commit)
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('synthetic-post-run', [expect.objectContaining({
-      candidateId: 'synthetic-candidate',
+    await waitFor(() => expect(capturedDecision).not.toBeNull())
+    const posted = committedState()
+    expect(posted.decision).toMatchObject({
+      candidateId: posted.candidate.id,
+      payee: posted.candidate.merchantRaw,
       entries: expect.arrayContaining([
         expect.objectContaining({ accountId: 'synthetic-household-other-expense', side: 'DEBIT', amountJpy: 1200 }),
         expect.objectContaining({ accountId: 'synthetic-cash', side: 'CREDIT', amountJpy: 1200 }),
       ]),
-    })]))
+    })
+    expect(posted.importRequest.records).toEqual([expect.objectContaining({ rowNumber: 2 })])
 
     fireEvent.click(screen.getByRole('button', { name: '取引' }))
-    const row = (await screen.findByText('Synthetic merchant')).closest('button')!
+    const row = (await screen.findAllByText('SYNTHETIC ITEM')).map((element) => element.closest('button')).find(Boolean)!
     fireEvent.click(row)
-    const detail = await screen.findByRole('dialog', { name: 'Synthetic merchant' })
+    const detail = await screen.findByRole('dialog', { name: 'SYNTHETIC ITEM' })
     expect(within(detail).getByText('借方 ¥1,200 / 貸方 ¥1,200')).toBeInTheDocument()
     expect(within(detail).getByText('synthetic-source.csv')).toBeInTheDocument()
     expect(within(detail).getByText(/行 2/)).toBeInTheDocument()

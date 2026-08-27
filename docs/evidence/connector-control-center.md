@@ -30,31 +30,33 @@ Node commands used `PATH=/opt/homebrew/opt/node@22/bin:$PATH TZ=Asia/Tokyo`; Rus
 | --- | --- |
 | `npm audit` | Passed; 0 vulnerabilities. |
 | `npm audit --omit=dev` | Passed; 0 vulnerabilities. |
-| `npm exec vitest run src/platform/client.test.ts src/features/connectors src/App.desktop.test.tsx src/platform/pwa/client.test.ts src/pwa/PwaRoot.test.tsx scripts/pwa-contract.test.ts` | Passed; 8 files, 245/245 tests. |
+| `npm exec vitest run src/platform/client.test.ts src/features/connectors src/App.desktop.test.tsx src/platform/pwa/client.test.ts src/pwa/PwaRoot.test.tsx scripts/pwa-contract.test.ts` | Passed; 8 files, 246/246 tests. |
+| `npm exec vitest run scripts/native-macos-build.test.ts scripts/packaged-app-smoke.test.ts scripts/dmg-install-smoke.test.ts scripts/release-version-contract.test.mjs` | Passed; 4 files, 20/20 tests. |
+| `npm exec vitest run scripts/ocr-resource-contract.test.mjs` and `npm run ocr:verify` | Passed; 9/9 contract tests and the staged Tesseract runtime/model/privacy verification. |
 | `cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_` | Passed; 59/59 library tests. |
 | `npm run lint` | Passed. |
-| `npm run test:functional` | Passed; 129 files, 902/902 tests. |
+| `npm run test:functional` | Passed; 130 files, 909/909 tests. |
 | `npm run build` | Passed; 1,781 modules transformed. |
 | `npm run build:pwa` | Passed; 61 modules transformed and 25 entries precached. |
 | `cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml` | Passed; 724/724 tests: 694 library, 15 family-delivery, 6 Gmail-store, and 9 Google-Drive-store. |
 | `PATH="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/opt/homebrew/opt/node@22/bin:$PATH" TZ=Asia/Tokyo KAKEFLOW_REQUIRE_POPPLER=1 KAKEFLOW_PDF_QA_OUTPUT=artifacts/pdf-report-visual-qa npm run test:pdf-visual` | Passed without skip; 1/1 integration test. |
 | `npm exec vitest run scripts/update-channel-contract.test.mjs scripts/release-version-contract.test.mjs scripts/github-actions-pins.test.ts` | Passed; 3 files, 26/26 tests. |
 | `npm run test:pwa:e2e` | Passed; 2/2 Playwright tests. |
-| `TAURI_SIGNING_PRIVATE_KEY="$HOME/.tauri/kakeflow-updater.key" TAURI_SIGNING_PRIVATE_KEY_PASSWORD='' npm run desktop:build:mac:ci` | Passed after the documented local updater key was supplied; app, DMG, updater archive, and updater signature created. |
+| `TAURI_SIGNING_PRIVATE_KEY='<opaque-environment-injection>' TAURI_SIGNING_PRIVATE_KEY_PASSWORD='<opaque-environment-injection>' npm run desktop:build:mac:ci` | Passed after opaque signing-environment injection; app, DMG, updater archive, and updater signature created. |
 | `npm run test:packaged` | Passed; 13 visible-page checks, 14 interaction checks, IPC, and schema v71. |
-| `npm run test:dmg` | Passed; v1.2.1 read-only mount and bundle integrity. |
+| `npm run test:dmg` | Passed; v1.2.1 read-only mount, whole-bundle privacy guard, and bundle integrity. |
 
-The first macOS composite attempt omitted `TAURI_SIGNING_PRIVATE_KEY`: the ad-hoc app and DMG were produced, then updater signing correctly failed closed because only the public key was configured. The successful retry supplied the existing local key by path; no key bytes or signature secret were printed or copied into evidence.
+The first macOS composite attempt omitted `TAURI_SIGNING_PRIVATE_KEY`: the ad-hoc app and DMG were produced, then updater signing correctly failed closed because only the public key was configured. The successful retry used opaque environment injection; the secret source and its location remain outside tracked documentation, and no key bytes or signature secret were printed or copied into evidence.
 
 ## Artifacts
 
-- Poppler machine result: `artifacts/pdf-report-visual-qa/manifest.json` with `status: automated-pass`.
-- Poppler human-review artifact: `artifacts/pdf-report-visual-qa/VISUAL_REVIEW.md`.
-- Rendered fixtures: `artifacts/pdf-report-visual-qa/{monthly,annual,investment-performance,portfolio-snapshot}/page-0001.png`, each 1,190 × 1,684 pixels. The deterministic fixture was visually inspected; the release-review checklist remains explicitly unclaimed.
-- Native application: `src-tauri/target/release/bundle/macos/KakeFlow.app`.
-- Updater archive: `src-tauri/target/release/bundle/macos/KakeFlow.app.tar.gz`, SHA-256 `23e77aff8ace10d4a3e3583a0a564f058935e45e866e41a1c6cc3bd33e259446`.
-- Updater signature: `src-tauri/target/release/bundle/macos/KakeFlow.app.tar.gz.sig`, SHA-256 `2b3838d742b99fff088cb26ab2647cbf8b708282f085bbefba248c8b9cd944b5`.
-- DMG: `src-tauri/target/release/bundle/dmg/KakeFlow_1.2.1_aarch64.dmg`, SHA-256 `4a39624d19febaceaa0507a3843e227feecfd3fc3c40e6192002feec588d32cc`.
+- Poppler machine result: `artifacts/pdf-report-visual-qa/manifest.json` with `status: automated-pass`. This proves required Poppler execution and render-artifact plumbing only.
+- Poppler review checklist: `artifacts/pdf-report-visual-qa/VISUAL_REVIEW.md`. It is an uncompleted human-review input, not evidence that a reviewer approved the pages.
+- Rendered fixtures: `artifacts/pdf-report-visual-qa/{monthly,annual,investment-performance,portfolio-snapshot}/page-0001.png`, each 1,190 × 1,684 pixels. All four are the same synthetic placeholder page; they do not prove report-specific content, visual variety, or visual quality.
+- Native application: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app`.
+- Updater archive: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app.tar.gz`, SHA-256 `61c96f6587224ee3ffe537ae5bf08d9ced8f6b118bddd382ac9b62251fd6177d`.
+- Updater signature: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app.tar.gz.sig`, SHA-256 `17d5578085b6888880eea99ebbb84514c988215e550ee774984c25e390c16548`.
+- DMG: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/dmg/KakeFlow_1.2.1_aarch64.dmg`, SHA-256 `76133d49676b23cb5c775f9e6980560f310bb9ff6e4618e25ede54127457d4e7`.
 
 `codesign --verify --deep --strict` passed for the app. Its recorded identity is `Signature=adhoc` and `TeamIdentifier=not set`; the build explicitly skipped Apple notarization because no notarization credentials were present. These are local verification artifacts, not a release. They are not Developer ID signed or notarized and are not presented as a frictionless production installer.
 
@@ -62,6 +64,10 @@ The first macOS composite attempt omitted `TAURI_SIGNING_PRIVATE_KEY`: the ad-ho
 
 The fresh PWA build, native build, Poppler manifest/checklist/PNGs, Playwright result, package resources, connector batch test sources, and this evidence were inspected for credential values, authorization-code values, cursor values, personal absolute paths, provider folder/label values, personal emails, real financial payloads, premium branding, and unsupported direct-institution or installer claims.
 
-The first package scan rejected the executable because Rust, Tauri, and OpenSSL build literals retained the local home root. Compiler path remapping removed Rust source spans but could not rewrite five generated or native-library literals. A tested `beforeBundleCommand` now replaces only the exact build home root with a same-length placeholder before Tauri signs and archives the executable; the package smoke also independently rejects macOS or Windows personal build-root markers. The final `.app`, extracted updater executable, and read-only-mounted DMG executable contain neither marker, and their runtime smoke checks pass.
+The first package scan rejected the executable because Rust, Tauri, and OpenSSL build literals retained the local home root. The rejected post-link byte rewrite was removed: it was section-blind and affected unrelated native-library strings. The retained macOS-only build wrapper chooses a deterministic neutral `CARGO_TARGET_DIR`, passes an explicit Apple target, and injects Rust path remapping at compile time through `CARGO_ENCODED_RUSTFLAGS`; it rejects personal target directories, unsupported hosts/targets, and ambiguous plain `RUSTFLAGS`. Artifact resolution follows the configured target and architecture, including universal bundles, without a global Tauri hook or final Mach-O mutation.
+
+A subsequent whole-bundle scan exposed two generated dependencies that an executable-only scan missed. The PWA core generator now uses its own neutral Cargo target and compile-time Rust remapping; its contract rejects personal roots in both the tracked WASM and production PWA WASM. The macOS OCR stage now builds under a neutral temporary vcpkg root, disables restoration from a user binary cache, and makes OCR verification reject personal roots in Tesseract before packaging. The rebuilt raw executable, all 14 regular files in the `.app`, all 14 files extracted from the updater, and all 16 files on the read-only-mounted DMG contain no macOS or Windows personal build-root marker. Package and DMG runtime smokes pass.
+
+Untouched OpenSSL `ENGINESDIR` and `MODULESDIR` strings and Tesseract source diagnostics remain under neutral operating-system temporary build roots. They are absolute compile-output paths, but they contain no user or personal build identity. Rust source paths are remapped to `/kakeflow-build-home`. The privacy claim is therefore personal-path-free artifacts, not the absence of every absolute path.
 
 No private payload or unsupported claim was found. Expected identifiers were separated from leaked runtime evidence: IndexedDB dependency code contains `IDBCursor`/`openCursor`; the bundled ONNX runtime contains its public build marker `/home/web_user`; native source tests contain public DTO field names and invented negative fixtures, including synthetic personal-path markers used to test the deny rule; and package email-like strings resolve to public third-party attribution addresses (for example, `appro@openssl.org` and `xiaokang.qian@arm.com`), `ftp@example.com`, or non-email binary fragments, not a KakeFlow user or build-machine identity. Roadmap and security text names OAuth, providers, and product comparisons only to define non-goals. Rust SQLite tests use temporary databases and emitted no persistent database fixture. Local compiler output displayed its working directory as an ephemeral diagnostic, but no personal absolute path was embedded in the public evidence, Poppler artifacts, Playwright result, updater signature, or final package executables.
