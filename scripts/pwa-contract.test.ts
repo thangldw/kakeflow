@@ -13,6 +13,8 @@ const nativeCommandPattern = /(?:connector_(?:control|binding|bindings|refresh)_
 const providerAuthPattern = /(?:DRIVE_READONLY|GMAIL_READONLY|SYSTEM_BROWSER_LOOPBACK|Authenticating Gmail in system browser|Authorizing Google Drive in system browser|complete authentication using your system browser|https:\/\/www\.googleapis\.com\/auth\/(?:drive|gmail))/iu
 const nativePathKeyPattern = /(?:folderPath|relativePath|watchedFolderId|absolutePath.{0,160}(?:relativePath|watchedFolderId)|(?:relativePath|watchedFolderId).{0,160}absolutePath)/u
 const keychainPattern = /Keychain/u
+const providerCatalogPattern = /(?:GOOGLE_DRIVE|GMAIL|WATCHED_FOLDER|Google Drive|Gmail|同期フォルダー)/u
+const unusedConnectorCatalogPattern = /(?:["'](?:REFRESH_NOW|RETRY|DISCONNECT|DISCONNECTED|ACCOUNT_BINDING)["']|すべて更新|接続解除|レビュー範囲を管理|レビュー対象口座|読み取りプロファイル|コネクタ更新の進行状況)/u
 
 interface JavascriptArtifact {
   readonly file: string
@@ -20,6 +22,7 @@ interface JavascriptArtifact {
 }
 
 function forbiddenJavascriptFindings({ file, source }: JavascriptArtifact): string[] {
+  const filenameAndSource = `${file}\n${source}`
   return [
     nativeChunkPattern.test(file) ? 'tauri-chunk' : null,
     nativeRuntimePattern.test(source) ? 'tauri-runtime' : null,
@@ -27,6 +30,8 @@ function forbiddenJavascriptFindings({ file, source }: JavascriptArtifact): stri
     providerAuthPattern.test(source) ? 'provider-auth' : null,
     keychainPattern.test(source) ? 'keychain' : null,
     nativePathKeyPattern.test(source) ? 'native-path-dto' : null,
+    providerCatalogPattern.test(filenameAndSource) ? 'provider-catalog' : null,
+    unusedConnectorCatalogPattern.test(filenameAndSource) ? 'unused-connector-catalog' : null,
   ].filter((finding): finding is string => finding !== null)
 }
 
@@ -128,6 +133,11 @@ describe('production PWA contract', () => {
     ['provider OAuth scope', { file: 'assets/index-a4.js', source: 'https://www.googleapis.com/auth/gmail.readonly' }, 'provider-auth'],
     ['Keychain runtime copy', { file: 'assets/index-a5.js', source: 'Open macOS Keychain' }, 'keychain'],
     ['minified native path DTO', { file: 'assets/index-a6.js', source: 'const x={absolutePath:e,relativePath:t}' }, 'native-path-dto'],
+    ['provider enum in a generic chunk', { file: 'assets/index-a7.js', source: 'const k="WATCHED_FOLDER"' }, 'provider-catalog'],
+    ['provider label in a minified chunk', { file: 'assets/index-a8.js', source: 'const l="Gmail"' }, 'provider-catalog'],
+    ['provider enum in a chunk name', { file: 'assets/GOOGLE_DRIVE-a9.js', source: '' }, 'provider-catalog'],
+    ['unused capability and state catalog', { file: 'assets/index-a10.js', source: 'const c=["REFRESH_NOW","RETRY","DISCONNECT","DISCONNECTED","ACCOUNT_BINDING"]' }, 'unused-connector-catalog'],
+    ['unused action and binding copy', { file: 'assets/index-a11.js', source: 'すべて更新 接続解除 レビュー範囲を管理' }, 'unused-connector-catalog'],
   ] as const)('recognizes forbidden %s mutations', (_name, artifact, finding) => {
     expect(forbiddenJavascriptFindings(artifact)).toContain(finding)
   })

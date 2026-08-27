@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { ConnectorControlCenter } from '../features/connectors/ConnectorControlCenter'
-import type { ConnectorControlCenterCopy } from '../features/connectors/ConnectorControlCenter'
+import {
+  ManualConnectorControlCenter,
+  type ManualConnectorControlCopy,
+} from '../features/connectors/ManualConnectorControlCenter'
 import type { ExtractedDocumentDto } from '../platform'
 import type { ConnectorSummaryDto } from '../platform/types'
 import { parseReceiptText, type ReceiptTextFields } from '../features/import/receiptText'
@@ -51,29 +53,27 @@ const navigation: readonly { id: Screen; label: string; step: string }[] = [
   { id: 'backup', label: 'Backup', step: '07' },
 ]
 
-const pwaConnectorCopyText: Readonly<Record<string, string>> = {
-  'コネクタ管理センター': 'Connector control center',
-  '接続状態、更新、レビュー待ちを一か所で管理します。認証とスケジュールは各設定画面で管理します。': 'Review the local source and pending items in one place.',
-  '更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。': 'Imports create review candidates. Nothing is posted automatically.',
-  '接続済み': 'Connected',
-  '古いデータ': 'Stale',
-  '更新中': 'Running',
-  '要対応': 'Needs action',
-  'コネクタを絞り込む': 'Filter sources',
-  'すべて': 'All',
-  '手動': 'Manual',
-  '設定を開く': 'Open settings',
-  '最後に成功した更新': 'Last successful refresh',
-  '成功した更新はまだありません': 'No successful refresh yet',
-  '次回の予定更新': 'Next scheduled refresh',
-  'スケジュールなし': 'Not scheduled',
-  'レビュー待ち': 'Pending review',
-  '{count}件': '{count} items',
-}
+const pwaDateFormatter = new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'short' })
 
-const pwaConnectorCopy: ConnectorControlCenterCopy = {
-  localeCode: 'en-US',
-  text: (source) => pwaConnectorCopyText[source] ?? source,
+const pwaConnectorCopy: ManualConnectorControlCopy = {
+  frame: {
+    title: 'Connector control center',
+    description: 'Review the local source and pending items in one place.',
+    reviewNote: 'Imports create review candidates. Nothing is posted automatically.',
+    connected: 'Connected',
+    stale: 'Stale',
+    running: 'Running',
+    needsAction: 'Needs action',
+  },
+  manualState: 'Manual',
+  configure: 'Open settings',
+  lastSuccessLabel: 'Last successful refresh',
+  noLastSuccess: 'No successful refresh yet',
+  nextDueLabel: 'Next scheduled refresh',
+  noNextDue: 'Not scheduled',
+  pendingReviewLabel: 'Pending review',
+  pendingReview: (count) => `${count.toLocaleString('en-US')} ${count === 1 ? 'item' : 'items'}`,
+  formatDate: (value) => pwaDateFormatter.format(new Date(value)),
 }
 
 const defaultOcrDocument: PwaOcrDocument = async (bytes, mediaType) => {
@@ -428,14 +428,10 @@ export default function PwaRoot({
       <main className="pwa-content">
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
         {screen === 'overview' && <Overview household={household} summary={summary} transactions={transactions} onImport={() => setScreen('import')} />}
-        {screen === 'sources' && <div className="pwa-sources"><ConnectorControlCenter
-          summaries={connectorSummaries}
-          loading={false}
-          error={null}
+        {screen === 'sources' && connectorSummaries[0] && <div className="pwa-sources"><ManualConnectorControlCenter
+          summary={connectorSummaries[0]}
           copy={pwaConnectorCopy}
-          onConfigure={(destination) => {
-            if (destination === 'IMPORT_INBOX') setScreen('import')
-          }}
+          onConfigure={() => setScreen('import')}
         /></div>}
         {screen === 'import' && <ImportScreen busy={busy} onFile={importReceipt} />}
         {screen === 'review' && <ReviewScreen
