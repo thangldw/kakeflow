@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { spawn } from 'node:child_process'
+import { execFile as execFileCallback, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import {
   executableForPlatform,
@@ -13,6 +14,49 @@ import {
   terminateChild,
   validateSmokeResult,
 } from './packaged-app-smoke.mjs'
+import { computeNativeBuildInputIdentity, writeNativeBuildIdentity } from './native-build-identity.mjs'
+
+const execFile = promisify(execFileCallback)
+
+async function staleInputAppFixture(root: string) {
+  const repositoryRoot = path.join(root, 'checkout')
+  const releaseDirectory = path.join(root, 'target', 'aarch64-apple-darwin', 'release')
+  const app = path.join(releaseDirectory, 'bundle', 'macos', 'KakeFlow.app')
+  const executable = path.join(app, 'Contents', 'MacOS', 'kakeflow')
+  const context = {
+    repositoryRoot,
+    cargoTargetDir: path.join(root, 'target'),
+    macosTarget: 'aarch64-apple-darwin',
+    artifactArchitecture: 'aarch64',
+    releaseDirectory,
+  }
+  const artifacts = {
+    app,
+    executable,
+    updaterArchive: `${app}.tar.gz`,
+    updaterSignature: `${app}.tar.gz.sig`,
+    dmg: path.join(releaseDirectory, 'bundle', 'dmg', 'KakeFlow_1.2.1_aarch64.dmg'),
+    identityManifest: path.join(releaseDirectory, 'kakeflow-build-identity.json'),
+  }
+  const ocr = path.join(repositoryRoot, 'src-tauri', 'generated-resources', 'ocr', 'tesseract')
+  await Promise.all([
+    mkdir(path.dirname(executable), { recursive: true }),
+    mkdir(path.dirname(ocr), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(path.join(repositoryRoot, 'package.json'), '{"version":"1.2.1"}\n'),
+    writeFile(path.join(repositoryRoot, '.gitignore'), 'src-tauri/generated-resources/ocr/*\n'),
+    writeFile(ocr, 'staged OCR v1'),
+    writeFile(executable, 'synthetic app'),
+    writeFile(artifacts.updaterArchive, 'synthetic updater'),
+    writeFile(artifacts.updaterSignature, 'synthetic signature'),
+  ])
+  await execFile('git', ['init', '-q'], { cwd: repositoryRoot })
+  await execFile('git', ['add', '.'], { cwd: repositoryRoot })
+  const buildInputIdentity = await computeNativeBuildInputIdentity(repositoryRoot)
+  await writeNativeBuildIdentity({ context, artifacts, version: '1.2.1', mode: 'app', buildInputIdentity })
+  return { repositoryRoot, executable, ocr }
+}
 
 describe('packaged app smoke harness', () => {
   it('terminates a timed-out child before returning control to cleanup', async () => {
@@ -74,6 +118,21 @@ describe('packaged app smoke harness', () => {
       await mkdir(path.dirname(executable), { recursive: true })
       await writeFile(executable, 'stale executable without a build identity')
       await expect(runPackagedSmoke({ executable, timeoutMs: 50 })).rejects.toThrow(/Successful native build identity is required/)
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a previously successful app identity after an ignored staged OCR input changes', async () => {
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-packaged-stale-source-test-'))
+    try {
+      const fixture = await staleInputAppFixture(temporaryRoot)
+      await writeFile(fixture.ocr, 'staged OCR v2')
+      await expect(runPackagedSmoke({
+        executable: fixture.executable,
+        repositoryRoot: fixture.repositoryRoot,
+        timeoutMs: 50,
+      })).rejects.toThrow(/build input identity mismatch/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }

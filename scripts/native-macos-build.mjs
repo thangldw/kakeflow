@@ -8,7 +8,9 @@ import {
   acquireNativeBuildLock,
   cleanNativeBuildOutputs,
   computeNativeBuildInputIdentity,
+  invalidateNativeBuildIdentity,
   nativeBuildIdentityFilename,
+  resolvePhysicalPath,
   writeNativeBuildIdentity,
 } from './native-build-identity.mjs'
 import { macOcrContractForTauriTarget } from './ocr-resource-contract.mjs'
@@ -23,8 +25,8 @@ const hostTargets = new Map([
 ])
 
 function personalRootFinding(candidate, homeDirectory) {
-  const normalized = path.resolve(candidate)
-  const home = path.resolve(homeDirectory)
+  const normalized = resolvePhysicalPath(candidate)
+  const home = resolvePhysicalPath(homeDirectory)
   if (normalized === home || normalized.startsWith(`${home}${path.sep}`)) return home
   if (normalized.includes('/Users/')) return '/Users/'
   return null
@@ -51,12 +53,13 @@ export function resolveMacBuildContext({
   homeDirectory = os.homedir(),
   temporaryDirectory = os.tmpdir(),
 } = {}) {
-  const root = path.resolve(repositoryRoot)
+  const root = resolvePhysicalPath(repositoryRoot)
   const target = resolveTarget(macosTarget, architecture)
   const defaultTargetName = `kakeflow-cargo-target-${createHash('sha256').update(root).digest('hex').slice(0, 12)}`
-  const resolvedTargetDir = cargoTargetDir
+  const targetCandidate = cargoTargetDir
     ? path.resolve(root, cargoTargetDir)
     : path.resolve(temporaryDirectory, defaultTargetName)
+  const resolvedTargetDir = resolvePhysicalPath(targetCandidate)
   const personalFinding = personalRootFinding(resolvedTargetDir, homeDirectory)
   if (personalFinding) {
     throw new Error(`CARGO_TARGET_DIR contains a personal build root (${personalFinding}); configure a neutral target directory`)
@@ -188,14 +191,17 @@ export async function runIsolatedMacBuild(plan, {
   cleanOutputs = cleanNativeBuildOutputs,
   computeBuildInputIdentity = computeNativeBuildInputIdentity,
   executeCommand = executeMacBuildCommand,
+  invalidateBuildIdentity = invalidateNativeBuildIdentity,
   writeBuildIdentity = writeNativeBuildIdentity,
-  reportCleanupError = (error) => console.error(`Native build lock cleanup failed: ${error instanceof Error ? error.message : error}`),
 } = {}) {
   let lock
   let result
   let primaryError
+  let identityPublished = false
+  const cleanupErrors = []
   try {
     lock = await acquireBuildLock(plan.context)
+    await invalidateBuildIdentity({ context: plan.context, artifacts: plan.artifacts })
     await cleanOutputs({ context: plan.context, artifacts: plan.artifacts })
     const inputBeforeBuild = await computeBuildInputIdentity(plan.context.repositoryRoot)
     for (const command of plan.commands) await executeCommand(command, plan)
@@ -210,19 +216,46 @@ export async function runIsolatedMacBuild(plan, {
       mode: plan.mode,
       buildInputIdentity: inputAfterBuild,
     })
+    identityPublished = true
   } catch (error) {
     primaryError = error
+    if (lock) {
+      try {
+        await invalidateBuildIdentity({ context: plan.context, artifacts: plan.artifacts })
+        identityPublished = false
+      } catch (identityCleanupError) {
+        cleanupErrors.push(identityCleanupError)
+      }
+    }
   } finally {
     if (lock) {
       try {
         await lock.release()
       } catch (cleanupError) {
-        if (primaryError) reportCleanupError(cleanupError)
-        else primaryError = cleanupError
+        cleanupErrors.push(cleanupError)
+        if (identityPublished) {
+          try {
+            await invalidateBuildIdentity({ context: plan.context, artifacts: plan.artifacts })
+            identityPublished = false
+          } catch (identityCleanupError) {
+            cleanupErrors.push(identityCleanupError)
+          }
+        }
       }
     }
   }
-  if (primaryError) throw primaryError
+  if (primaryError || cleanupErrors.length > 0) {
+    const primaryMessage = primaryError instanceof Error ? primaryError.message : String(primaryError ?? 'Native build finalization failed')
+    const cleanupMessage = cleanupErrors
+      .map((error) => error instanceof Error ? error.message : String(error))
+      .join('; ')
+    const failures = [...(primaryError ? [primaryError] : []), ...cleanupErrors]
+    throw new AggregateError(
+      failures,
+      cleanupErrors.length > 0 ? `${primaryMessage}; cleanup failure: ${cleanupMessage}` : primaryMessage,
+      primaryError ? { cause: primaryError } : undefined,
+    )
+  }
   return result
 }
 

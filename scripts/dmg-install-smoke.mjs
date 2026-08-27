@@ -58,6 +58,7 @@ async function detachDmg(device) {
 
 export async function runDmgInstallSmoke({
   platform = process.platform,
+  repositoryRoot = root,
   expectedVersion,
   dmg,
   artifactDirectory = process.env.KAKEFLOW_SMOKE_ARTIFACT_DIR,
@@ -66,13 +67,13 @@ export async function runDmgInstallSmoke({
   if (platform !== 'darwin') {
     throw new Error('DMG mount/install validation is supported only on macOS; Windows installer coverage is not claimed')
   }
-  const packageVersion = expectedVersion ?? JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version
-  const image = dmg ?? process.env.KAKEFLOW_DMG_PATH ?? dmgForVersion(packageVersion)
+  const packageVersion = expectedVersion ?? JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')).version
+  const image = dmg ?? process.env.KAKEFLOW_DMG_PATH ?? dmgForVersion(packageVersion, { repositoryRoot })
   if (!existsSync(image)) throw new Error(`KakeFlow DMG does not exist: ${image}`)
   const imageStat = await stat(image)
   if (!imageStat.isFile() || imageStat.size === 0) throw new Error(`KakeFlow DMG is invalid: ${image}`)
   await verifyNativeBuildIdentity({
-    repositoryRoot: root,
+    repositoryRoot,
     releaseDirectory: path.resolve(path.dirname(image), '..', '..'),
     version: packageVersion,
     artifact: 'dmg',
@@ -117,8 +118,8 @@ export async function runDmgInstallSmoke({
     const resources = path.join(app, 'Contents', 'Resources')
     const resourcesStat = await stat(resources)
     if (!resourcesStat.isDirectory()) throw new Error('Mounted KakeFlow resources are missing')
-    await execFile(process.execPath, [path.join(root, 'scripts', 'verify-ocr-resources.mjs'), '--target', 'macos-arm64', '--expected-architecture', 'arm64'], {
-      cwd: root,
+    await execFile(process.execPath, [path.join(repositoryRoot, 'scripts', 'verify-ocr-resources.mjs'), '--target', 'macos-arm64', '--expected-architecture', 'arm64'], {
+      cwd: repositoryRoot,
       env: { ...process.env, KAKEFLOW_OCR_RESOURCE_ROOT: path.join(resources, 'ocr') },
     })
     await execFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])

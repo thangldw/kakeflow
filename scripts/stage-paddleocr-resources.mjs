@@ -3,6 +3,7 @@ import { createReadStream, existsSync } from 'node:fs'
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { writePaddleResourceMetadata } from './paddleocr-resource-metadata.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const targetRoot = join(root, 'public', 'ocr', 'paddleocr')
@@ -89,24 +90,10 @@ await Promise.all(MODELS.map(stageModel))
 await stageOrtRuntime()
 
 if (!verifyOnly) {
-  const manifest = {
-    engine: '@paddleocr/paddleocr-js',
-    version: 'PP-OCRv5',
-    generatedAt: new Date().toISOString(),
+  await writePaddleResourceMetadata(targetRoot, {
     models: MODELS.map(({ filename, bytes, sha256 }) => ({ filename, bytes, sha256 })),
     ortFiles: ORT_FILES,
-  }
-  await writeFile(join(targetRoot, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(join(targetRoot, 'THIRD_PARTY_NOTICES.txt'), [
-    'PaddleOCR PP-OCRv5 mobile ONNX models',
-    'Source: https://github.com/PaddlePaddle/PaddleOCR',
-    'License: Apache-2.0',
-    '',
-    'ONNX Runtime Web',
-    'Source: https://github.com/microsoft/onnxruntime',
-    'License: MIT',
-    '',
-  ].join('\n'))
+  })
 }
 
 console.log(`PaddleOCR resources ${verifyOnly ? 'verified' : 'staged'} at ${targetRoot}`)

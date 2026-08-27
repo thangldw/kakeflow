@@ -1,9 +1,52 @@
 import { describe, expect, it } from 'vitest'
+import { execFile as execFileCallback } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { dmgForVersion, mountIsReadOnly, runDmgInstallSmoke, validateBundleMetadata } from './dmg-install-smoke.mjs'
+import { computeNativeBuildInputIdentity, writeNativeBuildIdentity } from './native-build-identity.mjs'
+
+const execFile = promisify(execFileCallback)
+
+async function staleInputDmgFixture(root: string) {
+  const repositoryRoot = path.join(root, 'checkout')
+  const cargoTargetDir = path.join(root, 'target')
+  const releaseDirectory = path.join(cargoTargetDir, 'aarch64-apple-darwin', 'release')
+  const app = path.join(releaseDirectory, 'bundle', 'macos', 'KakeFlow.app')
+  const executable = path.join(app, 'Contents', 'MacOS', 'kakeflow')
+  const dmg = path.join(releaseDirectory, 'bundle', 'dmg', 'KakeFlow_1.2.1_aarch64.dmg')
+  const context = {
+    repositoryRoot, cargoTargetDir, releaseDirectory,
+    macosTarget: 'aarch64-apple-darwin', artifactArchitecture: 'aarch64',
+  }
+  const artifacts = {
+    app, executable, dmg,
+    updaterArchive: `${app}.tar.gz`, updaterSignature: `${app}.tar.gz.sig`,
+    identityManifest: path.join(releaseDirectory, 'kakeflow-build-identity.json'),
+  }
+  const paddle = path.join(repositoryRoot, 'public', 'ocr', 'paddleocr', 'models', 'model.bin')
+  await Promise.all([
+    mkdir(path.dirname(executable), { recursive: true }),
+    mkdir(path.dirname(dmg), { recursive: true }),
+    mkdir(path.dirname(paddle), { recursive: true }),
+  ])
+  await Promise.all([
+    writeFile(path.join(repositoryRoot, 'package.json'), '{"version":"1.2.1"}\n'),
+    writeFile(path.join(repositoryRoot, '.gitignore'), 'public/ocr/paddleocr/\n'),
+    writeFile(paddle, 'staged Paddle v1'),
+    writeFile(executable, 'synthetic app'),
+    writeFile(artifacts.updaterArchive, 'synthetic updater'),
+    writeFile(artifacts.updaterSignature, 'synthetic signature'),
+    writeFile(dmg, 'synthetic dmg'),
+  ])
+  await execFile('git', ['init', '-q'], { cwd: repositoryRoot })
+  await execFile('git', ['add', '.'], { cwd: repositoryRoot })
+  const buildInputIdentity = await computeNativeBuildInputIdentity(repositoryRoot)
+  await writeNativeBuildIdentity({ context, artifacts, version: '1.2.1', mode: 'release', buildInputIdentity })
+  return { repositoryRoot, dmg, paddle }
+}
 
 describe('macOS DMG install smoke harness', () => {
   it('resolves Tauri DMG architecture names without pretending to support other platforms', () => {
@@ -38,6 +81,22 @@ describe('macOS DMG install smoke harness', () => {
       await mkdir(path.dirname(dmg), { recursive: true })
       await writeFile(dmg, 'stale dmg without a build identity')
       await expect(runDmgInstallSmoke({ platform: 'darwin', expectedVersion: '1.2.1', dmg })).rejects.toThrow(/Successful native build identity is required/)
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a previously successful DMG identity after an ignored staged Paddle input changes', async () => {
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-dmg-stale-source-test-'))
+    try {
+      const fixture = await staleInputDmgFixture(temporaryRoot)
+      await writeFile(fixture.paddle, 'staged Paddle v2')
+      await expect(runDmgInstallSmoke({
+        platform: 'darwin',
+        expectedVersion: '1.2.1',
+        dmg: fixture.dmg,
+        repositoryRoot: fixture.repositoryRoot,
+      })).rejects.toThrow(/build input identity mismatch/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
