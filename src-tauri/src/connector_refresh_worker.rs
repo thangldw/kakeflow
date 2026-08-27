@@ -605,9 +605,11 @@ impl BackgroundConnectorRefresh {
 impl Drop for BackgroundConnectorRefresh {
     fn drop(&mut self) {
         self.signal.stop();
-        if let Ok(mut worker) = self.worker.lock() {
+        if let Ok(worker) = self.worker.get_mut() {
             if let Some(worker) = worker.take() {
-                let _ = worker.join();
+                if worker.is_finished() {
+                    let _ = worker.join();
+                }
             }
         }
     }
@@ -1785,7 +1787,7 @@ mod tests {
     }
 
     #[test]
-    fn shutdown_waits_for_only_the_current_provider_and_never_claims_the_next_item() {
+    fn shutdown_is_bounded_while_current_provider_is_blocked_and_never_claims_the_next_item() {
         let state = Arc::new(AppState::in_memory(TEST_KEY).unwrap());
         let batch = state
             .with_connection(|connection| {
@@ -1811,15 +1813,17 @@ mod tests {
         let run_executor = Arc::clone(&executor);
         let run_signal = Arc::clone(&signal);
         let batch_id = batch.batch_id.clone();
+        let (worker_done_tx, worker_done_rx) = std::sync::mpsc::channel();
         let worker = std::thread::spawn(move || {
-            run_batch_controlled(
+            let result = run_batch_controlled(
                 &AppStateRefreshPersistence::new(&run_state),
                 run_executor.as_ref(),
                 run_signal.as_ref(),
                 "home",
                 &batch_id,
                 Duration::from_millis(5),
-            )
+            );
+            let _ = worker_done_tx.send(result);
         });
         let started = gate.started.lock().unwrap();
         drop(
@@ -1827,11 +1831,51 @@ mod tests {
                 .wait_while(started, |started| !*started)
                 .unwrap(),
         );
-        signal.stop();
+        let background = BackgroundConnectorRefresh {
+            signal: Arc::clone(&signal),
+            worker: Mutex::new(Some(worker)),
+        };
+        let (drop_done_tx, drop_done_rx) = std::sync::mpsc::channel();
+        let dropper = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            drop(background);
+            let _ = drop_done_tx.send(started.elapsed());
+        });
+        let shutdown_bound = Duration::from_millis(250);
+        let shutdown_elapsed = match drop_done_rx.recv_timeout(shutdown_bound) {
+            Ok(elapsed) => elapsed,
+            Err(error) => {
+                *gate.released.lock().unwrap() = true;
+                gate.release_changed.notify_all();
+                let _ = drop_done_rx.recv_timeout(Duration::from_secs(2));
+                let _ = dropper.join();
+                panic!("background connector shutdown exceeded {shutdown_bound:?}: {error}");
+            }
+        };
+
+        assert!(shutdown_elapsed < shutdown_bound);
+        assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+        state
+            .with_connection(|connection| {
+                let loaded =
+                    connector_refresh::load_batch(connection, "home", &batch.batch_id).unwrap();
+                assert_eq!(loaded.items[0].status, RefreshItemStatus::Running);
+                assert_eq!(loaded.items[1].status, RefreshItemStatus::Pending);
+                Ok(())
+            })
+            .unwrap();
+
         *gate.released.lock().unwrap() = true;
         gate.release_changed.notify_all();
 
-        assert_eq!(worker.join().unwrap().unwrap(), RunBatchState::Stopped);
+        assert_eq!(
+            worker_done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("blocked provider exits after test release")
+                .unwrap(),
+            RunBatchState::Stopped
+        );
+        dropper.join().unwrap();
         assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
         state
             .with_connection(|connection| {
