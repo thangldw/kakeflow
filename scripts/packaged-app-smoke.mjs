@@ -6,6 +6,28 @@ import path from 'node:path'
 
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 const defaultTimeoutMs = 90_000
+const personalBuildRootMarkers = ['/Users/', 'C:\\Users\\']
+
+export function personalBuildPathFindings(bytes) {
+  const executableBytes = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  return personalBuildRootMarkers.filter((marker) => executableBytes.includes(Buffer.from(marker)))
+}
+
+export function scrubPersonalBuildRoots(bytes, roots) {
+  const scrubbed = Buffer.from(bytes)
+  for (const root of roots) {
+    const rootBytes = Buffer.from(root)
+    if (rootBytes.length === 0) continue
+    const replacement = Buffer.alloc(rootBytes.length, '.'.charCodeAt(0))
+    Buffer.from('<build-root>').copy(replacement, 0, 0, rootBytes.length)
+    let offset = scrubbed.indexOf(rootBytes)
+    while (offset !== -1) {
+      replacement.copy(scrubbed, offset)
+      offset = scrubbed.indexOf(rootBytes, offset + replacement.length)
+    }
+  }
+  return scrubbed
+}
 
 export function executableForPlatform(platform = process.platform, repositoryRoot = root) {
   const release = path.join(repositoryRoot, 'src-tauri', 'target', 'release')
@@ -146,6 +168,10 @@ export async function runPackagedSmoke({
   const executableStat = await stat(executable)
   if (!executableStat.isFile() || executableStat.size === 0) {
     throw new Error(`Packaged app executable is invalid: ${executable}`)
+  }
+  const buildPathFindings = personalBuildPathFindings(await readFile(executable))
+  if (buildPathFindings.length > 0) {
+    throw new Error(`Packaged app executable contains personal build roots: ${buildPathFindings.join(', ')}`)
   }
 
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-packaged-smoke-'))
