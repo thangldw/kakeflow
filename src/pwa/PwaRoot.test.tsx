@@ -195,6 +195,7 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(screen.getByRole('heading', { name: 'Connector control center' })).toBeInTheDocument()
     expect(within(source).getByText('Manual')).toBeInTheDocument()
     expect(within(source).getByText('Pending review').closest('div')).toHaveTextContent('Pending review0 items')
+    expect(within(source).getByText('Review scope').closest('div')).toHaveTextContent('Review scopeNot configured')
     expect(within(source).getAllByRole('button')).toHaveLength(1)
     expect(within(source).queryByRole('button', { name: /Refresh|Retry|Disconnect|Schedule/u })).not.toBeInTheDocument()
     expect(document.body.textContent).not.toMatch(/Google|Gmail|OAuth|Keychain|\/Users\/|Connect bank|bank account|account required/iu)

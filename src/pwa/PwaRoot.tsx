@@ -73,6 +73,9 @@ const pwaConnectorCopy: ManualConnectorControlCopy = {
   noNextDue: 'Not scheduled',
   pendingReviewLabel: 'Pending review',
   pendingReview: (count) => `${count.toLocaleString('en-US')} ${count === 1 ? 'item' : 'items'}`,
+  bindingLabel: 'Review scope',
+  unboundBinding: 'Not configured',
+  bindingSummary: (count, parserConfigured, version) => `${count.toLocaleString('en-US')} accounts · ${parserConfigured ? 'parser profile set' : 'no parser profile'} · revision ${version.toLocaleString('en-US')}`,
   formatDate: (value) => pwaDateFormatter.format(new Date(value)),
 }
 

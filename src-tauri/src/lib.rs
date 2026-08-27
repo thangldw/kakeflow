@@ -4863,6 +4863,7 @@ pub fn run() {
             connector_commands::connector_binding_delete,
             connector_commands::connector_refresh_one,
             connector_commands::connector_refresh_all,
+            connector_commands::connector_refresh_active_batch_get,
             connector_commands::connector_refresh_batch_get,
             local_sync_foundation_status,
             principal_member_binding_update,

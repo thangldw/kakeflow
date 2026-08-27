@@ -3436,8 +3436,17 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
 
   const pollRefresh = useCallback(async (refreshHouseholdId: string, batchId: string, generation: number) => {
     while (generation === refreshGeneration.current) {
-      const next = await platformClient.getConnectorRefreshBatch(refreshHouseholdId, batchId)
+      let next: ConnectorRefreshBatchProgressDto
+      try {
+        next = await platformClient.getConnectorRefreshBatch(refreshHouseholdId, batchId)
+      } catch {
+        if (generation !== refreshGeneration.current) return
+        setRefreshError('CONNECTOR_REFRESH_UNAVAILABLE')
+        await waitForRefreshPoll(generation)
+        continue
+      }
       if (generation !== refreshGeneration.current) return
+      setRefreshError(null)
       setRefreshBatch(next)
       if (next.status !== 'ACTIVE') {
         await reload(true)
@@ -3446,6 +3455,37 @@ function SettingsConnectorControl({ householdId, onConfigure }: { readonly house
       await waitForRefreshPoll(generation)
     }
   }, [reload, waitForRefreshPoll])
+
+  useEffect(() => {
+    if (!householdId || platformClient.runtime !== 'tauri') return
+    const generation = refreshGeneration.current
+    refreshOperationInFlight.current = true
+    setRefreshStarting(true)
+    setRefreshError(null)
+    void (async () => {
+      try {
+        while (generation === refreshGeneration.current) {
+          try {
+            const active = await platformClient.getActiveConnectorRefreshBatch(householdId)
+            if (generation !== refreshGeneration.current) return
+            setRefreshBatch(active)
+            setRefreshError(null)
+            if (active !== null) await pollRefresh(householdId, active.batchId, generation)
+            return
+          } catch {
+            if (generation !== refreshGeneration.current) return
+            setRefreshError('CONNECTOR_REFRESH_UNAVAILABLE')
+            await waitForRefreshPoll(generation)
+          }
+        }
+      } finally {
+        if (generation === refreshGeneration.current) {
+          refreshOperationInFlight.current = false
+          setRefreshStarting(false)
+        }
+      }
+    })()
+  }, [householdId, pollRefresh, waitForRefreshPoll])
 
   const runRefresh = useCallback(async (start: (refreshHouseholdId: string) => ReturnType<typeof platformClient.startConnectorRefreshAll>) => {
     if (!householdId || platformClient.runtime !== 'tauri' || refreshOperationInFlight.current) return

@@ -322,6 +322,7 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
       deleteConnectorBinding: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_binding_delete') },
       startConnectorRefresh: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_refresh_one') },
       startConnectorRefreshAll: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_refresh_all') },
+      getActiveConnectorRefreshBatch: async () => null,
       getConnectorRefreshBatch: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'connector_refresh_batch_get') },
       listWatchedFolders: async () => [],
       selectWatchedFolder: async () => { throw new PlatformIpcError('COMMAND_FAILED', 'watched_folder_select') },
@@ -518,6 +519,10 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     startConnectorRefreshAll: (householdId) => {
       const expectedHouseholdId = asConnectorBindingIdentifier(householdId, 128, 'connector refresh')
       return invokeValidated(invoke, 'connector_refresh_all', (value) => parseConnectorRefreshBatch(value, expectedHouseholdId), { householdId: expectedHouseholdId })
+    },
+    getActiveConnectorRefreshBatch: (householdId) => {
+      const expectedHouseholdId = asConnectorBindingIdentifier(householdId, 128, 'connector refresh')
+      return invokeValidated(invoke, 'connector_refresh_active_batch_get', (value) => parseNullableActiveConnectorRefreshProgress(value, expectedHouseholdId), { householdId: expectedHouseholdId })
     },
     getConnectorRefreshBatch: (householdId, batchId) => {
       const expectedHouseholdId = asConnectorBindingIdentifier(householdId, 128, 'connector refresh')
@@ -2178,6 +2183,17 @@ function parseConnectorRefreshProgress(value: unknown, expectedHouseholdId: stri
     || failedCount !== batch.failedCount
     || changedCount !== batch.changedCount) throw new TypeError('connector refresh')
   return { schemaVersion: 1, ...batch, items }
+}
+
+function parseNullableActiveConnectorRefreshProgress(
+  value: unknown,
+  expectedHouseholdId: string,
+): ConnectorRefreshBatchProgressDto | null {
+  if (value === null) return null
+  const batchId = asConnectorBindingIdentifier(asRecord(value).batchId, 64, 'connector refresh')
+  const progress = parseConnectorRefreshProgress(value, expectedHouseholdId, batchId)
+  if (progress.status !== 'ACTIVE') throw new TypeError('connector refresh')
+  return progress
 }
 
 function parseConnectorRefreshBatch(value: unknown, expectedHouseholdId: string): ConnectorRefreshBatchDto {

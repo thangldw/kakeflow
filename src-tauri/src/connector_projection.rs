@@ -1,8 +1,8 @@
 use crate::{
     connector_control::{
         ConfigurationDestination, ConnectorAvailability, ConnectorBindingSummaryDto,
-        ConnectorCapability, ConnectorHealth, ConnectorKind, ConnectorLifecycle,
-        ConnectorRegistry, ConnectorSummaryDto,
+        ConnectorCapability, ConnectorHealth, ConnectorKind, ConnectorLifecycle, ConnectorRegistry,
+        ConnectorSummaryDto,
     },
     folder_discovery, gmail_command_service, gmail_store, google_drive_command_service,
     google_drive_store,

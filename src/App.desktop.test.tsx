@@ -2034,6 +2034,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [projected], nextCursor: null })
     desktop.getActiveConnectorRefreshBatch.mockResolvedValue(refreshBatch())
     desktop.getConnectorRefreshBatch
+      .mockRejectedValueOnce(new Error('transient IPC failure'))
       .mockResolvedValueOnce(refreshBatch())
       .mockResolvedValueOnce(refreshBatch({
         status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 1,
@@ -2053,7 +2054,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.click(refresh)
     expect(desktop.startConnectorRefresh).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(2), { timeout: 1_500 })
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(3), { timeout: 2_000 })
     expect(progress).toHaveTextContent('すべての更新が完了しました。')
     expect(desktop.listConnectorSummaries.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2)
   })
