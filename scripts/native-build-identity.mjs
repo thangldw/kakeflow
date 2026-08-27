@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { lstatSync, realpathSync } from 'node:fs'
-import { lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, readlink, rename, rm, rmdir, stat, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
@@ -183,45 +183,22 @@ function sameLockOwner(left, right) {
     left?.target === right?.target
 }
 
-async function restoreReleaseDirectory(releaseDirectory, lockDirectory, renamePath) {
-  try {
-    await renamePath(releaseDirectory, lockDirectory)
-    return `restored at ${lockDirectory}`
-  } catch (error) {
-    return `preserved at ${releaseDirectory}; restore failed: ${error instanceof Error ? error.message : error}`
-  }
-}
-
 async function releaseOwnedLock(lockDirectory, owner, {
-  renamePath,
-  removePath,
+  unlinkPath,
+  removeDirectory,
 }) {
-  const releaseDirectory = path.join(
-    path.dirname(lockDirectory),
-    `.${path.basename(lockDirectory)}.release-${owner.token}`,
-  )
   const current = await readLockOwner(lockDirectory)
   if (!sameLockOwner(current, owner)) {
     throw new Error(`Native build lock ownership changed at ${lockDirectory}`)
   }
-  await renamePath(lockDirectory, releaseDirectory)
-  const moved = await readLockOwner(releaseDirectory)
-  if (!sameLockOwner(moved, owner)) {
-    const preservation = await restoreReleaseDirectory(releaseDirectory, lockDirectory, renamePath)
-    throw new Error(`Native build lock ownership changed during owner release; replacement ${preservation}`)
-  }
-  try {
-    await removePath(releaseDirectory, { recursive: true, force: false })
-  } catch (error) {
-    const preservation = await restoreReleaseDirectory(releaseDirectory, lockDirectory, renamePath)
-    throw new Error(`Native build lock owner-release deletion failed: ${error instanceof Error ? error.message : error}; owner ${preservation}`)
-  }
+  await unlinkPath(path.join(lockDirectory, 'owner.json'))
+  await removeDirectory(lockDirectory)
 }
 
 export async function acquireNativeBuildLock(context, {
   pid = process.pid,
-  renamePath = rename,
-  removePath = rm,
+  unlinkPath = unlink,
+  removeDirectory = rmdir,
 } = {}) {
   const lockDirectory = lockDirectoryFor(context)
   const lockParent = path.dirname(lockDirectory)
@@ -263,7 +240,7 @@ export async function acquireNativeBuildLock(context, {
     path: lockDirectory,
     owner,
     async release() {
-      await releaseOwnedLock(lockDirectory, owner, { renamePath, removePath })
+      await releaseOwnedLock(lockDirectory, owner, { unlinkPath, removeDirectory })
     },
   }
 }

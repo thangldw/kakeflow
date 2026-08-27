@@ -220,7 +220,7 @@ describe('native build identity and isolation', () => {
     }
   })
 
-  it('restores its owner-token lock if owner-release deletion fails', async () => {
+  it('keeps its owner-token lock occupied if pre-unlock owner cleanup fails', async () => {
     expect(identityModule.acquireNativeBuildLock).toBeTypeOf('function')
     if (typeof identityModule.acquireNativeBuildLock !== 'function') return
     const root = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-build-lock-release-cleanup-test-'))
@@ -229,10 +229,31 @@ describe('native build identity and isolation', () => {
       await mkdir(context.repositoryRoot, { recursive: true })
       const lock = await identityModule.acquireNativeBuildLock(context, {
         pid: 45001,
-        removePath: async () => { throw new Error('synthetic owner-release deletion failure') },
+        unlinkPath: async () => { throw new Error('synthetic owner cleanup failure') },
       })
-      await expect(lock.release()).rejects.toThrow(/synthetic owner-release deletion failure/)
+      await expect(lock.release()).rejects.toThrow(/synthetic owner cleanup failure/)
       expect(JSON.parse(await readFile(path.join(lock.path, 'owner.json'), 'utf8'))).toEqual(lock.owner)
+      await expect(identityModule.acquireNativeBuildLock(context, { pid: 45002 })).rejects.toThrow(/already exists/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a partial lock fail-closed if the final directory removal fails', async () => {
+    expect(identityModule.acquireNativeBuildLock).toBeTypeOf('function')
+    if (typeof identityModule.acquireNativeBuildLock !== 'function') return
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-build-lock-final-unlock-test-'))
+    const { context } = fixture(root)
+    try {
+      await mkdir(context.repositoryRoot, { recursive: true })
+      const lock = await identityModule.acquireNativeBuildLock(context, {
+        pid: 46001,
+        removeDirectory: async () => { throw new Error('synthetic final rmdir failure') },
+      })
+      await expect(lock.release()).rejects.toThrow(/synthetic final rmdir failure/)
+      expect((await stat(lock.path)).isDirectory()).toBe(true)
+      await expect(readFile(path.join(lock.path, 'owner.json'), 'utf8')).rejects.toThrow()
+      await expect(identityModule.acquireNativeBuildLock(context, { pid: 46002 })).rejects.toThrow(/metadata is invalid/)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
