@@ -1,6 +1,6 @@
 # Connector Control Center evidence
 
-Verified on 2026-08-27 with Node 22.23.2, npm 10.9.8, Rust 1.97.0, and `TZ=Asia/Tokyo`. The commands below leave `$HOME` unexpanded so this public record contains no personal filesystem path.
+Verified on 2026-08-27 with Node 22.23.2, npm 10.9.8, Rust 1.97.0, and the portable gates under `TZ=UTC`. The commands below leave `$HOME` unexpanded so this public record contains no personal filesystem path.
 
 ## Synthetic system journey
 
@@ -24,29 +24,30 @@ This is a control plane over import sources. It is not direct institution aggreg
 
 ## Verification gates
 
-Node commands used `PATH=/opt/homebrew/opt/node@22/bin:$PATH TZ=Asia/Tokyo`; native packaging additionally placed `$HOME/.cargo/bin` on `PATH` and set `RUSTUP_TOOLCHAIN=1.97.0`. Rust commands used `PATH="$HOME/.cargo/bin:$PATH" TZ=Asia/Tokyo`.
+Final portable gates used `PATH=/opt/homebrew/opt/node@22/bin:$PATH TZ=UTC`; native packaging additionally placed `$HOME/.cargo/bin` on `PATH`. Rust commands used `PATH="$HOME/.cargo/bin:$PATH" TZ=UTC`.
 
 | Command | Result |
 | --- | --- |
 | `npm audit` | Passed; 0 vulnerabilities. |
 | `npm audit --omit=dev` | Passed; 0 vulnerabilities. |
-| `npm exec vitest run src/platform/client.test.ts src/features/connectors src/App.desktop.test.tsx src/platform/pwa/client.test.ts src/pwa/PwaRoot.test.tsx scripts/pwa-contract.test.ts` | Passed; 8 files, 246/246 tests. |
+| `npm exec vitest run src/platform/client.test.ts src/features/connectors src/App.desktop.test.tsx src/platform/pwa/client.test.ts src/pwa/PwaRoot.test.tsx scripts/pwa-contract.test.ts` | Passed within the final functional run; 8 files, 249/249 tests. |
 | `npm exec vitest run scripts/native-macos-build.test.ts scripts/native-build-identity.test.ts scripts/desktop-release.test.ts scripts/packaged-app-smoke.test.ts scripts/dmg-install-smoke.test.ts scripts/release-version-contract.test.mjs scripts/ocr-resource-contract.test.mjs scripts/stage-paddleocr-resources.test.ts` | Passed; 8 files, 58/58 tests. |
 | `npm run ocr:verify` | Passed; staged Tesseract runtime/model/privacy verification and exactly one arm64 slice. |
-| `cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_` | Passed; 59/59 library tests. |
+| focused connector binding, projection, refresh, worker, and command tests | Passed; reviewer rerun the generation-fenced binding subset 15/15 and found no Critical/Important issue. |
 | `npm run lint` | Passed. |
-| `npm run test:functional` | Passed; 133 files, 938/938 tests. |
+| `TZ=UTC npm run test:functional` | Passed; 133 files, 941/941 tests. |
 | `npm run build` | Passed; 1,781 modules transformed. |
 | `npm run build:pwa` | Passed; 61 modules transformed and 25 entries precached. |
-| `cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml` | Passed; 724/724 tests: 694 library, 15 family-delivery, 6 Gmail-store, and 9 Google-Drive-store. |
-| `PATH="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/opt/homebrew/opt/node@22/bin:$PATH" TZ=Asia/Tokyo KAKEFLOW_REQUIRE_POPPLER=1 KAKEFLOW_PDF_QA_OUTPUT=artifacts/pdf-report-visual-qa npm run test:pdf-visual` | Passed without skip; 1/1 integration test. |
+| `TZ=UTC cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml` | Passed; 732/732 tests: 702 library, 15 family-delivery, 6 Gmail-store, and 9 Google-Drive-store. |
+| `PATH="$HOME/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override:/opt/homebrew/opt/node@22/bin:$PATH" TZ=UTC KAKEFLOW_REQUIRE_POPPLER=1 KAKEFLOW_PDF_QA_OUTPUT=artifacts/pdf-report-visual-qa npm run test:pdf-visual` | Passed without skip; 1/1 integration test. |
 | `npm exec vitest run scripts/update-channel-contract.test.mjs scripts/release-version-contract.test.mjs scripts/github-actions-pins.test.ts` | Passed; 3 files, 26/26 tests. |
 | `npm run test:pwa:e2e` | Passed; 2/2 Playwright tests. |
-| opaque updater-signing environment injection plus `npm run desktop:build:mac:ci` | Passed for the no-vacancy release source identity; arm64 app, DMG, updater archive, detached signature, and success identity created. |
-| `npm run test:packaged` | Passed; 13 visible-page checks, 14 interaction checks, IPC, schema v71, source/byte identity, and whole-bundle privacy. |
+| `npm exec vitest run` over updater, release, action-pin, native-build, package-smoke, DMG-smoke, and OCR contracts | Passed; 10 files, 77/77 tests. |
+| opaque updater-signing environment injection plus `npm run desktop:build:mac:ci` | Passed at source identity `4db50b4c...`; arm64 app, DMG, updater archive, detached signature, and success identity created. |
+| `npm run test:packaged` | Passed; 13 visible-page checks, 14 interaction checks, IPC, schema v72, source/byte identity, and whole-bundle privacy. |
 | `npm run test:dmg` | Passed; v1.2.1 read-only mount, source/byte identity, whole-bundle privacy, and bundle integrity. |
 
-The artifact set recorded at `71e8c92` was valid only for the prior build-input identity and was rejected after the no-vacancy release correction. The controller then performed one clean arm64 rebuild and reran package, DMG, privacy, architecture, and codesign checks. The injection mechanism, location, and key material remain outside tracked documentation.
+Every artifact built before the final generation-fenced HEAD was treated as stale. The controller then performed one clean arm64 rebuild and reran package, DMG, privacy, architecture, and codesign checks. The injection mechanism, location, and key material remain outside tracked documentation.
 
 Both `npm run test:packaged` and `npm run test:dmg` were rerun against the invalidated `71e8c92` artifacts after this correction. Each exited 1 with `Native build input identity mismatch` before app launch or DMG mount. The replacement artifacts then passed both positive gates.
 
@@ -55,11 +56,11 @@ Both `npm run test:packaged` and `npm run test:dmg` were rerun against the inval
 - Poppler machine result: `artifacts/pdf-report-visual-qa/manifest.json` with `status: automated-pass`. This proves required Poppler execution and render-artifact plumbing only.
 - Poppler review checklist: `artifacts/pdf-report-visual-qa/VISUAL_REVIEW.md`. It is an uncompleted human-review input, not evidence that a reviewer approved the pages.
 - Rendered fixtures: `artifacts/pdf-report-visual-qa/{monthly,annual,investment-performance,portfolio-snapshot}/page-0001.png`, each 1,190 × 1,684 pixels. All four are the same synthetic placeholder page; they do not prove report-specific content, visual variety, or visual quality.
-- Native application: current identity-bound arm64 `KakeFlow.app`; recorded tree SHA-256 `da28f93a2440de53cace107ad459e11ff5b91f9846e3ecb0277e32d1e556f62e` across 14 files.
-- Updater archive: SHA-256 `64d0d91611b5932fe3b372fbb4e18182dc74c1d439bc7baf6be0d14c27c7f39f`.
-- Detached updater signature: SHA-256 `486b94a67f1162bde40589f1ea5ddbc5454ad12b11dbf49c8ddee17aa4b84bba`.
-- DMG: SHA-256 `9ac8a14edd099d0ba9f105170ffa251d3bfeaa58ddaf3e785fea02214c68386c`.
-- `kakeflow-build-identity.json`: SHA-256 `824c087c660996d972a7fe13b6daa1b698d26afc505c24da434c6148b015a59b`; build-input identity `e4aa937a4de612297a1b5659b9b4fe428e334b08cb263dc8709d041de15af4b5`.
+- Native application: current identity-bound arm64 `KakeFlow.app`; recorded tree SHA-256 `03d495b92bf6f3e306b04a82636875b9ac18e2e6dbe7870603887e3748ae7f40` across 14 files.
+- Updater archive: SHA-256 `776f4a7ecc65c76a2e2b7b6caedcbafe14a497a022dabeeffea2825ea887dc8b`.
+- Detached updater signature: SHA-256 `b7414701f62440865388c96db35a59061cd5fec486e0cbdfefe0e382c66b614c`.
+- DMG: SHA-256 `60e0bd9b20cb25f23633e85e69db7712ea09e4211649090168c65bc74c7bf8dd`.
+- `kakeflow-build-identity.json`: SHA-256 `9c00b9a623d638e53b61580fe9b38b20ba358ff645c56ea158645e2cc895a294`; build-input identity `4db50b4cce11e3ef49f6abf5bf6724ed1b627ab565fc530cad4fb9a4484f87ef`.
 
 `codesign --verify --deep --strict` passed; the app reports `Signature=adhoc`, `TeamIdentifier=not set`, and exactly the `arm64` architecture. Apple notarization was skipped because no notarization credentials were present. These local artifacts are not a release, are not Developer ID signed or notarized, and are not presented as a frictionless production installer.
 
