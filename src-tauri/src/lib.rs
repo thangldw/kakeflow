@@ -4090,9 +4090,15 @@ fn import_commit(
     state: tauri::State<'_, AppState>,
     run_id: String,
     decisions: Vec<PostingDecision>,
+    expected_connector_binding: Option<connector_binding::ImportBindingExpectation>,
 ) -> Result<CommitSummary, String> {
     workflow_result(&state, |connection| {
-        import_workflow::commit_import(connection, &run_id, &decisions)
+        import_workflow::commit_import(
+            connection,
+            &run_id,
+            &decisions,
+            expected_connector_binding.as_ref(),
+        )
     })
 }
 

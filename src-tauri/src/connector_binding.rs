@@ -91,6 +91,14 @@ pub struct DeleteConnectorBindingInput {
     pub expected_version: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportBindingExpectation {
+    pub connector_kind: ConnectorKind,
+    pub connection_key: String,
+    pub version: u64,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 enum ConnectorKindInput {
@@ -150,6 +158,14 @@ struct DeleteConnectorBindingWire {
     expected_version: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImportBindingExpectationWire {
+    connector_kind: ConnectorKindInput,
+    connection_key: String,
+    version: u64,
+}
+
 impl<'de> Deserialize<'de> for DeleteConnectorBindingInput {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -161,6 +177,20 @@ impl<'de> Deserialize<'de> for DeleteConnectorBindingInput {
             connector_kind: wire.connector_kind.into(),
             connection_key: wire.connection_key,
             expected_version: wire.expected_version,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for ImportBindingExpectation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = ImportBindingExpectationWire::deserialize(deserializer)?;
+        Ok(Self {
+            connector_kind: wire.connector_kind.into(),
+            connection_key: wire.connection_key,
+            version: wire.version,
         })
     }
 }
@@ -391,9 +421,40 @@ pub fn delete_active_binding(
     Ok(())
 }
 
-pub fn validate_import_binding(
+pub fn review_binding_expectation(
     connection: &Connection,
     run_id: &str,
+) -> Result<Option<ImportBindingExpectation>, ConnectorBindingError> {
+    validate_identifier(run_id, MAX_CONNECTION_KEY_BYTES, "Import run ID is invalid")?;
+    let household_id: String = connection
+        .query_row(
+            "SELECT household_id FROM import_runs WHERE id=?1",
+            [run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?
+        .ok_or(ConnectorBindingError::ImportBindingChanged)?;
+    let Some((connector_kind, connection_key)) =
+        resolve_run_connector(connection, run_id, &household_id)?
+    else {
+        return Ok(None);
+    };
+    Ok(
+        load_binding_optional(connection, &household_id, connector_kind, &connection_key)?.map(
+            |binding| ImportBindingExpectation {
+                connector_kind,
+                connection_key,
+                version: binding.version,
+            },
+        ),
+    )
+}
+
+pub fn validate_import_binding_at_review(
+    connection: &Connection,
+    run_id: &str,
+    expected: Option<&ImportBindingExpectation>,
 ) -> Result<(), ConnectorBindingError> {
     validate_identifier(run_id, MAX_CONNECTION_KEY_BYTES, "Import run ID is invalid")?;
     let (household_id, adapter_id, adapter_version): (String, Option<String>, Option<String>) =
@@ -406,16 +467,40 @@ pub fn validate_import_binding(
             .optional()
             .map_err(db_error)?
             .ok_or(ConnectorBindingError::ImportBindingChanged)?;
-    let Some((connector_kind, connection_key)) =
-        resolve_run_connector(connection, run_id, &household_id)?
-    else {
-        return Ok(());
+    let resolved = resolve_run_connector(connection, run_id, &household_id)?;
+    let Some((connector_kind, connection_key)) = resolved else {
+        return if expected.is_none() {
+            Ok(())
+        } else {
+            Err(ConnectorBindingError::ImportBindingChanged)
+        };
     };
+    if let Some(expected) = expected {
+        validate_identity(
+            &household_id,
+            expected.connector_kind,
+            &expected.connection_key,
+        )?;
+        validate_version(expected.version)?;
+        if expected.connector_kind != connector_kind || expected.connection_key != connection_key {
+            return Err(ConnectorBindingError::ImportBindingChanged);
+        }
+    }
     let binding =
         load_binding_optional(connection, &household_id, connector_kind, &connection_key)?;
     let Some(binding) = binding else {
-        return Ok(());
+        return if expected.is_none() {
+            Ok(())
+        } else {
+            Err(ConnectorBindingError::ImportBindingChanged)
+        };
     };
+    let Some(expected) = expected else {
+        return Err(ConnectorBindingError::ImportBindingChanged);
+    };
+    if binding.version != expected.version {
+        return Err(ConnectorBindingError::ImportBindingChanged);
+    }
     if binding.allowed_account_ids.is_empty()
         || !connector_exists(connection, &household_id, connector_kind, &connection_key)?
     {
@@ -899,6 +984,14 @@ mod tests {
             .expect("run binding test");
     }
 
+    fn validate_import_binding(
+        connection: &Connection,
+        run_id: &str,
+    ) -> Result<(), ConnectorBindingError> {
+        let expected = review_binding_expectation(connection, run_id)?;
+        validate_import_binding_at_review(connection, run_id, expected.as_ref())
+    }
+
     fn seed_control_plane(connection: &Connection) {
         connection
             .execute_batch(&format!(
@@ -1327,6 +1420,131 @@ mod tests {
                 validate_import_binding(connection, "manual-run"),
                 Err(ConnectorBindingError::ImportBindingChanged)
             ));
+        });
+    }
+
+    #[test]
+    fn reviewed_binding_version_fails_closed_after_update_or_delete() {
+        with_database(|connection| {
+            let created = upsert_binding(
+                connection,
+                &input(
+                    ConnectorKind::ManualImport,
+                    "manual-import",
+                    vec!["bank".into()],
+                ),
+            )
+            .unwrap();
+            seed_import_run(connection, "reviewed-run", "MANUAL_UPLOAD", "bank", '9');
+            let expected = review_binding_expectation(connection, "reviewed-run")
+                .unwrap()
+                .expect("bound review expectation");
+            assert_eq!(expected.version, created.version);
+            validate_import_binding_at_review(connection, "reviewed-run", Some(&expected)).unwrap();
+
+            delete_active_binding(
+                connection,
+                "family",
+                ConnectorKind::ManualImport,
+                "manual-import",
+            )
+            .unwrap();
+            assert!(matches!(
+                validate_import_binding_at_review(connection, "reviewed-run", Some(&expected)),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+
+            let recreated = upsert_binding(
+                connection,
+                &input(
+                    ConnectorKind::ManualImport,
+                    "manual-import",
+                    vec!["bank".into()],
+                ),
+            )
+            .unwrap();
+            let mut update = input(
+                ConnectorKind::ManualImport,
+                "manual-import",
+                vec!["bank".into()],
+            );
+            update.expected_version = Some(recreated.version);
+            upsert_binding(connection, &update).unwrap();
+            assert!(matches!(
+                validate_import_binding_at_review(connection, "reviewed-run", Some(&expected)),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+        });
+    }
+
+    #[test]
+    fn unbound_manual_review_remains_valid_but_cannot_ignore_a_later_binding() {
+        with_database(|connection| {
+            seed_import_run(connection, "unbound-run", "MANUAL_UPLOAD", "bank", '0');
+            assert_eq!(
+                review_binding_expectation(connection, "unbound-run").unwrap(),
+                None
+            );
+            validate_import_binding_at_review(connection, "unbound-run", None).unwrap();
+
+            upsert_binding(
+                connection,
+                &input(
+                    ConnectorKind::ManualImport,
+                    "manual-import",
+                    vec!["bank".into()],
+                ),
+            )
+            .unwrap();
+            assert!(matches!(
+                validate_import_binding_at_review(connection, "unbound-run", None),
+                Err(ConnectorBindingError::ImportBindingChanged)
+            ));
+        });
+    }
+
+    #[test]
+    fn reviewed_binding_expectation_is_identity_exact_and_version_bounded() {
+        with_database(|connection| {
+            upsert_binding(
+                connection,
+                &input(
+                    ConnectorKind::ManualImport,
+                    "manual-import",
+                    vec!["bank".into()],
+                ),
+            )
+            .unwrap();
+            seed_import_run(connection, "bounded-run", "MANUAL_UPLOAD", "bank", '7');
+            for expected in [
+                ImportBindingExpectation {
+                    connector_kind: ConnectorKind::Gmail,
+                    connection_key: "manual-import".into(),
+                    version: 1,
+                },
+                ImportBindingExpectation {
+                    connector_kind: ConnectorKind::ManualImport,
+                    connection_key: "other".into(),
+                    version: 1,
+                },
+                ImportBindingExpectation {
+                    connector_kind: ConnectorKind::ManualImport,
+                    connection_key: "manual-import".into(),
+                    version: 0,
+                },
+                ImportBindingExpectation {
+                    connector_kind: ConnectorKind::ManualImport,
+                    connection_key: "manual-import".into(),
+                    version: MAX_SAFE_VERSION + 1,
+                },
+            ] {
+                assert!(validate_import_binding_at_review(
+                    connection,
+                    "bounded-run",
+                    Some(&expected)
+                )
+                .is_err());
+            }
         });
     }
 

@@ -108,7 +108,7 @@ describe('platform client', () => {
     await expect(client.claimWatchedFileInboxItems('family', ['item'])).rejects.toMatchObject({ command: 'watched_file_inbox_claim' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
-    await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
+    await expect(client.commitImport('run-1', [], null)).rejects.toMatchObject({ command: 'import_commit' })
     await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
     await expect(client.createBackup('long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
     await expect(client.stageBackupRestore('long secure passphrase')).rejects.toMatchObject({ command: 'backup_restore_stage' })
@@ -482,6 +482,7 @@ describe('platform client', () => {
       import_preview: {
         summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
         source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123', audienceVisibility: 'SHARED', audienceMemberId: null },
+        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', version: 7 },
         candidates: [{
           id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
           amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
@@ -638,7 +639,8 @@ describe('platform client', () => {
     await expect(client.listPendingReviews('family')).resolves.toEqual(responses.pending_review_list)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
-    await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
+    const expectedConnectorBinding = { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 7 }
+    await expect(client.commitImport('run-1', decisions, expectedConnectorBinding)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
     await expect(client.createBackup('long secure passphrase')).resolves.toEqual(responses.backup_create)
     await expect(client.stageBackupRestore('long secure passphrase')).resolves.toEqual(responses.backup_restore_stage)
@@ -692,7 +694,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_failed', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64), errorCode: 'PREVIEW_FAILED' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_staged', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64), importRunId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
-    expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
+    expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions, expectedConnectorBinding })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_create', { passphrase: 'long secure passphrase' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_restore_stage', { passphrase: 'long secure passphrase' })
@@ -1136,6 +1138,45 @@ describe('platform client', () => {
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
   })
 
+  it('bounds the reviewed connector binding identity and version at the native boundary', async () => {
+    const response = (expectedConnectorBinding: unknown) => ({
+      summary: { runId: 'run', documentId: 'document', status: 'REVIEW_REQUIRED', recordCount: 0, candidateCount: 0, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 4, sha256: 'a'.repeat(64), audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding,
+      candidates: [],
+    })
+    const parse = (expectedConnectorBinding: unknown) => createPlatformClient({
+      tauri: true,
+      invoke: async <T>() => response(expectedConnectorBinding) as T,
+    }).previewImport('run')
+
+    await expect(parse(null)).resolves.toMatchObject({ expectedConnectorBinding: null })
+    await expect(parse({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1 })).resolves.toMatchObject({
+      expectedConnectorBinding: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1 },
+    })
+    for (const malformed of [
+      undefined,
+      { connectorKind: 'DROPBOX', connectionKey: 'gmail-primary', version: 1 },
+      { connectorKind: 'GMAIL', connectionKey: '', version: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129), version: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      await expect(parse(malformed)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+    }
+
+    const invoke = vi.fn(async () => ({ runId: 'run', postedCount: 0 }))
+    const client = createPlatformClient({ tauri: true, invoke })
+    for (const malformed of [
+      undefined,
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, providerAccountId: 'secret' },
+    ]) {
+      expect(() => client.commitImport('run', [], malformed as never)).toThrow('import binding expectation')
+    }
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
   it('sanitizes receipt review DTOs and rejects malformed structured evidence', async () => {
     const candidate = {
       id: 'candidate', accountId: 'bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT',
@@ -1156,6 +1197,7 @@ describe('platform client', () => {
     const response = (override: Record<string, unknown> = {}) => ({
       summary: { runId: 'run', documentId: 'doc', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 1, sha256: 'a'.repeat(64), audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ ...candidate, receiptReview: { ...candidate.receiptReview, ...override } }],
     })
     const client = createPlatformClient({ tauri: true, invoke: async <T>() => response() as T })

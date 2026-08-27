@@ -138,6 +138,7 @@ export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evide
 export interface ImportPreviewDto {
   readonly summary: ImportSummaryDto
   readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }
+  readonly expectedConnectorBinding: ImportBindingExpectationDto | null
   readonly candidates: readonly PreviewCandidateDto[]
   readonly duplicateSummary?: DuplicateSummaryDto
 }
@@ -1005,6 +1006,11 @@ export interface ConnectorBindingDto {
   readonly createdAt: string
   readonly updatedAt: string
 }
+export interface ImportBindingExpectationDto {
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly version: number
+}
 export interface UpsertConnectorBindingInputDto {
   readonly householdId: string
   readonly connectorKind: ConnectorKindDto
@@ -1369,7 +1375,7 @@ export interface PlatformClient {
   startImport(request: StartImportDto, fileBytes: Uint8Array): Promise<ImportSummaryDto>
   previewImport(runId: string): Promise<ImportPreviewDto>
   setImportDuplicateResolution(runId: string, candidateId: string, resolution: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE'): Promise<ImportPreviewDto>
-  commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
+  commitImport(runId: string, decisions: readonly PostingDecisionDto[], expectedConnectorBinding: ImportBindingExpectationDto | null): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
   createBackup(passphrase: string): Promise<BackupSummaryDto | null>
   stageBackupRestore(passphrase: string): Promise<BackupSummaryDto | null>

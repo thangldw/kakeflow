@@ -498,6 +498,7 @@ pub struct PendingReviewListDto {
 pub struct ImportPreview {
     pub summary: ImportSummary,
     pub source: PreviewSourceMetadata,
+    pub expected_connector_binding: Option<crate::connector_binding::ImportBindingExpectation>,
     pub candidates: Vec<PreviewCandidate>,
     pub duplicate_summary: DuplicateSummary,
 }
@@ -1664,6 +1665,17 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
         });
     }
     let duplicate_summary = duplicate_summary(connection, run_id)?;
+    let expected_connector_binding = crate::connector_binding::review_binding_expectation(
+        connection, run_id,
+    )
+    .map_err(|error| match error {
+        crate::connector_binding::ConnectorBindingError::Database(error) => {
+            ImportWorkflowError::Database(error)
+        }
+        _ => ImportWorkflowError::Validation(
+            "connector binding changed; reload and review the import".into(),
+        ),
+    })?;
     Ok(ImportPreview {
         summary: ImportSummary {
             run_id: run_id.into(),
@@ -1682,6 +1694,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             audience_visibility: source_audience_visibility,
             audience_member_id: source_audience_member_id,
         },
+        expected_connector_binding,
         candidates,
         duplicate_summary,
     })
@@ -1818,6 +1831,7 @@ pub fn commit_import(
     connection: &Connection,
     run_id: &str,
     decisions: &[PostingDecision],
+    expected_connector_binding: Option<&crate::connector_binding::ImportBindingExpectation>,
 ) -> Result<CommitSummary> {
     validate_id("run_id", run_id)?;
     let mut candidate_ids = HashSet::new();
@@ -1849,7 +1863,11 @@ pub fn commit_import(
             "import was rolled back".into(),
         ));
     }
-    if let Err(error) = crate::connector_binding::validate_import_binding(&tx, run_id) {
+    if let Err(error) = crate::connector_binding::validate_import_binding_at_review(
+        &tx,
+        run_id,
+        expected_connector_binding,
+    ) {
         return match error {
             crate::connector_binding::ConnectorBindingError::Database(error) => {
                 Err(ImportWorkflowError::Database(error))
@@ -3131,6 +3149,23 @@ fn validate_date(value: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn commit_import(
+        connection: &Connection,
+        run_id: &str,
+        decisions: &[PostingDecision],
+    ) -> Result<CommitSummary> {
+        let expected = crate::connector_binding::review_binding_expectation(connection, run_id)
+            .map_err(|error| match error {
+                crate::connector_binding::ConnectorBindingError::Database(error) => {
+                    ImportWorkflowError::Database(error)
+                }
+                _ => ImportWorkflowError::Validation(
+                    "connector binding changed; reload and review the import".into(),
+                ),
+            })?;
+        super::commit_import(connection, run_id, decisions, expected.as_ref())
+    }
+
     fn database() -> Connection {
         let connection = Connection::open_in_memory().expect("open test database");
         connection
@@ -3502,6 +3537,148 @@ mod tests {
                 )
                 .unwrap(),
             "REVIEW_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn commit_rejects_a_reviewed_binding_changed_from_v1_to_v2_before_any_write() {
+        let connection = database();
+        bind_manual_account(&connection, "bank");
+        start_import(
+            &connection,
+            &request("stale-binding", "stale-binding-doc", '8'),
+            "vault://stale-binding",
+        )
+        .unwrap();
+        let preview = preview_import(&connection, "stale-binding").unwrap();
+        let reviewed = preview
+            .expected_connector_binding
+            .expect("binding v1 must be part of the review DTO");
+        assert_eq!(reviewed.version, 1);
+
+        crate::connector_binding::upsert_binding(
+            &connection,
+            &crate::connector_binding::UpsertConnectorBindingInput {
+                household_id: "household".into(),
+                connector_kind: crate::connector_control::ConnectorKind::ManualImport,
+                connection_key: "manual-import".into(),
+                allowed_account_ids: vec!["bank".into()],
+                parser_profile_id: None,
+                parser_profile_version: None,
+                expected_version: Some(1),
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            super::commit_import(
+                &connection,
+                "stale-binding",
+                &[decision("stale-binding", 1_000)],
+                Some(&reviewed),
+            ),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "connector binding changed; reload and review the import"
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn commit_rejects_a_reviewed_binding_deleted_before_any_write() {
+        let connection = database();
+        bind_manual_account(&connection, "bank");
+        start_import(
+            &connection,
+            &request("deleted-binding", "deleted-binding-doc", '9'),
+            "vault://deleted-binding",
+        )
+        .unwrap();
+        let reviewed = preview_import(&connection, "deleted-binding")
+            .unwrap()
+            .expected_connector_binding
+            .expect("binding v1 must be part of the review DTO");
+        crate::connector_binding::delete_active_binding(
+            &connection,
+            "household",
+            crate::connector_control::ConnectorKind::ManualImport,
+            "manual-import",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            super::commit_import(
+                &connection,
+                "deleted-binding",
+                &[decision("deleted-binding", 1_000)],
+                Some(&reviewed),
+            ),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "connector binding changed; reload and review the import"
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn commit_accepts_the_exact_reviewed_binding_and_an_unbound_manual_review() {
+        let bound = database();
+        bind_manual_account(&bound, "bank");
+        start_import(
+            &bound,
+            &request("exact-binding", "exact-binding-doc", '4'),
+            "vault://exact-binding",
+        )
+        .unwrap();
+        let reviewed = preview_import(&bound, "exact-binding")
+            .unwrap()
+            .expected_connector_binding
+            .unwrap();
+        assert_eq!(
+            super::commit_import(
+                &bound,
+                "exact-binding",
+                &[decision("exact-binding", 1_000)],
+                Some(&reviewed),
+            )
+            .unwrap()
+            .posted_count,
+            1
+        );
+
+        let unbound = database();
+        start_import(
+            &unbound,
+            &request("unbound-manual", "unbound-manual-doc", '5'),
+            "vault://unbound-manual",
+        )
+        .unwrap();
+        assert_eq!(
+            preview_import(&unbound, "unbound-manual")
+                .unwrap()
+                .expected_connector_binding,
+            None
+        );
+        assert_eq!(
+            super::commit_import(
+                &unbound,
+                "unbound-manual",
+                &[decision("unbound-manual", 1_000)],
+                None,
+            )
+            .unwrap()
+            .posted_count,
+            1
         );
     }
 
