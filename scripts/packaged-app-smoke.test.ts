@@ -4,6 +4,8 @@ import { spawn } from 'node:child_process'
 import {
   executableForPlatform,
   launchArgumentsForPlatform,
+  personalBuildPathFindings,
+  scrubPersonalBuildRoots,
   terminateChild,
   validateSmokeResult,
 } from './packaged-app-smoke.mjs'
@@ -23,6 +25,28 @@ describe('packaged app smoke harness', () => {
     expect(() => executableForPlatform('linux', '/repo')).toThrow(/macOS and Windows/)
     expect(launchArgumentsForPlatform('darwin')).toEqual(['-ApplePersistenceIgnoreState', 'YES'])
     expect(launchArgumentsForPlatform('win32')).toEqual([])
+  })
+
+  it('rejects personal build roots embedded in a packaged executable', () => {
+    expect(personalBuildPathFindings(Buffer.from(
+      'dependency /Users/synthetic/.cargo/registry and C:\\Users\\synthetic\\.cargo',
+    ))).toEqual(['/Users/', 'C:\\Users\\'])
+    expect(personalBuildPathFindings(Buffer.from(
+      'relative .cargo/registry and bundled runtime /home/web_user',
+    ))).toEqual([])
+  })
+
+  it('scrubs exact personal build roots without changing executable length', () => {
+    const original = Buffer.from(
+      'one /Users/synthetic/.cargo two C:\\Users\\synthetic\\repo three',
+    )
+    const scrubbed = scrubPersonalBuildRoots(original, [
+      '/Users/synthetic',
+      'C:\\Users\\synthetic',
+    ])
+    expect(scrubbed).toHaveLength(original.length)
+    expect(scrubbed.toString()).not.toContain('synthetic')
+    expect(personalBuildPathFindings(scrubbed)).toEqual([])
   })
 
   it('accepts only a complete successful boot, IPC, and migration result', () => {

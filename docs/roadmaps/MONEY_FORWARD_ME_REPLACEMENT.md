@@ -26,6 +26,8 @@ Exit evidence: deterministic convergence tests, revoked-device tests, recovery d
 
 Build a versioned connector SDK and isolated connector workers for OAuth/API tokens, consent scopes, polling/webhooks, rate limits, credential rotation, backoff, institution outages, schema drift, and source snapshots. Normalize connector facts into candidates; never post them automatically.
 
+The delivered Connector Control Center is the internal control-plane foundation for the existing manual, watched-folder, Gmail, and Google Drive import sources: a redacted registry, fail-closed account bindings, bounded durable refresh batches, and delegated source actions. It is not the future connector SDK, direct institution connectivity, institution coverage, or evidence of Money Forward or Rakuten parity.
+
 Prioritize institutions from the target cohort rather than chasing the advertised 2,437-service count. Publish per-connector freshness, known gaps, reconciliation coverage, and incident state.
 
 Exit evidence: migration/cohort coverage, replay fixtures, duplicate/missing-fact detection, outage drills, and connector-level SLOs.

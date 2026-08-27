@@ -2123,6 +2123,169 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(refreshAll).toHaveFocus())
   })
 
+  it('proves the synthetic native source-to-provenance journey across refresh failure, remapping, approval, and balanced posting', async () => {
+    const accounts = [
+      { id: 'synthetic-cash', name: 'Synthetic cash', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'synthetic-other-cash', name: 'Synthetic other cash', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'synthetic-household-other-expense', name: 'Synthetic expense', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'synthetic-household-income', name: 'Synthetic income', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+    ]
+    desktop.listHouseholds.mockResolvedValue([{ id: 'synthetic-household', name: 'Synthetic household', baseCurrency: 'JPY', createdAt: '2026-08-25T00:00:00Z' }])
+    desktop.listHouseholdMembers.mockResolvedValue([])
+    desktop.listAccounts.mockResolvedValue(accounts)
+    desktop.listConnectorSummaries.mockResolvedValue({
+      schemaVersion: 1,
+      items: [
+        connectorSummary({
+          connectionKey: 'source-alpha', displayLabel: 'Synthetic source alpha',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'], pendingReviewCount: 1,
+        }),
+        connectorSummary({
+          connectorKind: 'GMAIL', connectionKey: 'source-beta', displayLabel: 'Synthetic source beta',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'], pendingReviewCount: 0,
+          configurationDestination: 'GMAIL_SETTINGS',
+        }),
+      ],
+      nextCursor: null,
+    })
+    desktop.listConnectorBindings.mockResolvedValue([{
+      householdId: 'synthetic-household', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+      allowedAccountIds: ['synthetic-cash'], parserProfileId: null, parserProfileVersion: null, version: 1,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.startConnectorRefreshAll.mockResolvedValue({
+      batchId: 'synthetic-batch', householdId: 'synthetic-household', status: 'ACTIVE', totalCount: 2, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch
+      .mockResolvedValueOnce({
+        schemaVersion: 1, batchId: 'synthetic-batch', householdId: 'synthetic-household', status: 'ACTIVE',
+        totalCount: 2, terminalCount: 1, succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 1, changedCount: 0,
+        createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:01Z', completedAt: null,
+        items: [
+          { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'source-alpha', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'SOURCE_TEMPORARILY_UNAVAILABLE', updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' },
+          { connectorKind: 'GMAIL', connectionKey: 'source-beta', status: 'RUNNING', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:01Z', completedAt: null },
+        ],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 1, batchId: 'synthetic-batch', householdId: 'synthetic-household', status: 'PARTIAL',
+        totalCount: 2, terminalCount: 2, succeededCount: 1, noChangesCount: 0, skippedManualCount: 0, failedCount: 1, changedCount: 1,
+        createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:02Z', completedAt: '2026-08-25T00:00:02Z',
+        items: [
+          { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'source-alpha', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'SOURCE_TEMPORARILY_UNAVAILABLE', updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' },
+          { connectorKind: 'GMAIL', connectionKey: 'source-beta', status: 'SUCCEEDED', changedCount: 1, lastErrorCode: null, updatedAt: '2026-08-25T00:00:02Z', startedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:02Z' },
+        ],
+      })
+
+    const mismatchedRun = {
+      runId: 'synthetic-mismatch-run', documentId: 'synthetic-mismatch-document', status: 'REVIEW_REQUIRED',
+      adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2', startedAt: '2026-08-25T00:00:00Z',
+      sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv', mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }
+    desktop.listPendingReviews
+      .mockResolvedValueOnce({ householdId: 'synthetic-household', runs: [mismatchedRun] })
+      .mockResolvedValue({ householdId: 'synthetic-household', runs: [] })
+    desktop.previewImport.mockImplementation(async (runId: string) => ({
+      summary: { runId, documentId: `${runId}-document`, status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'synthetic-source-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      candidates: [{
+        id: 'synthetic-candidate', accountId: runId === 'synthetic-mismatch-run' ? 'synthetic-other-cash' : 'synthetic-cash',
+        occurredOn: '2026-08-25', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'SYNTHETIC ITEM', merchantRaw: 'Synthetic merchant',
+        externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true,
+        suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
+        extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null,
+        audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [],
+      }],
+    }))
+    desktop.startImport.mockResolvedValue({ runId: 'synthetic-post-run', documentId: 'synthetic-post-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false })
+    desktop.commitImport.mockResolvedValue({ runId: 'synthetic-post-run', postedCount: 1 })
+    desktop.queryTransactions.mockImplementation(async ({ pageSize }: { pageSize: number }) => ({
+      items: [{ id: 'synthetic-posted-transaction', occurredOn: '2026-08-25', postedOn: null, transactionType: 'EXPENSE', payee: 'Synthetic merchant', description: 'Synthetic item', amountJpy: 1200, status: 'POSTED', calculationTarget: true, attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null, labels: [], tags: [] }],
+      page: 1, pageSize, totalItems: 1, totalPages: 1,
+    }))
+    desktop.getTransactionDetail.mockResolvedValue({
+      id: 'synthetic-posted-transaction', householdId: 'synthetic-household', occurredOn: '2026-08-25', postedOn: null,
+      transactionType: 'EXPENSE', payee: 'Synthetic merchant', description: 'Synthetic item', calculationTarget: true,
+      attributionKind: 'HOUSEHOLD', attributedMemberId: null, attributedMemberName: null, audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null,
+      status: 'POSTED', createdAt: '2026-08-25T00:00:03Z', updatedAt: '2026-08-25T00:00:03Z', editable: true,
+      entries: [
+        { id: 'synthetic-debit', accountId: 'synthetic-household-other-expense', accountName: 'Synthetic expense', accountKind: 'EXPENSE', side: 'DEBIT', amountJpy: 1200, lineNumber: 1 },
+        { id: 'synthetic-credit', accountId: 'synthetic-cash', accountName: 'Synthetic cash', accountKind: 'ASSET', side: 'CREDIT', amountJpy: 1200, lineNumber: 2 },
+      ],
+      sourceEvidence: [{ sourceRecordId: 'synthetic-record', sourceDocumentId: 'synthetic-post-document', sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv', mediaType: 'text/csv', rowNumber: 2, importedAt: '2026-08-25T00:00:03Z', evidenceRole: 'PRIMARY', audienceVisibility: 'SHARED', audienceMemberId: null, audienceMemberName: null }],
+    })
+
+    const { container } = render(<App />)
+    await screen.findByText('Synthetic merchant')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const refreshAll = await screen.findByRole('button', { name: 'すべて更新' })
+    expect(screen.getByRole('article', { name: 'Synthetic source alpha' })).toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Synthetic source beta' })).toBeInTheDocument()
+    fireEvent.click(refreshAll)
+
+    const progress = await screen.findByRole('status', { name: 'コネクタ更新の進行状況' })
+    await waitFor(() => expect(progress).toHaveTextContent('1 / 2'))
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Synthetic source alpha再試行できます',
+      'Synthetic source beta更新中',
+    ])
+    await waitFor(() => expect(progress).toHaveTextContent('一部の更新に対応が必要です。'), { timeout: 1_500 })
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Synthetic source alpha再試行できます',
+      'Synthetic source beta1件を検出',
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const blockedCommit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(screen.getByText('対応付けを再確認してください。口座または読み取りプロファイルが変更されています。')).toHaveAttribute('role', 'status')
+    expect(blockedCommit).toBeDisabled()
+    fireEvent.click(blockedCommit)
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '取り消す' }))
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('synthetic-mismatch-run'))
+    await waitFor(() => expect(screen.queryByText('対応付けが必要')).not.toBeInTheDocument())
+
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['日付,摘要,支払い金額,預かり金額,差引残高\n2026/08/25,SYNTHETIC ITEM,1200,,8800'], 'synthetic-source.csv', { type: 'text/csv' })
+    fireEvent.change(input, { target: { files: [file] } })
+    const start = await screen.findByRole('button', { name: '取込開始' })
+    fireEvent.click(start)
+    expect(await screen.findByText('銀行CSVの取込先銀行口座を選択してください。')).toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    const mappedAccount = screen.getByLabelText('synthetic-source.csvの取込先銀行口座')
+    expect(within(mappedAccount).getAllByRole('option').map((option) => option.textContent)).toEqual(['銀行口座を選択', 'Synthetic cash'])
+    fireEvent.change(mappedAccount, { target: { value: 'synthetic-cash' } })
+    fireEvent.click(start)
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      householdId: 'synthetic-household', sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv',
+      candidates: [expect.objectContaining({ accountId: 'synthetic-cash' })],
+    }), expect.any(Uint8Array)))
+
+    const commit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Synthetic merchantを承認' }))
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('synthetic-post-run', [expect.objectContaining({
+      candidateId: 'synthetic-candidate',
+      entries: expect.arrayContaining([
+        expect.objectContaining({ accountId: 'synthetic-household-other-expense', side: 'DEBIT', amountJpy: 1200 }),
+        expect.objectContaining({ accountId: 'synthetic-cash', side: 'CREDIT', amountJpy: 1200 }),
+      ]),
+    })]))
+
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    const row = (await screen.findByText('Synthetic merchant')).closest('button')!
+    fireEvent.click(row)
+    const detail = await screen.findByRole('dialog', { name: 'Synthetic merchant' })
+    expect(within(detail).getByText('借方 ¥1,200 / 貸方 ¥1,200')).toBeInTheDocument()
+    expect(within(detail).getByText('synthetic-source.csv')).toBeInTheDocument()
+    expect(within(detail).getByText(/行 2/)).toBeInTheDocument()
+  })
+
   it('cancels ACTIVE polling when the household changes', async () => {
     desktop.listHouseholds.mockResolvedValue([
       { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
