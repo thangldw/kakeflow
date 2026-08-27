@@ -3186,6 +3186,18 @@ mod tests {
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id), status TEXT NOT NULL);
                  CREATE TABLE watched_folders (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id));
+                 CREATE TABLE google_drive_inbox (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   connection_id TEXT NOT NULL REFERENCES google_drive_connections(id),
+                   state TEXT NOT NULL, import_run_id TEXT REFERENCES import_runs(id));
+                 CREATE TABLE gmail_inbox (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   connection_id TEXT NOT NULL REFERENCES gmail_connections(id),
+                   state TEXT NOT NULL, import_run_id TEXT REFERENCES import_runs(id));
+                 CREATE TABLE watched_file_inbox (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   watched_folder_id TEXT NOT NULL REFERENCES watched_folders(id),
+                   state TEXT NOT NULL, import_run_id TEXT REFERENCES import_runs(id));
                  CREATE TABLE delimited_parser_profiles (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    is_enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1);
@@ -4031,6 +4043,14 @@ mod tests {
         input.source_type = "ICLOUD_PICKER".into();
 
         start_import(&connection, &input, "vault://icloud-document").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO watched_folders(id,household_id) VALUES('icloud-folder','household');
+                 INSERT INTO watched_file_inbox
+                   (id,household_id,watched_folder_id,state,import_run_id)
+                 VALUES('icloud-inbox','household','icloud-folder','STAGED','icloud-run');",
+            )
+            .unwrap();
 
         let source_type: String = connection
             .query_row(
@@ -4065,6 +4085,15 @@ mod tests {
         input.source_type = "GOOGLE_DRIVE".into();
 
         start_import(&connection, &input, "vault://drive-document").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO google_drive_connections(id,household_id,status)
+                   VALUES('drive-connection','household','CONNECTED');
+                 INSERT INTO google_drive_inbox
+                   (id,household_id,connection_id,state,import_run_id)
+                 VALUES('drive-inbox','household','drive-connection','STAGED','drive-run');",
+            )
+            .unwrap();
 
         let persisted: String = connection
             .query_row(
@@ -4090,6 +4119,15 @@ mod tests {
         input.media_type = "message/rfc822".into();
 
         start_import(&connection, &input, "vault://gmail-document").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO gmail_connections(id,household_id,status)
+                   VALUES('gmail-connection','household','CONNECTED');
+                 INSERT INTO gmail_inbox
+                   (id,household_id,connection_id,state,import_run_id)
+                 VALUES('gmail-inbox','household','gmail-connection','STAGED','gmail-run');",
+            )
+            .unwrap();
 
         let persisted: String = connection
             .query_row(

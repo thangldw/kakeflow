@@ -1133,6 +1133,7 @@ export type AppCommand =
   | 'connector_binding_delete'
   | 'connector_refresh_one'
   | 'connector_refresh_all'
+  | 'connector_refresh_active_batch_get'
   | 'connector_refresh_batch_get'
   | 'google_drive_availability'
   | 'google_drive_connections_list'
@@ -1303,6 +1304,7 @@ export interface PlatformClient {
   deleteConnectorBinding(input: DeleteConnectorBindingInputDto): Promise<void>
   startConnectorRefresh(householdId: string, connectorKind: ConnectorKindDto, connectionKey: string): Promise<ConnectorRefreshBatchDto>
   startConnectorRefreshAll(householdId: string): Promise<ConnectorRefreshBatchDto>
+  getActiveConnectorRefreshBatch(householdId: string): Promise<ConnectorRefreshBatchProgressDto | null>
   getConnectorRefreshBatch(householdId: string, batchId: string): Promise<ConnectorRefreshBatchProgressDto>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>

@@ -437,6 +437,25 @@ pub(crate) fn load_batch(
     Ok(LoadedConnectorRefreshBatchDto { batch, items })
 }
 
+pub(crate) fn load_active_batch(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Option<LoadedConnectorRefreshBatchDto>, ConnectorRefreshError> {
+    validate_identifier(household_id, 128)?;
+    let batch_id = connection
+        .query_row(
+            "SELECT batch_id FROM connector_refresh_batches
+             WHERE household_id=?1 AND status='ACTIVE'",
+            [household_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(database_error)?;
+    batch_id
+        .map(|batch_id| load_batch(connection, household_id, &batch_id))
+        .transpose()
+}
+
 pub fn claim_next(
     connection: &Connection,
     household_id: &str,

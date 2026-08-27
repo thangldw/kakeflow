@@ -215,7 +215,7 @@ describe('platform client', () => {
     }
   })
 
-  it('strictly reconstructs refresh batches and invokes the three refresh commands exactly', async () => {
+  it('strictly reconstructs refresh batches and invokes the four refresh commands exactly', async () => {
     const started = {
       batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 2, terminalCount: 0,
       succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
@@ -229,9 +229,22 @@ describe('platform client', () => {
         { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'RATE_LIMITED', updatedAt: '2026-08-25T10:00:02Z', startedAt: '2026-08-25T10:00:01Z', completedAt: '2026-08-25T10:00:02Z' },
       ],
     } as const
+    const activeProgress = {
+      ...progress,
+      status: 'ACTIVE' as const,
+      terminalCount: 1,
+      failedCount: 0,
+      completedAt: null,
+      items: [
+        progress.items[0],
+        { ...progress.items[1], status: 'RUNNING' as const, lastErrorCode: null, completedAt: null },
+      ],
+    }
     const invokeSpy = vi.fn(async (command: AppCommand, args?: Record<string, unknown>) => {
       void args
-      return command === 'connector_refresh_batch_get' ? progress : started
+      if (command === 'connector_refresh_batch_get') return progress
+      if (command === 'connector_refresh_active_batch_get') return activeProgress
+      return started
     })
     const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
       return await invokeSpy(command, args) as T
@@ -240,12 +253,17 @@ describe('platform client', () => {
 
     await expect(client.startConnectorRefresh('family', 'GOOGLE_DRIVE', 'drive-primary')).resolves.toEqual(started)
     await expect(client.startConnectorRefreshAll('family')).resolves.toEqual(started)
+    await expect(client.getActiveConnectorRefreshBatch('family')).resolves.toEqual(activeProgress)
     await expect(client.getConnectorRefreshBatch('family', 'batch-1')).resolves.toEqual(progress)
     expect(invokeSpy.mock.calls).toEqual([
       ['connector_refresh_one', { input: { householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' } }],
       ['connector_refresh_all', { householdId: 'family' }],
+      ['connector_refresh_active_batch_get', { householdId: 'family' }],
       ['connector_refresh_batch_get', { householdId: 'family', batchId: 'batch-1' }],
     ])
+
+    const withoutActive = createPlatformClient({ tauri: true, invoke: async <T>() => null as T })
+    await expect(withoutActive.getActiveConnectorRefreshBatch('family')).resolves.toBeNull()
   })
 
   it('rejects malformed refresh batch and item contracts before exposing progress', async () => {

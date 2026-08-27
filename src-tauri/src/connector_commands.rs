@@ -192,6 +192,22 @@ pub fn connector_refresh_batch_get(
         .map_err(|error| error.code().to_owned())
 }
 
+#[tauri::command]
+pub fn connector_refresh_active_batch_get(
+    state: State<'_, AppState>,
+    household_id: String,
+) -> Result<Option<ConnectorRefreshBatchProgressDto>, String> {
+    state
+        .with_connection(|connection| {
+            Ok(load_active_refresh_batch_progress(
+                connection,
+                &household_id,
+            ))
+        })
+        .map_err(|_| ConnectorRefreshError::Database.code().to_owned())?
+        .map_err(|error| error.code().to_owned())
+}
+
 fn create_refresh_all_batch(
     connection: &Connection,
     household_id: &str,
@@ -302,7 +318,21 @@ fn load_refresh_batch_progress(
     batch_id: &str,
 ) -> Result<ConnectorRefreshBatchProgressDto, ConnectorRefreshError> {
     let loaded = connector_refresh::load_batch(connection, household_id, batch_id)?;
-    Ok(ConnectorRefreshBatchProgressDto {
+    Ok(project_refresh_batch_progress(loaded))
+}
+
+fn load_active_refresh_batch_progress(
+    connection: &Connection,
+    household_id: &str,
+) -> Result<Option<ConnectorRefreshBatchProgressDto>, ConnectorRefreshError> {
+    connector_refresh::load_active_batch(connection, household_id)
+        .map(|loaded| loaded.map(project_refresh_batch_progress))
+}
+
+fn project_refresh_batch_progress(
+    loaded: connector_refresh::LoadedConnectorRefreshBatchDto,
+) -> ConnectorRefreshBatchProgressDto {
+    ConnectorRefreshBatchProgressDto {
         schema_version: 1,
         batch_id: loaded.batch.batch_id,
         household_id: loaded.batch.household_id,
@@ -331,7 +361,7 @@ fn load_refresh_batch_progress(
                 completed_at: item.completed_at,
             })
             .collect(),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -535,6 +565,49 @@ mod tests {
                     load_refresh_batch_progress(connection, "other", &batch.batch_id).unwrap_err(),
                     connector_refresh::ConnectorRefreshError::NotFound
                 );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn active_batch_get_recovers_only_the_household_active_batch() {
+        let state = state();
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('home','Home'),('other','Other')",
+                    [],
+                )?;
+                let active = connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[connector_refresh::RefreshTarget {
+                        connector_kind: ConnectorKind::Gmail,
+                        connection_key: "gmail".to_owned(),
+                    }],
+                )
+                .unwrap();
+                connector_refresh::create_batch(
+                    connection,
+                    "other",
+                    &[connector_refresh::RefreshTarget {
+                        connector_kind: ConnectorKind::ManualImport,
+                        connection_key: "manual-import".to_owned(),
+                    }],
+                )
+                .unwrap();
+
+                let recovered = load_active_refresh_batch_progress(connection, "home")
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(recovered.batch_id, active.batch_id);
+                assert_eq!(recovered.household_id, "home");
+                assert_eq!(recovered.status, RefreshBatchStatus::Active);
+                assert_eq!(recovered.items.len(), 1);
+                assert!(load_active_refresh_batch_progress(connection, "other")
+                    .unwrap()
+                    .is_none());
                 Ok(())
             })
             .unwrap();
