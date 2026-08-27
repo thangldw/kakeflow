@@ -1,7 +1,8 @@
 use crate::{
     connector_control::{
-        ConfigurationDestination, ConnectorAvailability, ConnectorCapability, ConnectorHealth,
-        ConnectorKind, ConnectorLifecycle, ConnectorRegistry, ConnectorSummaryDto,
+        ConfigurationDestination, ConnectorAvailability, ConnectorBindingSummaryDto,
+        ConnectorCapability, ConnectorHealth, ConnectorKind, ConnectorLifecycle,
+        ConnectorRegistry, ConnectorSummaryDto,
     },
     folder_discovery, gmail_command_service, gmail_store, google_drive_command_service,
     google_drive_store,
@@ -294,6 +295,12 @@ impl ConnectorAdapter for GoogleDriveAdapter<'_> {
                     &source.id,
                     true,
                 )?;
+                let binding_summary = project_binding_summary(
+                    connection,
+                    household_id,
+                    ConnectorKind::GoogleDrive,
+                    &source.id,
+                )?;
                 Ok(ConnectorSummaryDto {
                     schema_version: 1,
                     connector_kind: ConnectorKind::GoogleDrive,
@@ -310,7 +317,7 @@ impl ConnectorAdapter for GoogleDriveAdapter<'_> {
                     pending_review_count,
                     consecutive_failures: schedule.consecutive_failures,
                     last_error_code: schedule.last_error_code,
-                    binding_summary: None,
+                    binding_summary,
                     configuration_destination: ConfigurationDestination::GoogleDriveSettings,
                 })
             })
@@ -366,6 +373,12 @@ impl ConnectorAdapter for GmailAdapter<'_> {
                     &source.id,
                     true,
                 )?;
+                let binding_summary = project_binding_summary(
+                    connection,
+                    household_id,
+                    ConnectorKind::Gmail,
+                    &source.id,
+                )?;
                 Ok(ConnectorSummaryDto {
                     schema_version: 1,
                     connector_kind: ConnectorKind::Gmail,
@@ -382,7 +395,7 @@ impl ConnectorAdapter for GmailAdapter<'_> {
                     pending_review_count,
                     consecutive_failures: schedule.consecutive_failures,
                     last_error_code: schedule.last_error_code,
-                    binding_summary: None,
+                    binding_summary,
                     configuration_destination: ConfigurationDestination::GmailSettings,
                 })
             })
@@ -431,6 +444,12 @@ impl ConnectorAdapter for WatchedFolderAdapter<'_> {
                     &source.id,
                     false,
                 )?;
+                let binding_summary = project_binding_summary(
+                    connection,
+                    household_id,
+                    ConnectorKind::WatchedFolder,
+                    &source.id,
+                )?;
                 Ok(ConnectorSummaryDto {
                     schema_version: 1,
                     connector_kind: ConnectorKind::WatchedFolder,
@@ -450,7 +469,7 @@ impl ConnectorAdapter for WatchedFolderAdapter<'_> {
                     pending_review_count,
                     consecutive_failures: runtime.consecutive_failures,
                     last_error_code: runtime.last_error_code,
-                    binding_summary: None,
+                    binding_summary,
                     configuration_destination: ConfigurationDestination::WatchedFolderSettings,
                 })
             })
@@ -570,6 +589,12 @@ impl ConnectorAdapter for ManualImportAdapter {
                 |row| row.get::<_, u64>(0),
             )
             .map_err(|_| ConnectorProjectionError::Database)?;
+        let binding_summary = project_binding_summary(
+            connection,
+            household_id,
+            ConnectorKind::ManualImport,
+            "manual-import",
+        )?;
         Ok(vec![ConnectorSummaryDto {
             schema_version: 1,
             connector_kind: ConnectorKind::ManualImport,
@@ -586,7 +611,7 @@ impl ConnectorAdapter for ManualImportAdapter {
             pending_review_count,
             consecutive_failures: 0,
             last_error_code: None,
-            binding_summary: None,
+            binding_summary,
             configuration_destination: ConfigurationDestination::ImportInbox,
         }])
     }
@@ -768,6 +793,54 @@ fn pending_count(
             row.get(0)
         })
         .map_err(|_| ConnectorProjectionError::Database)
+}
+
+fn project_binding_summary(
+    connection: &Connection,
+    household_id: &str,
+    connector_kind: ConnectorKind,
+    connection_key: &str,
+) -> Result<Option<ConnectorBindingSummaryDto>, ConnectorProjectionError> {
+    let connector_kind = match connector_kind {
+        ConnectorKind::GoogleDrive => "GOOGLE_DRIVE",
+        ConnectorKind::Gmail => "GMAIL",
+        ConnectorKind::WatchedFolder => "WATCHED_FOLDER",
+        ConnectorKind::ManualImport => "MANUAL_IMPORT",
+    };
+    let row = connection
+        .query_row(
+            "SELECT count(a.account_id),b.parser_profile_id IS NOT NULL,b.version
+             FROM connector_bindings b
+             LEFT JOIN connector_binding_accounts a
+               ON a.household_id=b.household_id AND a.connector_kind=b.connector_kind
+              AND a.connection_key=b.connection_key
+             WHERE b.household_id=?1 AND b.connector_kind=?2 AND b.connection_key=?3
+             GROUP BY b.household_id,b.connector_kind,b.connection_key",
+            params![household_id, connector_kind, connection_key],
+            |row| {
+                Ok((
+                    row.get::<_, u64>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| ConnectorProjectionError::Database)?;
+    let Some((allowed_account_count, parser_profile_configured, version)) = row else {
+        return Ok(None);
+    };
+    if !(1..=256).contains(&allowed_account_count)
+        || version == 0
+        || version > 9_007_199_254_740_991
+    {
+        return Err(ConnectorProjectionError::InvalidProjection);
+    }
+    Ok(Some(ConnectorBindingSummaryDto {
+        allowed_account_count: allowed_account_count as u16,
+        parser_profile_configured,
+        version,
+    }))
 }
 
 fn capabilities(kind: ConnectorKind, lifecycle: ConnectorLifecycle) -> Vec<ConnectorCapability> {
@@ -1198,6 +1271,97 @@ mod tests {
                 assert!(!json.contains("drive-other"));
                 assert!(!json.contains("gmail-other"));
                 assert!(!json.contains("watched-other"));
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn projects_redacted_binding_summaries_for_every_connector_kind() {
+        let state = migrated_state();
+        state
+            .with_connection(|connection| {
+                seed_contract_fixture(connection);
+                connection.execute_batch(
+                    r#"
+                    INSERT INTO accounts(id,household_id,name,account_kind,account_subtype,is_archived)
+                    VALUES('bank','home','Bank','ASSET','BANK',0),
+                          ('reserve','home','Reserve','ASSET','BANK',0);
+                    INSERT INTO delimited_parser_profiles(
+                        id,household_id,name,delimiter,encoding,header_row,date_column,date_format,
+                        description_column,amount_mode,signed_positive_direction,signed_amount_column,
+                        is_enabled,priority,version
+                    ) VALUES(
+                        'profile','home','Bank CSV','COMMA','UTF8',1,'date','YYYY_MM_DD',
+                        'description','SIGNED','OUT','amount',1,1,2
+                    );
+                    INSERT INTO connector_bindings(
+                        household_id,connector_kind,connection_key,parser_profile_id,
+                        parser_profile_version,version
+                    ) VALUES
+                        ('home','GOOGLE_DRIVE','drive-connected','profile',2,7),
+                        ('home','GMAIL','gmail-connected',NULL,NULL,3),
+                        ('home','WATCHED_FOLDER','watched-home',NULL,NULL,4),
+                        ('home','MANUAL_IMPORT','manual-import',NULL,NULL,5);
+                    INSERT INTO connector_binding_accounts(
+                        household_id,connector_kind,connection_key,account_id
+                    ) VALUES
+                        ('home','GOOGLE_DRIVE','drive-connected','bank'),
+                        ('home','GOOGLE_DRIVE','drive-connected','reserve'),
+                        ('home','GMAIL','gmail-connected','bank'),
+                        ('home','WATCHED_FOLDER','watched-home','reserve'),
+                        ('home','MANUAL_IMPORT','manual-import','bank');
+                    "#,
+                )?;
+
+                let page = ConnectionProjectionService::new(&FixedClock)
+                    .list_page(connection, "home", None, Some(100))
+                    .unwrap();
+                let summary = |kind, key| {
+                    page.items
+                        .iter()
+                        .find(|item| item.connector_kind == kind && item.connection_key == key)
+                        .unwrap()
+                        .binding_summary
+                        .clone()
+                };
+
+                assert_eq!(
+                    summary(ConnectorKind::GoogleDrive, "drive-connected"),
+                    Some(crate::connector_control::ConnectorBindingSummaryDto {
+                        allowed_account_count: 2,
+                        parser_profile_configured: true,
+                        version: 7,
+                    })
+                );
+                assert_eq!(
+                    summary(ConnectorKind::Gmail, "gmail-connected"),
+                    Some(crate::connector_control::ConnectorBindingSummaryDto {
+                        allowed_account_count: 1,
+                        parser_profile_configured: false,
+                        version: 3,
+                    })
+                );
+                assert_eq!(
+                    summary(ConnectorKind::WatchedFolder, "watched-home"),
+                    Some(crate::connector_control::ConnectorBindingSummaryDto {
+                        allowed_account_count: 1,
+                        parser_profile_configured: false,
+                        version: 4,
+                    })
+                );
+                assert_eq!(
+                    summary(ConnectorKind::ManualImport, "manual-import"),
+                    Some(crate::connector_control::ConnectorBindingSummaryDto {
+                        allowed_account_count: 1,
+                        parser_profile_configured: false,
+                        version: 5,
+                    })
+                );
+                assert_eq!(
+                    summary(ConnectorKind::GoogleDrive, "drive-configuring"),
+                    None
+                );
                 Ok(())
             })
             .unwrap();

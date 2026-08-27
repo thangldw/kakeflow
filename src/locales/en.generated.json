@@ -1,5 +1,9 @@
 {
+  "レビュー範囲": "Review scope",
   "レビュー範囲を管理": "Manage review scope",
+  "対象口座{count}件・読み取りプロファイル設定済み・設定版{version}": "{count} accounts · parser profile set · revision {version}",
+  "対象口座{count}件・読み取りプロファイルなし・設定版{version}": "{count} accounts · no parser profile · revision {version}",
+  "未設定": "Not configured",
   "レビュー対象口座": "Review accounts",
   "読み取りプロファイル": "Parser profile",
   "プロファイルを使用しない": "Do not use a parser profile",

@@ -93,6 +93,15 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(localeCode, { dateStyle: 'short', timeStyle: 'short' }), [localeCode])
   const formatDate = (value: string | null, emptyLabel: string) => value === null ? emptyLabel : dateFormatter.format(new Date(value))
   const formatPendingCount = (count: number) => text('{count}件').replace('{count}', count.toLocaleString(localeCode))
+  const formatBindingSummary = (binding: ConnectorSummaryDto['bindingSummary']) => {
+    if (binding === null) return text('未設定')
+    const template = binding.parserProfileConfigured
+      ? text('対象口座{count}件・読み取りプロファイル設定済み・設定版{version}')
+      : text('対象口座{count}件・読み取りプロファイルなし・設定版{version}')
+    return template
+      .replace('{count}', binding.allowedAccountCount.toLocaleString(localeCode))
+      .replace('{version}', binding.version.toLocaleString(localeCode))
+  }
   const refreshErrorLabel = refreshManagement?.error === 'CONNECTOR_DISCONNECT_UNAVAILABLE'
     ? text('コネクタの接続を解除できませんでした。')
     : text('コネクタの更新を開始できませんでした。')
@@ -177,6 +186,8 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
                   nextDue={formatDate(summary.nextDueAt, text('スケジュールなし'))}
                   pendingReviewLabel={text('レビュー待ち')}
                   pendingReview={formatPendingCount(summary.pendingReviewCount)}
+                  bindingLabel={text('レビュー範囲')}
+                  bindingSummary={formatBindingSummary(summary.bindingSummary)}
                 />
                 {bindingManagement && editingIdentity === `${summary.connectorKind}:${summary.connectionKey}` && <ConnectorBindingEditor
                   key={`${summary.connectorKind}:${summary.connectionKey}`}

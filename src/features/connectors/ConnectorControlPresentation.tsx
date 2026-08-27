@@ -62,17 +62,20 @@ export function ConnectorControlCard({ label, primaryState, stateLabel, actions,
   </article>
 }
 
-export function ConnectorControlDetails({ lastSuccessLabel, lastSuccess, nextDueLabel, nextDue, pendingReviewLabel, pendingReview }: {
+export function ConnectorControlDetails({ lastSuccessLabel, lastSuccess, nextDueLabel, nextDue, pendingReviewLabel, pendingReview, bindingLabel, bindingSummary }: {
   readonly lastSuccessLabel: string
   readonly lastSuccess: string
   readonly nextDueLabel: string
   readonly nextDue: string
   readonly pendingReviewLabel: string
   readonly pendingReview: string
+  readonly bindingLabel: string
+  readonly bindingSummary: string
 }) {
   return <dl className="connector-control-details">
     <div><dt>{lastSuccessLabel}</dt><dd>{lastSuccess}</dd></div>
     <div><dt>{nextDueLabel}</dt><dd>{nextDue}</dd></div>
     <div><dt>{pendingReviewLabel}</dt><dd>{pendingReview}</dd></div>
+    <div><dt>{bindingLabel}</dt><dd>{bindingSummary}</dd></div>
   </dl>
 }
