@@ -230,6 +230,19 @@ body {
   box-sizing: border-box;
 }
 
+.pwa-sources {
+  --text-muted: #65746b;
+  --surface-subtle: #edf3ec;
+  --accent: #165c3a;
+  --accent-soft: #dfeadf;
+}
+
+.pwa-sources .connector-control {
+  border: 1px solid #cbd3ca;
+  border-radius: 14px;
+  background: rgb(255 255 252 / 78%);
+}
+
 .pwa-page-head,
 .pwa-panel-head {
   display: flex;

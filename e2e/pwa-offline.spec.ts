@@ -26,7 +26,26 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await page.getByRole('button', { name: 'Save local setup' }).click()
   await expect(page.getByRole('heading', { name: 'Household overview' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Import', exact: true }).click()
+  await page.getByRole('button', { name: 'Lock vault' }).click()
+  await page.evaluate(async () => { await navigator.serviceWorker.ready })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller))
+  await context.setOffline(true)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('heading', { name: 'Unlock local vault' })).toBeVisible()
+  await page.getByLabel('Vault passphrase').fill(passphrase)
+  await page.getByRole('button', { name: 'Unlock vault' }).click()
+  await expect(page.getByRole('heading', { name: 'Household overview' })).toBeVisible()
+
+  const sourceRequestsBefore = requests.length
+  await page.getByRole('button', { name: 'Sources' }).click()
+  const manualSource = page.getByRole('article', { name: 'Manual import' })
+  await expect(manualSource).toBeVisible()
+  await expect(manualSource.getByText('Pending review').locator('..')).toContainText('0 items')
+  await expect(manualSource.getByRole('button')).toHaveCount(1)
+  expect(requests).toHaveLength(sourceRequestsBefore)
+  await manualSource.getByRole('button', { name: 'Open settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Import a receipt' })).toBeVisible()
   await page.getByLabel('Receipt image').setInputFiles(receiptPath)
   await expect(page.getByRole('heading', { name: 'Compare source and candidate' })).toBeVisible({
     timeout: 90_000,
@@ -35,6 +54,12 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await expect(page.getByText('2022-09-06')).toBeVisible()
   await expect(page.getByText('¥254', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('difference ¥0')).toBeVisible()
+
+  const sourceRequestsAfterStage = requests.length
+  await page.getByRole('button', { name: 'Sources' }).click()
+  await expect(manualSource.getByText('Pending review').locator('..')).toContainText('1 item')
+  expect(requests).toHaveLength(sourceRequestsAfterStage)
+  await page.getByRole('button', { name: 'Review' }).click()
 
   const post = page.getByRole('button', { name: 'Approve and post' })
   await expect(post).toBeDisabled()
@@ -50,19 +75,6 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await expect(page.getByRole('heading', { name: 'Transaction provenance' })).toBeVisible()
   await expect(page.getByText('receipt-tax-marker.synthetic.jpg')).toBeVisible()
   await expect(page.getByText(/SHA-256/u)).toBeVisible()
-
-  await page.getByRole('button', { name: 'Lock vault' }).click()
-  await page.evaluate(async () => { await navigator.serviceWorker.ready })
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller))
-  await context.setOffline(true)
-  await page.reload({ waitUntil: 'domcontentloaded' })
-  await expect(page.getByRole('heading', { name: 'Unlock local vault' })).toBeVisible()
-  await page.getByLabel('Vault passphrase').fill(passphrase)
-  await page.getByRole('button', { name: 'Unlock vault' }).click()
-  await expect(page.getByRole('heading', { name: 'Household overview' })).toBeVisible()
-  await page.getByRole('button', { name: 'Ledger' }).click()
-  await expect(page.getByText('¥254', { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: 'Backup' }).click()
   const downloadPromise = page.waitForEvent('download')

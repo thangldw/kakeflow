@@ -7,6 +7,9 @@ import { beforeAll, describe, expect, it } from 'vitest'
 const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
+const nativeChunkPattern = /(?:^|\/)(?:vendor-)?tauri(?:-|\/)|@tauri-apps/iu
+const nativeCommandPattern = /(?:connector_(?:control|binding|bindings|refresh)_|google_drive_|gmail_|watched_(?:folder|folders|file_inbox)_|relay_)/u
+const nativePathKeyPattern = /(?:absolutePath|folderPath|relativePath|watchedFolderId)/u
 
 async function filesBelow(directory: string): Promise<string[]> {
   const entries = await readdir(directory)
@@ -79,12 +82,32 @@ describe('production PWA contract', () => {
   })
 
   it('precaches the local OCR runtime but never imports a desktop or account connector', async () => {
-    const serviceWorker = await readFile(resolve(dist, 'sw.js'), 'utf8')
+    const [serviceWorker, files] = await Promise.all([
+      readFile(resolve(dist, 'sw.js'), 'utf8'),
+      filesBelow(dist),
+    ])
+    const applicationJavascript = (await Promise.all(files
+      .filter((file) => file.endsWith('.js') && !/(?:vendor-ocr|worker-entry|workbox-)/u.test(file))
+      .map((file) => readFile(resolve(dist, file), 'utf8')))).join('\n')
     expect(serviceWorker).toMatch(/PP-OCRv5_mobile_det\.tar/u)
     expect(serviceWorker).toMatch(/PP-OCRv5_mobile_rec\.tar/u)
     expect(serviceWorker).toMatch(/ort-wasm-simd-threaded\.jsep/u)
     expect(serviceWorker).not.toMatch(/ort-wasm-simd-threaded\.(?:asyncify|jspi)/u)
     expect(serviceWorker).not.toMatch(/assets\/ort-wasm-simd-threaded\.jsep-[^"\s]+\.wasm/u)
     expect(serviceWorker).not.toMatch(/(?:google-drive|gmail|moneyforward|relay-service|watched-folder)/iu)
+    expect(files).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(nativeChunkPattern),
+    ]))
+    expect(applicationJavascript).not.toMatch(nativeCommandPattern)
+    expect(applicationJavascript).not.toMatch(/(?:DRIVE_READONLY|GMAIL_READONLY|SYSTEM_BROWSER_LOOPBACK|Keychain)/u)
+    expect(applicationJavascript).not.toMatch(nativePathKeyPattern)
+  })
+
+  it.each([
+    ['Tauri vendor chunk', 'assets/vendor-tauri-deadbeef.js', nativeChunkPattern],
+    ['connector control command', 'connector_control_list', nativeCommandPattern],
+    ['minified watched path key', '{relativePath:e}', nativePathKeyPattern],
+  ])('recognizes forbidden %s mutations', (_name, value, pattern) => {
+    expect(value).toMatch(pattern)
   })
 })
