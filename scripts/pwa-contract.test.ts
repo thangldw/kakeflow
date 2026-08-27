@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFile, readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -44,6 +44,13 @@ async function filesBelow(directory: string): Promise<string[]> {
       : [entry]
   }))
   return nested.flat().sort()
+}
+
+async function javascriptArtifactsBelow(directory: string): Promise<JavascriptArtifact[]> {
+  const files = await filesBelow(directory)
+  return Promise.all(files
+    .filter((file) => file.endsWith('.js') || file.endsWith('.mjs'))
+    .map(async (file) => ({ file, source: await readFile(resolve(directory, file), 'utf8') })))
 }
 
 describe('production PWA contract', () => {
@@ -106,13 +113,10 @@ describe('production PWA contract', () => {
   })
 
   it('precaches the local OCR runtime but never imports a desktop or account connector', async () => {
-    const [serviceWorker, files] = await Promise.all([
+    const [serviceWorker, javascriptArtifacts] = await Promise.all([
       readFile(resolve(dist, 'sw.js'), 'utf8'),
-      filesBelow(dist),
+      javascriptArtifactsBelow(dist),
     ])
-    const javascriptArtifacts = await Promise.all(files
-      .filter((file) => file.endsWith('.js'))
-      .map(async (file) => ({ file, source: await readFile(resolve(dist, file), 'utf8') })))
     expect(serviceWorker).toMatch(/PP-OCRv5_mobile_det\.tar/u)
     expect(serviceWorker).toMatch(/PP-OCRv5_mobile_rec\.tar/u)
     expect(serviceWorker).toMatch(/ort-wasm-simd-threaded\.jsep/u)
@@ -123,6 +127,19 @@ describe('production PWA contract', () => {
     expect(javascriptArtifacts.flatMap((artifact) => (
       forbiddenJavascriptFindings(artifact).map((finding) => `${artifact.file}: ${finding}`)
     ))).toEqual([])
+  })
+
+  it('discovers forbidden module JavaScript artifacts', async () => {
+    const mutationFile = resolve(dist, 'assets/forbidden-traversal-mutation.mjs')
+    await writeFile(mutationFile, 'globalThis.__TAURI_INTERNALS__')
+    try {
+      const findings = (await javascriptArtifactsBelow(dist)).flatMap((artifact) => (
+        forbiddenJavascriptFindings(artifact).map((finding) => `${artifact.file}: ${finding}`)
+      ))
+      expect(findings).toContain('assets/forbidden-traversal-mutation.mjs: tauri-runtime')
+    } finally {
+      await unlink(mutationFile)
+    }
   })
 
   it.each([

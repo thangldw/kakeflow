@@ -102,3 +102,12 @@ Authoritative verification commands used Node 22 through `/opt/homebrew/opt/node
 - `npm run build:pwa`: passed; 61 modules transformed and 25 entries / 69,553.82 KiB precached. Existing OpenCV browser-externalization and large-chunk warnings remain informational.
 - `npm run build`: passed; 1,781 desktop modules transformed. Existing OpenCV browser-externalization and large-chunk warnings remain informational.
 - Fresh PWA artifact scan found no provider label/enum, refresh/retry/disconnect, binding, progress, native, Tauri, OAuth, Keychain, or path DTO match in any JavaScript artifact or chunk name.
+
+## Module-JavaScript traversal correction
+
+- Residual finding: the deny traversal selected only `.js`, omitting four shipped `.mjs` ONNX runtime files from production filename/body inspection.
+- RED: a synthetic `assets/forbidden-traversal-mutation.mjs` containing an existing forbidden Tauri runtime marker produced 1 failed and 15 passed contract tests because the shared traversal API did not yet exist. The test removes the synthetic file in `finally`.
+- GREEN: production discovery now returns both `.js` and `.mjs` artifacts and the main deny scan uses that same traversal. Detector patterns and runtime code are unchanged. The contract passed 16/16, including proof that the synthetic forbidden `.mjs` is discovered and rejected.
+- Fresh output contains exactly 13 `.js` and 4 `.mjs` artifacts; all 17 filenames and bodies passed the existing native/provider/catalog deny detector.
+- `npm run build:pwa` passed with 61 modules transformed and 25 entries / 69,553.82 KiB precached. Existing OpenCV browser-externalization and large-chunk warnings remain informational.
+- `npm run lint`, `npm exec -- tsc -b --pretty false`, and `git diff --check` passed. Lint initially caught one stale destructured `files` binding after the traversal extraction; removing that unused binding was the only follow-up edit.
