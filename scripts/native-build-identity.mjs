@@ -1,22 +1,73 @@
 import { execFile as execFileCallback } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
+import { lstatSync, realpathSync } from 'node:fs'
 import { lstat, mkdir, readFile, readdir, readlink, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCallback)
 const identityFilename = 'kakeflow-build-identity.json'
-const buildInputRoots = [
-  'package.json', 'package-lock.json', 'src/', 'src-tauri/', 'scripts/', 'packaging/',
-  'index.html', 'vite.config.', 'vitest.config.', 'tsconfig.',
+const buildInputPrefixes = [
+  '.cargo/',
+  'crates/kakeflow-core/',
+  'packaging/ocr/',
+  'public/',
+  'src/',
+  'src-tauri/',
+]
+const buildInputExact = new Set([
+  '.nvmrc',
+  'Cargo.lock',
+  'Cargo.toml',
+  'index.html',
+  'ocr-fixture-renderer.html',
+  'ocr-harness.html',
+  'ocr-regression.html',
+  'package-lock.json',
+  'package.json',
+  'rust-toolchain.toml',
+  'scripts/desktop-release.mjs',
+  'scripts/native-build-identity.mjs',
+  'scripts/native-macos-build.mjs',
+  'scripts/ocr-resource-contract.mjs',
+  'scripts/paddleocr-resource-metadata.mjs',
+  'scripts/release-version-contract.mjs',
+  'scripts/stage-paddleocr-resources.mjs',
+  'scripts/verify-ocr-resources.mjs',
+  'tsconfig.app.json',
+  'tsconfig.json',
+  'tsconfig.node.json',
+  'vite.config.ts',
+])
+const ignoredBuildInputRoots = [
+  'public/ocr/paddleocr',
+  'src-tauri/generated-resources/ocr',
 ]
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex')
 }
 
+export function resolvePhysicalPath(candidate) {
+  let cursor = path.resolve(candidate)
+  const suffix = []
+  for (;;) {
+    try {
+      lstatSync(cursor)
+      break
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+      const parent = path.dirname(cursor)
+      if (parent === cursor) throw new Error(`No existing ancestor for path: ${candidate}`)
+      suffix.unshift(path.basename(cursor))
+      cursor = parent
+    }
+  }
+  return path.join(realpathSync.native(cursor), ...suffix)
+}
+
 function checkoutIdentity(repositoryRoot) {
-  return sha256(path.resolve(repositoryRoot))
+  return sha256(resolvePhysicalPath(repositoryRoot))
 }
 
 function portable(relative) {
@@ -24,31 +75,79 @@ function portable(relative) {
 }
 
 function includedBuildInput(relative) {
-  return buildInputRoots.some((candidate) => candidate.endsWith('/')
-    ? relative.startsWith(candidate)
-    : relative === candidate || relative.startsWith(candidate))
+  return buildInputExact.has(relative) || buildInputPrefixes.some((candidate) => relative.startsWith(candidate))
 }
 
-export async function computeNativeBuildInputIdentity(repositoryRoot) {
-  const root = path.resolve(repositoryRoot)
+async function filesystemEntries(root, relativeRoot) {
+  const entries = []
+  const visit = async (relative) => {
+    const absolute = path.join(root, ...relative.split('/'))
+    let metadata
+    try {
+      metadata = await lstat(absolute)
+    } catch (error) {
+      if (error?.code === 'ENOENT') return
+      throw error
+    }
+    if (metadata.isSymbolicLink() || metadata.isFile()) {
+      entries.push(relative)
+      return
+    }
+    if (!metadata.isDirectory()) return
+    const children = await readdir(absolute)
+    children.sort()
+    for (const child of children) await visit(`${relative}/${child}`)
+  }
+  await visit(relativeRoot)
+  return entries
+}
+
+function fileMode(metadata) {
+  return (metadata.mode & 0o7777).toString(8).padStart(4, '0')
+}
+
+async function buildInputRecord(root, relative) {
+  const absolute = path.join(root, ...relative.split('/'))
+  try {
+    const metadata = await lstat(absolute)
+    if (metadata.isSymbolicLink()) {
+      const target = await readlink(absolute)
+      const targetBytes = Buffer.from(target, 'utf8')
+      return { type: 'symlink', path: relative, target, mode: fileMode(metadata), length: targetBytes.length, digest: sha256(targetBytes) }
+    }
+    if (metadata.isFile()) {
+      const bytes = await readFile(absolute)
+      return { type: 'file', path: relative, mode: fileMode(metadata), length: bytes.length, digest: sha256(bytes) }
+    }
+    return { type: 'unsupported', path: relative, mode: fileMode(metadata), length: 0, digest: sha256('') }
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+    return { type: 'deleted', path: relative, mode: '0000', length: 0, digest: sha256('') }
+  }
+}
+
+export async function collectNativeBuildInputRecords(repositoryRoot) {
+  const root = resolvePhysicalPath(repositoryRoot)
   const { stdout } = await execFile(
     'git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--'],
     { cwd: root, encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 },
   )
-  const files = stdout.toString('utf8').split('\0').filter(Boolean).filter(includedBuildInput).sort()
+  const files = new Set(stdout.toString('utf8').split('\0').filter(Boolean).filter(includedBuildInput))
+  for (const ignoredRoot of ignoredBuildInputRoots) {
+    for (const relative of await filesystemEntries(root, ignoredRoot)) files.add(relative)
+  }
+  return Promise.all([...files].sort().map((relative) => buildInputRecord(root, relative)))
+}
+
+export async function computeNativeBuildInputIdentity(repositoryRoot) {
+  const records = await collectNativeBuildInputRecords(repositoryRoot)
   const digest = createHash('sha256')
-  for (const relative of files) {
-    const absolute = path.join(root, ...relative.split('/'))
-    digest.update(`path\0${relative}\0`)
-    try {
-      const metadata = await lstat(absolute)
-      if (metadata.isSymbolicLink()) digest.update(`link\0${await readlink(absolute)}\0`)
-      else if (metadata.isFile()) digest.update(Buffer.concat([Buffer.from('file\0'), await readFile(absolute), Buffer.from('\0')]))
-      else digest.update('unsupported\0')
-    } catch (error) {
-      if (error?.code !== 'ENOENT') throw error
-      digest.update('deleted\0')
-    }
+  for (const record of records) {
+    const encoded = Buffer.from(JSON.stringify(record), 'utf8')
+    const length = Buffer.alloc(8)
+    length.writeBigUInt64BE(BigInt(encoded.length))
+    digest.update(length)
+    digest.update(encoded)
   }
   return digest.digest('hex')
 }
@@ -66,7 +165,7 @@ function defaultProcessAlive(pid) {
 function lockDirectoryFor(context) {
   const checkout = checkoutIdentity(context.repositoryRoot)
   return path.join(
-    path.resolve(context.cargoTargetDir),
+    resolvePhysicalPath(context.cargoTargetDir),
     '.kakeflow-build-locks',
     `${checkout}-${context.macosTarget}.lock`,
   )
@@ -74,9 +173,55 @@ function lockDirectoryFor(context) {
 
 async function readLockOwner(lockDirectory) {
   try {
+    const metadata = await lstat(lockDirectory)
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) return null
     return JSON.parse(await readFile(path.join(lockDirectory, 'owner.json'), 'utf8'))
   } catch {
     return null
+  }
+}
+
+function validLockOwner(owner, expectedCheckout, target) {
+  return owner?.schemaVersion === 1 && Number.isInteger(owner.pid) && owner.pid > 0 &&
+    typeof owner.token === 'string' && owner.token.length > 0 &&
+    owner.checkoutIdentity === expectedCheckout && owner.target === target
+}
+
+function sameLockOwner(left, right) {
+  return left?.schemaVersion === right?.schemaVersion && left?.pid === right?.pid &&
+    left?.token === right?.token && left?.checkoutIdentity === right?.checkoutIdentity &&
+    left?.target === right?.target
+}
+
+async function restoreQuarantinedLock(quarantine, lockDirectory, renamePath) {
+  try {
+    await renamePath(quarantine, lockDirectory)
+    return `restored at ${lockDirectory}`
+  } catch (error) {
+    return `preserved at ${quarantine}; restore failed: ${error instanceof Error ? error.message : error}`
+  }
+}
+
+async function quarantineObservedLock(lockDirectory, observed, {
+  renamePath,
+  removePath,
+  operation,
+}) {
+  const quarantine = path.join(
+    path.dirname(lockDirectory),
+    `.${path.basename(lockDirectory)}.${operation}-${randomUUID()}`,
+  )
+  await renamePath(lockDirectory, quarantine)
+  const moved = await readLockOwner(quarantine)
+  if (!sameLockOwner(moved, observed)) {
+    const preservation = await restoreQuarantinedLock(quarantine, lockDirectory, renamePath)
+    throw new Error(`Native build lock ownership changed during ${operation}; replacement ${preservation}`)
+  }
+  try {
+    await removePath(quarantine, { recursive: true, force: false })
+  } catch (error) {
+    const preservation = await restoreQuarantinedLock(quarantine, lockDirectory, renamePath)
+    throw new Error(`Native build lock quarantine deletion failed during ${operation}: ${error instanceof Error ? error.message : error}; owner ${preservation}`)
   }
 }
 
@@ -84,6 +229,8 @@ export async function acquireNativeBuildLock(context, {
   pid = process.pid,
   isProcessAlive = defaultProcessAlive,
   recoverStale = process.env.KAKEFLOW_RECOVER_STALE_BUILD_LOCK === '1',
+  renamePath = rename,
+  removePath = rm,
 } = {}) {
   const lockDirectory = lockDirectoryFor(context)
   const lockParent = path.dirname(lockDirectory)
@@ -102,10 +249,7 @@ export async function acquireNativeBuildLock(context, {
 
   if (!await acquire()) {
     const owner = await readLockOwner(lockDirectory)
-    const validOwner = Number.isInteger(owner?.pid) && owner.pid > 0 &&
-      typeof owner?.token === 'string' && owner.token.length > 0 &&
-      owner.checkoutIdentity === expectedCheckout && owner.target === context.macosTarget
-    if (!validOwner) {
+    if (!validLockOwner(owner, expectedCheckout, context.macosTarget)) {
       throw new Error(`Native build lock metadata is invalid at ${lockDirectory}; inspect and remove only this exact lock directory manually`)
     }
     if (isProcessAlive(owner.pid)) {
@@ -114,7 +258,9 @@ export async function acquireNativeBuildLock(context, {
     if (!recoverStale) {
       throw new Error(`Native build lock may be stale at ${lockDirectory}; confirm process ${owner.pid} is gone, then retry with KAKEFLOW_RECOVER_STALE_BUILD_LOCK=1`)
     }
-    await rm(lockDirectory, { recursive: true, force: false })
+    await quarantineObservedLock(lockDirectory, owner, {
+      renamePath, removePath, operation: 'stale recovery',
+    })
     if (!await acquire()) throw new Error(`Native build lock was concurrently reacquired at ${lockDirectory}`)
   }
 
@@ -128,7 +274,18 @@ export async function acquireNativeBuildLock(context, {
   try {
     await writeFile(path.join(lockDirectory, 'owner.json'), `${JSON.stringify(owner)}\n`, { encoding: 'utf8', flag: 'wx' })
   } catch (error) {
-    await rm(lockDirectory, { recursive: true, force: true })
+    const quarantine = path.join(lockParent, `.${path.basename(lockDirectory)}.failed-acquire-${randomUUID()}`)
+    try {
+      await renamePath(lockDirectory, quarantine)
+      const moved = await readLockOwner(quarantine)
+      if (moved && !sameLockOwner(moved, owner)) {
+        const preservation = await restoreQuarantinedLock(quarantine, lockDirectory, renamePath)
+        throw new Error(`Native build lock ownership changed after owner-write failure; replacement ${preservation}`)
+      }
+      await removePath(quarantine, { recursive: true, force: false })
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], `Native build lock owner write failed: ${error instanceof Error ? error.message : error}; cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}`)
+    }
     throw error
   }
 
@@ -138,7 +295,9 @@ export async function acquireNativeBuildLock(context, {
     async release() {
       const current = await readLockOwner(lockDirectory)
       if (current?.token !== owner.token) throw new Error(`Native build lock ownership changed at ${lockDirectory}`)
-      await rm(lockDirectory, { recursive: true, force: false })
+      await quarantineObservedLock(lockDirectory, owner, {
+        renamePath, removePath, operation: 'release',
+      })
     },
   }
 }
@@ -152,15 +311,53 @@ function assertWithinRelease(releaseDirectory, candidate) {
   return resolved
 }
 
+async function assertPhysicalCleanupPath(context, candidate) {
+  const cargoTarget = resolvePhysicalPath(context.cargoTargetDir)
+  const release = assertWithinRelease(
+    cargoTarget,
+    resolvePhysicalPath(context.releaseDirectory),
+  )
+  const logicalRelease = path.resolve(context.releaseDirectory)
+  const logicalCandidate = assertWithinRelease(logicalRelease, candidate)
+  const resolved = path.join(release, path.relative(logicalRelease, logicalCandidate))
+  const components = path.relative(cargoTarget, resolved).split(path.sep).filter(Boolean)
+  let cursor = cargoTarget
+  for (const component of components) {
+    cursor = path.join(cursor, component)
+    try {
+      const metadata = await lstat(cursor)
+      if (metadata.isSymbolicLink()) {
+        throw new Error(`Refusing native build cleanup through symlink traversal: ${cursor}`)
+      }
+    } catch (error) {
+      if (error?.code === 'ENOENT') break
+      throw error
+    }
+  }
+  const physicalCandidate = resolvePhysicalPath(resolved)
+  if (physicalCandidate === release || !physicalCandidate.startsWith(`${release}${path.sep}`)) {
+    throw new Error(`Refusing native build cleanup outside the physical release directory: ${physicalCandidate}`)
+  }
+  return resolved
+}
+
+export async function invalidateNativeBuildIdentity({ context, artifacts }) {
+  const identity = await assertPhysicalCleanupPath(context, artifacts.identityManifest)
+  await rm(identity, { force: true })
+}
+
 export async function cleanNativeBuildOutputs({ context, artifacts }) {
+  await invalidateNativeBuildIdentity({ context, artifacts })
   const candidates = [
     artifacts.app,
     artifacts.updaterArchive,
     artifacts.updaterSignature,
     artifacts.dmg,
-    artifacts.identityManifest,
-  ].map((candidate) => assertWithinRelease(context.releaseDirectory, candidate))
-  for (const candidate of candidates) await rm(candidate, { recursive: true, force: true })
+  ]
+  for (const candidate of candidates) {
+    const resolved = await assertPhysicalCleanupPath(context, candidate)
+    await rm(resolved, { recursive: true, force: true })
+  }
 }
 
 async function regularTreeEntries(directory, prefix = '') {

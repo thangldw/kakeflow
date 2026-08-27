@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -37,6 +37,74 @@ describe('native macOS build boundary', () => {
       artifactArchitecture: 'aarch64',
     })
     expect(context.releaseDirectory).toBe('/private/tmp/KakeFlow Build/成果物/aarch64-apple-darwin/release')
+  })
+
+  it('canonicalizes checkout and configured or derived target aliases to physical paths', async () => {
+    expect(nativeModule.resolveMacBuildContext).toBeTypeOf('function')
+    if (typeof nativeModule.resolveMacBuildContext !== 'function') return
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-physical-context-test-'))
+    const physicalCheckout = path.join(temporaryRoot, 'physical checkout', '家計')
+    const checkoutAlias = path.join(temporaryRoot, 'checkout alias')
+    const physicalTarget = path.join(temporaryRoot, 'physical target', '成果物')
+    const targetAlias = path.join(temporaryRoot, 'target alias')
+    const physicalTemporary = path.join(temporaryRoot, 'physical temporary')
+    const temporaryAlias = path.join(temporaryRoot, 'temporary alias')
+    try {
+      await Promise.all([
+        mkdir(physicalCheckout, { recursive: true }),
+        mkdir(physicalTarget, { recursive: true }),
+        mkdir(physicalTemporary, { recursive: true }),
+      ])
+      await Promise.all([
+        symlink(physicalCheckout, checkoutAlias),
+        symlink(physicalTarget, targetAlias),
+        symlink(physicalTemporary, temporaryAlias),
+      ])
+      const configured = nativeModule.resolveMacBuildContext({
+        repositoryRoot: checkoutAlias,
+        cargoTargetDir: targetAlias,
+        macosTarget: 'aarch64-apple-darwin',
+        homeDirectory: path.join(temporaryRoot, 'personal home'),
+      })
+      expect(configured.repositoryRoot).toBe(await realpath(physicalCheckout))
+      expect(configured.cargoTargetDir).toBe(await realpath(physicalTarget))
+
+      const derived = nativeModule.resolveMacBuildContext({
+        repositoryRoot: checkoutAlias,
+        temporaryDirectory: temporaryAlias,
+        architecture: 'arm64',
+        homeDirectory: path.join(temporaryRoot, 'personal home'),
+      })
+      expect(derived.repositoryRoot).toBe(await realpath(physicalCheckout))
+      expect(derived.cargoTargetDir).toMatch(new RegExp(`^${(await realpath(physicalTemporary)).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${path.sep}kakeflow-cargo-target-`))
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a neutral-looking target symlink that resolves into a personal root', async () => {
+    expect(nativeModule.resolveMacBuildContext).toBeTypeOf('function')
+    if (typeof nativeModule.resolveMacBuildContext !== 'function') return
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-personal-target-link-test-'))
+    const repositoryRoot = path.join(temporaryRoot, 'checkout')
+    const personalHome = path.join(temporaryRoot, 'personal home')
+    const physicalTarget = path.join(personalHome, 'private target')
+    const targetAlias = path.join(temporaryRoot, 'neutral target alias')
+    try {
+      await Promise.all([
+        mkdir(repositoryRoot, { recursive: true }),
+        mkdir(physicalTarget, { recursive: true }),
+      ])
+      await symlink(physicalTarget, targetAlias)
+      expect(() => nativeModule.resolveMacBuildContext({
+        repositoryRoot,
+        cargoTargetDir: targetAlias,
+        macosTarget: 'aarch64-apple-darwin',
+        homeDirectory: personalHome,
+      })).toThrow(/personal build root/)
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
   })
 
   it('fails closed for personal target roots and unsupported architectures', () => {
@@ -185,7 +253,116 @@ describe('native macOS build boundary', () => {
     }
   })
 
-  it('leaves no success identity after failure and never masks the build error with lock cleanup failure', async () => {
+  it('invalidates identity before output cleanup and leaves none after an interrupted build', async () => {
+    expect(nativeModule.runIsolatedMacBuild).toBeTypeOf('function')
+    if (typeof nativeModule.runIsolatedMacBuild !== 'function') return
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-cleanup-order-test-'))
+    const repositoryRoot = path.join(temporaryRoot, 'checkout')
+    try {
+      await mkdir(repositoryRoot, { recursive: true })
+      const plan = nativeModule.createMacBuildPlan({
+        bundle: 'release', version: '1.2.1', repositoryRoot,
+        cargoTargetDir: path.join(temporaryRoot, 'target'), homeDirectory: '/Users/synthetic',
+        architecture: 'arm64', platform: 'darwin', environment: {},
+      })
+      await mkdir(path.dirname(plan.artifacts.identityManifest), { recursive: true })
+      await writeFile(plan.artifacts.identityManifest, '{"status":"stale"}\n')
+      await expect(nativeModule.runIsolatedMacBuild(plan, {
+        cleanOutputs: async () => {
+          try {
+            await stat(plan.artifacts.identityManifest)
+            throw new Error('identity was not invalidated first')
+          } catch (error: unknown) {
+            if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+          }
+          throw new Error('synthetic output cleanup failure')
+        },
+      })).rejects.toThrow('synthetic output cleanup failure')
+      await expect(stat(plan.artifacts.identityManifest)).rejects.toThrow()
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('removes a newly published identity if final lock release fails', async () => {
+    expect(nativeModule.runIsolatedMacBuild).toBeTypeOf('function')
+    if (typeof nativeModule.runIsolatedMacBuild !== 'function') return
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-release-failure-test-'))
+    const repositoryRoot = path.join(temporaryRoot, 'checkout')
+    try {
+      await mkdir(repositoryRoot, { recursive: true })
+      const plan = nativeModule.createMacBuildPlan({
+        bundle: 'release', version: '1.2.1', repositoryRoot,
+        cargoTargetDir: path.join(temporaryRoot, 'target'), homeDirectory: '/Users/synthetic',
+        architecture: 'arm64', platform: 'darwin', environment: {},
+      })
+      await expect(nativeModule.runIsolatedMacBuild(plan, {
+        computeBuildInputIdentity: async () => 'a'.repeat(64),
+        acquireBuildLock: async () => ({ release: async () => { throw new Error('synthetic lock release failure') } }),
+        executeCommand: async (command: { phase: string }) => {
+          if (command.phase !== 'build') return
+          await Promise.all([
+            mkdir(path.dirname(plan.artifacts.executable), { recursive: true }),
+            mkdir(path.join(plan.artifacts.app, 'Contents', 'Resources'), { recursive: true }),
+            mkdir(path.dirname(plan.artifacts.dmg), { recursive: true }),
+          ])
+          await Promise.all([
+            writeFile(plan.artifacts.executable, 'fresh executable'),
+            writeFile(path.join(plan.artifacts.app, 'Contents', 'Resources', 'resource.bin'), 'fresh resource'),
+            writeFile(plan.artifacts.updaterArchive, 'fresh updater'),
+            writeFile(plan.artifacts.updaterSignature, 'fresh signature'),
+            writeFile(plan.artifacts.dmg, 'fresh dmg'),
+          ])
+        },
+      })).rejects.toThrow('synthetic lock release failure')
+      await expect(stat(plan.artifacts.identityManifest)).rejects.toThrow()
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('removes an identity if publication writes it and then reports failure', async () => {
+    expect(nativeModule.runIsolatedMacBuild).toBeTypeOf('function')
+    if (typeof nativeModule.runIsolatedMacBuild !== 'function') return
+    const identityModule = await import('./native-build-identity.mjs')
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-publication-failure-test-'))
+    const repositoryRoot = path.join(temporaryRoot, 'checkout')
+    try {
+      await mkdir(repositoryRoot, { recursive: true })
+      const plan = nativeModule.createMacBuildPlan({
+        bundle: 'release', version: '1.2.1', repositoryRoot,
+        cargoTargetDir: path.join(temporaryRoot, 'target'), homeDirectory: '/Users/synthetic',
+        architecture: 'arm64', platform: 'darwin', environment: {},
+      })
+      await expect(nativeModule.runIsolatedMacBuild(plan, {
+        computeBuildInputIdentity: async () => 'a'.repeat(64),
+        executeCommand: async (command: { phase: string }) => {
+          if (command.phase !== 'build') return
+          await Promise.all([
+            mkdir(path.dirname(plan.artifacts.executable), { recursive: true }),
+            mkdir(path.join(plan.artifacts.app, 'Contents', 'Resources'), { recursive: true }),
+            mkdir(path.dirname(plan.artifacts.dmg), { recursive: true }),
+          ])
+          await Promise.all([
+            writeFile(plan.artifacts.executable, 'fresh executable'),
+            writeFile(path.join(plan.artifacts.app, 'Contents', 'Resources', 'resource.bin'), 'fresh resource'),
+            writeFile(plan.artifacts.updaterArchive, 'fresh updater'),
+            writeFile(plan.artifacts.updaterSignature, 'fresh signature'),
+            writeFile(plan.artifacts.dmg, 'fresh dmg'),
+          ])
+        },
+        writeBuildIdentity: async (options: Parameters<typeof identityModule.writeNativeBuildIdentity>[0]) => {
+          await identityModule.writeNativeBuildIdentity(options)
+          throw new Error('synthetic publication failure')
+        },
+      })).rejects.toThrow('synthetic publication failure')
+      await expect(stat(plan.artifacts.identityManifest)).rejects.toThrow()
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('combines a build interruption with lock-release cleanup failure without masking either', async () => {
     expect(nativeModule.runIsolatedMacBuild).toBeTypeOf('function')
     if (typeof nativeModule.runIsolatedMacBuild !== 'function') return
     const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-failed-build-test-'))
@@ -199,15 +376,13 @@ describe('native macOS build boundary', () => {
       })
       await mkdir(path.dirname(plan.artifacts.identityManifest), { recursive: true })
       await writeFile(plan.artifacts.identityManifest, '{"status":"stale"}\n')
-      const cleanupErrors: string[] = []
-      await expect(nativeModule.runIsolatedMacBuild(plan, {
+      const failure = nativeModule.runIsolatedMacBuild(plan, {
         computeBuildInputIdentity: async () => 'a'.repeat(64),
         acquireBuildLock: async () => ({ release: async () => { throw new Error('synthetic lock cleanup failure') } }),
         executeCommand: async () => { throw new Error('synthetic build failure') },
-        reportCleanupError: (error: Error) => cleanupErrors.push(error.message),
-      })).rejects.toThrow('synthetic build failure')
+      })
+      await expect(failure).rejects.toThrow(/synthetic build failure[\s\S]*synthetic lock cleanup failure/)
       await expect(stat(plan.artifacts.identityManifest)).rejects.toThrow()
-      expect(cleanupErrors).toEqual(['synthetic lock cleanup failure'])
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }

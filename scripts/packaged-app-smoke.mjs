@@ -171,6 +171,8 @@ function launch(executable, dataRoot, timeoutMs) {
 
 export async function runPackagedSmoke({
   executable = process.env.KAKEFLOW_SMOKE_EXECUTABLE || executableForPlatform(),
+  platform = process.platform,
+  repositoryRoot = root,
   timeoutMs = defaultTimeoutMs,
   keepData = process.env.KAKEFLOW_KEEP_SMOKE_DATA === '1',
   artifactDirectory = process.env.KAKEFLOW_SMOKE_ARTIFACT_DIR,
@@ -182,19 +184,19 @@ export async function runPackagedSmoke({
   if (!executableStat.isFile() || executableStat.size === 0) {
     throw new Error(`Packaged app executable is invalid: ${executable}`)
   }
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     const app = path.resolve(path.dirname(executable), '..', '..')
     const releaseDirectory = path.resolve(app, '..', '..', '..')
-    const packageVersion = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version
+    const packageVersion = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')).version
     await verifyNativeBuildIdentity({
-      repositoryRoot: root,
+      repositoryRoot,
       releaseDirectory,
       version: packageVersion,
       artifact: 'app',
       artifactPath: app,
     })
   }
-  const buildPathFindings = await packagedBuildPathFindings(executable)
+  const buildPathFindings = await packagedBuildPathFindings(executable, platform)
   if (buildPathFindings.length > 0) {
     throw new Error(`Packaged app bundle contains personal build roots: ${buildPathFindings.join(', ')}`)
   }
