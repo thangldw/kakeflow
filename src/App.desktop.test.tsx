@@ -109,6 +109,7 @@ const desktop = vi.hoisted(() => ({
   deleteConnectorBinding: vi.fn(),
   startConnectorRefresh: vi.fn(),
   startConnectorRefreshAll: vi.fn(),
+  getActiveConnectorRefreshBatch: vi.fn(),
   getConnectorRefreshBatch: vi.fn(),
 }))
 
@@ -230,6 +231,7 @@ vi.mock('./platform', async () => {
       deleteConnectorBinding: desktop.deleteConnectorBinding,
       startConnectorRefresh: desktop.startConnectorRefresh,
       startConnectorRefreshAll: desktop.startConnectorRefreshAll,
+      getActiveConnectorRefreshBatch: desktop.getActiveConnectorRefreshBatch,
       getConnectorRefreshBatch: desktop.getConnectorRefreshBatch,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
@@ -439,6 +441,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.deleteConnectorBinding.mockReset()
     desktop.startConnectorRefresh.mockReset()
     desktop.startConnectorRefreshAll.mockReset()
+    desktop.getActiveConnectorRefreshBatch.mockReset().mockResolvedValue(null)
     desktop.getConnectorRefreshBatch.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
@@ -450,6 +453,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockReset().mockResolvedValue({
       summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
     desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
@@ -1374,6 +1378,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValue({
       summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'LOCAL_FOLDER', originalFilename: 'statement.eml', mediaType: 'message/rfc822', byteSize: bytes.length, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-27', postedOn: null, amountJpy: 204987, direction: 'OUT', descriptionRaw: 'ラクテンカードサービス', merchantRaw: 'ラクテンカードサービス', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
 
@@ -1492,6 +1497,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'receipt-run', documentId: 'receipt-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'CAMERA_SCAN', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 42, sha256: 'receipt-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'receipt-candidate', accountId: 'family-card', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: '生協', merchantRaw: '生協', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9300, normalizationConfidenceBps: 9300, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview }],
     })
     render(<App />)
@@ -1508,7 +1514,7 @@ describe('KakeFlow desktop read models', () => {
         expect.objectContaining({ side: 'DEBIT', amountJpy: 800 }),
         expect.objectContaining({ side: 'CREDIT', accountId: 'family-card', amountJpy: 1200 }),
       ],
-    })]))
+    })], null))
   })
 
   it('keeps a delta receipt manual and blocks commit while its edited journal is invalid', async () => {
@@ -1516,6 +1522,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'delta-run', documentId: 'delta-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'delta.txt', mediaType: 'text/plain', byteSize: 42, sha256: 'delta-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'delta-candidate', accountId: 'family-card', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9000, normalizationConfidenceBps: 9000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview: { merchant: 'STORE', occurredOn: '2026-07-12', totalAmountJpy: 1200, items: [{ description: '読取品目', quantity: 1, amountJpy: 1100, taxRatePercent: null, confidenceBps: 8000, provenance: { lineNumber: 2, regionIndexes: [], method: 'TEXT_PATTERN' } }], taxes: [], couponAmountJpy: null, pointsUsedJpy: null, couponEvidence: [], pointsUsedEvidence: [], subtotalJpy: null, changeJpy: null, paymentMethod: null, taxMode: null, reconciliation: { status: 'DELTA', itemTotalJpy: 1100, totalAmountJpy: 1200, deltaJpy: -100 }, provenance: { sourceRecordId: 'record', sourceRowNumber: 1, documentPageNumber: null } } }],
     })
     render(<App />)
@@ -1535,6 +1542,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'run-zero', documentId: 'document-zero', status: 'REVIEW_REQUIRED', recordCount: 3, candidateCount: 0, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-zero', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [],
     })
     desktop.commitImport.mockResolvedValueOnce({ runId: 'run-zero', postedCount: 0 })
@@ -1544,7 +1552,7 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByText('台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '原本処理を完了' }))
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-zero', []))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-zero', [], null))
     expect(await screen.findByText('取引を追加せず原本処理を完了しました。')).toBeInTheDocument()
   })
 
@@ -1553,6 +1561,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'run-resume', documentId: 'document-resume', status: 'REVIEW_REQUIRED', recordCount: 3, candidateCount: 0, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance-interrupted.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-resume', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [],
     })
     render(<App />)
@@ -2020,6 +2029,35 @@ describe('KakeFlow desktop read models', () => {
     ])
   })
 
+  it('recovers and resumes polling the durable active refresh batch after Settings remount', async () => {
+    const projected = connectorSummary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'] })
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [projected], nextCursor: null })
+    desktop.getActiveConnectorRefreshBatch.mockResolvedValue(refreshBatch())
+    desktop.getConnectorRefreshBatch
+      .mockResolvedValueOnce(refreshBatch())
+      .mockResolvedValueOnce(refreshBatch({
+        status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 1,
+        updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+        items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 1, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+      }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    await waitFor(() => expect(desktop.getActiveConnectorRefreshBatch).toHaveBeenCalledWith('family'))
+    const progress = await screen.findByRole('status', { name: 'コネクタ更新の進行状況' })
+    expect(progress).toHaveTextContent('0 / 1')
+    const refresh = within(await screen.findByRole('article', { name: 'Household statements' })).getByRole('button', { name: '更新' })
+    expect(refresh).toBeDisabled()
+    fireEvent.click(refresh)
+    expect(desktop.startConnectorRefresh).not.toHaveBeenCalled()
+
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(2), { timeout: 1_500 })
+    expect(progress).toHaveTextContent('すべての更新が完了しました。')
+    expect(desktop.listConnectorSummaries.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2)
+  })
+
   it('rejects repeated connector cursors without leaking cursor detail', async () => {
     const repeated = { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' }
     desktop.listConnectorSummaries
@@ -2224,6 +2262,7 @@ describe('KakeFlow desktop read models', () => {
           mediaType: source?.mediaType ?? 'text/csv', byteSize: source?.byteSize ?? 42,
           sha256: source?.sha256 ?? 'synthetic-source-hash', audienceVisibility: 'SHARED', audienceMemberId: null,
         },
+        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 1 },
         candidates: [candidate],
       }
     })
@@ -2234,10 +2273,13 @@ describe('KakeFlow desktop read models', () => {
         recordCount: request.records.length, candidateCount: request.candidates.length, reusedExisting: false,
       }
     })
-    desktop.commitImport.mockImplementation(async (runId: string, decisions: readonly PostingDecisionDto[]) => {
+    desktop.commitImport.mockImplementation(async (runId: string, decisions: readonly PostingDecisionDto[], expectedConnectorBinding) => {
       const decision = decisions[0]
       if (!capturedImport || !capturedCandidate || runId !== capturedImport.runId || decision?.candidateId !== capturedCandidate.id) {
         throw new Error('commit does not match the staged synthetic import')
+      }
+      if (expectedConnectorBinding?.connectorKind !== 'MANUAL_IMPORT' || expectedConnectorBinding.connectionKey !== 'manual-import' || expectedConnectorBinding.version !== 1) {
+        throw new Error('commit does not preserve the reviewed connector binding')
       }
       const debit = decision.entries.filter(({ side }) => side === 'DEBIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)
       const credit = decision.entries.filter(({ side }) => side === 'CREDIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)
@@ -2832,7 +2874,7 @@ describe('KakeFlow desktop read models', () => {
     const commit = within(review).getByRole('button', { name: '承認済みを台帳へ反映' })
     expect(commit).toBeEnabled()
     fireEvent.click(commit)
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith(runId, expect.any(Array)))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith(runId, expect.any(Array), null))
   })
 
   it('creates persisted monthly budgets and savings goals', async () => {
@@ -2876,7 +2918,7 @@ describe('KakeFlow desktop read models', () => {
     expect(commit).toBeEnabled()
     fireEvent.click(commit)
 
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })], null))
   })
 
   it('revalidates and applies an import classification suggestion without approving it, then commits its provenance', async () => {
@@ -3217,7 +3259,7 @@ describe('KakeFlow desktop read models', () => {
       adapterId, candidates: [], cardStatements: [],
     }), expect.any(Uint8Array)))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-nisa', sourceDocumentId: 'document-investment' }) }))
-    expect(desktop.commitImport).toHaveBeenCalledWith('run-investment', [])
+    expect(desktop.commitImport).toHaveBeenCalledWith('run-investment', [], null)
   })
 
   it('requires and applies one explicit account mapping per Money Forward institution', async () => {
@@ -3406,8 +3448,8 @@ describe('KakeFlow desktop read models', () => {
       adapterId: 'money-forward-me-asset-trend-v1', records: expect.arrayContaining([expect.objectContaining({ rowNumber: 2 }), expect.objectContaining({ rowNumber: 3 })]), candidates: [], cardStatements: [],
     }), expect.any(Uint8Array)))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('aggregate_asset_history_import', { input: expect.objectContaining({ householdId: 'family', snapshots: [expect.objectContaining({ sourceDocumentId: 'document-1', sourceRow: 2, asOf: '2026-06-30' }), expect.objectContaining({ sourceDocumentId: 'document-1', sourceRow: 3, asOf: '2026-07-31' })] }) }))
-    expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [])
-    expect(desktop.previewImport).not.toHaveBeenCalled()
+    expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [], null)
+    expect(desktop.previewImport).toHaveBeenCalledWith('run-1')
     expect(await screen.findByText(/2時点の総資産履歴を保存しました。台帳と純資産には加算しません/)).toBeInTheDocument()
   })
 
@@ -3461,7 +3503,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(input, { target: { files: [new File(['日付,合計（円）,預金・現金・暗号資産（円）\n2026/07/31,8700000,2100000'], 'moneyforward-assets.csv', { type: 'text/csv' })] } })
     fireEvent.click(await screen.findByRole('button', { name: '総資産履歴に保存' }))
 
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('retry-run', []))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('retry-run', [], null))
     expect(desktop.rollbackImport).not.toHaveBeenCalled()
   })
 

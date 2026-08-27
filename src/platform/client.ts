@@ -35,6 +35,7 @@ import type {
   OpenFamilyEnvelopeOutputDto,
   FamilySnapshotReviewDto,
   ImportPreviewDto,
+  ImportBindingExpectationDto,
   ImportRunCountsDto,
   ImportSummaryDto,
   PendingReviewListDto,
@@ -594,7 +595,11 @@ export function createPlatformClient(options: PlatformClientOptions = {}): Platf
     startImport: (request, fileBytes) => invokeValidated(invoke, 'import_start', parseImportSummaryDto, { request: { import: request, fileBytes: Array.from(fileBytes) } }),
     previewImport: (runId) => invokeValidated(invoke, 'import_preview', parseImportPreview, { runId }),
     setImportDuplicateResolution: (runId, candidateId, resolution) => invokeValidated(invoke, 'import_duplicate_resolution_set', parseImportPreview, { runId, candidateId, resolution }),
-    commitImport: (runId, decisions) => invokeValidated(invoke, 'import_commit', parseCommitSummary, { runId, decisions }),
+    commitImport: (runId, decisions, expectedConnectorBinding) => invokeValidated(invoke, 'import_commit', parseCommitSummary, {
+      runId,
+      decisions,
+      expectedConnectorBinding: parseImportBindingExpectation(expectedConnectorBinding),
+    }),
     rollbackImport: async (runId) => { await invokeValidated(invoke, 'import_rollback', parseVoid, { runId }) },
     createBackup: (passphrase) => invokeValidated(invoke, 'backup_create', parseNullableBackupSummary, { passphrase }),
     stageBackupRestore: (passphrase) => invokeValidated(invoke, 'backup_restore_stage', parseNullableBackupSummary, { passphrase }),
@@ -1328,8 +1333,27 @@ function parseImportPreview(value: unknown): ImportPreviewDto {
   return {
     summary: parseImportSummaryDto(record.summary),
     source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256, ...parseAudience(source) },
+    expectedConnectorBinding: parseImportBindingExpectation(record.expectedConnectorBinding),
     candidates: record.candidates.map(parsePreviewCandidate),
     ...(duplicateSummary ? { duplicateSummary } : {}),
+  }
+}
+
+function parseImportBindingExpectation(value: unknown): ImportBindingExpectationDto | null {
+  if (value === null) return null
+  try {
+    const record = asRecord(value)
+    assertExactFields(record, new Set(['connectorKind', 'connectionKey', 'version']), 'import binding expectation')
+    const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'import binding expectation')
+    const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'import binding expectation')
+    validateManualConnectorKey(connectorKind, connectionKey)
+    return {
+      connectorKind,
+      connectionKey,
+      version: asPositiveSafeInteger(record.version, 'import binding expectation'),
+    }
+  } catch {
+    throw new TypeError('import binding expectation')
   }
 }
 

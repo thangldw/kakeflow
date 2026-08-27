@@ -2226,7 +2226,10 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
       if (!started.reusedExisting) {
         await portfolioPlatform.importSnapshot(mapPortfolioSnapshotImport(snapshot, { snapshotId: crypto.randomUUID(), householdId, accountId: securitiesAccount.id, sourceDocumentId: started.documentId }))
       }
-      if (started.status !== 'POSTED') await platformClient.commitImport(started.runId, [])
+      if (started.status !== 'POSTED') {
+        const review = await platformClient.previewImport(started.runId)
+        await platformClient.commitImport(started.runId, [], review.expectedConnectorBinding)
+      }
       setPortfolioImported((current) => new Set([...current, item.id])); onChanged()
       setNotice(started.reusedExisting ? localize("この資産スナップショットはすでに取り込み済みです。") : localize(`${snapshot.positions.length}銘柄の資産スナップショットを保存しました。`))
     } catch { setNotice(localize("資産スナップショットを保存できませんでした。証券口座と原本を確認してください。")) }
@@ -2248,7 +2251,10 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
       if (!started.reusedExisting) {
         await brokeragePlatform.importEvents(mapBrokerageEventsImport(events, { householdId, accountId: securitiesAccount.id, sourceDocumentId: started.documentId, idPrefix: runId }))
       }
-      if (started.status !== 'POSTED') await platformClient.commitImport(started.runId, [])
+      if (started.status !== 'POSTED') {
+        const review = await platformClient.previewImport(started.runId)
+        await platformClient.commitImport(started.runId, [], review.expectedConnectorBinding)
+      }
       setPortfolioImported((current) => new Set([...current, item.id])); onChanged()
       setNotice(started.reusedExisting ? localize("この証券取引ファイルはすでに取り込み済みです。") : localize(`${events.length}件の証券取引を保存しました。`))
     } catch { setNotice(localize("証券取引を保存できませんでした。口座、通貨、原本の合計を確認してください。")) }
@@ -2269,7 +2275,10 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
       if (!started.reusedExisting) newRunId = started.runId
       const result = await aggregateAssetHistoryPlatform.importHistory({ householdId, snapshots: snapshots.map((snapshot) => mapAggregateAssetSnapshotImport(snapshot, { id: crypto.randomUUID(), householdId, sourceDocumentId: started.documentId })) })
       batchPersisted = true
-      if (started.status !== 'POSTED') await platformClient.commitImport(started.runId, [])
+      if (started.status !== 'POSTED') {
+        const review = await platformClient.previewImport(started.runId)
+        await platformClient.commitImport(started.runId, [], review.expectedConnectorBinding)
+      }
       setAggregateAssetImported((current) => new Set([...current, item.id])); onChanged()
       setNotice(result.reusedCount === snapshots.length ? localize("このMoney Forward総資産履歴はすでに取り込み済みです。") : localize(`${result.createdCount}時点の総資産履歴を保存しました。台帳と純資産には加算しません。`))
     } catch {
@@ -2306,7 +2315,11 @@ export function ImportPage({ previews, setPreviews, householdId, accounts, membe
     setActiveRun(stagedImport.summary.runId)
     setNotice('')
     try {
-      const result = await platformClient.commitImport(stagedImport.summary.runId, decisions)
+      const result = await platformClient.commitImport(
+        stagedImport.summary.runId,
+        decisions,
+        stagedImport.expectedConnectorBinding,
+      )
       setStaged((current) => { const next = { ...current }; delete next[previewId]; return next })
       setReceiptStagedIds((current) => { const next = new Set(current); next.delete(previewId); return next })
       setBindingInvalidRunIds((current) => { const next = new Set(current); next.delete(stagedImport.summary.runId); return next })
