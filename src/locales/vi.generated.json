@@ -1,5 +1,9 @@
 {
+  "レビュー範囲": "Phạm vi kiểm tra",
   "レビュー範囲を管理": "Quản lý phạm vi kiểm tra",
+  "対象口座{count}件・読み取りプロファイル設定済み・設定版{version}": "{count} tài khoản · đã đặt hồ sơ phân tích · bản {version}",
+  "対象口座{count}件・読み取りプロファイルなし・設定版{version}": "{count} tài khoản · không có hồ sơ phân tích · bản {version}",
+  "未設定": "Chưa thiết lập",
   "レビュー対象口座": "Tài khoản cần kiểm tra",
   "読み取りプロファイル": "Hồ sơ phân tích",
   "プロファイルを使用しない": "Không dùng hồ sơ phân tích",

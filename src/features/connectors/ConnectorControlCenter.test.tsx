@@ -73,8 +73,10 @@ describe('ConnectorControlCenter', () => {
   beforeEach(() => localStorage.clear())
 
   it('shows aggregate status, badge precedence, dates, counts, and review-only refresh semantics', () => {
+    const lastSuccessAt = new Date(2026, 7, 25, 9, 0).toISOString()
+    const nextDueAt = new Date(2026, 7, 25, 9, 30).toISOString()
     render(<ConnectorControlCenter summaries={[
-      summary(),
+      summary({ lastSuccessAt, nextDueAt }),
       summary({ connectorKind: 'GMAIL', connectionKey: 'gmail-provider-id', displayLabel: 'Receipt mail', health: 'NEEDS_ACTION', lastSuccessAt: null, nextDueAt: null, pendingReviewCount: 0, configurationDestination: 'GMAIL_SETTINGS' }),
     ]} loading={false} error={null} onConfigure={() => undefined} />)
 
@@ -91,6 +93,24 @@ describe('ConnectorControlCenter', () => {
     expect(screen.queryByText('gmail-provider-id')).not.toBeInTheDocument()
     expect(screen.queryByText(/version|cursor|\/Users\//i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /接続|同期|スケジュール|解除/ })).not.toBeInTheDocument()
+  })
+
+  it('renders the redacted binding summary without exposing bound account identities', () => {
+    render(<ConnectorControlCenter summaries={[
+      summary(),
+      summary({
+        connectorKind: 'GMAIL', connectionKey: 'gmail-provider-id', displayLabel: 'Receipt mail',
+        bindingSummary: null, configurationDestination: 'GMAIL_SETTINGS',
+      }),
+    ]} loading={false} error={null} onConfigure={() => undefined} />)
+
+    const bound = screen.getByRole('article', { name: 'Household statements' })
+    expect(within(bound).getByText('レビュー範囲').closest('div')).toHaveTextContent('対象口座2件・読み取りプロファイル設定済み・設定版7')
+    const unbound = screen.getByRole('article', { name: 'Receipt mail' })
+    expect(within(unbound).getByText('レビュー範囲').closest('div')).toHaveTextContent('未設定')
+    expect(document.body.textContent).not.toContain('family-bank')
+    expect(document.body.textContent).not.toContain('profile-bank')
+    expect(document.body.textContent).not.toContain('gmail-provider-id')
   })
 
   it('filters stale and actionable connectors with pressed-state semantics', () => {
