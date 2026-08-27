@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -287,6 +287,7 @@ describe('native macOS build boundary', () => {
   it('removes a newly published identity if final lock release fails', async () => {
     expect(nativeModule.runIsolatedMacBuild).toBeTypeOf('function')
     if (typeof nativeModule.runIsolatedMacBuild !== 'function') return
+    const identityModule = await import('./native-build-identity.mjs')
     const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-release-failure-test-'))
     const repositoryRoot = path.join(temporaryRoot, 'checkout')
     try {
@@ -296,9 +297,17 @@ describe('native macOS build boundary', () => {
         cargoTargetDir: path.join(temporaryRoot, 'target'), homeDirectory: '/Users/synthetic',
         architecture: 'arm64', platform: 'darwin', environment: {},
       })
+      let heldLockPath = ''
       await expect(nativeModule.runIsolatedMacBuild(plan, {
         computeBuildInputIdentity: async () => 'a'.repeat(64),
-        acquireBuildLock: async () => ({ release: async () => { throw new Error('synthetic lock release failure') } }),
+        acquireBuildLock: async (context: typeof plan.context) => {
+          const lock = await identityModule.acquireNativeBuildLock(context, {
+            pid: 46501,
+            unlinkPath: async () => { throw new Error('synthetic lock release failure') },
+          })
+          heldLockPath = lock.path
+          return lock
+        },
         executeCommand: async (command: { phase: string }) => {
           if (command.phase !== 'build') return
           await Promise.all([
@@ -316,6 +325,72 @@ describe('native macOS build boundary', () => {
         },
       })).rejects.toThrow('synthetic lock release failure')
       await expect(stat(plan.artifacts.identityManifest)).rejects.toThrow()
+      expect((await stat(heldLockPath)).isDirectory()).toBe(true)
+      await expect(identityModule.acquireNativeBuildLock(plan.context, { pid: 46502 })).rejects.toThrow(/already exists/)
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps B excluded until A final unlock and never lets delayed A cleanup delete B identity', async () => {
+    expect(nativeModule.runIsolatedMacBuild).toBeTypeOf('function')
+    if (typeof nativeModule.runIsolatedMacBuild !== 'function') return
+    const identityModule = await import('./native-build-identity.mjs')
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-release-linearization-test-'))
+    const repositoryRoot = path.join(temporaryRoot, 'checkout')
+    try {
+      await mkdir(repositoryRoot, { recursive: true })
+      const plan = nativeModule.createMacBuildPlan({
+        bundle: 'release', version: '1.2.1', repositoryRoot,
+        cargoTargetDir: path.join(temporaryRoot, 'target'), homeDirectory: '/Users/synthetic',
+        architecture: 'arm64', platform: 'darwin', environment: {},
+      })
+      let announceReleasePhase!: (phase: string) => void
+      const releasePhase = new Promise<string>((resolve) => { announceReleasePhase = resolve })
+      let continueRelease!: () => void
+      const releaseMayContinue = new Promise<void>((resolve) => { continueRelease = resolve })
+      const settle = async (operation: Promise<unknown>) => (await Promise.allSettled([operation]))[0]
+      const writeIdentity = (builder: string) => async () => {
+        await mkdir(path.dirname(plan.artifacts.identityManifest), { recursive: true })
+        await writeFile(plan.artifacts.identityManifest, `${JSON.stringify({ builder })}\n`)
+        return { builder }
+      }
+      const runBuild = (
+        builder: string,
+        acquireBuildLock?: (context: typeof plan.context) => Promise<{ release(): Promise<void> }>,
+      ) => nativeModule.runIsolatedMacBuild(plan, {
+        computeBuildInputIdentity: async () => 'a'.repeat(64),
+        executeCommand: async () => {},
+        writeBuildIdentity: writeIdentity(builder),
+        ...(acquireBuildLock ? { acquireBuildLock } : {}),
+      })
+
+      const aResultPromise = settle(runBuild('A', (context) => identityModule.acquireNativeBuildLock(context, {
+        pid: 47001,
+        unlinkPath: async (ownerPath: string) => {
+          announceReleasePhase('before-owner-unlink')
+          await releaseMayContinue
+          await unlink(ownerPath)
+        },
+        // Exercised only by the rejected rename-first implementation, after it opens a vacancy.
+        removePath: async () => {
+          announceReleasePhase('after-lock-rename')
+          await releaseMayContinue
+          throw new Error('synthetic delayed A cleanup failure')
+        },
+      })))
+      const observedPhase = await releasePhase
+      const bDuringA = await settle(runBuild('B'))
+      continueRelease()
+      const aResult = await aResultPromise
+      const bAfterA = bDuringA.status === 'rejected' ? await settle(runBuild('B')) : bDuringA
+      const finalIdentity = await readFile(plan.artifacts.identityManifest, 'utf8').catch(() => '')
+
+      expect(observedPhase).toBe('before-owner-unlink')
+      expect(bDuringA.status).toBe('rejected')
+      expect(aResult.status).toBe('fulfilled')
+      expect(bAfterA.status).toBe('fulfilled')
+      expect(finalIdentity).toBe('{"builder":"B"}\n')
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
