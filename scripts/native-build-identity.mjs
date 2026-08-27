@@ -152,16 +152,6 @@ export async function computeNativeBuildInputIdentity(repositoryRoot) {
   return digest.digest('hex')
 }
 
-function defaultProcessAlive(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    if (error?.code === 'ESRCH') return false
-    return true
-  }
-}
-
 function lockDirectoryFor(context) {
   const checkout = checkoutIdentity(context.repositoryRoot)
   return path.join(
@@ -193,42 +183,43 @@ function sameLockOwner(left, right) {
     left?.target === right?.target
 }
 
-async function restoreQuarantinedLock(quarantine, lockDirectory, renamePath) {
+async function restoreReleaseDirectory(releaseDirectory, lockDirectory, renamePath) {
   try {
-    await renamePath(quarantine, lockDirectory)
+    await renamePath(releaseDirectory, lockDirectory)
     return `restored at ${lockDirectory}`
   } catch (error) {
-    return `preserved at ${quarantine}; restore failed: ${error instanceof Error ? error.message : error}`
+    return `preserved at ${releaseDirectory}; restore failed: ${error instanceof Error ? error.message : error}`
   }
 }
 
-async function quarantineObservedLock(lockDirectory, observed, {
+async function releaseOwnedLock(lockDirectory, owner, {
   renamePath,
   removePath,
-  operation,
 }) {
-  const quarantine = path.join(
+  const releaseDirectory = path.join(
     path.dirname(lockDirectory),
-    `.${path.basename(lockDirectory)}.${operation}-${randomUUID()}`,
+    `.${path.basename(lockDirectory)}.release-${owner.token}`,
   )
-  await renamePath(lockDirectory, quarantine)
-  const moved = await readLockOwner(quarantine)
-  if (!sameLockOwner(moved, observed)) {
-    const preservation = await restoreQuarantinedLock(quarantine, lockDirectory, renamePath)
-    throw new Error(`Native build lock ownership changed during ${operation}; replacement ${preservation}`)
+  const current = await readLockOwner(lockDirectory)
+  if (!sameLockOwner(current, owner)) {
+    throw new Error(`Native build lock ownership changed at ${lockDirectory}`)
+  }
+  await renamePath(lockDirectory, releaseDirectory)
+  const moved = await readLockOwner(releaseDirectory)
+  if (!sameLockOwner(moved, owner)) {
+    const preservation = await restoreReleaseDirectory(releaseDirectory, lockDirectory, renamePath)
+    throw new Error(`Native build lock ownership changed during owner release; replacement ${preservation}`)
   }
   try {
-    await removePath(quarantine, { recursive: true, force: false })
+    await removePath(releaseDirectory, { recursive: true, force: false })
   } catch (error) {
-    const preservation = await restoreQuarantinedLock(quarantine, lockDirectory, renamePath)
-    throw new Error(`Native build lock quarantine deletion failed during ${operation}: ${error instanceof Error ? error.message : error}; owner ${preservation}`)
+    const preservation = await restoreReleaseDirectory(releaseDirectory, lockDirectory, renamePath)
+    throw new Error(`Native build lock owner-release deletion failed: ${error instanceof Error ? error.message : error}; owner ${preservation}`)
   }
 }
 
 export async function acquireNativeBuildLock(context, {
   pid = process.pid,
-  isProcessAlive = defaultProcessAlive,
-  recoverStale = process.env.KAKEFLOW_RECOVER_STALE_BUILD_LOCK === '1',
   renamePath = rename,
   removePath = rm,
 } = {}) {
@@ -252,16 +243,7 @@ export async function acquireNativeBuildLock(context, {
     if (!validLockOwner(owner, expectedCheckout, context.macosTarget)) {
       throw new Error(`Native build lock metadata is invalid at ${lockDirectory}; inspect and remove only this exact lock directory manually`)
     }
-    if (isProcessAlive(owner.pid)) {
-      throw new Error(`Native build lock is held by active build process ${owner.pid} at ${lockDirectory}`)
-    }
-    if (!recoverStale) {
-      throw new Error(`Native build lock may be stale at ${lockDirectory}; confirm process ${owner.pid} is gone, then retry with KAKEFLOW_RECOVER_STALE_BUILD_LOCK=1`)
-    }
-    await quarantineObservedLock(lockDirectory, owner, {
-      renamePath, removePath, operation: 'stale recovery',
-    })
-    if (!await acquire()) throw new Error(`Native build lock was concurrently reacquired at ${lockDirectory}`)
+    throw new Error(`Native build lock already exists at ${lockDirectory} for recorded process ${owner.pid}; verify no build process is running, then remove only this exact lock directory manually`)
   }
 
   const owner = {
@@ -274,30 +256,14 @@ export async function acquireNativeBuildLock(context, {
   try {
     await writeFile(path.join(lockDirectory, 'owner.json'), `${JSON.stringify(owner)}\n`, { encoding: 'utf8', flag: 'wx' })
   } catch (error) {
-    const quarantine = path.join(lockParent, `.${path.basename(lockDirectory)}.failed-acquire-${randomUUID()}`)
-    try {
-      await renamePath(lockDirectory, quarantine)
-      const moved = await readLockOwner(quarantine)
-      if (moved && !sameLockOwner(moved, owner)) {
-        const preservation = await restoreQuarantinedLock(quarantine, lockDirectory, renamePath)
-        throw new Error(`Native build lock ownership changed after owner-write failure; replacement ${preservation}`)
-      }
-      await removePath(quarantine, { recursive: true, force: false })
-    } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], `Native build lock owner write failed: ${error instanceof Error ? error.message : error}; cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : cleanupError}`)
-    }
-    throw error
+    throw new Error(`Native build lock owner publication failed at ${lockDirectory}; the lock remains fail-closed and requires manual inspection`, { cause: error })
   }
 
   return {
     path: lockDirectory,
     owner,
     async release() {
-      const current = await readLockOwner(lockDirectory)
-      if (current?.token !== owner.token) throw new Error(`Native build lock ownership changed at ${lockDirectory}`)
-      await quarantineObservedLock(lockDirectory, owner, {
-        renamePath, removePath, operation: 'release',
-      })
+      await releaseOwnedLock(lockDirectory, owner, { renamePath, removePath })
     },
   }
 }

@@ -86,7 +86,7 @@ async function writeBuildInputFixture(repositoryRoot: string) {
 }
 
 describe('native build identity and isolation', () => {
-  it('serializes each checkout/target and recovers only a verifiably dead owner when explicitly requested', async () => {
+  it('never recovers an existing lock even when its recorded owner appears dead and recovery is requested', async () => {
     expect(identityModule.acquireNativeBuildLock).toBeTypeOf('function')
     if (typeof identityModule.acquireNativeBuildLock !== 'function') return
     const root = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-build-lock-test-'))
@@ -94,27 +94,25 @@ describe('native build identity and isolation', () => {
     try {
       await mkdir(context.repositoryRoot, { recursive: true })
       const first = await identityModule.acquireNativeBuildLock(context, {
-        pid: 41001, isProcessAlive: () => true, recoverStale: false,
+        pid: 41001,
       })
+      const originalOwner = await readFile(path.join(first.path, 'owner.json'), 'utf8')
       await expect(identityModule.acquireNativeBuildLock(context, {
         pid: 41002, isProcessAlive: () => true, recoverStale: false,
-      })).rejects.toThrow(/active build process 41001/)
-      await expect(identityModule.acquireNativeBuildLock(context, {
-        pid: 41002, isProcessAlive: () => true, recoverStale: true,
-      })).rejects.toThrow(/active build process 41001/)
+      })).rejects.toThrow(/already exists.*41001.*manually/i)
+      expect(await readFile(path.join(first.path, 'owner.json'), 'utf8')).toBe(originalOwner)
+      const previousRecoveryFlag = process.env.KAKEFLOW_RECOVER_STALE_BUILD_LOCK
+      process.env.KAKEFLOW_RECOVER_STALE_BUILD_LOCK = '1'
+      try {
+        await expect(identityModule.acquireNativeBuildLock(context, {
+          pid: 41003, isProcessAlive: () => false,
+        })).rejects.toThrow(/already exists.*41001.*manually/i)
+      } finally {
+        if (previousRecoveryFlag === undefined) delete process.env.KAKEFLOW_RECOVER_STALE_BUILD_LOCK
+        else process.env.KAKEFLOW_RECOVER_STALE_BUILD_LOCK = previousRecoveryFlag
+      }
+      expect(await readFile(path.join(first.path, 'owner.json'), 'utf8')).toBe(originalOwner)
       await first.release()
-
-      const stale = await identityModule.acquireNativeBuildLock(context, {
-        pid: 41003, isProcessAlive: () => false, recoverStale: false,
-      })
-      await expect(identityModule.acquireNativeBuildLock(context, {
-        pid: 41004, isProcessAlive: () => false, recoverStale: false,
-      })).rejects.toThrow(/KAKEFLOW_RECOVER_STALE_BUILD_LOCK=1/)
-      const recovered = await identityModule.acquireNativeBuildLock(context, {
-        pid: 41004, isProcessAlive: () => false, recoverStale: true,
-      })
-      await expect(stale.release()).rejects.toThrow(/ownership changed/)
-      await recovered.release()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -147,46 +145,56 @@ describe('native build identity and isolation', () => {
       }
       await expect(identityModule.acquireNativeBuildLock(aliasContext, {
         pid: 42002, isProcessAlive: () => true,
-      })).rejects.toThrow(/active build process 42001/)
+      })).rejects.toThrow(/already exists.*42001.*manually/i)
       await first.release()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
 
-  it('atomically quarantines an observed stale lock and preserves a concurrently replaced owner', async () => {
+  it('keeps one occupied lock path continuously closed to two concurrent contenders', async () => {
     expect(identityModule.acquireNativeBuildLock).toBeTypeOf('function')
     if (typeof identityModule.acquireNativeBuildLock !== 'function') return
     const root = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-build-lock-race-test-'))
     const { context } = fixture(root)
     try {
       await mkdir(context.repositoryRoot, { recursive: true })
-      const stale = await identityModule.acquireNativeBuildLock(context, {
-        pid: 43001, isProcessAlive: () => false,
+      const owner = await identityModule.acquireNativeBuildLock(context, {
+        pid: 43001,
       })
-      const replacement = { ...stale.owner, pid: 43002, token: 'replacement-owner-token' }
-      let raced = false
-      await expect(identityModule.acquireNativeBuildLock(context, {
-        pid: 43003,
-        isProcessAlive: () => false,
-        recoverStale: true,
-        renamePath: async (source: string, destination: string) => {
-          if (!raced && source === stale.path) {
-            raced = true
-            await rm(source, { recursive: true, force: false })
-            await mkdir(source)
-            await writeFile(path.join(source, 'owner.json'), `${JSON.stringify(replacement)}\n`)
-          }
-          await rename(source, destination)
-        },
-      })).rejects.toThrow(/ownership changed during stale recovery/)
-      expect(JSON.parse(await readFile(path.join(stale.path, 'owner.json'), 'utf8'))).toMatchObject(replacement)
+      const originalOwner = await readFile(path.join(owner.path, 'owner.json'), 'utf8')
+      let thirdAttempt: Promise<PromiseSettledResult<unknown>> | undefined
+      const secondAttempt = Promise.allSettled([
+        identityModule.acquireNativeBuildLock(context, {
+          pid: 43002,
+          isProcessAlive: () => false,
+          recoverStale: true,
+          renamePath: async (source: string, destination: string) => {
+            await rename(source, destination)
+            thirdAttempt = Promise.allSettled([
+              identityModule.acquireNativeBuildLock(context, {
+                pid: 43003, isProcessAlive: () => false, recoverStale: true,
+              }),
+            ]).then(([result]) => result)
+            await thirdAttempt
+          },
+        }),
+      ]).then(([result]) => result)
+      const second = await secondAttempt
+      const third = thirdAttempt ?? Promise.allSettled([
+        identityModule.acquireNativeBuildLock(context, {
+          pid: 43003, isProcessAlive: () => false, recoverStale: true,
+        }),
+      ]).then(([result]) => result)
+      expect([second.status, (await third).status]).toEqual(['rejected', 'rejected'])
+      expect(await readFile(path.join(owner.path, 'owner.json'), 'utf8')).toBe(originalOwner)
+      await owner.release()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
 
-  it('restores an owned live lock if quarantine deletion fails during release', async () => {
+  it('releases only its own token and never recovers malformed replacement metadata', async () => {
     expect(identityModule.acquireNativeBuildLock).toBeTypeOf('function')
     if (typeof identityModule.acquireNativeBuildLock !== 'function') return
     const root = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-build-lock-release-cleanup-test-'))
@@ -195,11 +203,36 @@ describe('native build identity and isolation', () => {
       await mkdir(context.repositoryRoot, { recursive: true })
       const lock = await identityModule.acquireNativeBuildLock(context, {
         pid: 44001,
-        isProcessAlive: () => true,
-        removePath: async () => { throw new Error('synthetic quarantine deletion failure') },
       })
-      await expect(lock.release()).rejects.toThrow(/synthetic quarantine deletion failure/)
-      expect(JSON.parse(await readFile(path.join(lock.path, 'owner.json'), 'utf8'))).toMatchObject(lock.owner)
+      const replacement = { ...lock.owner, pid: 44002, token: 'replacement-owner-token' }
+      await writeFile(path.join(lock.path, 'owner.json'), `${JSON.stringify(replacement)}\n`)
+      await expect(lock.release()).rejects.toThrow(/ownership changed/)
+      expect(JSON.parse(await readFile(path.join(lock.path, 'owner.json'), 'utf8'))).toEqual(replacement)
+
+      const malformed = '{"schemaVersion":1,"pid":'
+      await writeFile(path.join(lock.path, 'owner.json'), malformed)
+      await expect(identityModule.acquireNativeBuildLock(context, {
+        pid: 44003, isProcessAlive: () => false, recoverStale: true,
+      })).rejects.toThrow(/metadata is invalid.*manually/i)
+      expect(await readFile(path.join(lock.path, 'owner.json'), 'utf8')).toBe(malformed)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('restores its owner-token lock if owner-release deletion fails', async () => {
+    expect(identityModule.acquireNativeBuildLock).toBeTypeOf('function')
+    if (typeof identityModule.acquireNativeBuildLock !== 'function') return
+    const root = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-build-lock-release-cleanup-test-'))
+    const { context } = fixture(root)
+    try {
+      await mkdir(context.repositoryRoot, { recursive: true })
+      const lock = await identityModule.acquireNativeBuildLock(context, {
+        pid: 45001,
+        removePath: async () => { throw new Error('synthetic owner-release deletion failure') },
+      })
+      await expect(lock.release()).rejects.toThrow(/synthetic owner-release deletion failure/)
+      expect(JSON.parse(await readFile(path.join(lock.path, 'owner.json'), 'utf8'))).toEqual(lock.owner)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
