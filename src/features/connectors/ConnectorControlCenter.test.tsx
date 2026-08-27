@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AccountDto, ConnectorBindingDto, ConnectorRefreshBatchProgressDto, ConnectorSummaryDto, ConfigurationDestinationDto } from '../../platform/types'
 import type { DelimitedParserProfileDto } from '../parser-profiles/delimitedParserProfilePlatform'
 import { I18nProvider } from '../../i18n'
-import { ConnectorControlCenter } from './ConnectorControlCenter'
+import { ConnectorControlCenter } from './LocalizedConnectorControlCenter'
 
 const summary = (overrides: Partial<ConnectorSummaryDto> = {}): ConnectorSummaryDto => ({
   schemaVersion: 1,

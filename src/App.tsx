@@ -128,7 +128,7 @@ import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
 import { APP_VERSION } from './version'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
 import { AuditReadinessPage, GlobalLedgerSearch, MonthlyContextNotes, PlanningTools, SecondaryCurrencySummary } from './features/gemini/GeminiFeatureSuite'
-import { ConnectorControlCenter } from './features/connectors/ConnectorControlCenter'
+import { ConnectorControlCenter } from './features/connectors/LocalizedConnectorControlCenter'
 import { loadAllConnectorSummaries } from './features/connectors/connectorControlModel'
 import {
   bindingForReviewSource,

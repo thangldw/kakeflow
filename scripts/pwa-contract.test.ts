@@ -8,8 +8,27 @@ const execFileAsync = promisify(execFile)
 const root = resolve(import.meta.dirname, '..')
 const dist = resolve(root, 'dist')
 const nativeChunkPattern = /(?:^|\/)(?:vendor-)?tauri(?:-|\/)|@tauri-apps/iu
+const nativeRuntimePattern = /(?:__TAURI_INTERNALS__|__TAURI_IPC__|@tauri-apps\/)/u
 const nativeCommandPattern = /(?:connector_(?:control|binding|bindings|refresh)_|google_drive_|gmail_|watched_(?:folder|folders|file_inbox)_|relay_)/u
-const nativePathKeyPattern = /(?:absolutePath|folderPath|relativePath|watchedFolderId)/u
+const providerAuthPattern = /(?:DRIVE_READONLY|GMAIL_READONLY|SYSTEM_BROWSER_LOOPBACK|Authenticating Gmail in system browser|Authorizing Google Drive in system browser|complete authentication using your system browser|https:\/\/www\.googleapis\.com\/auth\/(?:drive|gmail))/iu
+const nativePathKeyPattern = /(?:folderPath|relativePath|watchedFolderId|absolutePath.{0,160}(?:relativePath|watchedFolderId)|(?:relativePath|watchedFolderId).{0,160}absolutePath)/u
+const keychainPattern = /Keychain/u
+
+interface JavascriptArtifact {
+  readonly file: string
+  readonly source: string
+}
+
+function forbiddenJavascriptFindings({ file, source }: JavascriptArtifact): string[] {
+  return [
+    nativeChunkPattern.test(file) ? 'tauri-chunk' : null,
+    nativeRuntimePattern.test(source) ? 'tauri-runtime' : null,
+    nativeCommandPattern.test(source) ? 'native-command' : null,
+    providerAuthPattern.test(source) ? 'provider-auth' : null,
+    keychainPattern.test(source) ? 'keychain' : null,
+    nativePathKeyPattern.test(source) ? 'native-path-dto' : null,
+  ].filter((finding): finding is string => finding !== null)
+}
 
 async function filesBelow(directory: string): Promise<string[]> {
   const entries = await readdir(directory)
@@ -86,28 +105,30 @@ describe('production PWA contract', () => {
       readFile(resolve(dist, 'sw.js'), 'utf8'),
       filesBelow(dist),
     ])
-    const applicationJavascript = (await Promise.all(files
-      .filter((file) => file.endsWith('.js') && !/(?:vendor-ocr|worker-entry|workbox-)/u.test(file))
-      .map((file) => readFile(resolve(dist, file), 'utf8')))).join('\n')
+    const javascriptArtifacts = await Promise.all(files
+      .filter((file) => file.endsWith('.js'))
+      .map(async (file) => ({ file, source: await readFile(resolve(dist, file), 'utf8') })))
     expect(serviceWorker).toMatch(/PP-OCRv5_mobile_det\.tar/u)
     expect(serviceWorker).toMatch(/PP-OCRv5_mobile_rec\.tar/u)
     expect(serviceWorker).toMatch(/ort-wasm-simd-threaded\.jsep/u)
     expect(serviceWorker).not.toMatch(/ort-wasm-simd-threaded\.(?:asyncify|jspi)/u)
     expect(serviceWorker).not.toMatch(/assets\/ort-wasm-simd-threaded\.jsep-[^"\s]+\.wasm/u)
     expect(serviceWorker).not.toMatch(/(?:google-drive|gmail|moneyforward|relay-service|watched-folder)/iu)
-    expect(files).not.toEqual(expect.arrayContaining([
-      expect.stringMatching(nativeChunkPattern),
-    ]))
-    expect(applicationJavascript).not.toMatch(nativeCommandPattern)
-    expect(applicationJavascript).not.toMatch(/(?:DRIVE_READONLY|GMAIL_READONLY|SYSTEM_BROWSER_LOOPBACK|Keychain)/u)
-    expect(applicationJavascript).not.toMatch(nativePathKeyPattern)
+    expect(javascriptArtifacts.length).toBeGreaterThan(0)
+    expect(javascriptArtifacts.flatMap((artifact) => (
+      forbiddenJavascriptFindings(artifact).map((finding) => `${artifact.file}: ${finding}`)
+    ))).toEqual([])
   })
 
   it.each([
-    ['Tauri vendor chunk', 'assets/vendor-tauri-deadbeef.js', nativeChunkPattern],
-    ['connector control command', 'connector_control_list', nativeCommandPattern],
-    ['minified watched path key', '{relativePath:e}', nativePathKeyPattern],
-  ])('recognizes forbidden %s mutations', (_name, value, pattern) => {
-    expect(value).toMatch(pattern)
+    ['Tauri vendor chunk', { file: 'assets/vendor-tauri-deadbeef.js', source: '' }, 'tauri-chunk'],
+    ['Tauri runtime in a generic entry chunk', { file: 'assets/index-a1.js', source: 'globalThis.__TAURI_INTERNALS__' }, 'tauri-runtime'],
+    ['minified connector command in a generic chunk', { file: 'assets/index-a2.js', source: 'const c="connector_refresh_one"' }, 'native-command'],
+    ['provider system-browser authorization copy', { file: 'assets/index-a3.js', source: 'Authorizing Google Drive in system browser...' }, 'provider-auth'],
+    ['provider OAuth scope', { file: 'assets/index-a4.js', source: 'https://www.googleapis.com/auth/gmail.readonly' }, 'provider-auth'],
+    ['Keychain runtime copy', { file: 'assets/index-a5.js', source: 'Open macOS Keychain' }, 'keychain'],
+    ['minified native path DTO', { file: 'assets/index-a6.js', source: 'const x={absolutePath:e,relativePath:t}' }, 'native-path-dto'],
+  ] as const)('recognizes forbidden %s mutations', (_name, artifact, finding) => {
+    expect(forbiddenJavascriptFindings(artifact)).toContain(finding)
   })
 })

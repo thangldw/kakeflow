@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,13 +26,19 @@ vi.mock('./serviceWorker', () => ({
   usePwaServiceWorker: () => ({ ...updateMock, offlineReady: true }),
 }))
 
-import { I18nProvider } from '../i18n'
 import { PwaLedgerClient } from '../platform/pwa/client'
+import type { Household } from '../platform/pwa/types'
 import type { PwaOcrDocument } from './PwaRoot'
 import PwaRoot, { BackupScreen } from './PwaRoot'
 
 const originalFetch = globalThis.fetch
 const passphrase = 'correct horse battery staple'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
+}
 
 const recognizedReceipt: Awaited<ReturnType<PwaOcrDocument>> = {
   method: 'OCR',
@@ -70,7 +76,7 @@ const recognizedReceipt: Awaited<ReturnType<PwaOcrDocument>> = {
 }
 
 async function createConfiguredVault(databaseName: string, ocrDocument: PwaOcrDocument) {
-  render(<I18nProvider><PwaRoot databaseName={databaseName} ocrDocument={ocrDocument} /></I18nProvider>)
+  render(<PwaRoot databaseName={databaseName} ocrDocument={ocrDocument} />)
 
   expect(screen.getByText('LOCAL')).toBeInTheDocument()
   expect(screen.getByText('LOCKED')).toBeInTheDocument()
@@ -166,6 +172,15 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(document.body.textContent).not.toContain('Tanaka')
   })
 
+  it('renders English without overwriting the shared saved locale', () => {
+    localStorage.setItem('kakeflow.locale', 'vi')
+
+    render(<PwaRoot databaseName="pwa-ui-locale-boundary" />)
+
+    expect(screen.getByRole('heading', { name: 'Own your financial record' })).toBeInTheDocument()
+    expect(localStorage.getItem('kakeflow.locale')).toBe('vi')
+  })
+
   it('shows only the local manual source and routes Configure to Import with live pending review count', async () => {
     await createConfiguredVault(
       'pwa-ui-manual-source',
@@ -239,6 +254,45 @@ describe('PWA receipt-to-provenance journey', () => {
 
     expect(await screen.findByText('APPROVED')).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Transaction posted, but the refreshed vault status could not be loaded.')
+  })
+
+  it('does not repopulate a locked screen from a stale vault load', async () => {
+    await createConfiguredVault(
+      'pwa-ui-load-fence',
+      vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    fireEvent.change(screen.getByLabelText('Receipt image'), {
+      target: { files: [new File(['load fence'], 'load-fence.png', { type: 'image/png' })] },
+    })
+    await screen.findByText('CANDIDATE')
+
+    const staleLoad = deferred<Household[]>()
+    const currentLoad = deferred<Household[]>()
+    const listHouseholds = vi.spyOn(PwaLedgerClient.prototype, 'listHouseholds')
+      .mockReturnValueOnce(staleLoad.promise)
+      .mockReturnValueOnce(currentLoad.promise)
+    fireEvent.click(screen.getByLabelText('I compared the receipt and approve this posting'))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and post' }))
+    await waitFor(() => expect(listHouseholds).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    await screen.findByRole('heading', { name: 'Unlock local vault' })
+    await act(async () => {
+      staleLoad.resolve([{ id: 'stale-household', name: 'Stale household', baseCurrency: 'JPY' }])
+      await Promise.resolve()
+    })
+
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock vault' }))
+    await waitFor(() => expect(listHouseholds).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('heading', { name: 'Set up your household' })).toBeInTheDocument()
+    expect(screen.queryByText('Stale household')).not.toBeInTheDocument()
+
+    await act(async () => {
+      currentLoad.resolve([{ id: 'household', name: 'Home', baseCurrency: 'JPY' }])
+    })
+    await screen.findByRole('heading', { name: 'Household overview' })
   })
 
   it('keeps incomplete OCR visible and prevents posting', async () => {

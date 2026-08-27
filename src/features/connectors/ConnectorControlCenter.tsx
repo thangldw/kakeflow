@@ -9,7 +9,6 @@ import type {
   DeleteConnectorBindingInputDto,
   UpsertConnectorBindingInputDto,
 } from '../../platform/types'
-import { useI18n } from '../../i18n'
 import type { DelimitedParserProfileDto } from '../parser-profiles/delimitedParserProfilePlatform'
 import {
   aggregateConnectorSummaries,
@@ -19,7 +18,12 @@ import {
 import type { ConnectorControlFilter, ConnectorPrimaryState } from './connectorControlModel'
 import './ConnectorControlCenter.css'
 
-interface Props {
+export interface ConnectorControlCenterCopy {
+  readonly localeCode: string
+  readonly text: (source: string) => string
+}
+
+export interface ConnectorControlCenterProps {
   readonly summaries: readonly ConnectorSummaryDto[]
   readonly loading: boolean
   readonly error: string | null
@@ -27,6 +31,7 @@ interface Props {
   readonly bindingManagementUnavailable?: boolean
   readonly bindingManagement?: ConnectorBindingManagement
   readonly refreshManagement?: ConnectorRefreshManagement
+  readonly copy?: ConnectorControlCenterCopy
 }
 
 export interface ConnectorBindingManagement {
@@ -67,8 +72,13 @@ const stateLabel: Readonly<Record<ConnectorPrimaryState, string>> = {
   DISCONNECTED: '未接続',
 }
 
-export function ConnectorControlCenter({ summaries, loading, error, onConfigure, bindingManagementUnavailable = false, bindingManagement, refreshManagement }: Props) {
-  const { localeCode, text } = useI18n()
+const japaneseCopy: ConnectorControlCenterCopy = {
+  localeCode: 'ja-JP',
+  text: (source) => source,
+}
+
+export function ConnectorControlCenter({ summaries, loading, error, onConfigure, bindingManagementUnavailable = false, bindingManagement, refreshManagement, copy = japaneseCopy }: ConnectorControlCenterProps) {
+  const { localeCode, text } = copy
   const [filter, setFilter] = useState<ConnectorControlFilter>('ALL')
   const [editingIdentity, setEditingIdentity] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -139,7 +149,7 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
     </div>
 
     {refreshManagement?.error && <p className="connector-control-state" role="alert">{refreshErrorLabel}</p>}
-    {refreshManagement?.batch && <ConnectorRefreshProgress batch={refreshManagement.batch} summaries={summaries} />}
+    {refreshManagement?.batch && <ConnectorRefreshProgress batch={refreshManagement.batch} summaries={summaries} copy={copy} />}
 
     {loading ? <p className="connector-control-state" role="status">{text('コネクタの状態を読み込んでいます…')}</p>
       : error !== null ? <p className="connector-control-state" role="alert">{text('コネクタの状態を読み込めませんでした。')}</p>
@@ -171,14 +181,15 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
                   key={`${summary.connectorKind}:${summary.connectionKey}`}
                   summary={summary}
                   management={bindingManagement}
+                  copy={copy}
                 />}
               </article>
             })}</div>}
   </section>
 }
 
-function ConnectorRefreshProgress({ batch, summaries }: { readonly batch: ConnectorRefreshBatchProgressDto; readonly summaries: readonly ConnectorSummaryDto[] }) {
-  const { localeCode, text } = useI18n()
+function ConnectorRefreshProgress({ batch, summaries, copy }: { readonly batch: ConnectorRefreshBatchProgressDto; readonly summaries: readonly ConnectorSummaryDto[]; readonly copy: ConnectorControlCenterCopy }) {
+  const { localeCode, text } = copy
   const summaryByIdentity = new Map(summaries.map((summary) => [connectorIdentity(summary), summary]))
   const headline = batch.status === 'ACTIVE'
     ? text('更新の進行: {completed} / {total}').replace('{completed}', batch.terminalCount.toLocaleString(localeCode)).replace('{total}', batch.totalCount.toLocaleString(localeCode))
@@ -234,11 +245,12 @@ function refreshItemLabel(item: ConnectorRefreshItemDto, localeCode: string, tex
   return text('設定を確認してください')
 }
 
-function ConnectorBindingEditor({ summary, management }: {
+function ConnectorBindingEditor({ summary, management, copy }: {
   readonly summary: ConnectorSummaryDto
   readonly management: ConnectorBindingManagement
+  readonly copy: ConnectorControlCenterCopy
 }) {
-  const { text } = useI18n()
+  const { text } = copy
   const binding = management.bindings.find((item) => item.connectorKind === summary.connectorKind && item.connectionKey === summary.connectionKey) ?? null
   const [selectedAccountIds, setSelectedAccountIds] = useState<readonly string[]>(binding?.allowedAccountIds ?? [])
   const [selectedParserToken, setSelectedParserToken] = useState(binding?.parserProfileId && binding.parserProfileVersion
