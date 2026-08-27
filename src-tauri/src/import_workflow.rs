@@ -3352,6 +3352,11 @@ mod tests {
             .execute_batch(include_str!("../migrations/0070_connector_bindings.sql"))
             .expect("install connector binding schema");
         connection
+            .execute_batch(include_str!(
+                "../migrations/0072_connector_binding_generations.sql"
+            ))
+            .expect("install connector binding generation schema");
+        connection
     }
 
     fn request(run: &str, document: &str, sha: char) -> StartImport {
@@ -3566,7 +3571,8 @@ mod tests {
         let reviewed = preview
             .expected_connector_binding
             .expect("binding v1 must be part of the review DTO");
-        assert_eq!(reviewed.version, 1);
+        assert_eq!(reviewed.version, Some(1));
+        assert_eq!(reviewed.generation, 1);
 
         crate::connector_binding::upsert_binding(
             &connection,
@@ -3675,18 +3681,18 @@ mod tests {
             "vault://unbound-manual",
         )
         .unwrap();
-        assert_eq!(
-            preview_import(&unbound, "unbound-manual")
-                .unwrap()
-                .expected_connector_binding,
-            None
-        );
+        let unbound_review = preview_import(&unbound, "unbound-manual")
+            .unwrap()
+            .expected_connector_binding
+            .expect("unbound connector identity must be snapshotted");
+        assert_eq!(unbound_review.version, None);
+        assert_eq!(unbound_review.generation, 0);
         assert_eq!(
             super::commit_import(
                 &unbound,
                 "unbound-manual",
                 &[decision("unbound-manual", 1_000)],
-                None,
+                Some(&unbound_review),
             )
             .unwrap()
             .posted_count,

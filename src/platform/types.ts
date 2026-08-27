@@ -1009,7 +1009,8 @@ export interface ConnectorBindingDto {
 export interface ImportBindingExpectationDto {
   readonly connectorKind: ConnectorKindDto
   readonly connectionKey: string
-  readonly version: number
+  readonly version: number | null
+  readonly generation: number
 }
 export interface UpsertConnectorBindingInputDto {
   readonly householdId: string

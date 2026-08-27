@@ -1348,14 +1348,15 @@ function parseImportBindingExpectation(value: unknown): ImportBindingExpectation
   if (value === null) return null
   try {
     const record = asRecord(value)
-    assertExactFields(record, new Set(['connectorKind', 'connectionKey', 'version']), 'import binding expectation')
+    assertExactFields(record, new Set(['connectorKind', 'connectionKey', 'version', 'generation']), 'import binding expectation')
     const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'import binding expectation')
     const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'import binding expectation')
     validateManualConnectorKey(connectorKind, connectionKey)
     return {
       connectorKind,
       connectionKey,
-      version: asPositiveSafeInteger(record.version, 'import binding expectation'),
+      version: record.version === null ? null : asPositiveSafeInteger(record.version, 'import binding expectation'),
+      generation: asSafeInteger(record.generation),
     }
   } catch {
     throw new TypeError('import binding expectation')

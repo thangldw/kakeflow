@@ -2263,7 +2263,7 @@ describe('KakeFlow desktop read models', () => {
           mediaType: source?.mediaType ?? 'text/csv', byteSize: source?.byteSize ?? 42,
           sha256: source?.sha256 ?? 'synthetic-source-hash', audienceVisibility: 'SHARED', audienceMemberId: null,
         },
-        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 1 },
+        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 1, generation: 1 },
         candidates: [candidate],
       }
     })
@@ -2279,7 +2279,7 @@ describe('KakeFlow desktop read models', () => {
       if (!capturedImport || !capturedCandidate || runId !== capturedImport.runId || decision?.candidateId !== capturedCandidate.id) {
         throw new Error('commit does not match the staged synthetic import')
       }
-      if (expectedConnectorBinding?.connectorKind !== 'MANUAL_IMPORT' || expectedConnectorBinding.connectionKey !== 'manual-import' || expectedConnectorBinding.version !== 1) {
+      if (expectedConnectorBinding?.connectorKind !== 'MANUAL_IMPORT' || expectedConnectorBinding.connectionKey !== 'manual-import' || expectedConnectorBinding.version !== 1 || expectedConnectorBinding.generation !== 1) {
         throw new Error('commit does not preserve the reviewed connector binding')
       }
       const debit = decision.entries.filter(({ side }) => side === 'DEBIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)

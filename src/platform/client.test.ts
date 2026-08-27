@@ -500,7 +500,7 @@ describe('platform client', () => {
       import_preview: {
         summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
         source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123', audienceVisibility: 'SHARED', audienceMemberId: null },
-        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', version: 7 },
+        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', version: 7, generation: 9 },
         candidates: [{
           id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
           amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
@@ -657,7 +657,7 @@ describe('platform client', () => {
     await expect(client.listPendingReviews('family')).resolves.toEqual(responses.pending_review_list)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
-    const expectedConnectorBinding = { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 7 }
+    const expectedConnectorBinding = { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 7, generation: 9 }
     await expect(client.commitImport('run-1', decisions, expectedConnectorBinding)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
     await expect(client.createBackup('long secure passphrase')).resolves.toEqual(responses.backup_create)
@@ -1169,16 +1169,20 @@ describe('platform client', () => {
     }).previewImport('run')
 
     await expect(parse(null)).resolves.toMatchObject({ expectedConnectorBinding: null })
-    await expect(parse({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1 })).resolves.toMatchObject({
-      expectedConnectorBinding: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1 },
+    await expect(parse({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: 3 })).resolves.toMatchObject({
+      expectedConnectorBinding: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: 3 },
+    })
+    await expect(parse({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: null, generation: 0 })).resolves.toMatchObject({
+      expectedConnectorBinding: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: null, generation: 0 },
     })
     for (const malformed of [
       undefined,
-      { connectorKind: 'DROPBOX', connectionKey: 'gmail-primary', version: 1 },
-      { connectorKind: 'GMAIL', connectionKey: '', version: 1 },
-      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129), version: 1 },
-      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0 },
-      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: Number.MAX_SAFE_INTEGER + 1 },
+      { connectorKind: 'DROPBOX', connectionKey: 'gmail-primary', version: 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: '', version: 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129), version: 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: Number.MAX_SAFE_INTEGER + 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: Number.MAX_SAFE_INTEGER + 1 },
     ]) {
       await expect(parse(malformed)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
     }
@@ -1188,8 +1192,8 @@ describe('platform client', () => {
     const client = createPlatformClient({ tauri: true, invoke })
     for (const malformed of [
       undefined,
-      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0 },
-      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, providerAccountId: 'secret' },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: 1, providerAccountId: 'secret' },
     ]) {
       expect(() => client.commitImport('run', [], malformed as never)).toThrow('import binding expectation')
     }
