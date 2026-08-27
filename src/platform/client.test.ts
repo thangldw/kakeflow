@@ -1165,7 +1165,8 @@ describe('platform client', () => {
       await expect(parse(malformed)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
     }
 
-    const invoke = vi.fn(async () => ({ runId: 'run', postedCount: 0 }))
+    const invokeSpy = vi.fn(async () => ({ runId: 'run', postedCount: 0 }))
+    const invoke: Invoke = async <T>() => await invokeSpy() as T
     const client = createPlatformClient({ tauri: true, invoke })
     for (const malformed of [
       undefined,
@@ -1174,7 +1175,7 @@ describe('platform client', () => {
     ]) {
       expect(() => client.commitImport('run', [], malformed as never)).toThrow('import binding expectation')
     }
-    expect(invoke).not.toHaveBeenCalled()
+    expect(invokeSpy).not.toHaveBeenCalled()
   })
 
   it('sanitizes receipt review DTOs and rejects malformed structured evidence', async () => {
