@@ -16,12 +16,15 @@ import {
   primaryConnectorState,
 } from './connectorControlModel'
 import type { ConnectorControlFilter, ConnectorPrimaryState } from './connectorControlModel'
-import './ConnectorControlCenter.css'
+import {
+  ConnectorControlCard,
+  ConnectorControlDetails,
+  ConnectorControlFrame,
+  ConnectorControlList,
+  type ConnectorControlCenterCopy,
+} from './ConnectorControlPresentation'
 
-export interface ConnectorControlCenterCopy {
-  readonly localeCode: string
-  readonly text: (source: string) => string
-}
+export type { ConnectorControlCenterCopy } from './ConnectorControlPresentation'
 
 export interface ConnectorControlCenterProps {
   readonly summaries: readonly ConnectorSummaryDto[]
@@ -125,22 +128,15 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
     await perform(`disconnect:${connectorIdentity(summary)}`, trigger, () => refreshManagement!.onDisconnect(summary))
   }
 
-  return <section className="panel connector-control" aria-labelledby="connector-control-title">
-    <div className="connector-control-heading">
-      <div>
-        <h2 id="connector-control-title" tabIndex={-1}>{text('コネクタ管理センター')}</h2>
-        <p>{text('接続状態、更新、レビュー待ちを一か所で管理します。認証とスケジュールは各設定画面で管理します。')}</p>
-      </div>
-      <p className="connector-control-review-note">{text('更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。')}</p>
-    </div>
-
-    <dl className="connector-control-totals">
-      <div><dt>{text('接続済み')}</dt><dd>{totals.connected}</dd></div>
-      <div><dt>{text('古いデータ')}</dt><dd>{totals.stale}</dd></div>
-      <div><dt>{text('更新中')}</dt><dd>{totals.running}</dd></div>
-      <div><dt>{text('要対応')}</dt><dd>{totals.needsAction}</dd></div>
-    </dl>
-
+  return <ConnectorControlFrame labels={{
+    title: text('コネクタ管理センター'),
+    description: text('接続状態、更新、レビュー待ちを一か所で管理します。認証とスケジュールは各設定画面で管理します。'),
+    reviewNote: text('更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。'),
+    connected: text('接続済み'),
+    stale: text('古いデータ'),
+    running: text('更新中'),
+    needsAction: text('要対応'),
+  }} totals={totals}>
     <div className="connector-control-toolbar">
       <div className="connector-control-filters" role="group" aria-label={text('コネクタを絞り込む')}>
         {FILTERS.map((value) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{text(filterLabel[value])}</button>)}
@@ -155,37 +151,42 @@ export function ConnectorControlCenter({ summaries, loading, error, onConfigure,
       : error !== null ? <p className="connector-control-state" role="alert">{text('コネクタの状態を読み込めませんでした。')}</p>
         : summaries.length === 0 ? <p className="connector-control-state">{text('表示できるコネクタはありません。')}</p>
           : visible.length === 0 ? <p className="connector-control-state">{text('この条件に一致するコネクタはありません。')}</p>
-            : <div className="connector-control-list">{visible.map((summary) => {
+            : <ConnectorControlList>{visible.map((summary) => {
               const primaryState = primaryConnectorState(summary)
               const identity = connectorIdentity(summary)
               const refreshLabel = summary.health === 'RETRY_BACKOFF' && summary.capabilities.includes('RETRY') ? text('再試行') : text('更新')
-              return <article className="connector-control-card" aria-label={summary.displayLabel} key={`${summary.connectorKind}:${summary.connectionKey}`}>
-                <div className="connector-control-card-heading">
-                  <div><h3>{summary.displayLabel}</h3><span className={`connector-control-badge connector-control-badge--${primaryState.toLowerCase()}`}>{text(stateLabel[primaryState])}</span></div>
-                  <div className="connector-control-actions">
+              return <ConnectorControlCard
+                key={`${summary.connectorKind}:${summary.connectionKey}`}
+                label={summary.displayLabel}
+                primaryState={primaryState}
+                stateLabel={text(stateLabel[primaryState])}
+                actions={<>
                     {refreshManagement && canRefresh(summary) && <button className="secondary-btn" type="button" disabled={refreshManagement.starting || activeRefresh || pendingAction !== null} onClick={(event) => void perform(`refresh:${identity}`, event.currentTarget, () => refreshManagement.onRefresh(summary))}>{refreshLabel}</button>}
                     <button className="secondary-btn" data-connector-configure type="button" onClick={() => onConfigure(summary.configurationDestination)}>{text('設定を開く')}</button>
                     {refreshManagement && canDisconnect(summary) && <button className="secondary-btn" type="button" disabled={activeRefresh || pendingAction !== null} onClick={(event) => void disconnect(summary, event.currentTarget)}>{text('接続解除')}</button>}
                     {bindingManagement && summary.capabilities.includes('ACCOUNT_BINDING') && <button className="secondary-btn" type="button" onClick={() => setEditingIdentity(`${summary.connectorKind}:${summary.connectionKey}`)}>{text('レビュー範囲を管理')}</button>}
-                  </div>
-                </div>
+                </>}
+              >
                 {bindingManagementUnavailable && summary.capabilities.includes('ACCOUNT_BINDING') && <p className="connector-control-unavailable"><strong>{text('レビュー範囲を管理')}</strong>{' — '}{text('この実行環境では利用できません。デスクトップ版の設定を確認してください。')}</p>}
                 {summary.availability === 'RUNTIME_UNSUPPORTED' && <p className="connector-control-unavailable">{text('この実行環境では利用できません。デスクトップ版の設定を確認してください。')}</p>}
                 {summary.availability === 'CONFIG_MISSING' && <p className="connector-control-unavailable">{text('このコネクタには追加設定が必要です。')}</p>}
-                <dl className="connector-control-details">
-                  <div><dt>{text('最後に成功した更新')}</dt><dd>{formatDate(summary.lastSuccessAt, text('成功した更新はまだありません'))}</dd></div>
-                  <div><dt>{text('次回の予定更新')}</dt><dd>{formatDate(summary.nextDueAt, text('スケジュールなし'))}</dd></div>
-                  <div><dt>{text('レビュー待ち')}</dt><dd>{formatPendingCount(summary.pendingReviewCount)}</dd></div>
-                </dl>
+                <ConnectorControlDetails
+                  lastSuccessLabel={text('最後に成功した更新')}
+                  lastSuccess={formatDate(summary.lastSuccessAt, text('成功した更新はまだありません'))}
+                  nextDueLabel={text('次回の予定更新')}
+                  nextDue={formatDate(summary.nextDueAt, text('スケジュールなし'))}
+                  pendingReviewLabel={text('レビュー待ち')}
+                  pendingReview={formatPendingCount(summary.pendingReviewCount)}
+                />
                 {bindingManagement && editingIdentity === `${summary.connectorKind}:${summary.connectionKey}` && <ConnectorBindingEditor
                   key={`${summary.connectorKind}:${summary.connectionKey}`}
                   summary={summary}
                   management={bindingManagement}
                   copy={copy}
                 />}
-              </article>
-            })}</div>}
-  </section>
+              </ConnectorControlCard>
+            })}</ConnectorControlList>}
+  </ConnectorControlFrame>
 }
 
 function ConnectorRefreshProgress({ batch, summaries, copy }: { readonly batch: ConnectorRefreshBatchProgressDto; readonly summaries: readonly ConnectorSummaryDto[]; readonly copy: ConnectorControlCenterCopy }) {

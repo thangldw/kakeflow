@@ -1,30 +1,49 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 const passphrase = 'synthetic offline vault passphrase 2026'
 const householdName = 'Synthetic Offline Household 8f2c'
 const receiptPath = resolve('src/features/import/fixtures/ocr/receipt-tax-marker.synthetic.jpg')
+
+interface OfflineNetworkAttempt {
+  readonly kind: 'non-service-worker-response' | 'request-failed'
+  readonly method: string
+  readonly url: string
+}
+
+function monitorOfflineNetwork(page: Page) {
+  const attempts: OfflineNetworkAttempt[] = []
+  let active = false
+  page.on('response', (response) => {
+    if (active && /^https?:/u.test(response.url()) && !response.fromServiceWorker()) {
+      attempts.push({ kind: 'non-service-worker-response', method: response.request().method(), url: response.url() })
+    }
+  })
+  page.on('requestfailed', (request) => {
+    if (active && /^https?:/u.test(request.url())) {
+      attempts.push({ kind: 'request-failed', method: request.method(), url: request.url() })
+    }
+  })
+  return {
+    attempts,
+    start: () => { active = true },
+  }
+}
+
+function assertNoOfflineNetwork(attempts: readonly OfflineNetworkAttempt[]) {
+  if (attempts.length > 0) {
+    throw new Error(`Offline journey attempted network:\n${attempts.map(({ kind, method, url }) => `${kind} ${method} ${url}`).join('\n')}`)
+  }
+}
 
 test('posts a synthetic receipt, reloads offline, and restores an encrypted archive', async ({
   context,
   page,
 }) => {
   const requests: { method: string; url: string }[] = []
-  const journeyNetworkRequests: { method: string; url: string }[] = []
-  const journeyFailedRequests: { method: string; url: string }[] = []
-  let measuringOfflineJourney = false
+  const offlineNetwork = monitorOfflineNetwork(page)
   page.on('request', (request) => requests.push({ method: request.method(), url: request.url() }))
-  page.on('response', (response) => {
-    if (measuringOfflineJourney && /^https?:/u.test(response.url()) && !response.fromServiceWorker()) {
-      journeyNetworkRequests.push({ method: response.request().method(), url: response.url() })
-    }
-  })
-  page.on('requestfailed', (request) => {
-    if (measuringOfflineJourney && /^https?:/u.test(request.url())) {
-      journeyFailedRequests.push({ method: request.method(), url: request.url() })
-    }
-  })
 
   await page.goto('/kakeflow/app/')
   await expect(page.getByRole('heading', { name: 'Own your financial record' })).toBeVisible()
@@ -44,13 +63,13 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller))
   await context.setOffline(true)
+  offlineNetwork.start()
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.getByRole('heading', { name: 'Unlock local vault' })).toBeVisible()
   await page.getByLabel('Vault passphrase').fill(passphrase)
   await page.getByRole('button', { name: 'Unlock vault' }).click()
   await expect(page.getByRole('heading', { name: 'Household overview' })).toBeVisible()
 
-  measuringOfflineJourney = true
   await page.getByRole('button', { name: 'Sources' }).click()
   const manualSource = page.getByRole('article', { name: 'Manual import' })
   await expect(manualSource).toBeVisible()
@@ -69,9 +88,6 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
 
   await page.getByRole('button', { name: 'Sources' }).click()
   await expect(manualSource.getByText('Pending review').locator('..')).toContainText('1 item')
-  expect(journeyNetworkRequests).toEqual([])
-  expect(journeyFailedRequests).toEqual([])
-  measuringOfflineJourney = false
   await page.getByRole('button', { name: 'Review' }).click()
 
   const post = page.getByRole('button', { name: 'Approve and post' })
@@ -127,9 +143,26 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   expect(cacheEvidence.cacheNames.length).toBeGreaterThan(0)
   expect(cacheEvidence.leakedValues).toEqual([])
   expect(cacheEvidence.urls.some((url) => /blob:|kakeflow-encrypted-vault|receipt-tax-marker/u.test(url))).toBe(false)
+  assertNoOfflineNetwork(offlineNetwork.attempts)
 
   const networkRequests = requests.filter(({ url }) => /^https?:/u.test(url))
   expect(networkRequests.length).toBeGreaterThan(0)
   expect(networkRequests.every(({ method }) => method === 'GET')).toBe(true)
   expect(networkRequests.every(({ url }) => new URL(url).origin === 'http://127.0.0.1:4173')).toBe(true)
+})
+
+test('offline network guard rejects an unprecached fetch', async ({ context, page }) => {
+  const offlineNetwork = monitorOfflineNetwork(page)
+  await page.goto('/kakeflow/app/')
+  await page.evaluate(async () => { await navigator.serviceWorker.ready })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller))
+  await context.setOffline(true)
+  offlineNetwork.start()
+
+  await page.evaluate(async () => {
+    await fetch('/kakeflow/app/unprecached-network-guard-probe.json').catch(() => undefined)
+  })
+  await expect.poll(() => offlineNetwork.attempts.length).toBe(1)
+  expect(() => assertNoOfflineNetwork(offlineNetwork.attempts)).toThrow(/unprecached-network-guard-probe/u)
 })
