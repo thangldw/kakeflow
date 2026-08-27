@@ -40,6 +40,21 @@ export function hostOcrTarget(platform = process.platform, architecture = proces
   throw new Error(`Packaged OCR is not defined for ${platform}/${architecture}`)
 }
 
+export function macOcrContractForTauriTarget(target) {
+  if (target !== 'aarch64-apple-darwin') {
+    throw new Error(`OCR-backed macOS packaging supports only aarch64-apple-darwin, not ${target}`)
+  }
+  return { target: 'macos-arm64', architecture: 'arm64' }
+}
+
+export function assertMacOcrArchitectures(output, expectedArchitecture) {
+  const architectures = String(output).trim().split(/\s+/u).filter(Boolean)
+  if (expectedArchitecture !== 'arm64' || architectures.length !== 1 || architectures[0] !== expectedArchitecture) {
+    throw new Error(`Packaged Tesseract must contain exactly arm64 code; received ${architectures.join(' ') || 'none'}`)
+  }
+  return architectures
+}
+
 export function ocrTargetContract(target) {
   const platform = TARGETS[target]
   if (!platform) throw new Error(`Unsupported packaged OCR target: ${target}`)

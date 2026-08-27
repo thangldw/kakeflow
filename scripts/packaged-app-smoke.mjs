@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { verifyNativeBuildIdentity } from './native-build-identity.mjs'
 import { resolveMacBuildContext } from './native-macos-build.mjs'
 
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
@@ -180,6 +181,18 @@ export async function runPackagedSmoke({
   const executableStat = await stat(executable)
   if (!executableStat.isFile() || executableStat.size === 0) {
     throw new Error(`Packaged app executable is invalid: ${executable}`)
+  }
+  if (process.platform === 'darwin') {
+    const app = path.resolve(path.dirname(executable), '..', '..')
+    const releaseDirectory = path.resolve(app, '..', '..', '..')
+    const packageVersion = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version
+    await verifyNativeBuildIdentity({
+      repositoryRoot: root,
+      releaseDirectory,
+      version: packageVersion,
+      artifact: 'app',
+      artifactPath: app,
+    })
   }
   const buildPathFindings = await packagedBuildPathFindings(executable)
   if (buildPathFindings.length > 0) {

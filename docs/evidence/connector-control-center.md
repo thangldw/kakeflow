@@ -24,18 +24,18 @@ This is a control plane over import sources. It is not direct institution aggreg
 
 ## Verification gates
 
-Node commands used `PATH=/opt/homebrew/opt/node@22/bin:$PATH TZ=Asia/Tokyo`; Rust commands used `PATH="$HOME/.cargo/bin:$PATH" TZ=Asia/Tokyo`.
+Node commands used `PATH=/opt/homebrew/opt/node@22/bin:$PATH TZ=Asia/Tokyo`; native packaging additionally placed `$HOME/.cargo/bin` on `PATH` and set `RUSTUP_TOOLCHAIN=1.97.0`. Rust commands used `PATH="$HOME/.cargo/bin:$PATH" TZ=Asia/Tokyo`.
 
 | Command | Result |
 | --- | --- |
 | `npm audit` | Passed; 0 vulnerabilities. |
 | `npm audit --omit=dev` | Passed; 0 vulnerabilities. |
 | `npm exec vitest run src/platform/client.test.ts src/features/connectors src/App.desktop.test.tsx src/platform/pwa/client.test.ts src/pwa/PwaRoot.test.tsx scripts/pwa-contract.test.ts` | Passed; 8 files, 246/246 tests. |
-| `npm exec vitest run scripts/native-macos-build.test.ts scripts/packaged-app-smoke.test.ts scripts/dmg-install-smoke.test.ts scripts/release-version-contract.test.mjs` | Passed; 4 files, 20/20 tests. |
-| `npm exec vitest run scripts/ocr-resource-contract.test.mjs` and `npm run ocr:verify` | Passed; 9/9 contract tests and the staged Tesseract runtime/model/privacy verification. |
+| `npm exec vitest run scripts/native-macos-build.test.ts scripts/native-build-identity.test.ts scripts/desktop-release.test.ts scripts/packaged-app-smoke.test.ts scripts/dmg-install-smoke.test.ts scripts/release-version-contract.test.mjs scripts/ocr-resource-contract.test.mjs` | Passed; 7 files, 43/43 tests. |
+| `npm run ocr:verify` | Passed; staged Tesseract runtime/model/privacy verification and exactly one arm64 slice. |
 | `cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_` | Passed; 59/59 library tests. |
 | `npm run lint` | Passed. |
-| `npm run test:functional` | Passed; 130 files, 909/909 tests. |
+| `npm run test:functional` | Passed; 132 files, 923/923 tests. |
 | `npm run build` | Passed; 1,781 modules transformed. |
 | `npm run build:pwa` | Passed; 61 modules transformed and 25 entries precached. |
 | `cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml` | Passed; 724/724 tests: 694 library, 15 family-delivery, 6 Gmail-store, and 9 Google-Drive-store. |
@@ -43,8 +43,8 @@ Node commands used `PATH=/opt/homebrew/opt/node@22/bin:$PATH TZ=Asia/Tokyo`; Rus
 | `npm exec vitest run scripts/update-channel-contract.test.mjs scripts/release-version-contract.test.mjs scripts/github-actions-pins.test.ts` | Passed; 3 files, 26/26 tests. |
 | `npm run test:pwa:e2e` | Passed; 2/2 Playwright tests. |
 | `TAURI_SIGNING_PRIVATE_KEY='<opaque-environment-injection>' TAURI_SIGNING_PRIVATE_KEY_PASSWORD='<opaque-environment-injection>' npm run desktop:build:mac:ci` | Passed after opaque signing-environment injection; app, DMG, updater archive, and updater signature created. |
-| `npm run test:packaged` | Passed; 13 visible-page checks, 14 interaction checks, IPC, and schema v71. |
-| `npm run test:dmg` | Passed; v1.2.1 read-only mount, whole-bundle privacy guard, and bundle integrity. |
+| `npm run test:packaged` | Passed; build identity, 13 visible-page checks, 14 interaction checks, IPC, schema v71, and whole-bundle privacy. |
+| `npm run test:dmg` | Passed; build identity, v1.2.1 read-only mount, whole-bundle privacy, and bundle integrity. |
 
 The first macOS composite attempt omitted `TAURI_SIGNING_PRIVATE_KEY`: the ad-hoc app and DMG were produced, then updater signing correctly failed closed because only the public key was configured. The successful retry used opaque environment injection; the secret source and its location remain outside tracked documentation, and no key bytes or signature secret were printed or copied into evidence.
 
@@ -54,9 +54,10 @@ The first macOS composite attempt omitted `TAURI_SIGNING_PRIVATE_KEY`: the ad-ho
 - Poppler review checklist: `artifacts/pdf-report-visual-qa/VISUAL_REVIEW.md`. It is an uncompleted human-review input, not evidence that a reviewer approved the pages.
 - Rendered fixtures: `artifacts/pdf-report-visual-qa/{monthly,annual,investment-performance,portfolio-snapshot}/page-0001.png`, each 1,190 × 1,684 pixels. All four are the same synthetic placeholder page; they do not prove report-specific content, visual variety, or visual quality.
 - Native application: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app`.
-- Updater archive: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app.tar.gz`, SHA-256 `61c96f6587224ee3ffe537ae5bf08d9ced8f6b118bddd382ac9b62251fd6177d`.
-- Updater signature: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app.tar.gz.sig`, SHA-256 `17d5578085b6888880eea99ebbb84514c988215e550ee774984c25e390c16548`.
-- DMG: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/dmg/KakeFlow_1.2.1_aarch64.dmg`, SHA-256 `76133d49676b23cb5c775f9e6980560f310bb9ff6e4618e25ede54127457d4e7`.
+- Updater archive: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app.tar.gz`, SHA-256 `bf9bb45e5bb29a8eab7308260e42a8fa5887cc60f4ac9a7cbe09c5d0f6a04779`.
+- Updater signature: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app.tar.gz.sig`, SHA-256 `2e5bf58cce72f6c5fff65f836f616316a59ff37a999f7d0b2048cb37a76469d8`.
+- DMG: `<neutral-cargo-target>/aarch64-apple-darwin/release/bundle/dmg/KakeFlow_1.2.1_aarch64.dmg`, SHA-256 `c74479626676a0fd374dffa0ebde1c4dc52f10ef567d3b0764e221e6a3450f0b`.
+- Build identity: `<neutral-cargo-target>/aarch64-apple-darwin/release/kakeflow-build-identity.json`, SHA-256 `e7e6a02e174f063bc8d2798948a95316647b115393b9e6546a1a71ad92b012e1`.
 
 `codesign --verify --deep --strict` passed for the app. Its recorded identity is `Signature=adhoc` and `TeamIdentifier=not set`; the build explicitly skipped Apple notarization because no notarization credentials were present. These are local verification artifacts, not a release. They are not Developer ID signed or notarized and are not presented as a frictionless production installer.
 
@@ -64,7 +65,9 @@ The first macOS composite attempt omitted `TAURI_SIGNING_PRIVATE_KEY`: the ad-ho
 
 The fresh PWA build, native build, Poppler manifest/checklist/PNGs, Playwright result, package resources, connector batch test sources, and this evidence were inspected for credential values, authorization-code values, cursor values, personal absolute paths, provider folder/label values, personal emails, real financial payloads, premium branding, and unsupported direct-institution or installer claims.
 
-The first package scan rejected the executable because Rust, Tauri, and OpenSSL build literals retained the local home root. The rejected post-link byte rewrite was removed: it was section-blind and affected unrelated native-library strings. The retained macOS-only build wrapper chooses a deterministic neutral `CARGO_TARGET_DIR`, passes an explicit Apple target, and injects Rust path remapping at compile time through `CARGO_ENCODED_RUSTFLAGS`; it rejects personal target directories, unsupported hosts/targets, and ambiguous plain `RUSTFLAGS`. Artifact resolution follows the configured target and architecture, including universal bundles, without a global Tauri hook or final Mach-O mutation.
+The first package scan rejected the executable because Rust, Tauri, and OpenSSL build literals retained the local home root. The rejected post-link byte rewrite was removed: it was section-blind and affected unrelated native-library strings. The retained macOS-only build wrapper chooses a deterministic neutral `CARGO_TARGET_DIR`, passes `aarch64-apple-darwin` explicitly, and injects Rust path remapping at compile time through `CARGO_ENCODED_RUSTFLAGS`; it rejects personal target directories, x64/fat targets, unsupported hosts, and ambiguous plain `RUSTFLAGS`. Tesseract verification requires exactly one arm64 slice. Until target-specific or fat OCR resources exist, no x64 or universal macOS package capability is claimed.
+
+Both generic `desktop:release` and the macOS CI entry point route through that wrapper on macOS; protected target, bundle, config, and debug arguments cannot bypass it. Other platforms retain direct Tauri dispatch. Each checkout/target has an atomic lock. A dead, well-formed owner can be recovered only through explicit `KAKEFLOW_RECOVER_STALE_BUILD_LOCK=1`; active or malformed locks fail closed and require inspection of the exact reported lock. Before building, only the resolved app, updater, signature, DMG, and previous identity are removed. A source- and byte-bound identity manifest is written atomically only after success, and both smokes reject missing, mismatched, interrupted, or stale outputs before launch or mount. The first isolated invocation without Cargo on `PATH` demonstrated this failure boundary: it left no success identity and released the lock; the pinned-toolchain retry produced the recorded artifacts in one release invocation.
 
 A subsequent whole-bundle scan exposed two generated dependencies that an executable-only scan missed. The PWA core generator now uses its own neutral Cargo target and compile-time Rust remapping; its contract rejects personal roots in both the tracked WASM and production PWA WASM. The macOS OCR stage now builds under a neutral temporary vcpkg root, disables restoration from a user binary cache, and makes OCR verification reject personal roots in Tesseract before packaging. The rebuilt raw executable, all 14 regular files in the `.app`, all 14 files extracted from the updater, and all 16 files on the read-only-mounted DMG contain no macOS or Windows personal build-root marker. Package and DMG runtime smokes pass.
 

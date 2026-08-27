@@ -16,7 +16,7 @@ export function assertReleaseVersion(version) {
 
 export function macDmgArtifactName(version, architecture) {
   assertReleaseVersion(version)
-  assert(['aarch64', 'x64', 'universal'].includes(architecture), `Unsupported macOS DMG architecture: ${architecture}`)
+  assert(architecture === 'aarch64', `Unsupported macOS DMG architecture: ${architecture}`)
   return `KakeFlow_${version}_${architecture}.dmg`
 }
 

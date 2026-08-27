@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import { dmgForVersion, mountIsReadOnly, runDmgInstallSmoke, validateBundleMetadata } from './dmg-install-smoke.mjs'
 
@@ -7,10 +10,13 @@ describe('macOS DMG install smoke harness', () => {
     expect(dmgForVersion('0.9.0', {
       repositoryRoot: '/repo with spaces/財務',
       cargoTargetDir: '/private/tmp/KakeFlow Build/成果物',
-      macosTarget: 'universal-apple-darwin',
+      macosTarget: 'aarch64-apple-darwin',
       homeDirectory: '/Users/synthetic',
       temporaryDirectory: '/private/tmp',
-    })).toBe('/private/tmp/KakeFlow Build/成果物/universal-apple-darwin/release/bundle/dmg/KakeFlow_0.9.0_universal.dmg')
+    })).toBe('/private/tmp/KakeFlow Build/成果物/aarch64-apple-darwin/release/bundle/dmg/KakeFlow_0.9.0_aarch64.dmg')
+    for (const macosTarget of ['x86_64-apple-darwin', 'universal-apple-darwin']) {
+      expect(() => dmgForVersion('0.9.0', { macosTarget })).toThrow(/only aarch64-apple-darwin/)
+    }
     expect(() => dmgForVersion('0.9.0', { macosTarget: 'i686-apple-darwin' })).toThrow(/Unsupported macOS target/)
   })
 
@@ -23,5 +29,17 @@ describe('macOS DMG install smoke harness', () => {
 
   it('rejects Windows explicitly instead of claiming installer coverage', async () => {
     await expect(runDmgInstallSmoke({ platform: 'win32', expectedVersion: '0.9.0' })).rejects.toThrow(/Windows installer coverage is not claimed/)
+  })
+
+  it('rejects a DMG without a successful build identity before mounting it', async () => {
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-dmg-identity-test-'))
+    const dmg = path.join(temporaryRoot, 'release', 'bundle', 'dmg', 'KakeFlow_1.2.1_aarch64.dmg')
+    try {
+      await mkdir(path.dirname(dmg), { recursive: true })
+      await writeFile(dmg, 'stale dmg without a build identity')
+      await expect(runDmgInstallSmoke({ platform: 'darwin', expectedVersion: '1.2.1', dmg })).rejects.toThrow(/Successful native build identity is required/)
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
   })
 })
