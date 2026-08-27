@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ConnectorControlCenter } from '../features/connectors/ConnectorControlCenter'
-import { I18nProvider, useI18n } from '../i18n'
+import type { ConnectorControlCenterCopy } from '../features/connectors/ConnectorControlCenter'
 import type { ExtractedDocumentDto } from '../platform'
 import type { ConnectorSummaryDto } from '../platform/types'
 import { parseReceiptText, type ReceiptTextFields } from '../features/import/receiptText'
@@ -17,7 +17,7 @@ import type {
   TransactionDetail,
 } from '../platform/pwa/types'
 import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
-import { usePwaClient } from './usePwaClient'
+import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
 import './pwa.css'
 
 export type PwaOcrDocument = (
@@ -50,6 +50,31 @@ const navigation: readonly { id: Screen; label: string; step: string }[] = [
   { id: 'evidence', label: 'Evidence', step: '06' },
   { id: 'backup', label: 'Backup', step: '07' },
 ]
+
+const pwaConnectorCopyText: Readonly<Record<string, string>> = {
+  'コネクタ管理センター': 'Connector control center',
+  '接続状態、更新、レビュー待ちを一か所で管理します。認証とスケジュールは各設定画面で管理します。': 'Review the local source and pending items in one place.',
+  '更新はレビュー候補を作成します。台帳へ自動記帳されることはありません。': 'Imports create review candidates. Nothing is posted automatically.',
+  '接続済み': 'Connected',
+  '古いデータ': 'Stale',
+  '更新中': 'Running',
+  '要対応': 'Needs action',
+  'コネクタを絞り込む': 'Filter sources',
+  'すべて': 'All',
+  '手動': 'Manual',
+  '設定を開く': 'Open settings',
+  '最後に成功した更新': 'Last successful refresh',
+  '成功した更新はまだありません': 'No successful refresh yet',
+  '次回の予定更新': 'Next scheduled refresh',
+  'スケジュールなし': 'Not scheduled',
+  'レビュー待ち': 'Pending review',
+  '{count}件': '{count} items',
+}
+
+const pwaConnectorCopy: ConnectorControlCenterCopy = {
+  localeCode: 'en-US',
+  text: (source) => pwaConnectorCopyText[source] ?? source,
+}
 
 const defaultOcrDocument: PwaOcrDocument = async (bytes, mediaType) => {
   const { paddleOcrDocument } = await import('../features/import/paddleOcr')
@@ -105,19 +130,7 @@ function receiptProvenance(
   })
 }
 
-export default function PwaRoot(props: PwaRootProps) {
-  return <I18nProvider><EnglishPwaRoot {...props} /></I18nProvider>
-}
-
-function EnglishPwaRoot(props: PwaRootProps) {
-  const { locale, setLocale } = useI18n()
-  useLayoutEffect(() => {
-    if (locale !== 'en') setLocale('en')
-  }, [locale, setLocale])
-  return locale === 'en' ? <PwaRootContent {...props} /> : null
-}
-
-function PwaRootContent({
+export default function PwaRoot({
   databaseName = 'kakeflow-pwa-v1',
   ocrDocument = defaultOcrDocument,
 }: PwaRootProps) {
@@ -139,31 +152,42 @@ function PwaRootContent({
   const [creditAccountId, setCreditAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const vaultLoadGeneration = useRef(0)
   const serviceWorker = usePwaServiceWorker()
 
-  const loadVault = useCallback(async (client: PwaLedgerClient) => {
-    const households = await client.listHouseholds()
-    const active = households[0] ?? null
-    setHousehold(active)
-    if (!active) {
-      setAccounts([])
-      setSummary(null)
-      setTransactions([])
-      setConnectorSummaries([])
-      return
+  const loadVault = useCallback(async (client: PwaLedgerClient): Promise<boolean> => {
+    const generation = ++vaultLoadGeneration.current
+    try {
+      const households = await client.listHouseholds()
+      if (generation !== vaultLoadGeneration.current) return false
+      const active = households[0] ?? null
+      if (!active) {
+        setHousehold(null)
+        setAccounts([])
+        setSummary(null)
+        setTransactions([])
+        setConnectorSummaries([])
+        return true
+      }
+      const [nextAccounts, nextSummary, nextTransactions, nextConnectorSummaries] = await Promise.all([
+        client.listAccounts(active.id),
+        client.dashboard(active.id),
+        client.listTransactions(active.id),
+        client.listConnectorSummaries(active.id),
+      ])
+      if (generation !== vaultLoadGeneration.current) return false
+      setHousehold(active)
+      setAccounts(nextAccounts)
+      setSummary(nextSummary)
+      setTransactions(nextTransactions)
+      setConnectorSummaries(nextConnectorSummaries)
+      setDebitAccountId(nextAccounts.find((account) => account.kind === 'EXPENSE')?.id ?? '')
+      setCreditAccountId(nextAccounts.find((account) => account.kind === 'ASSET')?.id ?? '')
+      return true
+    } catch (cause) {
+      if (generation !== vaultLoadGeneration.current) return false
+      throw cause
     }
-    const [nextAccounts, nextSummary, nextTransactions, nextConnectorSummaries] = await Promise.all([
-      client.listAccounts(active.id),
-      client.dashboard(active.id),
-      client.listTransactions(active.id),
-      client.listConnectorSummaries(active.id),
-    ])
-    setAccounts(nextAccounts)
-    setSummary(nextSummary)
-    setTransactions(nextTransactions)
-    setConnectorSummaries(nextConnectorSummaries)
-    setDebitAccountId(nextAccounts.find((account) => account.kind === 'EXPENSE')?.id ?? '')
-    setCreditAccountId(nextAccounts.find((account) => account.kind === 'ASSET')?.id ?? '')
   }, [])
 
   const submitVault = async (create: boolean) => {
@@ -185,7 +209,7 @@ function PwaRootContent({
       setScreen('overview')
       await loadVault(client)
     } catch (cause) {
-      setError(messageOf(cause))
+      if (!isPwaClientOperationSuperseded(cause)) setError(messageOf(cause))
     }
   }
 
@@ -274,7 +298,7 @@ function PwaRootContent({
         ],
       })
       try {
-        await loadVault(session.client)
+        if (!await loadVault(session.client)) return
       } catch {
         setError('Transaction posted, but the refreshed vault status could not be loaded.')
       }
@@ -318,6 +342,7 @@ function PwaRootContent({
       setScreen('overview')
       await loadVault(client)
     } catch (cause) {
+      if (isPwaClientOperationSuperseded(cause)) return
       setError(messageOf(cause))
       throw cause
     } finally {
@@ -326,7 +351,10 @@ function PwaRootContent({
   }
 
   const lockVault = () => {
+    vaultLoadGeneration.current += 1
     session.lockVault()
+    setBusy(false)
+    setError(null)
     setPassphrase('')
     setDraft(null)
     setPosted(null)
@@ -404,6 +432,7 @@ function PwaRootContent({
           summaries={connectorSummaries}
           loading={false}
           error={null}
+          copy={pwaConnectorCopy}
           onConfigure={(destination) => {
             if (destination === 'IMPORT_INBOX') setScreen('import')
           }}

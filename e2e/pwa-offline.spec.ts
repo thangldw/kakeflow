@@ -11,7 +11,20 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   page,
 }) => {
   const requests: { method: string; url: string }[] = []
+  const journeyNetworkRequests: { method: string; url: string }[] = []
+  const journeyFailedRequests: { method: string; url: string }[] = []
+  let measuringOfflineJourney = false
   page.on('request', (request) => requests.push({ method: request.method(), url: request.url() }))
+  page.on('response', (response) => {
+    if (measuringOfflineJourney && /^https?:/u.test(response.url()) && !response.fromServiceWorker()) {
+      journeyNetworkRequests.push({ method: response.request().method(), url: response.url() })
+    }
+  })
+  page.on('requestfailed', (request) => {
+    if (measuringOfflineJourney && /^https?:/u.test(request.url())) {
+      journeyFailedRequests.push({ method: request.method(), url: request.url() })
+    }
+  })
 
   await page.goto('/kakeflow/app/')
   await expect(page.getByRole('heading', { name: 'Own your financial record' })).toBeVisible()
@@ -37,13 +50,12 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await page.getByRole('button', { name: 'Unlock vault' }).click()
   await expect(page.getByRole('heading', { name: 'Household overview' })).toBeVisible()
 
-  const sourceRequestsBefore = requests.length
+  measuringOfflineJourney = true
   await page.getByRole('button', { name: 'Sources' }).click()
   const manualSource = page.getByRole('article', { name: 'Manual import' })
   await expect(manualSource).toBeVisible()
   await expect(manualSource.getByText('Pending review').locator('..')).toContainText('0 items')
   await expect(manualSource.getByRole('button')).toHaveCount(1)
-  expect(requests).toHaveLength(sourceRequestsBefore)
   await manualSource.getByRole('button', { name: 'Open settings' }).click()
   await expect(page.getByRole('heading', { name: 'Import a receipt' })).toBeVisible()
   await page.getByLabel('Receipt image').setInputFiles(receiptPath)
@@ -55,10 +67,11 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await expect(page.getByText('¥254', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('difference ¥0')).toBeVisible()
 
-  const sourceRequestsAfterStage = requests.length
   await page.getByRole('button', { name: 'Sources' }).click()
   await expect(manualSource.getByText('Pending review').locator('..')).toContainText('1 item')
-  expect(requests).toHaveLength(sourceRequestsAfterStage)
+  expect(journeyNetworkRequests).toEqual([])
+  expect(journeyFailedRequests).toEqual([])
+  measuringOfflineJourney = false
   await page.getByRole('button', { name: 'Review' }).click()
 
   const post = page.getByRole('button', { name: 'Approve and post' })
