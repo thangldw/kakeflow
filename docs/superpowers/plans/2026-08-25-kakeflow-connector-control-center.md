@@ -21,7 +21,7 @@
 - `Refresh all` snapshots at most 10,000 connector rows, pages source stores in groups of 100, runs deterministically and sequentially, records every result, and never truncates an over-limit snapshot.
 - The PWA exposes only its local manual-import source. Production PWA code and bundles must continue to exclude native OAuth, Keychain, relay, watched-folder, and provider runtime implementations.
 - Current v1.2.1 no-regression floors are 804 frontend tests and 644 Rust tests; new coverage raises the actual totals rather than freezing them.
-- Use `PATH=/opt/homebrew/opt/node@22/bin:$PATH` for npm commands and `PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0` for Rust commands.
+- Use `PATH=/opt/homebrew/opt/node@22/bin:$PATH` for npm commands and `PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0` for Rust commands.
 - macOS remains ad-hoc signed. Do not describe the DMG as notarized, Developer ID signed, or a frictionless production installer.
 
 ---
@@ -58,7 +58,7 @@ Cover the exact badge precedence `NEEDS_ACTION > RUNNING > RETRY_BACKOFF > STALE
 Run:
 
 ```bash
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_control::tests
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_control::tests
 ```
 
 Expected: failure because `connector_control` does not exist.
@@ -165,7 +165,7 @@ Seed two households, connected/configuring/disconnected Drive and Gmail rows, en
 - [ ] **Step 2: Verify RED**
 
 ```bash
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_projection::tests
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_projection::tests
 ```
 
 Expected: missing projection module.
@@ -285,7 +285,7 @@ Add binding tests for one to 256 allowed account IDs, optimistic create/update/d
 - [ ] **Step 2: Verify RED**
 
 ```bash
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_binding::tests
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_binding::tests
 ```
 
 Expected: migration/module missing.
@@ -408,7 +408,7 @@ Cover deterministic item ordering, explicit `SKIPPED_MANUAL`, exactly 10,000 acc
 - [ ] **Step 2: Verify RED**
 
 ```bash
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_refresh::tests
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_refresh::tests
 ```
 
 Expected: migration/module missing.
@@ -467,7 +467,7 @@ Use a synthetic executor to prove sequential deterministic execution, no overlap
 - [ ] **Step 2: Verify RED**
 
 ```bash
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_refresh_worker::tests
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_refresh_worker::tests
 ```
 
 Expected: worker missing.
@@ -625,7 +625,7 @@ Use mocked public PlatformClient DTOs plus real model/component state to show mo
 
 ```bash
 PATH=/opt/homebrew/opt/node@22/bin:$PATH npm exec vitest run src/platform/client.test.ts src/features/connectors src/App.desktop.test.tsx src/platform/pwa/client.test.ts src/pwa/PwaRoot.test.tsx scripts/pwa-contract.test.ts
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml connector_
 ```
 
 Expected: all connector, binding, refresh, native UI, and PWA tests pass.
@@ -639,7 +639,7 @@ PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run lint
 PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run test:functional
 PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build
 PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build:pwa
-PATH=/Users/thang/.cargo/bin:$PATH cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml
+PATH="$HOME/.cargo/bin:$PATH" cargo +1.97.0 test --manifest-path src-tauri/Cargo.toml
 ```
 
 Expected: both audits report zero vulnerabilities; frontend exceeds 804 passing tests; Rust exceeds 644 passing tests; lint and both builds exit 0.

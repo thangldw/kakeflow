@@ -8,6 +8,13 @@ export const OCR_FIXED_HASHES = Object.freeze({
   'tessdata/configs/tsv': '59d079bb75d8b3d7c839a3564580cb559e362c93a9d70f234e421c0c3e767e04',
 })
 
+const personalBuildRootMarkers = ['/Users/', 'C:\\Users\\']
+
+export function personalBuildPathFindings(bytes) {
+  const executableBytes = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  return personalBuildRootMarkers.filter((marker) => executableBytes.includes(Buffer.from(marker)))
+}
+
 const TARGETS = Object.freeze({
   'macos-arm64': Object.freeze({
     target: 'macos-arm64',

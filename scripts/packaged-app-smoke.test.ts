@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { spawn } from 'node:child_process'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
   executableForPlatform,
   launchArgumentsForPlatform,
+  packagedBuildPathFindings,
   personalBuildPathFindings,
-  scrubPersonalBuildRoots,
   terminateChild,
   validateSmokeResult,
 } from './packaged-app-smoke.mjs'
@@ -18,35 +21,49 @@ describe('packaged app smoke harness', () => {
   })
 
   it('resolves the native artifacts produced by each CI package build', () => {
-    expect(executableForPlatform('darwin', '/repo')).toBe(
-      '/repo/src-tauri/target/release/bundle/macos/KakeFlow.app/Contents/MacOS/kakeflow',
+    expect(executableForPlatform('darwin', {
+      repositoryRoot: '/repo with spaces/財務',
+      cargoTargetDir: '/private/tmp/KakeFlow Build/成果物',
+      macosTarget: 'universal-apple-darwin',
+      homeDirectory: '/Users/synthetic',
+      temporaryDirectory: '/private/tmp',
+    })).toBe(
+      '/private/tmp/KakeFlow Build/成果物/universal-apple-darwin/release/bundle/macos/KakeFlow.app/Contents/MacOS/kakeflow',
     )
-    expect(executableForPlatform('win32', 'C:\\repo')).toMatch(/kakeflow\.exe$/)
+    expect(executableForPlatform('win32', { repositoryRoot: 'C:\\repo' })).toMatch(/kakeflow\.exe$/)
     expect(() => executableForPlatform('linux', '/repo')).toThrow(/macOS and Windows/)
     expect(launchArgumentsForPlatform('darwin')).toEqual(['-ApplePersistenceIgnoreState', 'YES'])
     expect(launchArgumentsForPlatform('win32')).toEqual([])
   })
 
-  it('rejects personal build roots embedded in a packaged executable', () => {
+  it('rejects personal build roots anywhere in a packaged app bundle', async () => {
     expect(personalBuildPathFindings(Buffer.from(
       'dependency /Users/synthetic/.cargo/registry and C:\\Users\\synthetic\\.cargo',
     ))).toEqual(['/Users/', 'C:\\Users\\'])
     expect(personalBuildPathFindings(Buffer.from(
       'relative .cargo/registry and bundled runtime /home/web_user',
     ))).toEqual([])
-  })
 
-  it('scrubs exact personal build roots without changing executable length', () => {
-    const original = Buffer.from(
-      'one /Users/synthetic/.cargo two C:\\Users\\synthetic\\repo three',
-    )
-    const scrubbed = scrubPersonalBuildRoots(original, [
-      '/Users/synthetic',
-      'C:\\Users\\synthetic',
-    ])
-    expect(scrubbed).toHaveLength(original.length)
-    expect(scrubbed.toString()).not.toContain('synthetic')
-    expect(personalBuildPathFindings(scrubbed)).toEqual([])
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-packaged-privacy-test-'))
+    const executable = path.join(temporaryRoot, 'KakeFlow.app', 'Contents', 'MacOS', 'kakeflow')
+    const resource = path.join(temporaryRoot, 'KakeFlow.app', 'Contents', 'Resources', 'nested', 'metadata.bin')
+    try {
+      await Promise.all([
+        mkdir(path.dirname(executable), { recursive: true }),
+        mkdir(path.dirname(resource), { recursive: true }),
+      ])
+      await Promise.all([
+        writeFile(executable, 'neutral executable'),
+        writeFile(resource, 'dependency /Users/synthetic/build'),
+      ])
+      expect(await packagedBuildPathFindings(executable, 'darwin')).toEqual([
+        'Contents/Resources/nested/metadata.bin:/Users/',
+      ])
+      await writeFile(resource, 'dependency /kakeflow-build-home/build')
+      expect(await packagedBuildPathFindings(executable, 'darwin')).toEqual([])
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
   })
 
   it('accepts only a complete successful boot, IPC, and migration result', () => {

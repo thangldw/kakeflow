@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { resolveMacBuildContext } from './native-macos-build.mjs'
 
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 const defaultTimeoutMs = 90_000
@@ -13,28 +14,39 @@ export function personalBuildPathFindings(bytes) {
   return personalBuildRootMarkers.filter((marker) => executableBytes.includes(Buffer.from(marker)))
 }
 
-export function scrubPersonalBuildRoots(bytes, roots) {
-  const scrubbed = Buffer.from(bytes)
-  for (const root of roots) {
-    const rootBytes = Buffer.from(root)
-    if (rootBytes.length === 0) continue
-    const replacement = Buffer.alloc(rootBytes.length, '.'.charCodeAt(0))
-    Buffer.from('<build-root>').copy(replacement, 0, 0, rootBytes.length)
-    let offset = scrubbed.indexOf(rootBytes)
-    while (offset !== -1) {
-      replacement.copy(scrubbed, offset)
-      offset = scrubbed.indexOf(rootBytes, offset + replacement.length)
-    }
-  }
-  return scrubbed
+async function regularFilesBelow(directory) {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const target = path.join(directory, entry.name)
+    if (entry.isDirectory()) return regularFilesBelow(target)
+    return entry.isFile() ? [target] : []
+  }))
+  return nested.flat()
 }
 
-export function executableForPlatform(platform = process.platform, repositoryRoot = root) {
-  const release = path.join(repositoryRoot, 'src-tauri', 'target', 'release')
+export async function packagedBuildPathFindings(executable, platform = process.platform) {
+  const packageRoot = platform === 'darwin'
+    ? path.resolve(path.dirname(executable), '..', '..')
+    : executable
+  const files = platform === 'darwin' ? await regularFilesBelow(packageRoot) : [executable]
+  const findings = []
+  for (const file of files) {
+    for (const marker of personalBuildPathFindings(await readFile(file))) {
+      findings.push(`${path.relative(packageRoot, file) || path.basename(file)}:${marker}`)
+    }
+  }
+  return findings
+}
+
+export function executableForPlatform(platform = process.platform, options = {}) {
+  const normalized = typeof options === 'string' ? { repositoryRoot: options } : options
   if (platform === 'darwin') {
-    return path.join(release, 'bundle', 'macos', 'KakeFlow.app', 'Contents', 'MacOS', 'kakeflow')
+    const context = resolveMacBuildContext({ repositoryRoot: root, ...normalized })
+    return path.join(context.releaseDirectory, 'bundle', 'macos', 'KakeFlow.app', 'Contents', 'MacOS', 'kakeflow')
   }
   if (platform === 'win32') {
+    const repositoryRoot = path.resolve(normalized.repositoryRoot ?? root)
+    const release = path.join(repositoryRoot, 'src-tauri', 'target', 'release')
     return path.join(release, 'kakeflow.exe')
   }
   throw new Error(`Packaged app smoke is supported only on macOS and Windows, not ${platform}`)
@@ -169,9 +181,9 @@ export async function runPackagedSmoke({
   if (!executableStat.isFile() || executableStat.size === 0) {
     throw new Error(`Packaged app executable is invalid: ${executable}`)
   }
-  const buildPathFindings = personalBuildPathFindings(await readFile(executable))
+  const buildPathFindings = await packagedBuildPathFindings(executable)
   if (buildPathFindings.length > 0) {
-    throw new Error(`Packaged app executable contains personal build roots: ${buildPathFindings.join(', ')}`)
+    throw new Error(`Packaged app bundle contains personal build roots: ${buildPathFindings.join(', ')}`)
   }
 
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-packaged-smoke-'))
@@ -192,7 +204,7 @@ export async function runPackagedSmoke({
       artifactPaths.push(resultArtifact)
     }
     console.log(
-      `Packaged app smoke passed (${result.visualEvidence.visitedPages.length} visible page, ${result.visualEvidence.interactionCount} interaction, IPC, schema v${result.schemaVersion})`,
+      `Packaged app smoke passed (${result.visualEvidence.visitedPages.length} visible page, ${result.visualEvidence.interactionCount} interaction, IPC, schema v${result.schemaVersion}, bundle privacy)`,
     )
     return { ...result, dataRoot, artifactPaths }
   } finally {

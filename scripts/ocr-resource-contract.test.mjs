@@ -8,6 +8,7 @@ import {
   inspectPeX64Imports,
   isAllowedStaticWindowsImport,
   ocrTargetContract,
+  personalBuildPathFindings,
   requiredOcrFiles,
   tesseractSmokeArguments,
 } from './ocr-resource-contract.mjs'
@@ -117,6 +118,15 @@ describe('packaged OCR resource contract', () => {
     })
   })
 
+  it('rejects personal build roots in a packaged OCR executable', () => {
+    expect(personalBuildPathFindings(Buffer.from(
+      'mac /Users/synthetic/build windows C:\\Users\\synthetic\\build',
+    ))).toEqual(['/Users/', 'C:\\Users\\'])
+    expect(personalBuildPathFindings(Buffer.from(
+      '/kakeflow-ocr-build and /private/tmp/kakeflow-ocr-build',
+    ))).toEqual([])
+  })
+
   it('makes Windows staging explicit and verifies before NSIS packaging', () => {
     const root = path.resolve(import.meta.dirname, '..')
     const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -128,5 +138,10 @@ describe('packaged OCR resource contract', () => {
     expect(staging).toContain("$TesseractVersion = '5.5.2'")
     expect(staging).toContain("$Triplet = 'x64-windows-static-kakeflow'")
     expect(staging).toContain("'windows-x64'")
+    const macStaging = readFileSync(path.join(root, 'scripts', 'stage-ocr-resources-macos.sh'), 'utf8')
+    expect(macStaging).toContain('kakeflow-ocr-build-${TRIPLET}')
+    expect(macStaging).toContain('KAKEFLOW_OCR_BUILD_CACHE must use a neutral non-personal build root.')
+    expect(macStaging).toContain('--binarysource=clear')
+    expect(macStaging).not.toContain('${HOME}/Library/Caches/KakeFlow/ocr-build')
   })
 })

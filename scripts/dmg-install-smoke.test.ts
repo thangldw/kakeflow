@@ -4,9 +4,14 @@ import { dmgForVersion, mountIsReadOnly, runDmgInstallSmoke, validateBundleMetad
 
 describe('macOS DMG install smoke harness', () => {
   it('resolves Tauri DMG architecture names without pretending to support other platforms', () => {
-    expect(dmgForVersion('0.9.0', 'arm64', '/repo')).toBe('/repo/src-tauri/target/release/bundle/dmg/KakeFlow_0.9.0_aarch64.dmg')
-    expect(() => dmgForVersion('0.9.0', 'x64', '/repo')).toThrow(/Unsupported macOS DMG architecture/)
-    expect(() => dmgForVersion('0.9.0', 'ia32', '/repo')).toThrow(/Unsupported macOS DMG architecture/)
+    expect(dmgForVersion('0.9.0', {
+      repositoryRoot: '/repo with spaces/財務',
+      cargoTargetDir: '/private/tmp/KakeFlow Build/成果物',
+      macosTarget: 'universal-apple-darwin',
+      homeDirectory: '/Users/synthetic',
+      temporaryDirectory: '/private/tmp',
+    })).toBe('/private/tmp/KakeFlow Build/成果物/universal-apple-darwin/release/bundle/dmg/KakeFlow_0.9.0_universal.dmg')
+    expect(() => dmgForVersion('0.9.0', { macosTarget: 'i686-apple-darwin' })).toThrow(/Unsupported macOS target/)
   })
 
   it('requires exact bundle identity/version/executable and a read-only mount', () => {
