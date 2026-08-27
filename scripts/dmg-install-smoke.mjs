@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { macArtifactPaths } from './native-macos-build.mjs'
+import { verifyNativeBuildIdentity } from './native-build-identity.mjs'
 import { packagedBuildPathFindings } from './packaged-app-smoke.mjs'
 
 const execFile = promisify(execFileCallback)
@@ -70,6 +71,13 @@ export async function runDmgInstallSmoke({
   if (!existsSync(image)) throw new Error(`KakeFlow DMG does not exist: ${image}`)
   const imageStat = await stat(image)
   if (!imageStat.isFile() || imageStat.size === 0) throw new Error(`KakeFlow DMG is invalid: ${image}`)
+  await verifyNativeBuildIdentity({
+    repositoryRoot: root,
+    releaseDirectory: path.resolve(path.dirname(image), '..', '..'),
+    version: packageVersion,
+    artifact: 'dmg',
+    artifactPath: image,
+  })
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-dmg-smoke-'))
   const mountPoint = path.join(temporaryRoot, 'volume')
@@ -109,7 +117,7 @@ export async function runDmgInstallSmoke({
     const resources = path.join(app, 'Contents', 'Resources')
     const resourcesStat = await stat(resources)
     if (!resourcesStat.isDirectory()) throw new Error('Mounted KakeFlow resources are missing')
-    await execFile(process.execPath, [path.join(root, 'scripts', 'verify-ocr-resources.mjs')], {
+    await execFile(process.execPath, [path.join(root, 'scripts', 'verify-ocr-resources.mjs'), '--target', 'macos-arm64', '--expected-architecture', 'arm64'], {
       cwd: root,
       env: { ...process.env, KAKEFLOW_OCR_RESOURCE_ROOT: path.join(resources, 'ocr') },
     })

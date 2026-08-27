@@ -9,6 +9,7 @@ import {
   launchArgumentsForPlatform,
   packagedBuildPathFindings,
   personalBuildPathFindings,
+  runPackagedSmoke,
   terminateChild,
   validateSmokeResult,
 } from './packaged-app-smoke.mjs'
@@ -24,11 +25,11 @@ describe('packaged app smoke harness', () => {
     expect(executableForPlatform('darwin', {
       repositoryRoot: '/repo with spaces/財務',
       cargoTargetDir: '/private/tmp/KakeFlow Build/成果物',
-      macosTarget: 'universal-apple-darwin',
+      macosTarget: 'aarch64-apple-darwin',
       homeDirectory: '/Users/synthetic',
       temporaryDirectory: '/private/tmp',
     })).toBe(
-      '/private/tmp/KakeFlow Build/成果物/universal-apple-darwin/release/bundle/macos/KakeFlow.app/Contents/MacOS/kakeflow',
+      '/private/tmp/KakeFlow Build/成果物/aarch64-apple-darwin/release/bundle/macos/KakeFlow.app/Contents/MacOS/kakeflow',
     )
     expect(executableForPlatform('win32', { repositoryRoot: 'C:\\repo' })).toMatch(/kakeflow\.exe$/)
     expect(() => executableForPlatform('linux', '/repo')).toThrow(/macOS and Windows/)
@@ -61,6 +62,18 @@ describe('packaged app smoke harness', () => {
       ])
       await writeFile(resource, 'dependency /kakeflow-build-home/build')
       expect(await packagedBuildPathFindings(executable, 'darwin')).toEqual([])
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an app bundle without a successful build identity before launch', async () => {
+    const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-packaged-identity-test-'))
+    const executable = path.join(temporaryRoot, 'release', 'bundle', 'macos', 'KakeFlow.app', 'Contents', 'MacOS', 'kakeflow')
+    try {
+      await mkdir(path.dirname(executable), { recursive: true })
+      await writeFile(executable, 'stale executable without a build identity')
+      await expect(runPackagedSmoke({ executable, timeoutMs: 50 })).rejects.toThrow(/Successful native build identity is required/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
