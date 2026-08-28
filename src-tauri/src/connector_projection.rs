@@ -20,7 +20,7 @@ const MAX_CONNECTION_KEY_BYTES: usize = 128;
 #[cfg(test)]
 thread_local! {
     static MATERIALIZED_SOURCE_ROWS: std::cell::RefCell<std::collections::BTreeMap<ConnectorKind, usize>> =
-        std::cell::RefCell::new(std::collections::BTreeMap::new());
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
 }
 
 #[cfg(test)]
@@ -894,10 +894,10 @@ fn summary_key(summary: &ConnectorSummaryDto) -> (ConnectorKind, &str) {
     (summary.connector_kind, &summary.connection_key)
 }
 
-fn adapter_after_key<'a>(
+fn adapter_after_key(
     kind: ConnectorKind,
-    cursor: Option<&'a ConnectorCursorDto>,
-) -> Option<Option<&'a str>> {
+    cursor: Option<&ConnectorCursorDto>,
+) -> Option<Option<&str>> {
     match cursor {
         None => Some(None),
         Some(cursor) if kind < cursor.connector_kind => None,

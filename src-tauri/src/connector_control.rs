@@ -415,7 +415,9 @@ fn days_in_month(year: u32, month: u32) -> u32 {
     match month {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,
-        2 if year % 400 == 0 || (year % 4 == 0 && year % 100 != 0) => 29,
+        2 if year.is_multiple_of(400) || (year.is_multiple_of(4) && !year.is_multiple_of(100)) => {
+            29
+        }
         2 => 28,
         _ => 0,
     }
@@ -456,7 +458,7 @@ mod tests {
 
     #[test]
     fn registry_has_the_four_unique_descriptors_in_display_order() {
-        let registry = ConnectorRegistry::default();
+        let registry = ConnectorRegistry;
         let kinds = registry
             .descriptors()
             .iter()
@@ -573,7 +575,7 @@ mod tests {
             ConnectorContractError::InconsistentCapabilities
         );
 
-        let registry = ConnectorRegistry::default();
+        let registry = ConnectorRegistry;
         let manual = registry.descriptor(ConnectorKind::ManualImport).unwrap();
         assert!(manual.supports_web);
         assert!(manual
