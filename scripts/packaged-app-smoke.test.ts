@@ -117,7 +117,7 @@ describe('packaged app smoke harness', () => {
     try {
       await mkdir(path.dirname(executable), { recursive: true })
       await writeFile(executable, 'stale executable without a build identity')
-      await expect(runPackagedSmoke({ executable, timeoutMs: 50 })).rejects.toThrow(/Successful native build identity is required/)
+      await expect(runPackagedSmoke({ executable, platform: 'darwin', timeoutMs: 50 })).rejects.toThrow(/Successful native build identity is required/)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
     }
@@ -130,6 +130,7 @@ describe('packaged app smoke harness', () => {
       await writeFile(fixture.ocr, 'staged OCR v2')
       await expect(runPackagedSmoke({
         executable: fixture.executable,
+        platform: 'darwin',
         repositoryRoot: fixture.repositoryRoot,
         timeoutMs: 50,
       })).rejects.toThrow(/build input identity mismatch/)

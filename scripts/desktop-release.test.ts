@@ -9,7 +9,11 @@ describe('desktop release platform dispatcher', () => {
   it('routes macOS through the protected native wrapper and forwards only safe argv and env', async () => {
     expect(releaseModule.createDesktopReleasePlan).toBeTypeOf('function')
     if (typeof releaseModule.createDesktopReleasePlan !== 'function') return
-    const environment = { PATH: '/controlled/bin', RELEASE_MARKER: 'synthetic' }
+    const environment = {
+      PATH: '/controlled/bin',
+      RELEASE_MARKER: 'synthetic',
+      KAKEFLOW_MACOS_TARGET: 'aarch64-apple-darwin',
+    }
     const plan = releaseModule.createDesktopReleasePlan({
       platform: 'darwin',
       repositoryRoot: '/repo with spaces/家計',
