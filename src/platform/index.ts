@@ -138,6 +138,7 @@ export type {
   ImportRunCountsDto,
   ImportPreviewDto,
   ImportSummaryDto,
+  ImportBindingExpectationDto,
   PendingReviewRunDto,
   PendingReviewListDto,
   MonthlyCategoryBudgetDto,

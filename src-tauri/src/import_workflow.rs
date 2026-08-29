@@ -498,6 +498,7 @@ pub struct PendingReviewListDto {
 pub struct ImportPreview {
     pub summary: ImportSummary,
     pub source: PreviewSourceMetadata,
+    pub expected_connector_binding: Option<crate::connector_binding::ImportBindingExpectation>,
     pub candidates: Vec<PreviewCandidate>,
     pub duplicate_summary: DuplicateSummary,
 }
@@ -1664,6 +1665,17 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
         });
     }
     let duplicate_summary = duplicate_summary(connection, run_id)?;
+    let expected_connector_binding = crate::connector_binding::review_binding_expectation(
+        connection, run_id,
+    )
+    .map_err(|error| match error {
+        crate::connector_binding::ConnectorBindingError::Database(error) => {
+            ImportWorkflowError::Database(error)
+        }
+        _ => ImportWorkflowError::Validation(
+            "connector binding changed; reload and review the import".into(),
+        ),
+    })?;
     Ok(ImportPreview {
         summary: ImportSummary {
             run_id: run_id.into(),
@@ -1682,6 +1694,7 @@ pub fn preview_import(connection: &Connection, run_id: &str) -> Result<ImportPre
             audience_visibility: source_audience_visibility,
             audience_member_id: source_audience_member_id,
         },
+        expected_connector_binding,
         candidates,
         duplicate_summary,
     })
@@ -1818,6 +1831,7 @@ pub fn commit_import(
     connection: &Connection,
     run_id: &str,
     decisions: &[PostingDecision],
+    expected_connector_binding: Option<&crate::connector_binding::ImportBindingExpectation>,
 ) -> Result<CommitSummary> {
     validate_id("run_id", run_id)?;
     let mut candidate_ids = HashSet::new();
@@ -1848,6 +1862,20 @@ pub fn commit_import(
         return Err(ImportWorkflowError::Validation(
             "import was rolled back".into(),
         ));
+    }
+    if let Err(error) = crate::connector_binding::validate_import_binding_at_review(
+        &tx,
+        run_id,
+        expected_connector_binding,
+    ) {
+        return match error {
+            crate::connector_binding::ConnectorBindingError::Database(error) => {
+                Err(ImportWorkflowError::Database(error))
+            }
+            _ => Err(ImportWorkflowError::Validation(
+                "connector binding changed; reload and review the import".into(),
+            )),
+        };
     }
     let expected_candidates: u64 = tx.query_row(
         "SELECT count(DISTINCT tc.id) FROM transaction_candidates tc \
@@ -3121,6 +3149,23 @@ fn validate_date(value: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn commit_import(
+        connection: &Connection,
+        run_id: &str,
+        decisions: &[PostingDecision],
+    ) -> Result<CommitSummary> {
+        let expected = crate::connector_binding::review_binding_expectation(connection, run_id)
+            .map_err(|error| match error {
+                crate::connector_binding::ConnectorBindingError::Database(error) => {
+                    ImportWorkflowError::Database(error)
+                }
+                _ => ImportWorkflowError::Validation(
+                    "connector binding changed; reload and review the import".into(),
+                ),
+            })?;
+        super::commit_import(connection, run_id, decisions, expected.as_ref())
+    }
+
     fn database() -> Connection {
         let connection = Connection::open_in_memory().expect("open test database");
         connection
@@ -3134,7 +3179,28 @@ mod tests {
                  CREATE TABLE accounts (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    name TEXT NOT NULL, account_kind TEXT NOT NULL, account_subtype TEXT NOT NULL,
-                   currency TEXT NOT NULL DEFAULT 'JPY');
+                   currency TEXT NOT NULL DEFAULT 'JPY', is_archived INTEGER NOT NULL DEFAULT 0);
+                 CREATE TABLE google_drive_connections (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id), status TEXT NOT NULL);
+                 CREATE TABLE gmail_connections (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id), status TEXT NOT NULL);
+                 CREATE TABLE watched_folders (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id));
+                 CREATE TABLE google_drive_inbox (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   connection_id TEXT NOT NULL REFERENCES google_drive_connections(id),
+                   state TEXT NOT NULL, import_run_id TEXT REFERENCES import_runs(id));
+                 CREATE TABLE gmail_inbox (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   connection_id TEXT NOT NULL REFERENCES gmail_connections(id),
+                   state TEXT NOT NULL, import_run_id TEXT REFERENCES import_runs(id));
+                 CREATE TABLE watched_file_inbox (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   watched_folder_id TEXT NOT NULL REFERENCES watched_folders(id),
+                   state TEXT NOT NULL, import_run_id TEXT REFERENCES import_runs(id));
+                 CREATE TABLE delimited_parser_profiles (
+                   id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
+                   is_enabled INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1);
                  CREATE TABLE import_runs (
                    id TEXT PRIMARY KEY, household_id TEXT NOT NULL REFERENCES households(id),
                    status TEXT NOT NULL, adapter_id TEXT, adapter_version TEXT,
@@ -3276,11 +3342,20 @@ mod tests {
                    VALUES('member','household','Member','ARCHIVED');
                  INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
                    VALUES('bank','household','Bank','ASSET','BANK'),
+                         ('reserve','household','Reserve','ASSET','BANK'),
                          ('expense','household','Food','EXPENSE','OTHER'),
                          ('rule-expense','household','Subscriptions','EXPENSE','OTHER'),
                          ('card','household','Card','LIABILITY','CREDIT_CARD');",
             )
             .expect("create compatible schema");
+        connection
+            .execute_batch(include_str!("../migrations/0070_connector_bindings.sql"))
+            .expect("install connector binding schema");
+        connection
+            .execute_batch(include_str!(
+                "../migrations/0072_connector_binding_generations.sql"
+            ))
+            .expect("install connector binding generation schema");
         connection
     }
 
@@ -3383,6 +3458,246 @@ mod tests {
                 },
             ],
         }
+    }
+
+    fn bind_manual_account(connection: &Connection, account_id: &str) {
+        crate::connector_binding::upsert_binding(
+            connection,
+            &crate::connector_binding::UpsertConnectorBindingInput {
+                household_id: "household".into(),
+                connector_kind: crate::connector_control::ConnectorKind::ManualImport,
+                connection_key: "manual-import".into(),
+                allowed_account_ids: vec![account_id.into()],
+                parser_profile_id: None,
+                parser_profile_version: None,
+                expected_version: None,
+            },
+        )
+        .expect("bind manual source account");
+    }
+
+    #[test]
+    fn connector_binding_checks_only_candidate_source_account_before_any_write() {
+        let accepted = database();
+        bind_manual_account(&accepted, "bank");
+        start_import(
+            &accepted,
+            &request("bound-accepted", "bound-accepted-doc", '6'),
+            "vault://bound-accepted",
+        )
+        .unwrap();
+
+        let committed = commit_import(
+            &accepted,
+            "bound-accepted",
+            &[decision("bound-accepted", 1_000)],
+        )
+        .expect("expense category outside allow-list must remain valid");
+        assert_eq!(committed.posted_count, 1);
+        assert_eq!(
+            accepted
+                .query_row(
+                    "SELECT account_id FROM journal_entries
+                     WHERE transaction_id='bound-accepted-transaction' AND entry_side='DEBIT'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "expense"
+        );
+
+        let rejected = database();
+        bind_manual_account(&rejected, "bank");
+        let mut outside = request("bound-rejected", "bound-rejected-doc", '7');
+        outside.candidates[0].account_id = Some("reserve".into());
+        start_import(&rejected, &outside, "vault://bound-rejected").unwrap();
+
+        assert!(matches!(
+            commit_import(
+                &rejected,
+                "bound-rejected",
+                &[decision("bound-rejected", 1_000)]
+            ),
+            Err(ImportWorkflowError::Validation(message)) if message.contains("binding")
+        ));
+        for table in [
+            "transactions",
+            "journal_entries",
+            "transaction_sources",
+            "transaction_external_keys",
+            "card_payments",
+        ] {
+            let count: i64 = rejected
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} must stay empty");
+        }
+        assert_eq!(
+            rejected
+                .query_row(
+                    "SELECT review_status FROM transaction_candidates
+                     WHERE id='bound-rejected-candidate'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "READY"
+        );
+        assert_eq!(
+            rejected
+                .query_row(
+                    "SELECT status FROM import_runs WHERE id='bound-rejected'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "REVIEW_REQUIRED"
+        );
+    }
+
+    #[test]
+    fn commit_rejects_a_reviewed_binding_changed_from_v1_to_v2_before_any_write() {
+        let connection = database();
+        bind_manual_account(&connection, "bank");
+        start_import(
+            &connection,
+            &request("stale-binding", "stale-binding-doc", '8'),
+            "vault://stale-binding",
+        )
+        .unwrap();
+        let preview = preview_import(&connection, "stale-binding").unwrap();
+        let reviewed = preview
+            .expected_connector_binding
+            .expect("binding v1 must be part of the review DTO");
+        assert_eq!(reviewed.version, Some(1));
+        assert_eq!(reviewed.generation, 1);
+
+        crate::connector_binding::upsert_binding(
+            &connection,
+            &crate::connector_binding::UpsertConnectorBindingInput {
+                household_id: "household".into(),
+                connector_kind: crate::connector_control::ConnectorKind::ManualImport,
+                connection_key: "manual-import".into(),
+                allowed_account_ids: vec!["bank".into()],
+                parser_profile_id: None,
+                parser_profile_version: None,
+                expected_version: Some(1),
+            },
+        )
+        .unwrap();
+
+        assert!(matches!(
+            super::commit_import(
+                &connection,
+                "stale-binding",
+                &[decision("stale-binding", 1_000)],
+                Some(&reviewed),
+            ),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "connector binding changed; reload and review the import"
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn commit_rejects_a_reviewed_binding_deleted_before_any_write() {
+        let connection = database();
+        bind_manual_account(&connection, "bank");
+        start_import(
+            &connection,
+            &request("deleted-binding", "deleted-binding-doc", '9'),
+            "vault://deleted-binding",
+        )
+        .unwrap();
+        let reviewed = preview_import(&connection, "deleted-binding")
+            .unwrap()
+            .expected_connector_binding
+            .expect("binding v1 must be part of the review DTO");
+        crate::connector_binding::delete_active_binding(
+            &connection,
+            "household",
+            crate::connector_control::ConnectorKind::ManualImport,
+            "manual-import",
+        )
+        .unwrap();
+
+        assert!(matches!(
+            super::commit_import(
+                &connection,
+                "deleted-binding",
+                &[decision("deleted-binding", 1_000)],
+                Some(&reviewed),
+            ),
+            Err(ImportWorkflowError::Validation(message))
+                if message == "connector binding changed; reload and review the import"
+        ));
+        assert_eq!(
+            connection
+                .query_row("SELECT count(*) FROM transactions", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn commit_accepts_the_exact_reviewed_binding_and_an_unbound_manual_review() {
+        let bound = database();
+        bind_manual_account(&bound, "bank");
+        start_import(
+            &bound,
+            &request("exact-binding", "exact-binding-doc", '4'),
+            "vault://exact-binding",
+        )
+        .unwrap();
+        let reviewed = preview_import(&bound, "exact-binding")
+            .unwrap()
+            .expected_connector_binding
+            .unwrap();
+        assert_eq!(
+            super::commit_import(
+                &bound,
+                "exact-binding",
+                &[decision("exact-binding", 1_000)],
+                Some(&reviewed),
+            )
+            .unwrap()
+            .posted_count,
+            1
+        );
+
+        let unbound = database();
+        start_import(
+            &unbound,
+            &request("unbound-manual", "unbound-manual-doc", '5'),
+            "vault://unbound-manual",
+        )
+        .unwrap();
+        let unbound_review = preview_import(&unbound, "unbound-manual")
+            .unwrap()
+            .expected_connector_binding
+            .expect("unbound connector identity must be snapshotted");
+        assert_eq!(unbound_review.version, None);
+        assert_eq!(unbound_review.generation, 0);
+        assert_eq!(
+            super::commit_import(
+                &unbound,
+                "unbound-manual",
+                &[decision("unbound-manual", 1_000)],
+                Some(&unbound_review),
+            )
+            .unwrap()
+            .posted_count,
+            1
+        );
     }
 
     #[test]
@@ -3734,6 +4049,14 @@ mod tests {
         input.source_type = "ICLOUD_PICKER".into();
 
         start_import(&connection, &input, "vault://icloud-document").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO watched_folders(id,household_id) VALUES('icloud-folder','household');
+                 INSERT INTO watched_file_inbox
+                   (id,household_id,watched_folder_id,state,import_run_id)
+                 VALUES('icloud-inbox','household','icloud-folder','STAGED','icloud-run');",
+            )
+            .unwrap();
 
         let source_type: String = connection
             .query_row(
@@ -3768,6 +4091,15 @@ mod tests {
         input.source_type = "GOOGLE_DRIVE".into();
 
         start_import(&connection, &input, "vault://drive-document").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO google_drive_connections(id,household_id,status)
+                   VALUES('drive-connection','household','CONNECTED');
+                 INSERT INTO google_drive_inbox
+                   (id,household_id,connection_id,state,import_run_id)
+                 VALUES('drive-inbox','household','drive-connection','STAGED','drive-run');",
+            )
+            .unwrap();
 
         let persisted: String = connection
             .query_row(
@@ -3793,6 +4125,15 @@ mod tests {
         input.media_type = "message/rfc822".into();
 
         start_import(&connection, &input, "vault://gmail-document").unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO gmail_connections(id,household_id,status)
+                   VALUES('gmail-connection','household','CONNECTED');
+                 INSERT INTO gmail_inbox
+                   (id,household_id,connection_id,state,import_run_id)
+                 VALUES('gmail-inbox','household','gmail-connection','STAGED','gmail-run');",
+            )
+            .unwrap();
 
         let persisted: String = connection
             .query_row(

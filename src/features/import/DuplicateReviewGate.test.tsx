@@ -6,6 +6,7 @@ import type { ImportPreviewDto } from '../../platform'
 const preview: ImportPreviewDto = {
   summary: { runId: 'overlap', documentId: 'document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
   source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'july-new.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'a'.repeat(64), audienceVisibility: 'SHARED', audienceMemberId: null },
+  expectedConnectorBinding: null,
   duplicateSummary: { confirmedReplays: 0, likelyDuplicates: 1, possibleDuplicates: 0, unresolved: 1, overlapStart: '2026-07-01', overlapEnd: '2026-07-31' },
   candidates: [{
     id: 'candidate', accountId: 'bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1000, direction: 'OUT', descriptionRaw: 'Store', merchantRaw: 'Store', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9900, normalizationConfidenceBps: 9900, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview: null,

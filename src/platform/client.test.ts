@@ -55,6 +55,44 @@ describe('platform client', () => {
     await expect(client.querySourceDocumentRecords({ householdId: 'family', sourceDocumentId: 'document', page: 1, pageSize: 20 })).rejects.toMatchObject({ command: 'source_document_records_query' })
     await expect(client.listTransactionSourceRecords('family', 'tx')).rejects.toMatchObject({ command: 'transaction_source_records_list' })
     await expect(client.listWatchedFolders('family')).resolves.toEqual([])
+    await expect(client.listConnectorSummaries('family')).resolves.toEqual({
+      schemaVersion: 1,
+      items: [{
+        schemaVersion: 1,
+        connectorKind: 'MANUAL_IMPORT',
+        connectionKey: 'manual-import',
+        displayLabel: 'Manual import',
+        availability: 'AVAILABLE',
+        lifecycle: 'CONNECTED',
+        health: 'MANUAL',
+        capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'],
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        freshnessDeadlineAt: null,
+        nextDueAt: null,
+        pendingReviewCount: 0,
+        consecutiveFailures: 0,
+        lastErrorCode: null,
+        bindingSummary: null,
+        configurationDestination: 'IMPORT_INBOX',
+      }],
+      nextCursor: null,
+    })
+    await expect(client.listConnectorSummaries('family', { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import' })).resolves.toEqual({
+      schemaVersion: 1,
+      items: [],
+      nextCursor: null,
+    })
+    for (const cursor of [
+      'provider-cursor-secret',
+      { connectorKind: 'DROPBOX', connectionKey: 'drive-primary' },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129) },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', providerCursor: 'provider-cursor-secret' },
+    ]) {
+      await expect(client.listConnectorSummaries('family', cursor as never)).rejects.toThrow('connector cursor')
+    }
+    await expect(client.listConnectorSummaries('')).rejects.toThrow('household id')
+    await expect(client.listConnectorSummaries('family', undefined, 101)).rejects.toThrow('connector limit')
     await expect(client.selectWatchedFolder('family', 'Inbox')).rejects.toMatchObject({ command: 'watched_folder_select' })
     await expect(client.selectIcloudFolder('family', 'iCloud Drive Inbox')).rejects.toMatchObject({ command: 'icloud_folder_select' })
     await expect(client.removeWatchedFolder('family', 'folder')).rejects.toMatchObject({ command: 'watched_folder_remove' })
@@ -70,7 +108,7 @@ describe('platform client', () => {
     await expect(client.claimWatchedFileInboxItems('family', ['item'])).rejects.toMatchObject({ command: 'watched_file_inbox_claim' })
     await expect(client.startImport({} as StartImportDto, new Uint8Array())).rejects.toMatchObject({ command: 'import_start' })
     await expect(client.previewImport('run-1')).rejects.toMatchObject({ command: 'import_preview' })
-    await expect(client.commitImport('run-1', [])).rejects.toMatchObject({ command: 'import_commit' })
+    await expect(client.commitImport('run-1', [], null)).rejects.toMatchObject({ command: 'import_commit' })
     await expect(client.rollbackImport('run-1')).rejects.toMatchObject({ command: 'import_rollback' })
     await expect(client.createBackup('long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
     await expect(client.stageBackupRestore('long secure passphrase')).rejects.toMatchObject({ command: 'backup_restore_stage' })
@@ -89,6 +127,296 @@ describe('platform client', () => {
     await expect(client.queryCardSettlementBalanceCoverage({ householdId: 'family', asOf: '2026-07-13' })).resolves.toMatchObject({ horizonDays: 45, banks: [] })
     expect(client.runtime).toBe('web')
     expect(invokeSpy).not.toHaveBeenCalled()
+  })
+
+  it('validates bounded, redacted connector summary pages at the native IPC boundary', async () => {
+    const page = {
+      schemaVersion: 1,
+      items: [
+        {
+          schemaVersion: 1, connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', displayLabel: 'Household Drive',
+          availability: 'AVAILABLE', lifecycle: 'CONNECTED', health: 'FRESH',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING'],
+          lastAttemptAt: '2026-08-25T10:00:00Z', lastSuccessAt: '2026-08-25T10:00:00Z', freshnessDeadlineAt: '2026-08-25T11:00:00Z', nextDueAt: '2026-08-25T11:00:00Z',
+          pendingReviewCount: 2, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: { allowedAccountCount: 2, parserProfileConfigured: true, version: 4 }, configurationDestination: 'GOOGLE_DRIVE_SETTINGS',
+        },
+        {
+          schemaVersion: 1, connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Statements mailbox',
+          availability: 'AVAILABLE', lifecycle: 'CONNECTED', health: 'RUNNING',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING'],
+          lastAttemptAt: '2026-08-25T10:05:00Z', lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null,
+          pendingReviewCount: 0, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: null, configurationDestination: 'GMAIL_SETTINGS',
+        },
+        {
+          schemaVersion: 1, connectorKind: 'WATCHED_FOLDER', connectionKey: 'watched-inbox', displayLabel: 'Inbox folder',
+          availability: 'AVAILABLE', lifecycle: 'CONFIGURING', health: 'NEVER_REFRESHED',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'ACCOUNT_BINDING'],
+          lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null,
+          pendingReviewCount: 1, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: null, configurationDestination: 'WATCHED_FOLDER_SETTINGS',
+        },
+        {
+          schemaVersion: 1, connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import',
+          availability: 'AVAILABLE', lifecycle: 'CONNECTED', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'],
+          lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null,
+          pendingReviewCount: 3, consecutiveFailures: 0, lastErrorCode: null,
+          bindingSummary: null, configurationDestination: 'IMPORT_INBOX',
+        },
+      ],
+      nextCursor: { connectorKind: 'WATCHED_FOLDER', connectionKey: 'watched-inbox' },
+    }
+    const invokeSpy = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke: async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      invokeSpy(command, args)
+      return page as T
+    } })
+
+    await expect(client.listConnectorSummaries('family', { connectorKind: 'GMAIL', connectionKey: 'gmail-primary' }, 25)).resolves.toEqual(page)
+    expect(invokeSpy).toHaveBeenCalledWith('connector_control_list', {
+      householdId: 'family', cursor: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary' }, limit: 25,
+    })
+    await expect(client.listConnectorSummaries('family', undefined, 0)).rejects.toThrow('connector limit')
+    await expect(client.listConnectorSummaries('family', undefined, 101)).rejects.toThrow('connector limit')
+    for (const cursor of [
+      'provider-cursor-secret',
+      { connectorKind: 'DROPBOX', connectionKey: 'drive-primary' },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129) },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', providerCursor: 'provider-cursor-secret' },
+    ]) {
+      await expect(client.listConnectorSummaries('family', cursor as never)).rejects.toThrow('connector cursor')
+    }
+
+    const invalidPages = [
+      { name: 'unknown enum', value: { ...page, items: [{ ...page.items[0], connectorKind: 'DROPBOX' }] } },
+      { name: 'unknown capability', value: { ...page, items: [{ ...page.items[0], capabilities: ['UNKNOWN_CAPABILITY'] }] } },
+      { name: 'duplicate connector identity', value: { ...page, items: [...page.items, { ...page.items[0] }] } },
+      { name: 'invalid UTC timestamp', value: { ...page, items: [{ ...page.items[0], lastAttemptAt: '2026-08-25T10:00:00+09:00' }] } },
+      { name: 'negative count', value: { ...page, items: [{ ...page.items[0], pendingReviewCount: -1 }] } },
+      { name: 'more than one hundred items', value: { ...page, items: Array.from({ length: 101 }, (_, index) => ({ ...page.items[0], connectionKey: `drive-${index}` })) } },
+      { name: 'overlong UTF-8 display label', value: { ...page, items: [{ ...page.items[0], displayLabel: '日'.repeat(86) }] } },
+      { name: 'overlong connection key', value: { ...page, items: [{ ...page.items[0], connectionKey: 'a'.repeat(129) }] } },
+      { name: 'running without refresh capability', value: { ...page, items: [{ ...page.items[1], capabilities: ['CONFIGURE'] }] } },
+      { name: 'runtime unsupported with executable capability', value: { ...page, items: [{ ...page.items[0], availability: 'RUNTIME_UNSUPPORTED', capabilities: ['REFRESH_NOW'] }] } },
+      { name: 'manual health on a non-manual connector', value: { ...page, items: [{ ...page.items[0], health: 'MANUAL' }] } },
+      { name: 'provider cursor field', value: { ...page, items: [{ ...page.items[0], cursor: 'provider-cursor-secret' }] } },
+      { name: 'provider path field', value: { ...page, items: [{ ...page.items[0], absolutePath: '/Users/private/statement.csv' }] } },
+      { name: 'provider-secret next cursor', value: { ...page, nextCursor: 'provider-cursor-secret' } },
+      { name: 'malformed next cursor', value: { ...page, nextCursor: { connectorKind: 'DROPBOX', connectionKey: 'drive-primary' } } },
+      { name: 'oversized next cursor', value: { ...page, nextCursor: { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129) } } },
+      { name: 'provider field in next cursor', value: { ...page, nextCursor: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', providerCursor: 'provider-cursor-secret' } } },
+    ]
+    for (const { value } of invalidPages) {
+      const invalidClient = createPlatformClient({ tauri: true, invoke: async <T>() => value as T })
+      await expect(invalidClient.listConnectorSummaries('family')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'connector_control_list',
+      })
+    }
+  })
+
+  it('strictly reconstructs refresh batches and invokes the four refresh commands exactly', async () => {
+    const started = {
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 2, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:00:00Z', completedAt: null,
+    } as const
+    const progress = {
+      schemaVersion: 1, ...started, status: 'PARTIAL', terminalCount: 2, succeededCount: 1, failedCount: 1,
+      changedCount: 3, updatedAt: '2026-08-25T10:00:02Z', completedAt: '2026-08-25T10:00:02Z',
+      items: [
+        { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 3, lastErrorCode: null, updatedAt: '2026-08-25T10:00:01Z', startedAt: '2026-08-25T10:00:00Z', completedAt: '2026-08-25T10:00:01Z' },
+        { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'RATE_LIMITED', updatedAt: '2026-08-25T10:00:02Z', startedAt: '2026-08-25T10:00:01Z', completedAt: '2026-08-25T10:00:02Z' },
+      ],
+    } as const
+    const activeProgress = {
+      ...progress,
+      status: 'ACTIVE' as const,
+      terminalCount: 1,
+      failedCount: 0,
+      completedAt: null,
+      items: [
+        progress.items[0],
+        { ...progress.items[1], status: 'RUNNING' as const, lastErrorCode: null, completedAt: null },
+      ],
+    }
+    const invokeSpy = vi.fn(async (command: AppCommand, args?: Record<string, unknown>) => {
+      void args
+      if (command === 'connector_refresh_batch_get') return progress
+      if (command === 'connector_refresh_active_batch_get') return activeProgress
+      return started
+    })
+    const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => {
+      return await invokeSpy(command, args) as T
+    }
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.startConnectorRefresh('family', 'GOOGLE_DRIVE', 'drive-primary')).resolves.toEqual(started)
+    await expect(client.startConnectorRefreshAll('family')).resolves.toEqual(started)
+    await expect(client.getActiveConnectorRefreshBatch('family')).resolves.toEqual(activeProgress)
+    await expect(client.getConnectorRefreshBatch('family', 'batch-1')).resolves.toEqual(progress)
+    expect(invokeSpy.mock.calls).toEqual([
+      ['connector_refresh_one', { input: { householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' } }],
+      ['connector_refresh_all', { householdId: 'family' }],
+      ['connector_refresh_active_batch_get', { householdId: 'family' }],
+      ['connector_refresh_batch_get', { householdId: 'family', batchId: 'batch-1' }],
+    ])
+
+    const withoutActive = createPlatformClient({ tauri: true, invoke: async <T>() => null as T })
+    await expect(withoutActive.getActiveConnectorRefreshBatch('family')).resolves.toBeNull()
+  })
+
+  it('rejects malformed refresh batch and item contracts before exposing progress', async () => {
+    const valid = {
+      schemaVersion: 1, batchId: 'batch-1', householdId: 'family', status: 'COMPLETE', totalCount: 2, terminalCount: 2,
+      succeededCount: 1, noChangesCount: 0, skippedManualCount: 1, failedCount: 0, changedCount: 3,
+      createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:00:02Z', completedAt: '2026-08-25T10:00:02Z',
+      items: [
+        { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 3, lastErrorCode: null, updatedAt: '2026-08-25T10:00:01Z', startedAt: '2026-08-25T10:00:00Z', completedAt: '2026-08-25T10:00:01Z' },
+        { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', status: 'SKIPPED_MANUAL', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T10:00:02Z', startedAt: null, completedAt: '2026-08-25T10:00:02Z' },
+      ],
+    }
+    const invalid = [
+      { ...valid, providerCursor: 'secret' },
+      { ...valid, householdId: 'another-family' },
+      { ...valid, batchId: 'another-batch' },
+      { ...valid, status: 'UNKNOWN' },
+      { ...valid, totalCount: 10_001 },
+      { ...valid, terminalCount: 1 },
+      { ...valid, failedCount: 1 },
+      { ...valid, completedAt: null },
+      { ...valid, updatedAt: '2026-08-25T19:00:02+09:00' },
+      { ...valid, items: [valid.items[1], valid.items[0]] },
+      { ...valid, items: [valid.items[0], valid.items[0]] },
+      { ...valid, items: [{ ...valid.items[0], absolutePath: '/Users/private/statement.csv' }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], connectorKind: 'DROPBOX' }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], status: 'SUCCEEDED', changedCount: 0 }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: null }, valid.items[1]] },
+      { ...valid, items: [{ ...valid.items[0], lastErrorCode: 'provider/private/path' }, valid.items[1]] },
+      { ...valid, items: [valid.items[0], { ...valid.items[1], connectorKind: 'GMAIL' }] },
+    ]
+    for (const response of invalid) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+      await expect(client.getConnectorRefreshBatch('family', 'batch-1')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'connector_refresh_batch_get',
+      })
+    }
+  })
+
+  it('keeps native refresh commands unreachable in the browser runtime', async () => {
+    const invoke = vi.fn()
+    const client = createPlatformClient({ tauri: false, invoke })
+
+    await expect(client.startConnectorRefresh('family', 'GOOGLE_DRIVE', 'drive-primary')).rejects.toMatchObject({ command: 'connector_refresh_one' })
+    await expect(client.startConnectorRefreshAll('family')).rejects.toMatchObject({ command: 'connector_refresh_all' })
+    await expect(client.getConnectorRefreshBatch('family', 'batch-1')).rejects.toMatchObject({ command: 'connector_refresh_batch_get' })
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('reconstructs connector bindings field by field and invokes optimistic mutations exactly', async () => {
+    const binding = {
+      householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
+      allowedAccountIds: ['family-bank', 'family-card'], parserProfileId: 'profile-bank', parserProfileVersion: 3,
+      version: 7, createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:05:00Z',
+    }
+    const invokeSpy = vi.fn(async (command: AppCommand, args?: Record<string, unknown>) => {
+      void args
+      if (command === 'connector_bindings_list') return [binding]
+      if (command === 'connector_binding_upsert') return { ...binding, version: 8 }
+      return null
+    })
+    const invoke: Invoke = async <T>(command: AppCommand, args?: Record<string, unknown>) => await invokeSpy(command, args) as T
+    const client = createPlatformClient({ tauri: true, invoke })
+
+    await expect(client.listConnectorBindings('family')).resolves.toEqual([binding])
+    await expect(client.upsertConnectorBinding({
+      householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
+      allowedAccountIds: ['family-card', 'family-bank'], parserProfileId: 'profile-bank', parserProfileVersion: 3,
+      expectedVersion: 7,
+    })).resolves.toEqual({ ...binding, version: 8 })
+    await expect(client.deleteConnectorBinding({
+      householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary', expectedVersion: 8,
+    })).resolves.toBeUndefined()
+
+    expect(invokeSpy.mock.calls).toEqual([
+      ['connector_bindings_list', { householdId: 'family' }],
+      ['connector_binding_upsert', { input: {
+        householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary',
+        allowedAccountIds: ['family-card', 'family-bank'], parserProfileId: 'profile-bank', parserProfileVersion: 3,
+        expectedVersion: 7,
+      } }],
+      ['connector_binding_delete', { input: {
+        householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary', expectedVersion: 8,
+      } }],
+    ])
+  })
+
+  it('rejects malformed connector binding DTOs and unsafe mutation inputs', async () => {
+    const binding = {
+      householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null,
+      version: 1, createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:00:00Z',
+    } as const
+    const invalidBindings = [
+      { ...binding, providerToken: 'secret' },
+      { ...binding, householdId: 'another-family' },
+      { ...binding, connectorKind: 'DROPBOX' },
+      { ...binding, allowedAccountIds: ['family-bank', 'family-bank'] },
+      { ...binding, allowedAccountIds: ['a'.repeat(65)] },
+      { ...binding, allowedAccountIds: [] },
+      { ...binding, parserProfileId: 'p'.repeat(65), parserProfileVersion: 1 },
+      { ...binding, parserProfileId: 'profile-bank', parserProfileVersion: null },
+      { ...binding, version: 0 },
+      { ...binding, createdAt: '2026-08-25T19:00:00+09:00' },
+    ]
+    for (const value of invalidBindings) {
+      const client = createPlatformClient({ tauri: true, invoke: async <T>() => [value] as T })
+      await expect(client.listConnectorBindings('family')).rejects.toMatchObject({
+        code: 'INVALID_RESPONSE', command: 'connector_bindings_list',
+      })
+    }
+
+    const duplicateClient = createPlatformClient({ tauri: true, invoke: async <T>() => [binding, binding] as T })
+    await expect(duplicateClient.listConnectorBindings('family')).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE', command: 'connector_bindings_list',
+    })
+
+    const invoke = vi.fn()
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 1, allowedAccountIds: ['family-bank', 'family-bank'] })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 1, allowedAccountIds: ['a'.repeat(65)] })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 1, parserProfileId: 'p'.repeat(65), parserProfileVersion: 1 })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: 0 })).rejects.toThrow('connector binding')
+    await expect(client.upsertConnectorBinding({ ...binding, expectedVersion: null, parserProfileId: 'profile-bank', parserProfileVersion: null })).rejects.toThrow('connector binding')
+    await expect(client.deleteConnectorBinding({ householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'wrong', expectedVersion: 1 })).rejects.toThrow('connector binding')
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes optimistic binding conflicts while preserving the command identity', async () => {
+    const client = createPlatformClient({ tauri: true, invoke: async () => { throw new Error('connector binding changed; reload it and try again') } })
+    await expect(client.upsertConnectorBinding({
+      householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null, expectedVersion: 4,
+    })).rejects.toEqual(new PlatformIpcError('COMMAND_FAILED', 'connector_binding_upsert'))
+  })
+
+  it.each([
+    ['household', { householdId: 'another-family' }],
+    ['connector kind', { connectorKind: 'GMAIL' }],
+    ['connection key', { connectionKey: 'another-drive' }],
+  ] as const)('rejects a valid-shaped upsert response from a different %s scope', async (_label, override) => {
+    const response = {
+      householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null,
+      version: 2, createdAt: '2026-08-25T10:00:00Z', updatedAt: '2026-08-25T10:05:00Z',
+      ...override,
+    }
+    const client = createPlatformClient({ tauri: true, invoke: async <T>() => response as T })
+
+    await expect(client.upsertConnectorBinding({
+      householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary',
+      allowedAccountIds: ['family-bank'], parserProfileId: null, parserProfileVersion: null, expectedVersion: 1,
+    })).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'connector_binding_upsert' })
   })
 
   it('invokes each desktop command and returns validated camelCase DTOs', async () => {
@@ -172,6 +500,7 @@ describe('platform client', () => {
       import_preview: {
         summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
         source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 3, sha256: 'abc123', audienceVisibility: 'SHARED', audienceMemberId: null },
+        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', version: 7, generation: 9 },
         candidates: [{
           id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null,
           amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE',
@@ -328,7 +657,8 @@ describe('platform client', () => {
     await expect(client.listPendingReviews('family')).resolves.toEqual(responses.pending_review_list)
     await expect(client.startImport(importRequest, new Uint8Array([1, 2, 3]))).resolves.toEqual(responses.import_start)
     await expect(client.previewImport('run-1')).resolves.toEqual(responses.import_preview)
-    await expect(client.commitImport('run-1', decisions)).resolves.toEqual(responses.import_commit)
+    const expectedConnectorBinding = { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 7, generation: 9 }
+    await expect(client.commitImport('run-1', decisions, expectedConnectorBinding)).resolves.toEqual(responses.import_commit)
     await expect(client.rollbackImport('run-1')).resolves.toBeUndefined()
     await expect(client.createBackup('long secure passphrase')).resolves.toEqual(responses.backup_create)
     await expect(client.stageBackupRestore('long secure passphrase')).resolves.toEqual(responses.backup_restore_stage)
@@ -382,7 +712,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_failed', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64), errorCode: 'PREVIEW_FAILED' })
     expect(invokeSpy).toHaveBeenCalledWith('watched_file_inbox_mark_staged', { householdId: 'family', itemId: 'a'.repeat(64), leaseToken: 'c'.repeat(64), importRunId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('import_preview', { runId: 'run-1' })
-    expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions })
+    expect(invokeSpy).toHaveBeenCalledWith('import_commit', { runId: 'run-1', decisions, expectedConnectorBinding })
     expect(invokeSpy).toHaveBeenCalledWith('import_rollback', { runId: 'run-1' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_create', { passphrase: 'long secure passphrase' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_restore_stage', { passphrase: 'long secure passphrase' })
@@ -826,6 +1156,50 @@ describe('platform client', () => {
     await expect(client.previewImport('run')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
   })
 
+  it('bounds the reviewed connector binding identity and version at the native boundary', async () => {
+    const response = (expectedConnectorBinding: unknown) => ({
+      summary: { runId: 'run', documentId: 'document', status: 'REVIEW_REQUIRED', recordCount: 0, candidateCount: 0, reusedExisting: false },
+      source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 4, sha256: 'a'.repeat(64), audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding,
+      candidates: [],
+    })
+    const parse = (expectedConnectorBinding: unknown) => createPlatformClient({
+      tauri: true,
+      invoke: async <T>() => response(expectedConnectorBinding) as T,
+    }).previewImport('run')
+
+    await expect(parse(null)).resolves.toMatchObject({ expectedConnectorBinding: null })
+    await expect(parse({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: 3 })).resolves.toMatchObject({
+      expectedConnectorBinding: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: 3 },
+    })
+    await expect(parse({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: null, generation: 0 })).resolves.toMatchObject({
+      expectedConnectorBinding: { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: null, generation: 0 },
+    })
+    for (const malformed of [
+      undefined,
+      { connectorKind: 'DROPBOX', connectionKey: 'gmail-primary', version: 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: '', version: 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'a'.repeat(129), version: 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: Number.MAX_SAFE_INTEGER + 1, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      await expect(parse(malformed)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'import_preview' })
+    }
+
+    const invokeSpy = vi.fn(async () => ({ runId: 'run', postedCount: 0 }))
+    const invoke: Invoke = async <T>() => await invokeSpy() as T
+    const client = createPlatformClient({ tauri: true, invoke })
+    for (const malformed of [
+      undefined,
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 0, generation: 1 },
+      { connectorKind: 'GMAIL', connectionKey: 'gmail-primary', version: 1, generation: 1, providerAccountId: 'secret' },
+    ]) {
+      expect(() => client.commitImport('run', [], malformed as never)).toThrow('import binding expectation')
+    }
+    expect(invokeSpy).not.toHaveBeenCalled()
+  })
+
   it('sanitizes receipt review DTOs and rejects malformed structured evidence', async () => {
     const candidate = {
       id: 'candidate', accountId: 'bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT',
@@ -846,6 +1220,7 @@ describe('platform client', () => {
     const response = (override: Record<string, unknown> = {}) => ({
       summary: { runId: 'run', documentId: 'doc', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 1, sha256: 'a'.repeat(64), audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ ...candidate, receiptReview: { ...candidate.receiptReview, ...override } }],
     })
     const client = createPlatformClient({ tauri: true, invoke: async <T>() => response() as T })

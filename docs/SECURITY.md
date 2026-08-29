@@ -24,6 +24,12 @@ At-rest encryption does not protect an unlocked vault from code already executin
 
 The production CSP keeps scripts and connections same-origin and disallows inline script, but the bundled PP-OCRv5/OpenCV runtime currently requires `script-src 'unsafe-eval'`. This increases the impact of any same-origin script injection. No third-party runtime script is loaded; dependency removal or replacement must be re-evaluated before claiming an eval-free CSP.
 
+### Connector control and credential boundary
+
+Connector summaries, refresh batches, and binding projections are redacted by construction: they contain stable public states and safe connector keys, not credentials, authorization codes, durable cursors, raw local paths, provider folder or label identifiers, financial rows, or provider response bodies. Provider authorization and detailed configuration remain in the existing native source-specific panels. The PWA does not bundle native provider clients or credential state.
+
+Bindings are an authorization boundary for posting. Review records snapshot the exact connector identity, optional binding version, and monotonic lifecycle generation. A durable generation tombstone advances on create, update, and delete, so a review staged while unbound can commit only if no transient binding existed, and a bound review cannot accept a deleted-and-recreated version with the same number. Replacement, ambiguity, cross-household scope, or an account/parser mismatch also blocks commit. Rejection never deletes immutable evidence or already posted entries. Retryable refresh failures retain the last durable source cursor and isolate backoff to that source; the application must not publish success or freshness unless the source result and redacted batch outcome commit durably.
+
 ## Tiếng Việt
 
 Chỉ phiên bản ổn định mới nhất được nhận bản sửa bảo mật. Báo cáo lỗ hổng riêng tư qua [GitHub Security Advisories](https://github.com/thangldw/kakeflow/security/advisories/new), sử dụng dữ liệu giả lập và không đăng issue công khai trước khi maintainer có thời gian xử lý.
@@ -44,6 +50,10 @@ Mã hóa at rest không bảo vệ vault đang unlock trước code đã chạy 
 
 CSP production giữ script và kết nối cùng origin, đồng thời cấm inline script, nhưng runtime PP-OCRv5/OpenCV đóng gói hiện cần `script-src 'unsafe-eval'`. Điều này làm tăng tác động của lỗ hổng same-origin script injection. Không tải runtime script bên thứ ba; phải đánh giá lại dependency trước khi tuyên bố CSP không dùng eval.
 
+### Ranh giới connector control và credential
+
+Summary, refresh batch và binding projection của connector được redaction theo contract; chúng không chứa credential, authorization code, durable cursor, raw local path, provider folder/label identifier, financial row hay provider response body. Binding thiếu, mơ hồ, khác household hoặc sai version sẽ chặn commit mà không xóa immutable evidence. PWA không đóng gói native provider client hay credential state.
+
 ## 日本語
 
 セキュリティ修正は最新の安定版のみを対象とします。[GitHub Security Advisories](https://github.com/thangldw/kakeflow/security/advisories/new) から非公開で報告し、再現には架空データを使用してください。maintainer が調査する前に公開 issue を作成しないでください。
@@ -63,3 +73,7 @@ PWA record は Argon2id で導出した non-extractable AES-GCM key と record �
 at-rest 暗号化は、unlock 中の vault を KakeFlow origin 内で実行中の code、侵害された browser／extension、侵害された device session から保護しません。persistent storage を要求しても browser storage は eviction される可能性があります。site data の削除、profile 変更、PWA を唯一の copy とする前に、検証済み encrypted archive を browser storage 外へ保管してください。
 
 production CSP は script／connection を same-origin に限定し inline script を禁止しますが、同梱 PP-OCRv5／OpenCV runtime は現在 `script-src 'unsafe-eval'` を必要とします。そのため same-origin script injection の影響が増えます。third-party runtime script は読み込まず、eval-free CSP を主張する前に dependency の除去または置換を再評価します。
+
+### Connector control と credential の境界
+
+connector summary、refresh batch、binding projection は contract 上 redaction され、credential、authorization code、durable cursor、raw local path、provider folder／label identifier、financial row、provider response body を含みません。binding が欠落・曖昧・cross-household・version 不一致なら immutable evidence を削除せず commit を防ぎます。PWA は native provider client や credential state を同梱しません。

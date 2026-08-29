@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import {
   OCR_FIXED_HASHES,
@@ -8,9 +10,12 @@ import {
   inspectPeX64Imports,
   isAllowedStaticWindowsImport,
   ocrTargetContract,
+  personalBuildPathFindings,
   requiredOcrFiles,
   tesseractSmokeArguments,
 } from './ocr-resource-contract.mjs'
+
+const ocrModule = await import('./ocr-resource-contract.mjs')
 
 function manifestFor(target) {
   const contract = ocrTargetContract(target)
@@ -51,6 +56,33 @@ function syntheticPe(importName = 'KERNEL32.dll') {
 }
 
 describe('packaged OCR resource contract', () => {
+  it('maps macOS packaging only to arm64 OCR and rejects fat or x64 slices', () => {
+    expect(ocrModule.macOcrContractForTauriTarget).toBeTypeOf('function')
+    expect(ocrModule.assertMacOcrArchitectures).toBeTypeOf('function')
+    if (typeof ocrModule.macOcrContractForTauriTarget !== 'function' || typeof ocrModule.assertMacOcrArchitectures !== 'function') return
+    expect(ocrModule.macOcrContractForTauriTarget('aarch64-apple-darwin')).toEqual({
+      target: 'macos-arm64',
+      architecture: 'arm64',
+    })
+    for (const target of ['x86_64-apple-darwin', 'universal-apple-darwin']) {
+      expect(() => ocrModule.macOcrContractForTauriTarget(target)).toThrow(/only aarch64-apple-darwin/)
+    }
+    expect(ocrModule.assertMacOcrArchitectures('arm64\n', 'arm64')).toEqual(['arm64'])
+    for (const actual of ['x86_64\n', 'arm64 x86_64\n', '']) {
+      expect(() => ocrModule.assertMacOcrArchitectures(actual, 'arm64')).toThrow(/exactly arm64/)
+    }
+  })
+
+  it('rejects a non-arm64 staging request before touching the build cache', () => {
+    const script = path.resolve(import.meta.dirname, 'stage-ocr-resources-macos.sh')
+    const result = spawnSync('bash', [script, 'macos-x64'], {
+      encoding: 'utf8',
+      env: { ...process.env, KAKEFLOW_OCR_BUILD_CACHE: path.join(os.homedir(), 'must-not-be-touched') },
+    })
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('requires the explicit target macos-arm64')
+    expect(result.stderr).not.toContain('neutral non-personal build root')
+  })
   it('selects only the two reproducible host targets', () => {
     expect(hostOcrTarget('darwin', 'arm64')).toBe('macos-arm64')
     expect(hostOcrTarget('win32', 'x64')).toBe('windows-x64')
@@ -117,6 +149,15 @@ describe('packaged OCR resource contract', () => {
     })
   })
 
+  it('rejects personal build roots in a packaged OCR executable', () => {
+    expect(personalBuildPathFindings(Buffer.from(
+      'mac /Users/synthetic/build windows C:\\Users\\synthetic\\build',
+    ))).toEqual(['/Users/', 'C:\\Users\\'])
+    expect(personalBuildPathFindings(Buffer.from(
+      '/kakeflow-ocr-build and /private/tmp/kakeflow-ocr-build',
+    ))).toEqual([])
+  })
+
   it('makes Windows staging explicit and verifies before NSIS packaging', () => {
     const root = path.resolve(import.meta.dirname, '..')
     const packageJson = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -128,5 +169,10 @@ describe('packaged OCR resource contract', () => {
     expect(staging).toContain("$TesseractVersion = '5.5.2'")
     expect(staging).toContain("$Triplet = 'x64-windows-static-kakeflow'")
     expect(staging).toContain("'windows-x64'")
+    const macStaging = readFileSync(path.join(root, 'scripts', 'stage-ocr-resources-macos.sh'), 'utf8')
+    expect(macStaging).toContain('kakeflow-ocr-build-${TRIPLET}')
+    expect(macStaging).toContain('KAKEFLOW_OCR_BUILD_CACHE must use a neutral non-personal build root.')
+    expect(macStaging).toContain('--binarysource=clear')
+    expect(macStaging).not.toContain('${HOME}/Library/Caches/KakeFlow/ocr-build')
   })
 })

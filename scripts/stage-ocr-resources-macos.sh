@@ -1,12 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REQUESTED_TARGET="${1:-}"
+if [[ "${REQUESTED_TARGET}" != "macos-arm64" ]]; then
+  echo "Packaged OCR staging requires the explicit target macos-arm64." >&2
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VCPKG_COMMIT="b5229343b4b80264ed51e89c6a7dcd0cbe85e9cc"
 TESSERACT_VERSION="5.5.2"
 TESSDATA_VERSION="4.1.0"
 TRIPLET="arm64-osx-kakeflow"
-CACHE_ROOT="${KAKEFLOW_OCR_BUILD_CACHE:-${HOME}/Library/Caches/KakeFlow/ocr-build}"
+NEUTRAL_TEMP_ROOT="${TMPDIR:-/tmp}"
+CACHE_ROOT="${KAKEFLOW_OCR_BUILD_CACHE:-${NEUTRAL_TEMP_ROOT%/}/kakeflow-ocr-build-${TRIPLET}}"
+CACHE_ROOT="$(node -e 'process.stdout.write(require("node:path").resolve(process.argv[1]))' "${CACHE_ROOT}")"
+PORTABLE_CACHE_ROOT="${CACHE_ROOT//\\//}"
+PORTABLE_HOME="${HOME//\\//}"
+case "${PORTABLE_CACHE_ROOT}/" in
+  "${PORTABLE_HOME}/"*|/Users/*|[A-Za-z]:/Users/*)
+    echo "KAKEFLOW_OCR_BUILD_CACHE must use a neutral non-personal build root." >&2
+    exit 1
+    ;;
+esac
 VCPKG_ROOT="${CACHE_ROOT}/vcpkg"
 INSTALL_ROOT="${CACHE_ROOT}/installed"
 STAGE_ROOT="${ROOT}/src-tauri/generated-resources/ocr"
@@ -17,7 +33,7 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   exit 1
 fi
 
-for command in git curl shasum xcrun otool; do
+for command in git curl shasum xcrun otool lipo; do
   command -v "${command}" >/dev/null || { echo "Missing required command: ${command}" >&2; exit 1; }
 done
 xcrun --find clang >/dev/null
@@ -37,12 +53,19 @@ rm -rf "${INSTALL_ROOT}"
   --x-install-root="${INSTALL_ROOT}" \
   --overlay-triplets="${ROOT}/packaging/ocr/triplets" \
   --triplet="${TRIPLET}" \
+  --binarysource=clear \
   --clean-after-build \
   --disable-metrics
 
 TESSERACT_BIN="${INSTALL_ROOT}/${TRIPLET}/tools/tesseract/tesseract"
 if [[ ! -x "${TESSERACT_BIN}" ]]; then
   echo "vcpkg did not produce an executable Tesseract binary at ${TESSERACT_BIN}" >&2
+  exit 1
+fi
+
+TESSERACT_ARCHS="$(lipo -archs "${TESSERACT_BIN}")"
+if [[ "${TESSERACT_ARCHS}" != "arm64" ]]; then
+  echo "Packaged Tesseract must contain exactly arm64 code; received ${TESSERACT_ARCHS:-none}." >&2
   exit 1
 fi
 
@@ -100,5 +123,5 @@ download_checked \
 
 node "${ROOT}/scripts/write-ocr-resource-manifest.mjs" \
   "${STAGE_ROOT}" "macos-arm64"
-KAKEFLOW_OCR_TARGET="macos-arm64" node "${ROOT}/scripts/verify-ocr-resources.mjs"
+node "${ROOT}/scripts/verify-ocr-resources.mjs" --target "${REQUESTED_TARGET}" --expected-architecture arm64
 echo "Packaged OCR resources staged at ${STAGE_ROOT}"

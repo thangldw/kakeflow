@@ -29,7 +29,9 @@ describe('release version contract', () => {
     })
     expect(macDmgArtifactName('1.2.3', 'aarch64')).toBe('KakeFlow_1.2.3_aarch64.dmg')
     expect(windowsInstallerArtifactName('1.2.3', 'x64')).toBe('KakeFlow_1.2.3_x64-setup.exe')
-    expect(() => macDmgArtifactName('1.2.3', 'x64')).toThrow('Unsupported macOS DMG architecture')
+    for (const architecture of ['x64', 'universal', 'ia32']) {
+      expect(() => macDmgArtifactName('1.2.3', architecture)).toThrow('Unsupported macOS DMG architecture')
+    }
     expect(() => windowsInstallerArtifactName('1.2.3', 'arm64')).toThrow('Unsupported Windows installer architecture')
   })
 

@@ -1,4 +1,5 @@
 import { createPwaArchive, restorePwaArchive, type RestorePwaArchiveOptions } from './archive'
+import type { ConnectorSummaryDto } from '../types'
 import type { PlainEventWrite, PlainProjectionWrite } from './database'
 import { PwaVaultDatabase } from './database'
 import { EvidenceStore, type EvidenceStoreOptions } from './evidenceStore'
@@ -290,6 +291,31 @@ export class PwaLedgerClient {
   async listCandidates(householdId: string): Promise<ReceiptCandidate[]> {
     return (await this.listModels<ReceiptCandidate>('CANDIDATE'))
       .filter((candidate) => candidate.householdId === householdId)
+  }
+
+  async listConnectorSummaries(householdId: string): Promise<readonly ConnectorSummaryDto[]> {
+    await this.model<Household>('HOUSEHOLD', householdId)
+    const pendingReviewCount = (await this.listCandidates(householdId))
+      .filter((candidate) => candidate.status === 'CANDIDATE').length
+    return [{
+      schemaVersion: 1,
+      connectorKind: 'MANUAL_IMPORT',
+      connectionKey: 'manual-import',
+      displayLabel: 'Manual import',
+      availability: 'AVAILABLE',
+      lifecycle: 'CONNECTED',
+      health: 'MANUAL',
+      capabilities: ['IMPORT_FILE'],
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      freshnessDeadlineAt: null,
+      nextDueAt: null,
+      pendingReviewCount,
+      consecutiveFailures: 0,
+      lastErrorCode: null,
+      bindingSummary: null,
+      configurationDestination: 'IMPORT_INBOX',
+    }]
   }
 
   async listTransactions(householdId: string): Promise<Transaction[]> {

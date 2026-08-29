@@ -92,6 +92,25 @@ const desktop = vi.hoisted(() => ({
   getGoogleDriveSchedule: vi.fn(),
   updateGoogleDriveSchedule: vi.fn(),
   syncGoogleDriveNow: vi.fn(),
+  listGoogleDriveInbox: vi.fn(),
+  readGoogleDriveInboxFile: vi.fn(),
+  retryGoogleDriveInboxItem: vi.fn(),
+  ignoreGoogleDriveInboxItem: vi.fn(),
+  reopenGoogleDriveInboxItem: vi.fn(),
+  disconnectGmail: vi.fn(),
+  listGmailInbox: vi.fn(),
+  readGmailInboxFile: vi.fn(),
+  retryGmailInboxItem: vi.fn(),
+  ignoreGmailInboxItem: vi.fn(),
+  reopenGmailInboxItem: vi.fn(),
+  listConnectorSummaries: vi.fn(),
+  listConnectorBindings: vi.fn(),
+  upsertConnectorBinding: vi.fn(),
+  deleteConnectorBinding: vi.fn(),
+  startConnectorRefresh: vi.fn(),
+  startConnectorRefreshAll: vi.fn(),
+  getActiveConnectorRefreshBatch: vi.fn(),
+  getConnectorRefreshBatch: vi.fn(),
 }))
 
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }))
@@ -195,6 +214,25 @@ vi.mock('./platform', async () => {
       getGoogleDriveSchedule: desktop.getGoogleDriveSchedule,
       updateGoogleDriveSchedule: desktop.updateGoogleDriveSchedule,
       syncGoogleDriveNow: desktop.syncGoogleDriveNow,
+      listGoogleDriveInbox: desktop.listGoogleDriveInbox,
+      readGoogleDriveInboxFile: desktop.readGoogleDriveInboxFile,
+      retryGoogleDriveInboxItem: desktop.retryGoogleDriveInboxItem,
+      ignoreGoogleDriveInboxItem: desktop.ignoreGoogleDriveInboxItem,
+      reopenGoogleDriveInboxItem: desktop.reopenGoogleDriveInboxItem,
+      disconnectGmail: desktop.disconnectGmail,
+      listGmailInbox: desktop.listGmailInbox,
+      readGmailInboxFile: desktop.readGmailInboxFile,
+      retryGmailInboxItem: desktop.retryGmailInboxItem,
+      ignoreGmailInboxItem: desktop.ignoreGmailInboxItem,
+      reopenGmailInboxItem: desktop.reopenGmailInboxItem,
+      listConnectorSummaries: desktop.listConnectorSummaries,
+      listConnectorBindings: desktop.listConnectorBindings,
+      upsertConnectorBinding: desktop.upsertConnectorBinding,
+      deleteConnectorBinding: desktop.deleteConnectorBinding,
+      startConnectorRefresh: desktop.startConnectorRefresh,
+      startConnectorRefreshAll: desktop.startConnectorRefreshAll,
+      getActiveConnectorRefreshBatch: desktop.getActiveConnectorRefreshBatch,
+      getConnectorRefreshBatch: desktop.getConnectorRefreshBatch,
       listClassificationRules: desktop.listClassificationRules,
       createClassificationRule: desktop.createClassificationRule,
       updateClassificationRule: desktop.updateClassificationRule,
@@ -205,9 +243,12 @@ vi.mock('./platform', async () => {
   }
 })
 
-import App from './App'
+import App, { ImportPage } from './App'
 import { I18nProvider } from './i18n'
 import { PlatformIpcError } from './platform'
+import { previewImportFiles } from './features/import/importService'
+import type { StartImportRequest } from './features/import/importMapper'
+import type { ImportPreviewDto, PostingDecisionDto } from './platform/types'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
   FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
@@ -236,6 +277,69 @@ const storeClassificationRule = {
 const pendingBankReview = {
   householdId: 'family',
   runs: [{ runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'japanese-bank-ledger-v1', adapterVersion: '1', startedAt: '2026-07-13T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42, sourceModifiedAt: null, recordCount: 1, candidateCount: 1 }],
+}
+
+const connectorSummary = (overrides: Record<string, unknown> = {}) => ({
+  schemaVersion: 1,
+  connectorKind: 'GOOGLE_DRIVE',
+  connectionKey: 'drive-primary',
+  displayLabel: 'Household statements',
+  availability: 'AVAILABLE',
+  lifecycle: 'CONNECTED',
+  health: 'FRESH',
+  capabilities: ['CONFIGURE', 'REFRESH_NOW', 'SCHEDULE'],
+  lastAttemptAt: '2026-08-25T00:00:00Z',
+  lastSuccessAt: '2026-08-25T00:00:00Z',
+  freshnessDeadlineAt: '2026-08-26T00:00:00Z',
+  nextDueAt: '2026-08-25T00:30:00Z',
+  pendingReviewCount: 2,
+  consecutiveFailures: 0,
+  lastErrorCode: null,
+  bindingSummary: null,
+  configurationDestination: 'GOOGLE_DRIVE_SETTINGS',
+  ...overrides,
+})
+
+const refreshBatch = (overrides: Record<string, unknown> = {}) => ({
+  schemaVersion: 1,
+  batchId: 'batch-1',
+  householdId: 'family',
+  status: 'ACTIVE',
+  totalCount: 1,
+  terminalCount: 0,
+  succeededCount: 0,
+  noChangesCount: 0,
+  skippedManualCount: 0,
+  failedCount: 0,
+  changedCount: 0,
+  createdAt: '2026-08-25T00:00:00Z',
+  updatedAt: '2026-08-25T00:00:00Z',
+  completedAt: null,
+  items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'RUNNING', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T00:00:00Z', startedAt: '2026-08-25T00:00:00Z', completedAt: null }],
+  ...overrides,
+})
+
+const observableParserProfileResponse = (onFilter: () => void): readonly unknown[] => {
+  const raw: Array<Record<string, unknown>> = [{
+    id: 'late-profile', householdId: 'family', name: 'Late profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1,
+    dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null,
+    amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null,
+    externalIdColumn: null, accountHintColumn: 'Account', isEnabled: true, priority: 50, version: 1,
+    createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+  }]
+  Object.defineProperty(raw, 'map', {
+    value: (transform: (value: Record<string, unknown>, index: number, array: Array<Record<string, unknown>>) => unknown) => {
+      const mapped = [transform(raw[0], 0, raw)]
+      Object.defineProperty(mapped, 'filter', {
+        value: (predicate: (value: unknown, index: number, array: unknown[]) => unknown) => {
+          onFilter()
+          return Array.prototype.filter.call(mapped, predicate) as unknown[]
+        },
+      })
+      return mapped
+    },
+  })
+  return raw
 }
 
 const recurringIntelligenceResponse = {
@@ -320,6 +424,25 @@ describe('KakeFlow desktop read models', () => {
     desktop.getGoogleDriveSchedule.mockReset()
     desktop.updateGoogleDriveSchedule.mockReset()
     desktop.syncGoogleDriveNow.mockReset()
+    desktop.listGoogleDriveInbox.mockReset().mockResolvedValue([])
+    desktop.readGoogleDriveInboxFile.mockReset()
+    desktop.retryGoogleDriveInboxItem.mockReset()
+    desktop.ignoreGoogleDriveInboxItem.mockReset()
+    desktop.reopenGoogleDriveInboxItem.mockReset()
+    desktop.disconnectGmail.mockReset().mockResolvedValue(undefined)
+    desktop.listGmailInbox.mockReset().mockResolvedValue([])
+    desktop.readGmailInboxFile.mockReset()
+    desktop.retryGmailInboxItem.mockReset()
+    desktop.ignoreGmailInboxItem.mockReset()
+    desktop.reopenGmailInboxItem.mockReset()
+    desktop.listConnectorSummaries.mockReset().mockResolvedValue({ schemaVersion: 1, items: [], nextCursor: null })
+    desktop.listConnectorBindings.mockReset().mockResolvedValue([])
+    desktop.upsertConnectorBinding.mockReset()
+    desktop.deleteConnectorBinding.mockReset()
+    desktop.startConnectorRefresh.mockReset()
+    desktop.startConnectorRefreshAll.mockReset()
+    desktop.getActiveConnectorRefreshBatch.mockReset().mockResolvedValue(null)
+    desktop.getConnectorRefreshBatch.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -330,6 +453,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockReset().mockResolvedValue({
       summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 1, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
     desktop.commitImport.mockReset().mockResolvedValue({ runId: 'run-1', postedCount: 1 })
@@ -1254,6 +1378,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValue({
       summary: { runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'LOCAL_FOLDER', originalFilename: 'statement.eml', mediaType: 'message/rfc822', byteSize: bytes.length, sha256: 'hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'candidate-1', accountId: 'family-bank', occurredOn: '2026-07-27', postedOn: null, amountJpy: 204987, direction: 'OUT', descriptionRaw: 'ラクテンカードサービス', merchantRaw: 'ラクテンカードサービス', externalTransactionId: null, extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [] }],
     })
 
@@ -1372,6 +1497,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'receipt-run', documentId: 'receipt-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'CAMERA_SCAN', originalFilename: 'receipt.png', mediaType: 'image/png', byteSize: 42, sha256: 'receipt-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'receipt-candidate', accountId: 'family-card', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: '生協', merchantRaw: '生協', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9300, normalizationConfidenceBps: 9300, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview }],
     })
     render(<App />)
@@ -1388,7 +1514,7 @@ describe('KakeFlow desktop read models', () => {
         expect.objectContaining({ side: 'DEBIT', amountJpy: 800 }),
         expect.objectContaining({ side: 'CREDIT', accountId: 'family-card', amountJpy: 1200 }),
       ],
-    })]))
+    })], null))
   })
 
   it('keeps a delta receipt manual and blocks commit while its edited journal is invalid', async () => {
@@ -1396,6 +1522,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'delta-run', documentId: 'delta-document', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'delta.txt', mediaType: 'text/plain', byteSize: 42, sha256: 'delta-hash', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [{ id: 'delta-candidate', accountId: 'family-card', occurredOn: '2026-07-12', postedOn: null, amountJpy: 1200, direction: 'OUT', descriptionRaw: 'STORE', merchantRaw: 'STORE', externalTransactionId: null, externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null, institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null, extractionConfidenceBps: 9000, normalizationConfidenceBps: 9000, attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null, reviewStatus: 'READY', evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview: { merchant: 'STORE', occurredOn: '2026-07-12', totalAmountJpy: 1200, items: [{ description: '読取品目', quantity: 1, amountJpy: 1100, taxRatePercent: null, confidenceBps: 8000, provenance: { lineNumber: 2, regionIndexes: [], method: 'TEXT_PATTERN' } }], taxes: [], couponAmountJpy: null, pointsUsedJpy: null, couponEvidence: [], pointsUsedEvidence: [], subtotalJpy: null, changeJpy: null, paymentMethod: null, taxMode: null, reconciliation: { status: 'DELTA', itemTotalJpy: 1100, totalAmountJpy: 1200, deltaJpy: -100 }, provenance: { sourceRecordId: 'record', sourceRowNumber: 1, documentPageNumber: null } } }],
     })
     render(<App />)
@@ -1415,6 +1542,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'run-zero', documentId: 'document-zero', status: 'REVIEW_REQUIRED', recordCount: 3, candidateCount: 0, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-zero', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [],
     })
     desktop.commitImport.mockResolvedValueOnce({ runId: 'run-zero', postedCount: 0 })
@@ -1424,7 +1552,7 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByText('台帳候補のない原本処理です。内容を確認して完了するか、取り消してください。')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '原本処理を完了' }))
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-zero', []))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-zero', [], null))
     expect(await screen.findByText('取引を追加せず原本処理を完了しました。')).toBeInTheDocument()
   })
 
@@ -1433,6 +1561,7 @@ describe('KakeFlow desktop read models', () => {
     desktop.previewImport.mockResolvedValueOnce({
       summary: { runId: 'run-resume', documentId: 'document-resume', status: 'REVIEW_REQUIRED', recordCount: 3, candidateCount: 0, reusedExisting: false },
       source: { sourceType: 'MANUAL_UPLOAD', originalFilename: 'assetbalance-interrupted.csv', mediaType: 'text/csv', byteSize: 42, sha256: 'hash-resume', audienceVisibility: 'SHARED', audienceMemberId: null },
+      expectedConnectorBinding: null,
       candidates: [],
     })
     render(<App />)
@@ -1882,6 +2011,873 @@ describe('KakeFlow desktop read models', () => {
     expect(desktop.listGoogleDriveConnections).toHaveBeenCalledWith('family')
   })
 
+  it('loads every connector summary page into the Settings control center', async () => {
+    const cursor = { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' }
+    desktop.listConnectorSummaries
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [connectorSummary()], nextCursor: cursor })
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', configurationDestination: 'GMAIL_SETTINGS' })], nextCursor: null })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(await screen.findByRole('article', { name: 'Household statements' })).toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Receipt mail' })).toBeInTheDocument()
+    expect(desktop.listConnectorSummaries.mock.calls).toEqual([
+      ['family', undefined, 100],
+      ['family', cursor, 100],
+    ])
+  })
+
+  it('recovers and resumes polling the durable active refresh batch after Settings remount', async () => {
+    const projected = connectorSummary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'] })
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [projected], nextCursor: null })
+    desktop.getActiveConnectorRefreshBatch.mockResolvedValue(refreshBatch())
+    desktop.getConnectorRefreshBatch
+      .mockRejectedValueOnce(new Error('transient IPC failure'))
+      .mockResolvedValueOnce(refreshBatch())
+      .mockResolvedValueOnce(refreshBatch({
+        status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 1,
+        updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+        items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 1, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+      }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    await waitFor(() => expect(desktop.getActiveConnectorRefreshBatch).toHaveBeenCalledWith('family'))
+    const progress = await screen.findByRole('status', { name: 'コネクタ更新の進行状況' })
+    expect(progress).toHaveTextContent('0 / 1')
+    const refresh = within(await screen.findByRole('article', { name: 'Household statements' })).getByRole('button', { name: '更新' })
+    expect(refresh).toBeDisabled()
+    fireEvent.click(refresh)
+    expect(desktop.startConnectorRefresh).not.toHaveBeenCalled()
+
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(3), { timeout: 2_000 })
+    expect(progress).toHaveTextContent('すべての更新が完了しました。')
+    expect(desktop.listConnectorSummaries.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('rejects repeated connector cursors without leaking cursor detail', async () => {
+    const repeated = { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary' }
+    desktop.listConnectorSummaries
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [connectorSummary()], nextCursor: repeated })
+      .mockResolvedValueOnce({ schemaVersion: 1, items: [], nextCursor: repeated })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    expect(await screen.findByText('コネクタの状態を読み込めませんでした。')).toHaveAttribute('role', 'alert')
+    expect(desktop.listConnectorSummaries).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('drive-primary')).not.toBeInTheDocument()
+  })
+
+  it('polls an individual refresh every 500 ms only while ACTIVE, reloads terminal state, and keeps item failures local', async () => {
+    const projected = connectorSummary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY'] })
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [projected], nextCursor: null })
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch
+      .mockResolvedValueOnce(refreshBatch())
+      .mockResolvedValueOnce(refreshBatch({
+        status: 'FAILED', terminalCount: 1, failedCount: 1, updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+        items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'RATE_LIMITED', updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+      }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    const refresh = within(card).getByRole('button', { name: '更新' })
+    fireEvent.click(refresh)
+
+    await waitFor(() => expect(desktop.startConnectorRefresh).toHaveBeenCalledWith('family', 'GOOGLE_DRIVE', 'drive-primary'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('0 / 1'))
+    expect(refresh).toBeDisabled()
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(2), { timeout: 1_500 })
+    expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('再試行できます')
+    expect(screen.queryByText('コネクタの更新を開始できませんでした。')).not.toBeInTheDocument()
+    expect(desktop.listConnectorSummaries.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2)
+    await waitFor(() => expect(refresh).toHaveFocus())
+  })
+
+  it('blocks a second connector start while ACTIVE and continues the original poll through terminal reload', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [
+      connectorSummary({ capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'] }),
+      connectorSummary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'], configurationDestination: 'GMAIL_SETTINGS' }),
+    ], nextCursor: null })
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch
+      .mockResolvedValueOnce(refreshBatch())
+      .mockResolvedValueOnce(refreshBatch({
+        status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 1, updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+        items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 1, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+      }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const drive = await screen.findByRole('article', { name: 'Household statements' })
+    fireEvent.click(within(drive).getByRole('button', { name: '更新' }))
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce())
+
+    const gmailRefresh = within(screen.getByRole('article', { name: 'Receipt mail' })).getByRole('button', { name: '更新' })
+    expect(gmailRefresh).toBeDisabled()
+    fireEvent.click(gmailRefresh)
+    expect(desktop.startConnectorRefresh).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(2), { timeout: 1_500 })
+    expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('すべての更新が完了しました。')
+    expect(desktop.listConnectorSummaries.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('starts Refresh all and stops immediately when the first progress result is terminal', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
+    desktop.startConnectorRefreshAll.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch({
+      status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 2, updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+      items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 2, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+    }))
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const refreshAll = await screen.findByRole('button', { name: 'すべて更新' })
+    fireEvent.click(refreshAll)
+
+    await waitFor(() => expect(desktop.startConnectorRefreshAll).toHaveBeenCalledWith('family'))
+    await waitFor(() => expect(screen.getByRole('status', { name: 'コネクタ更新の進行状況' })).toHaveTextContent('すべての更新が完了しました。'))
+    expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(refreshAll).toHaveFocus())
+  })
+
+  it('proves the synthetic native source-to-provenance journey across refresh failure, remapping, approval, and balanced posting', async () => {
+    const accounts = [
+      { id: 'synthetic-cash', name: 'Synthetic cash', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'synthetic-other-cash', name: 'Synthetic other cash', accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'synthetic-household-other-expense', name: 'Synthetic expense', accountKind: 'EXPENSE', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+      { id: 'synthetic-household-income', name: 'Synthetic income', accountKind: 'INCOME', accountSubtype: 'OTHER', currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' },
+    ]
+    desktop.listHouseholds.mockResolvedValue([{ id: 'synthetic-household', name: 'Synthetic household', baseCurrency: 'JPY', createdAt: '2026-08-25T00:00:00Z' }])
+    desktop.listHouseholdMembers.mockResolvedValue([])
+    desktop.listAccounts.mockResolvedValue(accounts)
+    desktop.listConnectorSummaries.mockResolvedValue({
+      schemaVersion: 1,
+      items: [
+        connectorSummary({
+          connectionKey: 'source-alpha', displayLabel: 'Synthetic source alpha',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'], pendingReviewCount: 1,
+        }),
+        connectorSummary({
+          connectorKind: 'GMAIL', connectionKey: 'source-beta', displayLabel: 'Synthetic source beta',
+          capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'RETRY'], pendingReviewCount: 0,
+          configurationDestination: 'GMAIL_SETTINGS',
+        }),
+      ],
+      nextCursor: null,
+    })
+    desktop.listConnectorBindings.mockResolvedValue([{
+      householdId: 'synthetic-household', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+      allowedAccountIds: ['synthetic-cash'], parserProfileId: null, parserProfileVersion: null, version: 1,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.startConnectorRefreshAll.mockResolvedValue({
+      batchId: 'synthetic-batch', householdId: 'synthetic-household', status: 'ACTIVE', totalCount: 2, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch
+      .mockResolvedValueOnce({
+        schemaVersion: 1, batchId: 'synthetic-batch', householdId: 'synthetic-household', status: 'ACTIVE',
+        totalCount: 2, terminalCount: 1, succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 1, changedCount: 0,
+        createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:01Z', completedAt: null,
+        items: [
+          { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'source-alpha', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'SOURCE_TEMPORARILY_UNAVAILABLE', updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' },
+          { connectorKind: 'GMAIL', connectionKey: 'source-beta', status: 'RUNNING', changedCount: 0, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:01Z', completedAt: null },
+        ],
+      })
+      .mockResolvedValueOnce({
+        schemaVersion: 1, batchId: 'synthetic-batch', householdId: 'synthetic-household', status: 'PARTIAL',
+        totalCount: 2, terminalCount: 2, succeededCount: 1, noChangesCount: 0, skippedManualCount: 0, failedCount: 1, changedCount: 1,
+        createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:02Z', completedAt: '2026-08-25T00:00:02Z',
+        items: [
+          { connectorKind: 'GOOGLE_DRIVE', connectionKey: 'source-alpha', status: 'FAILED_RETRYABLE', changedCount: 0, lastErrorCode: 'SOURCE_TEMPORARILY_UNAVAILABLE', updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' },
+          { connectorKind: 'GMAIL', connectionKey: 'source-beta', status: 'SUCCEEDED', changedCount: 1, lastErrorCode: null, updatedAt: '2026-08-25T00:00:02Z', startedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:02Z' },
+        ],
+      })
+
+    const mismatchedRun = {
+      runId: 'synthetic-mismatch-run', documentId: 'synthetic-mismatch-document', status: 'REVIEW_REQUIRED',
+      adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2', startedAt: '2026-08-25T00:00:00Z',
+      sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv', mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }
+    desktop.listPendingReviews
+      .mockResolvedValueOnce({ householdId: 'synthetic-household', runs: [mismatchedRun] })
+      .mockResolvedValue({ householdId: 'synthetic-household', runs: [] })
+    let capturedImport: StartImportRequest | null = null
+    let capturedCandidate: ImportPreviewDto['candidates'][number] | null = null
+    let capturedDecision: PostingDecisionDto | null = null
+    let committed = false
+    desktop.previewImport.mockImplementation(async (runId: string) => {
+      const sourceCandidate = runId === 'synthetic-mismatch-run' ? null : capturedImport?.candidates[0]
+      const candidate = sourceCandidate ? {
+        ...sourceCandidate,
+        reviewStatus: 'READY' as const,
+        evidenceCount: sourceCandidate.evidence.length,
+        evidenceRoles: sourceCandidate.evidence.map(({ role }) => role),
+        issues: [], receiptReview: null,
+      } : {
+        id: 'synthetic-mismatch-candidate', accountId: 'synthetic-other-cash',
+        occurredOn: '2026-08-25', postedOn: null, amountJpy: 1200, direction: 'OUT' as const,
+        descriptionRaw: 'SYNTHETIC ITEM', merchantRaw: 'Synthetic merchant', externalTransactionId: null,
+        externalSource: null, externalFactHash: null, calculationTarget: true, suggestedTransactionType: null,
+        institutionRaw: null, categoryMajorRaw: null, categoryMinorRaw: null, memoRaw: null,
+        extractionConfidenceBps: 10000, normalizationConfidenceBps: 10000, attributionKind: 'HOUSEHOLD' as const,
+        attributedMemberId: null, audienceVisibility: 'SHARED' as const, audienceMemberId: null,
+        reviewStatus: 'READY' as const, evidenceCount: 1, evidenceRoles: ['PRIMARY'], issues: [], receiptReview: null,
+      }
+      if (sourceCandidate) capturedCandidate = candidate
+      const source = capturedImport && runId !== 'synthetic-mismatch-run' ? capturedImport : null
+      return {
+        summary: {
+          runId,
+          documentId: source?.documentId ?? 'synthetic-mismatch-document',
+          status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 1, reusedExisting: false,
+        },
+        source: {
+          sourceType: source?.sourceType ?? 'MANUAL_UPLOAD',
+          originalFilename: source?.originalFilename ?? 'synthetic-source.csv',
+          mediaType: source?.mediaType ?? 'text/csv', byteSize: source?.byteSize ?? 42,
+          sha256: source?.sha256 ?? 'synthetic-source-hash', audienceVisibility: 'SHARED', audienceMemberId: null,
+        },
+        expectedConnectorBinding: { connectorKind: 'MANUAL_IMPORT' as const, connectionKey: 'manual-import', version: 1, generation: 1 },
+        candidates: [candidate],
+      }
+    })
+    desktop.startImport.mockImplementation(async (request: StartImportRequest) => {
+      capturedImport = request
+      return {
+        runId: request.runId, documentId: request.documentId, status: 'REVIEW_REQUIRED',
+        recordCount: request.records.length, candidateCount: request.candidates.length, reusedExisting: false,
+      }
+    })
+    desktop.commitImport.mockImplementation(async (runId: string, decisions: readonly PostingDecisionDto[], expectedConnectorBinding) => {
+      const decision = decisions[0]
+      if (!capturedImport || !capturedCandidate || runId !== capturedImport.runId || decision?.candidateId !== capturedCandidate.id) {
+        throw new Error('commit does not match the staged synthetic import')
+      }
+      if (expectedConnectorBinding?.connectorKind !== 'MANUAL_IMPORT' || expectedConnectorBinding.connectionKey !== 'manual-import' || expectedConnectorBinding.version !== 1 || expectedConnectorBinding.generation !== 1) {
+        throw new Error('commit does not preserve the reviewed connector binding')
+      }
+      const debit = decision.entries.filter(({ side }) => side === 'DEBIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)
+      const credit = decision.entries.filter(({ side }) => side === 'CREDIT').reduce((sum, { amountJpy }) => sum + amountJpy, 0)
+      if (debit !== credit) throw new Error('synthetic decision is not balanced')
+      capturedDecision = decision
+      committed = true
+      return { runId, postedCount: 1 }
+    })
+    desktop.queryTransactions.mockImplementation(async ({ pageSize }: { pageSize: number }) => ({
+      items: committed && capturedCandidate && capturedDecision ? [{
+        id: capturedDecision.transactionId,
+        occurredOn: capturedCandidate.occurredOn, postedOn: capturedCandidate.postedOn,
+        transactionType: capturedDecision.transactionType, payee: capturedDecision.payee,
+        description: capturedDecision.description, amountJpy: capturedCandidate.amountJpy,
+        status: 'POSTED', calculationTarget: capturedDecision.calculationTarget,
+        attributionKind: capturedDecision.attributionKind, attributedMemberId: capturedDecision.attributedMemberId,
+        attributedMemberName: null, audienceVisibility: capturedDecision.audienceVisibility,
+        audienceMemberId: capturedDecision.audienceMemberId, audienceMemberName: null, labels: [], tags: [],
+      }] : [],
+      page: 1, pageSize, totalItems: committed ? 1 : 0, totalPages: committed ? 1 : 0,
+    }))
+    desktop.getTransactionDetail.mockImplementation(async (householdId: string, transactionId: string) => {
+      if (!committed || !capturedImport || !capturedCandidate || !capturedDecision || householdId !== capturedImport.householdId || transactionId !== capturedDecision.transactionId) {
+        throw new Error('transaction is not committed')
+      }
+      const sourceRecordId = capturedImport.candidates[0].evidence[0].sourceRecordId
+      const sourceRecord = capturedImport.records.find(({ id }) => id === sourceRecordId)
+      if (!sourceRecord) throw new Error('committed source provenance is missing')
+      return {
+        id: capturedDecision.transactionId, householdId, occurredOn: capturedCandidate.occurredOn,
+        postedOn: capturedCandidate.postedOn, transactionType: capturedDecision.transactionType,
+        payee: capturedDecision.payee, description: capturedDecision.description,
+        calculationTarget: capturedDecision.calculationTarget, attributionKind: capturedDecision.attributionKind,
+        attributedMemberId: capturedDecision.attributedMemberId, attributedMemberName: null,
+        audienceVisibility: capturedDecision.audienceVisibility, audienceMemberId: capturedDecision.audienceMemberId,
+        audienceMemberName: null, status: 'POSTED', createdAt: '2026-08-25T00:00:03Z',
+        updatedAt: '2026-08-25T00:00:03Z', editable: true,
+        entries: capturedDecision.entries.map((entry, index) => {
+          const account = accounts.find(({ id }) => id === entry.accountId)
+          if (!account) throw new Error(`committed account is missing: ${entry.accountId}`)
+          return { ...entry, accountName: account.name, accountKind: account.accountKind, lineNumber: index + 1 }
+        }),
+        sourceEvidence: [{
+          sourceRecordId, sourceDocumentId: capturedImport.documentId, sourceType: capturedImport.sourceType,
+          originalFilename: capturedImport.originalFilename, mediaType: capturedImport.mediaType,
+          rowNumber: sourceRecord.rowNumber, importedAt: '2026-08-25T00:00:03Z', evidenceRole: 'PRIMARY',
+          audienceVisibility: capturedImport.audienceVisibility, audienceMemberId: capturedImport.audienceMemberId,
+          audienceMemberName: null,
+        }],
+      }
+    })
+    const committedState = () => {
+      if (!capturedImport || !capturedCandidate || !capturedDecision) throw new Error('synthetic commit state is incomplete')
+      return { importRequest: capturedImport, candidate: capturedCandidate, decision: capturedDecision }
+    }
+
+    const { container } = render(<App />)
+    const settings = await screen.findByRole('button', { name: '設定' })
+    expect(screen.queryByText('Synthetic merchant')).not.toBeInTheDocument()
+    expect(desktop.getTransactionDetail).not.toHaveBeenCalled()
+    fireEvent.click(settings)
+    const refreshAll = await screen.findByRole('button', { name: 'すべて更新' })
+    expect(screen.getByRole('article', { name: 'Synthetic source alpha' })).toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'Synthetic source beta' })).toBeInTheDocument()
+    fireEvent.click(refreshAll)
+
+    const progress = await screen.findByRole('status', { name: 'コネクタ更新の進行状況' })
+    await waitFor(() => expect(progress).toHaveTextContent('1 / 2'))
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Synthetic source alpha再試行できます',
+      'Synthetic source beta更新中',
+    ])
+    await waitFor(() => expect(progress).toHaveTextContent('一部の更新に対応が必要です。'), { timeout: 1_500 })
+    expect(within(progress).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      'Synthetic source alpha再試行できます',
+      'Synthetic source beta1件を検出',
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'インポート' }))
+    const blockedCommit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(screen.getByText('対応付けを再確認してください。口座または読み取りプロファイルが変更されています。')).toHaveAttribute('role', 'status')
+    expect(blockedCommit).toBeDisabled()
+    fireEvent.click(blockedCommit)
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '取り消す' }))
+    await waitFor(() => expect(desktop.rollbackImport).toHaveBeenCalledWith('synthetic-mismatch-run'))
+    await waitFor(() => expect(screen.queryByText('対応付けが必要')).not.toBeInTheDocument())
+
+    const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+    const file = new File(['日付,摘要,支払い金額,預かり金額,差引残高\n2026/08/25,SYNTHETIC ITEM,1200,,8800'], 'synthetic-source.csv', { type: 'text/csv' })
+    fireEvent.change(input, { target: { files: [file] } })
+    const start = await screen.findByRole('button', { name: '取込開始' })
+    fireEvent.click(start)
+    expect(await screen.findByText('銀行CSVの取込先銀行口座を選択してください。')).toBeInTheDocument()
+    expect(desktop.startImport).not.toHaveBeenCalled()
+    const mappedAccount = screen.getByLabelText('synthetic-source.csvの取込先銀行口座')
+    expect(within(mappedAccount).getAllByRole('option').map((option) => option.textContent)).toEqual(['銀行口座を選択', 'Synthetic cash'])
+    fireEvent.change(mappedAccount, { target: { value: 'synthetic-cash' } })
+    fireEvent.click(start)
+    await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({
+      householdId: 'synthetic-household', sourceType: 'MANUAL_UPLOAD', originalFilename: 'synthetic-source.csv',
+      candidates: [expect.objectContaining({ accountId: 'synthetic-cash' })],
+    }), expect.any(Uint8Array)))
+
+    const commit = await screen.findByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'SYNTHETIC ITEMを承認' }))
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+    await waitFor(() => expect(capturedDecision).not.toBeNull())
+    const posted = committedState()
+    expect(posted.decision).toMatchObject({
+      candidateId: posted.candidate.id,
+      payee: posted.candidate.merchantRaw,
+      entries: expect.arrayContaining([
+        expect.objectContaining({ accountId: 'synthetic-household-other-expense', side: 'DEBIT', amountJpy: 1200 }),
+        expect.objectContaining({ accountId: 'synthetic-cash', side: 'CREDIT', amountJpy: 1200 }),
+      ]),
+    })
+    expect(posted.importRequest.records).toEqual([expect.objectContaining({ rowNumber: 2 })])
+
+    fireEvent.click(screen.getByRole('button', { name: '取引' }))
+    const row = (await screen.findAllByText('SYNTHETIC ITEM')).map((element) => element.closest('button')).find(Boolean)!
+    fireEvent.click(row)
+    const detail = await screen.findByRole('dialog', { name: 'SYNTHETIC ITEM' })
+    expect(within(detail).getByText('借方 ¥1,200 / 貸方 ¥1,200')).toBeInTheDocument()
+    expect(within(detail).getByText('synthetic-source.csv')).toBeInTheDocument()
+    expect(within(detail).getByText(/行 2/)).toBeInTheDocument()
+  })
+
+  it('cancels ACTIVE polling when the household changes', async () => {
+    desktop.listHouseholds.mockResolvedValue([
+      { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+      { id: 'family-2', name: '佐藤家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+    ])
+    desktop.listConnectorSummaries.mockImplementation(async (householdId: string) => ({ schemaVersion: 1, items: householdId === 'family' ? [connectorSummary()] : [], nextCursor: null }))
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch())
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    fireEvent.click(within(card).getByRole('button', { name: '更新' }))
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      fireEvent.change(screen.getByRole('combobox', { name: '世帯を切り替える' }), { target: { value: 'family-2' } })
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 600))
+    })
+    expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce()
+  })
+
+  it('cleans up the ACTIVE refresh poll on unmount', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch())
+
+    const view = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    fireEvent.click(within(card).getByRole('button', { name: '更新' }))
+    await waitFor(() => expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce())
+
+    view.unmount()
+    await act(async () => { await new Promise((resolve) => globalThis.setTimeout(resolve, 600)) })
+    expect(desktop.getConnectorRefreshBatch).toHaveBeenCalledOnce()
+  })
+
+  it.each(['unmount', 'household-change'] as const)('invalidates a deferred terminal reload on %s before it can commit stale state', async (mode) => {
+    if (mode === 'household-change') {
+      desktop.listHouseholds.mockResolvedValue([
+        { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+        { id: 'family-2', name: '佐藤家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' },
+      ])
+    }
+    desktop.listConnectorSummaries.mockImplementation(async (householdId: string) => ({ schemaVersion: 1, items: householdId === 'family' ? [connectorSummary()] : [], nextCursor: null }))
+    desktop.startConnectorRefresh.mockResolvedValue({
+      batchId: 'batch-1', householdId: 'family', status: 'ACTIVE', totalCount: 1, terminalCount: 0,
+      succeededCount: 0, noChangesCount: 0, skippedManualCount: 0, failedCount: 0, changedCount: 0,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z', completedAt: null,
+    })
+    desktop.getConnectorRefreshBatch.mockResolvedValue(refreshBatch({
+      status: 'COMPLETE', terminalCount: 1, succeededCount: 1, changedCount: 1, updatedAt: '2026-08-25T00:00:01Z', completedAt: '2026-08-25T00:00:01Z',
+      items: [{ connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', status: 'SUCCEEDED', changedCount: 1, lastErrorCode: null, updatedAt: '2026-08-25T00:00:01Z', startedAt: '2026-08-25T00:00:00Z', completedAt: '2026-08-25T00:00:01Z' }],
+    }))
+
+    const view = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    const invoke = nativeInvoke.getMockImplementation()!
+    let resolveProfiles: ((value: readonly unknown[]) => void) | undefined
+    let delayed = false
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'delimited_parser_profiles_list' && !delayed) {
+        delayed = true
+        return await new Promise<readonly unknown[]>((resolve) => { resolveProfiles = resolve })
+      }
+      return await invoke(command, args)
+    })
+
+    fireEvent.click(within(card).getByRole('button', { name: '更新' }))
+    await waitFor(() => expect(resolveProfiles).toBeDefined())
+    if (mode === 'unmount') view.unmount()
+    else {
+      fireEvent.change(screen.getByRole('combobox', { name: '世帯を切り替える' }), { target: { value: 'family-2' } })
+      await waitFor(() => expect(screen.getByRole('combobox', { name: '世帯を切り替える' })).toHaveValue('family-2'))
+    }
+
+    const staleCommit = vi.fn()
+    await act(async () => {
+      resolveProfiles?.(observableParserProfileResponse(staleCommit))
+      await Promise.resolve()
+    })
+    expect(staleCommit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['GOOGLE_DRIVE', desktop.disconnectGoogleDrive, 'drive-primary'],
+    ['GMAIL', desktop.disconnectGmail, 'gmail-primary'],
+    ['WATCHED_FOLDER', desktop.removeWatchedFolder, 'folder-primary'],
+  ] as const)('confirms and delegates %s disconnect to its existing typed command, then reloads summaries and bindings', async (connectorKind, disconnect, connectionKey) => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({
+      connectorKind, connectionKey, displayLabel: `${connectorKind} source`, capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW'],
+      configurationDestination: connectorKind === 'GOOGLE_DRIVE' ? 'GOOGLE_DRIVE_SETTINGS' : connectorKind === 'GMAIL' ? 'GMAIL_SETTINGS' : 'WATCHED_FOLDER_SETTINGS',
+    })], nextCursor: null })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: `${connectorKind} source` })
+    fireEvent.click(within(card).getByRole('button', { name: '接続解除' }))
+
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith('family', connectionKey))
+    expect(globalThis.confirm).toHaveBeenCalledWith(`${connectorKind} sourceの接続を解除しますか？取り込み済みの証跡と台帳は保持されます。`)
+    await waitFor(() => expect(desktop.listConnectorBindings.mock.calls.filter(([householdId]) => householdId === 'family').length).toBeGreaterThanOrEqual(2))
+  })
+
+  it('focuses the stable Control Center heading after watched-folder disconnect removes its card', async () => {
+    let disconnected = false
+    desktop.listConnectorSummaries.mockImplementation(async () => ({ schemaVersion: 1, items: disconnected ? [] : [connectorSummary({
+      connectorKind: 'WATCHED_FOLDER', connectionKey: 'folder-primary', displayLabel: 'Folder source', capabilities: ['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW'], configurationDestination: 'WATCHED_FOLDER_SETTINGS',
+    })], nextCursor: null }))
+    desktop.removeWatchedFolder.mockImplementation(async () => { disconnected = true })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Folder source' })
+    fireEvent.click(within(card).getByRole('button', { name: '接続解除' }))
+
+    await waitFor(() => expect(screen.queryByRole('article', { name: 'Folder source' })).not.toBeInTheDocument())
+    const heading = screen.getByRole('heading', { name: 'コネクタ管理センター' })
+    await waitFor(() => expect(document.activeElement).toBe(heading))
+    expect(document.activeElement?.isConnected).toBe(true)
+  })
+
+  it('opens the existing connector disclosure, scrolls its exact panel, and focuses its heading', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary()], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const disclosure = screen.getByText('コネクタ').closest('details')
+    expect(disclosure).not.toHaveAttribute('open')
+    const card = await screen.findByRole('article', { name: 'Household statements' })
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
+
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
+
+    await waitFor(() => expect(disclosure).toHaveAttribute('open'))
+    const panel = document.getElementById('connector-settings-google-drive')
+    const heading = screen.getByRole('heading', { name: 'Google Drive' })
+    expect(scrollIntoView).toHaveBeenCalledOnce()
+    expect(scrollIntoView.mock.instances[0]).toBe(panel)
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('opens the existing Gmail disclosure target without duplicating provider controls', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'GMAIL', connectionKey: 'gmail-primary', displayLabel: 'Receipt mail', configurationDestination: 'GMAIL_SETTINGS' })], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const disclosure = screen.getByText('コネクタ').closest('details')
+    const card = await screen.findByRole('article', { name: 'Receipt mail' })
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
+
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
+
+    await waitFor(() => expect(disclosure).toHaveAttribute('open'))
+    const panel = document.getElementById('connector-settings-gmail')
+    const heading = screen.getByRole('heading', { name: 'Gmail' })
+    expect(scrollIntoView.mock.instances[0]).toBe(panel)
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('routes a local watched folder to the shared local and iCloud connector controls', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'WATCHED_FOLDER', connectionKey: 'local-folder', displayLabel: 'Household Inbox', configurationDestination: 'WATCHED_FOLDER_SETTINGS' })], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Household Inbox' })
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
+
+    const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })
+    await waitFor(() => expect(heading).toHaveAttribute('id', 'connector-settings-watched-folder'))
+    expect(screen.getByRole('tab', { name: 'コネクタ' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('button', { name: '同期フォルダーを追加' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'iCloud Drive を接続' })).toBeInTheDocument()
+    expect(scrollIntoView.mock.instances[0]).toBe(heading)
+    expect(document.activeElement).toBe(heading)
+  })
+
+  it('routes manual import configuration to the existing Import Inbox heading', async () => {
+    desktop.listConnectorSummaries.mockResolvedValue({ schemaVersion: 1, items: [connectorSummary({ connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', displayLabel: 'Manual import', health: 'MANUAL', capabilities: ['IMPORT_FILE', 'ACCOUNT_BINDING'], lastAttemptAt: null, lastSuccessAt: null, freshnessDeadlineAt: null, nextDueAt: null, configurationDestination: 'IMPORT_INBOX' })], nextCursor: null })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })
+
+    render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+    const card = await screen.findByRole('article', { name: 'Manual import' })
+    expect(within(card).getAllByRole('button')).toHaveLength(2)
+    expect(within(card).getByRole('button', { name: 'レビュー範囲を管理' })).toBeInTheDocument()
+    fireEvent.click(within(card).getByRole('button', { name: '設定を開く' }))
+
+    const heading = await screen.findByRole('heading', { name: 'インポート Inbox' })
+    await waitFor(() => expect(document.activeElement).toBe(heading))
+    expect(heading).toHaveAttribute('id', 'connector-import-inbox')
+    expect(screen.getByRole('tab', { name: 'ローカル' })).toHaveAttribute('aria-selected', 'true')
+    expect(scrollIntoView.mock.instances[0]).toBe(heading)
+  })
+
+  it('narrows Drive, Gmail, watched-folder, and manual review selectors by exact binding identity without defaults', async () => {
+    const bankAccounts = ['drive-bank', 'gmail-bank', 'folder-bank', 'manual-bank'].map((id) => ({
+      id, name: id, accountKind: 'ASSET', accountSubtype: 'BANK', currency: 'JPY', ownershipKind: 'HOUSEHOLD',
+      ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED',
+    }))
+    desktop.listAccounts.mockResolvedValue(bankAccounts)
+    desktop.listConnectorBindings.mockResolvedValue([
+      { householdId: 'family', connectorKind: 'GOOGLE_DRIVE', connectionKey: 'drive-primary', allowedAccountIds: ['drive-bank'], parserProfileId: 'drive-profile', parserProfileVersion: 1, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+      { householdId: 'family', connectorKind: 'GMAIL', connectionKey: 'gmail-primary', allowedAccountIds: ['gmail-bank'], parserProfileId: null, parserProfileVersion: null, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+      { householdId: 'family', connectorKind: 'WATCHED_FOLDER', connectionKey: 'folder-primary', allowedAccountIds: ['folder-bank'], parserProfileId: 'folder-profile', parserProfileVersion: 1, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+    ])
+    desktop.listGoogleDriveInbox.mockResolvedValue([{
+      id: 'drive-item', householdId: 'family', connectionId: 'drive-primary', fileId: 'remote-drive', generationFingerprint: 'generation', fileName: 'drive.csv', mediaType: 'text/csv',
+      remoteByteSize: 1, remoteModifiedAt: null, remoteMd5Checksum: null, driveVersion: '1', contentSha256: 'hash', state: 'FAILED', attemptCount: 1, importRunId: null,
+      lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.listGmailInbox.mockResolvedValue([{
+      id: 'gmail-item', householdId: 'family', connectionId: 'gmail-primary', fileName: 'gmail.csv', mediaType: 'message/rfc822', internalDateMs: 1,
+      estimatedByteSize: 1, contentReady: true, state: 'FAILED', attemptCount: 1, importRunId: null, lastErrorCode: 'PREVIEW_FAILED',
+      discoveredAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    const baseInvoke = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'delimited_parser_profiles_list'
+      ? [
+        { id: 'drive-profile', householdId: 'family', name: 'Drive profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: null, isEnabled: true, priority: 10, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+        { id: 'folder-profile', householdId: 'family', name: 'Folder profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: null, isEnabled: true, priority: 20, version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' },
+      ]
+      : baseInvoke(command, args))
+    const preview = (id: string, source: Record<string, unknown>) => ({
+      id, filename: `${id}.csv`, adapterId: 'yucho-direct-ledger-v1', detectedAdapterId: 'yucho-direct-ledger-v1' as const,
+      encoding: 'utf-8', recordCount: 1, issues: [], status: 'ready' as const, parsedAt: '2026-08-25T00:00:00Z',
+      fileBytes: new Uint8Array([1]), parsed: { adapterId: 'yucho-direct-ledger-v1' as const, records: [], issues: [], metadata: {} }, ...source,
+    })
+    const previews = [
+      preview('drive', { sourceType: 'GOOGLE_DRIVE', driveInboxItemId: 'drive-item' }),
+      preview('gmail', { sourceType: 'GMAIL', gmailInboxItemId: 'gmail-item' }),
+      preview('folder', { sourceType: 'LOCAL_FOLDER', watchedFolderId: 'folder-primary' }),
+      preview('manual', { sourceType: 'MANUAL_UPLOAD' }),
+    ]
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={previews} setPreviews={vi.fn()} householdId="family" accounts={bankAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalledWith('family'))
+    const optionTexts = (label: string) => within(screen.getByRole('combobox', { name: label })).getAllByRole('option').map((option) => option.textContent)
+    expect(optionTexts('drive.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'drive-bank'])
+    expect(optionTexts('gmail.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'gmail-bank'])
+    expect(optionTexts('folder.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'folder-bank'])
+    expect(optionTexts('manual.csvのゆうちょ取込先口座')).toEqual(['銀行口座を選択', 'drive-bank', 'gmail-bank', 'folder-bank', 'manual-bank'])
+    expect(optionTexts('drive.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Drive profile（優先度 10）'])
+    expect(optionTexts('gmail.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Drive profile（優先度 10）', 'Folder profile（優先度 20）'])
+    expect(optionTexts('folder.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Folder profile（優先度 20）'])
+    expect(optionTexts('manual.csvの読み取りプロファイル')).toEqual(['プロファイルを選択', 'Drive profile（優先度 10）', 'Folder profile（優先度 20）'])
+    for (const name of ['drive.csvのゆうちょ取込先口座', 'gmail.csvのゆうちょ取込先口座', 'folder.csvのゆうちょ取込先口座', 'manual.csvのゆうちょ取込先口座', 'drive.csvの読み取りプロファイル']) {
+      expect(screen.getByRole('combobox', { name })).toHaveValue('')
+    }
+  })
+
+  it('reloads a rejected staged binding and blocks another commit after account archive and parser version change', async () => {
+    const initialAccounts = [...classificationAccounts]
+    desktop.listAccounts.mockResolvedValueOnce(initialAccounts).mockResolvedValue(initialAccounts.filter((account) => account.id !== 'family-bank'))
+    desktop.listConnectorBindings.mockResolvedValue([{
+      householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import', allowedAccountIds: ['family-bank'],
+      parserProfileId: 'profile-bank', parserProfileVersion: 2, version: 4,
+      createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId: 'run-1', documentId: 'document-1', status: 'REVIEW_REQUIRED', adapterId: 'custom-delimited-v1', adapterVersion: 'profile-bank@2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: 'bank.csv', mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    desktop.commitImport.mockRejectedValue(new Error('connector binding changed'))
+    let profileVersion = 2
+    const baseInvoke = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'delimited_parser_profiles_list'
+      ? [{ id: 'profile-bank', householdId: 'family', name: 'Bank profile', delimiter: 'COMMA', encoding: 'UTF8', headerRow: 1, dateColumn: 'Date', dateFormat: 'YYYY_MM_DD', descriptionColumn: 'Description', payeeColumn: null, amountMode: 'SIGNED', signedPositiveDirection: 'IN', signedAmountColumn: 'Amount', debitColumn: null, creditColumn: null, externalIdColumn: null, accountHintColumn: null, isEnabled: true, priority: 10, version: profileVersion++, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z' }]
+      : baseInvoke(command, args))
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[]} setPreviews={vi.fn()} householdId="family" accounts={initialAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    const approve = await screen.findByRole('checkbox', { name: 'STOREを承認' })
+    fireEvent.click(approve)
+    const commit = screen.getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledOnce())
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('対応付けを再確認してください。口座または読み取りプロファイルが変更されています。'))
+    expect(screen.getByRole('button', { name: '承認済みを台帳へ反映' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '承認済みを台帳へ反映' }))
+    expect(desktop.commitImport).toHaveBeenCalledOnce()
+  })
+
+  it('clears a disallowed brokerage destination so re-allowing it still requires explicit reselection', async () => {
+    const bank = classificationAccounts[0]
+    const oldBroker = { ...bank, id: 'broker-old', name: 'Old broker', accountSubtype: 'SECURITIES' }
+    const newBroker = { ...bank, id: 'broker-new', name: 'New broker', accountSubtype: 'SECURITIES' }
+    const initialAccounts = [...classificationAccounts, oldBroker, newBroker]
+    desktop.listAccounts.mockResolvedValue(initialAccounts)
+    desktop.listConnectorBindings
+      .mockResolvedValueOnce([{
+        householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+        allowedAccountIds: ['family-bank', 'broker-old'], parserProfileId: null, parserProfileVersion: null,
+        version: 1, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+      }])
+      .mockResolvedValueOnce([{
+        householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+        allowedAccountIds: ['family-bank', 'broker-new'], parserProfileId: null, parserProfileVersion: null,
+        version: 2, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:05:00Z',
+      }])
+      .mockResolvedValue([{
+        householdId: 'family', connectorKind: 'MANUAL_IMPORT', connectionKey: 'manual-import',
+        allowedAccountIds: ['family-bank', 'broker-old', 'broker-new'], parserProfileId: null, parserProfileVersion: null,
+        version: 3, createdAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:10:00Z',
+      }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: ['one', 'two'].map((suffix) => ({
+      runId: `run-review-${suffix}`, documentId: `document-review-${suffix}`, status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType: 'MANUAL_UPLOAD', originalFilename: `review-${suffix}.csv`, mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    })) })
+    const previewReview = desktop.previewImport.getMockImplementation()!
+    desktop.previewImport.mockImplementation(async (runId: string) => {
+      const loaded = await previewReview(runId) as ImportPreviewDto
+      const suffix = runId.endsWith('one') ? 'one' : 'two'
+      return {
+        ...loaded,
+        summary: { ...loaded.summary, runId, documentId: `document-review-${suffix}` },
+        source: { ...loaded.source, originalFilename: `review-${suffix}.csv` },
+        candidates: loaded.candidates.map((candidate) => ({ ...candidate, id: `candidate-${suffix}`, merchantRaw: `STORE ${suffix}` })),
+      }
+    })
+    desktop.commitImport.mockRejectedValue(new Error('connector binding changed'))
+    desktop.startImport.mockResolvedValue({ runId: 'run-investment', documentId: 'document-investment', status: 'REVIEW_REQUIRED', recordCount: 1, candidateCount: 0, reusedExisting: false })
+    const baseInvoke = nativeInvoke.getMockImplementation()!
+    nativeInvoke.mockImplementation(async (command: string, args?: Record<string, unknown>) => command === 'brokerage_events_import'
+      ? { sourceDocumentId: 'document-investment', importedEventCount: 1, importedLegCount: 3 }
+      : baseInvoke(command, args))
+    const [brokeragePreview] = await previewImportFiles([new File([
+      '約定日,銘柄,取引,預り,約定数量,約定単価,受渡日,受渡金額／決済損益\n2026/07/01,7203 トヨタ自動車 東証,株式現物買,特定,100,2500,2026/07/03,250000',
+    ], 'sbi-trades.csv', { type: 'text/csv' })])
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[{ ...brokeragePreview, sourceType: 'MANUAL_UPLOAD' }]} setPreviews={vi.fn()} householdId="family"
+      accounts={initialAccounts as never} members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    const destination = await screen.findByRole('combobox', { name: 'sbi-trades.csvの取込先証券口座' })
+    fireEvent.change(destination, { target: { value: 'broker-old' } })
+    expect(screen.getByRole('button', { name: '証券取引に保存' })).toBeEnabled()
+    const firstReview = (await screen.findByRole('heading', { name: 'review-one.csv' })).closest('section')!
+    fireEvent.click(within(firstReview).getByRole('checkbox', { name: 'STORE oneを承認' }))
+    fireEvent.click(within(firstReview).getByRole('button', { name: '承認済みを台帳へ反映' }))
+
+    await waitFor(() => expect(destination).toHaveValue(''))
+    const save = screen.getByRole('button', { name: '証券取引に保存' })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(desktop.startImport).not.toHaveBeenCalled()
+
+    const secondReview = screen.getByRole('heading', { name: 'review-two.csv' }).closest('section')!
+    fireEvent.click(within(secondReview).getByRole('checkbox', { name: 'STORE twoを承認' }))
+    fireEvent.click(within(secondReview).getByRole('button', { name: '承認済みを台帳へ反映' }))
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(within(destination).getByRole('option', { name: 'Old broker' })).toBeInTheDocument())
+    expect(destination).toHaveValue('')
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(desktop.startImport).not.toHaveBeenCalled()
+
+    fireEvent.change(destination, { target: { value: 'broker-old' } })
+    expect(save).toBeEnabled()
+    fireEvent.click(save)
+    await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-old' }) }))
+  })
+
+  it.each(['CAMERA_SCAN', 'OTHER', 'BROKEN_SOURCE'] as const)('blocks a recovered %s commit when a Drive inbox row claims the run', async (sourceType) => {
+    const runId = `mismatch-${sourceType.toLowerCase()}`
+    desktop.listGoogleDriveInbox.mockResolvedValue([{
+      id: `drive-${runId}`, householdId: 'family', connectionId: 'drive-primary', fileId: `remote-${runId}`, generationFingerprint: 'generation', fileName: `${runId}.csv`, mediaType: 'text/csv',
+      remoteByteSize: 1, remoteModifiedAt: null, remoteMd5Checksum: null, driveVersion: '1', contentSha256: 'hash', state: 'FAILED', attemptCount: 1, importRunId: runId,
+      lastErrorCode: 'PREVIEW_FAILED', discoveredAt: '2026-08-25T00:00:00Z', updatedAt: '2026-08-25T00:00:00Z',
+    }])
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId, documentId: `document-${runId}`, status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType, originalFilename: `${runId}.csv`, mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    const previewReview = desktop.previewImport.getMockImplementation()!
+    desktop.previewImport.mockImplementation(async () => {
+      const loaded = await previewReview(runId)
+      return { ...loaded, summary: { ...loaded.summary, runId, documentId: `document-${runId}` }, source: { ...loaded.source, sourceType, originalFilename: `${runId}.csv` } }
+    })
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[]} setPreviews={vi.fn()} householdId="family" accounts={classificationAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    await waitFor(() => expect(desktop.listGoogleDriveInbox).toHaveBeenCalled())
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalled())
+    const review = (await screen.findByRole('heading', { name: `${runId}.csv` })).closest('section')!
+    expect(within(review).getByRole('status')).toHaveTextContent('対応付けを再確認してください。口座または読み取りプロファイルが変更されています。')
+    const commit = within(review).getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeDisabled()
+    fireEvent.click(commit)
+    expect(desktop.commitImport).not.toHaveBeenCalled()
+  })
+
+  it.each(['CAMERA_SCAN', 'OTHER', 'MANUAL_UPLOAD'] as const)('keeps a standalone recovered %s commit reviewable', async (sourceType) => {
+    const runId = `standalone-${sourceType.toLowerCase()}`
+    desktop.listPendingReviews.mockResolvedValue({ householdId: 'family', runs: [{
+      runId, documentId: `document-${runId}`, status: 'REVIEW_REQUIRED', adapterId: 'personal-japanese-bank-ledger-v2', adapterVersion: '2',
+      startedAt: '2026-08-25T00:00:00Z', sourceType, originalFilename: `${runId}.csv`, mediaType: 'text/csv', byteSize: 42,
+      sourceModifiedAt: null, recordCount: 1, candidateCount: 1, completionState: 'CANDIDATE_REVIEW',
+    }] })
+    const previewReview = desktop.previewImport.getMockImplementation()!
+    desktop.previewImport.mockImplementation(async () => {
+      const loaded = await previewReview(runId)
+      return { ...loaded, summary: { ...loaded.summary, runId, documentId: `document-${runId}` }, source: { ...loaded.source, sourceType, originalFilename: `${runId}.csv` } }
+    })
+    const folderInbox = {
+      items: [], counts: null, autoScan: false, busy: false, setAutoScan: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined), retry: vi.fn().mockResolvedValue(undefined), ignore: vi.fn().mockResolvedValue(undefined),
+    }
+    render(<I18nProvider><ImportPage previews={[]} setPreviews={vi.fn()} householdId="family" accounts={classificationAccounts as never}
+      members={[]} summary={null} onChanged={() => undefined} folderInbox={folderInbox} /></I18nProvider>)
+
+    await waitFor(() => expect(desktop.listConnectorBindings).toHaveBeenCalled())
+    const review = (await screen.findByRole('heading', { name: `${runId}.csv` })).closest('section')!
+    fireEvent.click(within(review).getByRole('checkbox', { name: 'STOREを承認' }))
+    const commit = within(review).getByRole('button', { name: '承認済みを台帳へ反映' })
+    expect(commit).toBeEnabled()
+    fireEvent.click(commit)
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith(runId, expect.any(Array), null))
+  })
+
   it('creates persisted monthly budgets and savings goals', async () => {
     render(<App />)
     await screen.findByText('生協')
@@ -1923,7 +2919,7 @@ describe('KakeFlow desktop read models', () => {
     expect(commit).toBeEnabled()
     fireEvent.click(commit)
 
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })]))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [expect.objectContaining({ candidateId: 'candidate-1', transactionType: 'EXPENSE', attributionKind: 'HOUSEHOLD', attributedMemberId: null, audienceVisibility: 'SHARED', audienceMemberId: null })], null))
   })
 
   it('revalidates and applies an import classification suggestion without approving it, then commits its provenance', async () => {
@@ -2264,7 +3260,7 @@ describe('KakeFlow desktop read models', () => {
       adapterId, candidates: [], cardStatements: [],
     }), expect.any(Uint8Array)))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('brokerage_events_import', { input: expect.objectContaining({ accountId: 'broker-nisa', sourceDocumentId: 'document-investment' }) }))
-    expect(desktop.commitImport).toHaveBeenCalledWith('run-investment', [])
+    expect(desktop.commitImport).toHaveBeenCalledWith('run-investment', [], null)
   })
 
   it('requires and applies one explicit account mapping per Money Forward institution', async () => {
@@ -2453,8 +3449,8 @@ describe('KakeFlow desktop read models', () => {
       adapterId: 'money-forward-me-asset-trend-v1', records: expect.arrayContaining([expect.objectContaining({ rowNumber: 2 }), expect.objectContaining({ rowNumber: 3 })]), candidates: [], cardStatements: [],
     }), expect.any(Uint8Array)))
     await waitFor(() => expect(nativeInvoke).toHaveBeenCalledWith('aggregate_asset_history_import', { input: expect.objectContaining({ householdId: 'family', snapshots: [expect.objectContaining({ sourceDocumentId: 'document-1', sourceRow: 2, asOf: '2026-06-30' }), expect.objectContaining({ sourceDocumentId: 'document-1', sourceRow: 3, asOf: '2026-07-31' })] }) }))
-    expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [])
-    expect(desktop.previewImport).not.toHaveBeenCalled()
+    expect(desktop.commitImport).toHaveBeenCalledWith('run-1', [], null)
+    expect(desktop.previewImport).toHaveBeenCalledWith('run-1')
     expect(await screen.findByText(/2時点の総資産履歴を保存しました。台帳と純資産には加算しません/)).toBeInTheDocument()
   })
 
@@ -2508,7 +3504,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(input, { target: { files: [new File(['日付,合計（円）,預金・現金・暗号資産（円）\n2026/07/31,8700000,2100000'], 'moneyforward-assets.csv', { type: 'text/csv' })] } })
     fireEvent.click(await screen.findByRole('button', { name: '総資産履歴に保存' }))
 
-    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('retry-run', []))
+    await waitFor(() => expect(desktop.commitImport).toHaveBeenCalledWith('retry-run', [], null))
     expect(desktop.rollbackImport).not.toHaveBeenCalled()
   })
 
@@ -2533,7 +3529,9 @@ describe('KakeFlow desktop read models', () => {
 
     expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
     expect(screen.getByText('取引日: Date → Date')).toBeInTheDocument()
-    expect(screen.getByLabelText('local-bank.csvの取込先口座')).toHaveValue('family-bank')
+    const destination = screen.getByLabelText('local-bank.csvの取込先口座')
+    expect(destination).toHaveValue('')
+    fireEvent.change(destination, { target: { value: 'family-bank' } })
 
     fireEvent.change(profile, { target: { value: 'custom-bank-2' } })
     expect(screen.queryByText('1件の候補 / 0行を除外 / 0件のエラー')).not.toBeInTheDocument()
@@ -2542,6 +3540,7 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(profile, { target: { value: 'custom-bank' } })
     fireEvent.click(screen.getByRole('button', { name: '適用してプレビュー' }))
     expect(await screen.findByText('1件の候補 / 0行を除外 / 0件のエラー')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('local-bank.csvの取込先口座'), { target: { value: 'family-bank' } })
     fireEvent.click(screen.getByRole('button', { name: '取込開始' }))
 
     await waitFor(() => expect(desktop.startImport).toHaveBeenCalledWith(expect.objectContaining({

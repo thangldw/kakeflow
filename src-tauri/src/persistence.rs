@@ -172,6 +172,13 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0069_japanese_expense_categories.sql"
     )),
+    M::up(include_str!("../migrations/0070_connector_bindings.sql")),
+    M::up(include_str!(
+        "../migrations/0071_connector_refresh_batches.sql"
+    )),
+    M::up(include_str!(
+        "../migrations/0072_connector_binding_generations.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -404,6 +411,16 @@ pub fn clear_restored_device_local_state(
     let version = schema_version(&connection)?;
     if version >= 8 {
         let transaction = connection.transaction()?;
+        if version >= 71 {
+            transaction.execute("DELETE FROM connector_runtime_observations", [])?;
+            transaction.execute(
+                "DELETE FROM connector_refresh_batches WHERE status='ACTIVE'",
+                [],
+            )?;
+        }
+        if version >= 70 {
+            transaction.execute("DELETE FROM connector_bindings", [])?;
+        }
         transaction.execute("DELETE FROM watched_folders", [])?;
         if version >= 31 {
             transaction.execute("DELETE FROM local_sync_contexts", [])?;
@@ -1708,6 +1725,451 @@ fn validate_restored_semantics(
              LIMIT 1",
         )?;
     }
+    if schema_version >= 71 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_refresh_batches b
+             WHERE length(b.batch_id) NOT BETWEEN 1 AND 64
+                OR b.batch_id!=trim(b.batch_id)
+                OR b.batch_id GLOB '*[^0-9A-Za-z_-]*'
+                OR length(b.household_id) NOT BETWEEN 1 AND 128
+                OR b.status NOT IN ('ACTIVE','COMPLETE','PARTIAL','FAILED')
+                OR b.total_count NOT BETWEEN 0 AND 10000
+                OR b.terminal_count NOT BETWEEN 0 AND 10000
+                OR b.succeeded_count NOT BETWEEN 0 AND 10000
+                OR b.no_changes_count NOT BETWEEN 0 AND 10000
+                OR b.skipped_manual_count NOT BETWEEN 0 AND 10000
+                OR b.failed_count NOT BETWEEN 0 AND 10000
+                OR b.changed_count NOT BETWEEN 0 AND 9007199254740991
+                OR NOT (
+                  (length(b.created_at)=20 OR length(b.created_at) BETWEEN 22 AND 32)
+                  AND substr(b.created_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',b.created_at) IS NOT NULL
+                  AND substr(b.created_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(b.created_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',b.created_at)
+                  AND (length(b.created_at)=20 OR (
+                    substr(b.created_at,20,1)='.'
+                    AND substr(b.created_at,21,length(b.created_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR NOT (
+                  (length(b.updated_at)=20 OR length(b.updated_at) BETWEEN 22 AND 32)
+                  AND substr(b.updated_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',b.updated_at) IS NOT NULL
+                  AND substr(b.updated_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(b.updated_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',b.updated_at)
+                  AND (length(b.updated_at)=20 OR (
+                    substr(b.updated_at,20,1)='.'
+                    AND substr(b.updated_at,21,length(b.updated_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR (b.completed_at IS NOT NULL AND NOT (
+                  (length(b.completed_at)=20
+                   OR length(b.completed_at) BETWEEN 22 AND 32)
+                  AND substr(b.completed_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',b.completed_at) IS NOT NULL
+                  AND substr(b.completed_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(b.completed_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',b.completed_at)
+                  AND (length(b.completed_at)=20 OR (
+                    substr(b.completed_at,20,1)='.'
+                    AND substr(b.completed_at,21,length(b.completed_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (strftime('%Y%m%d%H%M%S',b.updated_at)
+                      || CASE WHEN length(b.updated_at)=20 THEN '00000000000'
+                           ELSE substr(substr(b.updated_at,21,length(b.updated_at)-21)
+                                       ||'00000000000',1,11) END)
+                   < (strftime('%Y%m%d%H%M%S',b.created_at)
+                      || CASE WHEN length(b.created_at)=20 THEN '00000000000'
+                           ELSE substr(substr(b.created_at,21,length(b.created_at)-21)
+                                       ||'00000000000',1,11) END)
+                OR (b.completed_at IS NOT NULL AND (
+                  (strftime('%Y%m%d%H%M%S',b.completed_at)
+                    || CASE WHEN length(b.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(b.completed_at,21,length(b.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',b.created_at)
+                       || CASE WHEN length(b.created_at)=20 THEN '00000000000'
+                            ELSE substr(substr(b.created_at,21,length(b.created_at)-21)
+                                        ||'00000000000',1,11) END)
+                  OR (strftime('%Y%m%d%H%M%S',b.completed_at)
+                    || CASE WHEN length(b.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(b.completed_at,21,length(b.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',b.updated_at)
+                       || CASE WHEN length(b.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(b.updated_at,21,length(b.updated_at)-21)
+                                        ||'00000000000',1,11) END)
+                ))
+                OR b.terminal_count!=b.succeeded_count+b.no_changes_count
+                                          +b.skipped_manual_count+b.failed_count
+                OR b.terminal_count>b.total_count
+                OR NOT (
+                  (b.status='ACTIVE' AND b.completed_at IS NULL
+                   AND b.terminal_count<b.total_count)
+                  OR (b.status='COMPLETE' AND b.completed_at IS NOT NULL
+                      AND b.terminal_count=b.total_count AND b.failed_count=0)
+                  OR (b.status='PARTIAL' AND b.completed_at IS NOT NULL
+                      AND b.terminal_count=b.total_count AND b.failed_count>0
+                      AND b.succeeded_count+b.no_changes_count>0)
+                  OR (b.status='FAILED' AND b.completed_at IS NOT NULL
+                      AND b.terminal_count=b.total_count AND b.failed_count>0
+                      AND b.succeeded_count+b.no_changes_count=0)
+                )
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_refresh_batch_items i
+             WHERE length(i.item_id) NOT BETWEEN 1 AND 64
+                OR i.item_id!=trim(i.item_id)
+                OR i.item_id GLOB '*[^0-9A-Za-z_-]*'
+                OR i.connector_kind NOT IN (
+                     'GOOGLE_DRIVE','GMAIL','WATCHED_FOLDER','MANUAL_IMPORT')
+                OR length(i.connection_key) NOT BETWEEN 1 AND 128
+                OR i.connection_key!=trim(i.connection_key)
+                OR i.connection_key GLOB '*[^!-~]*'
+                OR instr(i.connection_key,'/')!=0
+                OR (i.connector_kind='MANUAL_IMPORT'
+                    AND i.connection_key!='manual-import')
+                OR i.status NOT IN (
+                     'PENDING','RUNNING','SUCCEEDED','NO_CHANGES','SKIPPED_MANUAL',
+                     'FAILED_RETRYABLE','NEEDS_ACTION')
+                OR i.attempt_generation NOT BETWEEN 0 AND 9007199254740991
+                OR (i.lease_token IS NOT NULL AND (
+                     length(i.lease_token)!=64
+                     OR i.lease_token GLOB '*[^0-9a-f]*'))
+                OR (i.lease_expires_at IS NOT NULL AND NOT (
+                  (length(i.lease_expires_at)=20
+                   OR length(i.lease_expires_at) BETWEEN 22 AND 32)
+                  AND substr(i.lease_expires_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.lease_expires_at) IS NOT NULL
+                  AND substr(i.lease_expires_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.lease_expires_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.lease_expires_at)
+                  AND (length(i.lease_expires_at)=20 OR (
+                    substr(i.lease_expires_at,20,1)='.'
+                    AND substr(i.lease_expires_at,21,length(i.lease_expires_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR i.changed_count NOT BETWEEN 0 AND 9007199254740991
+                OR (i.last_error_code IS NOT NULL AND (
+                     length(i.last_error_code) NOT BETWEEN 1 AND 64
+                     OR i.last_error_code GLOB '*[^A-Z0-9_]*'))
+                OR NOT (
+                  (length(i.created_at)=20 OR length(i.created_at) BETWEEN 22 AND 32)
+                  AND substr(i.created_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.created_at) IS NOT NULL
+                  AND substr(i.created_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.created_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.created_at)
+                  AND (length(i.created_at)=20 OR (
+                    substr(i.created_at,20,1)='.'
+                    AND substr(i.created_at,21,length(i.created_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR NOT (
+                  (length(i.updated_at)=20 OR length(i.updated_at) BETWEEN 22 AND 32)
+                  AND substr(i.updated_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.updated_at) IS NOT NULL
+                  AND substr(i.updated_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.updated_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.updated_at)
+                  AND (length(i.updated_at)=20 OR (
+                    substr(i.updated_at,20,1)='.'
+                    AND substr(i.updated_at,21,length(i.updated_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR (i.started_at IS NOT NULL AND NOT (
+                  (length(i.started_at)=20 OR length(i.started_at) BETWEEN 22 AND 32)
+                  AND substr(i.started_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.started_at) IS NOT NULL
+                  AND substr(i.started_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.started_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.started_at)
+                  AND (length(i.started_at)=20 OR (
+                    substr(i.started_at,20,1)='.'
+                    AND substr(i.started_at,21,length(i.started_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (i.completed_at IS NOT NULL AND NOT (
+                  (length(i.completed_at)=20
+                   OR length(i.completed_at) BETWEEN 22 AND 32)
+                  AND substr(i.completed_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',i.completed_at) IS NOT NULL
+                  AND substr(i.completed_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(i.completed_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',i.completed_at)
+                  AND (length(i.completed_at)=20 OR (
+                    substr(i.completed_at,20,1)='.'
+                    AND substr(i.completed_at,21,length(i.completed_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (strftime('%Y%m%d%H%M%S',i.updated_at)
+                      || CASE WHEN length(i.updated_at)=20 THEN '00000000000'
+                           ELSE substr(substr(i.updated_at,21,length(i.updated_at)-21)
+                                       ||'00000000000',1,11) END)
+                   < (strftime('%Y%m%d%H%M%S',i.created_at)
+                      || CASE WHEN length(i.created_at)=20 THEN '00000000000'
+                           ELSE substr(substr(i.created_at,21,length(i.created_at)-21)
+                                       ||'00000000000',1,11) END)
+                OR (i.started_at IS NOT NULL AND (
+                  (strftime('%Y%m%d%H%M%S',i.started_at)
+                    || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',i.created_at)
+                       || CASE WHEN length(i.created_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.created_at,21,length(i.created_at)-21)
+                                        ||'00000000000',1,11) END)
+                  OR (strftime('%Y%m%d%H%M%S',i.started_at)
+                    || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',i.updated_at)
+                       || CASE WHEN length(i.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.updated_at,21,length(i.updated_at)-21)
+                                        ||'00000000000',1,11) END)
+                ))
+                OR (i.completed_at IS NOT NULL AND (
+                  (strftime('%Y%m%d%H%M%S',i.completed_at)
+                    || CASE WHEN length(i.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.completed_at,21,length(i.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',i.created_at)
+                       || CASE WHEN length(i.created_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.created_at,21,length(i.created_at)-21)
+                                        ||'00000000000',1,11) END)
+                  OR (strftime('%Y%m%d%H%M%S',i.completed_at)
+                    || CASE WHEN length(i.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.completed_at,21,length(i.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',i.updated_at)
+                       || CASE WHEN length(i.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.updated_at,21,length(i.updated_at)-21)
+                                        ||'00000000000',1,11) END)
+                ))
+                OR (i.completed_at IS NOT NULL AND i.started_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',i.completed_at)
+                    || CASE WHEN length(i.completed_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.completed_at,21,length(i.completed_at)-21)
+                                     ||'00000000000',1,11) END)
+                    < (strftime('%Y%m%d%H%M%S',i.started_at)
+                       || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                            ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                        ||'00000000000',1,11) END))
+                OR (i.lease_expires_at IS NOT NULL AND i.started_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',i.lease_expires_at)
+                    || CASE WHEN length(i.lease_expires_at)=20 THEN '00000000000'
+                         ELSE substr(substr(i.lease_expires_at,21,
+                                            length(i.lease_expires_at)-21)
+                                     ||'00000000000',1,11) END)
+                    <= (strftime('%Y%m%d%H%M%S',i.started_at)
+                        || CASE WHEN length(i.started_at)=20 THEN '00000000000'
+                             ELSE substr(substr(i.started_at,21,length(i.started_at)-21)
+                                         ||'00000000000',1,11) END))
+                OR NOT (
+                  (i.status='PENDING' AND i.connector_kind!='MANUAL_IMPORT'
+                   AND i.lease_token IS NULL AND i.lease_expires_at IS NULL
+                   AND i.started_at IS NULL AND i.completed_at IS NULL
+                   AND i.changed_count=0 AND i.last_error_code IS NULL)
+                  OR (i.status='RUNNING' AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NOT NULL
+                      AND i.lease_expires_at IS NOT NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NULL AND i.changed_count=0
+                      AND i.last_error_code IS NULL)
+                  OR (i.status='SUCCEEDED' AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count>0
+                      AND i.last_error_code IS NULL)
+                  OR (i.status='NO_CHANGES' AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count=0
+                      AND i.last_error_code IS NULL)
+                  OR (i.status IN ('FAILED_RETRYABLE','NEEDS_ACTION')
+                      AND i.connector_kind!='MANUAL_IMPORT'
+                      AND i.attempt_generation>0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NOT NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count=0
+                      AND i.last_error_code IS NOT NULL)
+                  OR (i.status='SKIPPED_MANUAL'
+                      AND i.connector_kind='MANUAL_IMPORT'
+                      AND i.attempt_generation=0 AND i.lease_token IS NULL
+                      AND i.lease_expires_at IS NULL AND i.started_at IS NULL
+                      AND i.completed_at IS NOT NULL AND i.changed_count=0
+                      AND i.last_error_code IS NULL)
+                )
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_runtime_observations o
+             WHERE length(o.household_id) NOT BETWEEN 1 AND 128
+                OR o.connector_kind NOT IN (
+                     'GOOGLE_DRIVE','GMAIL','WATCHED_FOLDER','MANUAL_IMPORT')
+                OR length(o.connection_key) NOT BETWEEN 1 AND 128
+                OR o.connection_key!=trim(o.connection_key)
+                OR o.connection_key GLOB '*[^!-~]*'
+                OR instr(o.connection_key,'/')!=0
+                OR (o.connector_kind='MANUAL_IMPORT'
+                    AND o.connection_key!='manual-import')
+                OR (o.last_attempt_at IS NOT NULL AND NOT (
+                  (length(o.last_attempt_at)=20
+                   OR length(o.last_attempt_at) BETWEEN 22 AND 32)
+                  AND substr(o.last_attempt_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.last_attempt_at) IS NOT NULL
+                  AND substr(o.last_attempt_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.last_attempt_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.last_attempt_at)
+                  AND (length(o.last_attempt_at)=20 OR (
+                    substr(o.last_attempt_at,20,1)='.'
+                    AND substr(o.last_attempt_at,21,length(o.last_attempt_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (o.last_success_at IS NOT NULL AND NOT (
+                  (length(o.last_success_at)=20
+                   OR length(o.last_success_at) BETWEEN 22 AND 32)
+                  AND substr(o.last_success_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.last_success_at) IS NOT NULL
+                  AND substr(o.last_success_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.last_success_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.last_success_at)
+                  AND (length(o.last_success_at)=20 OR (
+                    substr(o.last_success_at,20,1)='.'
+                    AND substr(o.last_success_at,21,length(o.last_success_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (o.freshness_deadline_at IS NOT NULL AND NOT (
+                  (length(o.freshness_deadline_at)=20
+                   OR length(o.freshness_deadline_at) BETWEEN 22 AND 32)
+                  AND substr(o.freshness_deadline_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.freshness_deadline_at) IS NOT NULL
+                  AND substr(o.freshness_deadline_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.freshness_deadline_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.freshness_deadline_at)
+                  AND (length(o.freshness_deadline_at)=20 OR (
+                    substr(o.freshness_deadline_at,20,1)='.'
+                    AND substr(o.freshness_deadline_at,21,
+                               length(o.freshness_deadline_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR (o.next_due_at IS NOT NULL AND NOT (
+                  (length(o.next_due_at)=20 OR length(o.next_due_at) BETWEEN 22 AND 32)
+                  AND substr(o.next_due_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.next_due_at) IS NOT NULL
+                  AND substr(o.next_due_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.next_due_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.next_due_at)
+                  AND (length(o.next_due_at)=20 OR (
+                    substr(o.next_due_at,20,1)='.'
+                    AND substr(o.next_due_at,21,length(o.next_due_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                ))
+                OR o.pending_review_count NOT BETWEEN 0 AND 9007199254740991
+                OR o.consecutive_failures NOT BETWEEN 0 AND 10000
+                OR (o.last_error_code IS NOT NULL AND (
+                     length(o.last_error_code) NOT BETWEEN 1 AND 64
+                     OR o.last_error_code GLOB '*[^A-Z0-9_]*'))
+                OR NOT (
+                  (length(o.updated_at)=20 OR length(o.updated_at) BETWEEN 22 AND 32)
+                  AND substr(o.updated_at,-1)='Z'
+                  AND strftime('%Y-%m-%dT%H:%M:%S',o.updated_at) IS NOT NULL
+                  AND substr(o.updated_at,12,2) BETWEEN '00' AND '23'
+                  AND substr(o.updated_at,1,19)=
+                      strftime('%Y-%m-%dT%H:%M:%S',o.updated_at)
+                  AND (length(o.updated_at)=20 OR (
+                    substr(o.updated_at,20,1)='.'
+                    AND substr(o.updated_at,21,length(o.updated_at)-21)
+                        NOT GLOB '*[^0-9]*'))
+                )
+                OR (o.last_success_at IS NOT NULL AND o.last_attempt_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',o.last_success_at)
+                    || CASE WHEN length(o.last_success_at)=20 THEN '00000000000'
+                         ELSE substr(substr(o.last_success_at,21,
+                                            length(o.last_success_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',o.last_attempt_at)
+                       || CASE WHEN length(o.last_attempt_at)=20 THEN '00000000000'
+                            ELSE substr(substr(o.last_attempt_at,21,
+                                               length(o.last_attempt_at)-21)
+                                        ||'00000000000',1,11) END))
+                OR (o.last_attempt_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',o.last_attempt_at)
+                    || CASE WHEN length(o.last_attempt_at)=20 THEN '00000000000'
+                         ELSE substr(substr(o.last_attempt_at,21,
+                                            length(o.last_attempt_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',o.updated_at)
+                       || CASE WHEN length(o.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(o.updated_at,21,length(o.updated_at)-21)
+                                        ||'00000000000',1,11) END))
+                OR (o.last_success_at IS NOT NULL AND
+                  (strftime('%Y%m%d%H%M%S',o.last_success_at)
+                    || CASE WHEN length(o.last_success_at)=20 THEN '00000000000'
+                         ELSE substr(substr(o.last_success_at,21,
+                                            length(o.last_success_at)-21)
+                                     ||'00000000000',1,11) END)
+                    > (strftime('%Y%m%d%H%M%S',o.updated_at)
+                       || CASE WHEN length(o.updated_at)=20 THEN '00000000000'
+                            ELSE substr(substr(o.updated_at,21,length(o.updated_at)-21)
+                                        ||'00000000000',1,11) END))
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_refresh_batches b
+             LEFT JOIN (
+               SELECT batch_id,count(*) AS total_count,
+                      sum(status IN ('SUCCEEDED','NO_CHANGES','SKIPPED_MANUAL',
+                                     'FAILED_RETRYABLE','NEEDS_ACTION')) AS terminal_count,
+                      sum(status='SUCCEEDED') AS succeeded_count,
+                      sum(status='NO_CHANGES') AS no_changes_count,
+                      sum(status='SKIPPED_MANUAL') AS skipped_manual_count,
+                      sum(status IN ('FAILED_RETRYABLE','NEEDS_ACTION')) AS failed_count,
+                      sum(changed_count) AS changed_count
+               FROM connector_refresh_batch_items GROUP BY batch_id
+             ) i ON i.batch_id=b.batch_id
+             WHERE b.total_count!=COALESCE(i.total_count,0)
+                OR b.terminal_count!=COALESCE(i.terminal_count,0)
+                OR b.succeeded_count!=COALESCE(i.succeeded_count,0)
+                OR b.no_changes_count!=COALESCE(i.no_changes_count,0)
+                OR b.skipped_manual_count!=COALESCE(i.skipped_manual_count,0)
+                OR b.failed_count!=COALESCE(i.failed_count,0)
+                OR b.changed_count!=COALESCE(i.changed_count,0)
+             LIMIT 1",
+        )?;
+    }
+    if schema_version >= 72 {
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_binding_generations g
+             LEFT JOIN households h ON h.id=g.household_id
+             WHERE h.id IS NULL
+                OR g.connector_kind NOT IN (
+                     'GOOGLE_DRIVE','GMAIL','WATCHED_FOLDER','MANUAL_IMPORT')
+                OR length(g.connection_key) NOT BETWEEN 1 AND 128
+                OR g.connection_key!=trim(g.connection_key)
+                OR (g.connector_kind='MANUAL_IMPORT'
+                    AND g.connection_key!='manual-import')
+                OR g.generation NOT BETWEEN 1 AND 9007199254740991
+             LIMIT 1",
+        )?;
+        reject_if_exists(
+            connection,
+            "SELECT 1 FROM connector_bindings b
+             LEFT JOIN connector_binding_generations g
+               ON g.household_id=b.household_id
+              AND g.connector_kind=b.connector_kind
+              AND g.connection_key=b.connection_key
+             WHERE g.household_id IS NULL OR g.generation<b.version
+             LIMIT 1",
+        )?;
+    }
     Ok(())
 }
 
@@ -1774,6 +2236,198 @@ mod tests {
                 Ok(())
             })
             .expect("database should remain readable");
+    }
+
+    #[test]
+    fn migration_72_preserves_released_connectors_bindings_evidence_and_posted_provenance() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        Migrations::new(MIGRATIONS[..70].to_vec())
+            .to_latest(&mut connection)
+            .expect("released schema 70");
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO households(id,name) VALUES('family','Family');
+                 INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                 VALUES('bank','family','Bank','ASSET','BANK'),
+                       ('expense','family','Expense','EXPENSE','OTHER');
+
+                 INSERT INTO import_runs(id,household_id,status,adapter_id,adapter_version)
+                 VALUES('drive-run','family','POSTED','test','1'),
+                       ('gmail-run','family','REVIEW_REQUIRED','test','1'),
+                       ('folder-run','family','REVIEW_REQUIRED','test','1');
+                 INSERT INTO source_documents
+                   (id,household_id,import_run_id,source_type,original_filename,media_type,
+                    byte_size,sha256,storage_path)
+                 VALUES('drive-doc','family','drive-run','GOOGLE_DRIVE','drive.csv','text/csv',10,
+                        '{drive_sha}','vault://{drive_sha}'),
+                       ('gmail-doc','family','gmail-run','GMAIL','message.eml','message/rfc822',20,
+                        '{gmail_sha}','vault://{gmail_sha}'),
+                       ('folder-doc','family','folder-run','LOCAL_FOLDER','folder.csv','text/csv',30,
+                        '{folder_sha}','vault://{folder_sha}');
+                 INSERT INTO source_records(id,source_document_id,row_number,record_hash,raw_payload_json)
+                 VALUES('drive-record','drive-doc',1,'{record_sha}','{{}}'),
+                       ('gmail-record','gmail-doc',1,'{gmail_record_sha}','{{}}'),
+                       ('folder-record','folder-doc',1,'{folder_record_sha}','{{}}');
+                 INSERT INTO transaction_candidates
+                   (id,household_id,account_id,occurred_on,amount_jpy,direction,review_status)
+                 VALUES('drive-candidate','family','bank','2026-08-25',100,'OUT','POSTED');
+                 INSERT INTO candidate_sources(candidate_id,source_record_id,evidence_role)
+                 VALUES('drive-candidate','drive-record','PRIMARY');
+                 INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                 VALUES('posted-transaction','family','2026-08-25','EXPENSE','POSTED');
+                 INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                 VALUES('posted-debit','posted-transaction','expense','DEBIT',100,1),
+                       ('posted-credit','posted-transaction','bank','CREDIT',100,2);
+                 INSERT INTO transaction_sources(transaction_id,source_record_id,candidate_id)
+                 VALUES('posted-transaction','drive-record','drive-candidate');
+
+                 INSERT INTO google_drive_connections(id,household_id,client_id_fingerprint,status)
+                 VALUES('drive','family','{drive_fingerprint}','AUTHORIZING');
+                 INSERT INTO google_drive_sync_schedules(connection_id,enabled,interval_minutes,last_result)
+                 VALUES('drive',0,30,'DISABLED');
+                 INSERT INTO google_drive_nodes
+                   (connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download)
+                 VALUES('drive','drive-file','drive.csv','text/csv','{drive_generation}',0,1);
+                 INSERT INTO google_drive_inbox
+                   (id,household_id,connection_id,file_id,generation_fingerprint,file_name,media_type,
+                    content_sha256,state,import_run_id)
+                 VALUES('{drive_inbox}','family','drive','drive-file','{drive_generation}',
+                        'drive.csv','text/csv','{drive_sha}','STAGED','drive-run');
+                 INSERT INTO google_drive_source_links(inbox_id,source_document_id)
+                 VALUES('{drive_inbox}','drive-doc');
+
+                 INSERT INTO gmail_connections(id,household_id,client_id_fingerprint,status)
+                 VALUES('gmail','family','{gmail_fingerprint}','AUTHORIZING');
+                 INSERT INTO gmail_sync_schedules(connection_id,enabled,interval_minutes,last_result)
+                 VALUES('gmail',0,30,'DISABLED');
+                 INSERT INTO gmail_inbox
+                   (id,household_id,connection_id,provider_message_id,generation_fingerprint,
+                    message_history_id,internal_date_ms,file_name,content_sha256,state,import_run_id)
+                 VALUES('{gmail_inbox}','family','gmail','message','{gmail_generation}',
+                        '1',1,'message.eml','{gmail_sha}','STAGED','gmail-run');
+                 INSERT INTO gmail_source_links(inbox_id,source_document_id)
+                 VALUES('{gmail_inbox}','gmail-doc');
+
+                 INSERT INTO watched_folders(id,household_id,label,canonical_path,source_type,provider)
+                 VALUES('folder','family','Inbox','/device/inbox','LOCAL_FOLDER','LOCAL');
+                 INSERT INTO watched_file_inbox
+                   (id,household_id,watched_folder_id,relative_path,file_name,media_type,byte_size,
+                    fingerprint,state,import_run_id)
+                 VALUES('{folder_inbox}','family','folder','folder.csv','folder.csv','text/csv',30,
+                        '{folder_generation}','STAGED','folder-run');
+
+                 INSERT INTO connector_bindings
+                   (household_id,connector_kind,connection_key,version)
+                 VALUES('family','GOOGLE_DRIVE','drive',1),
+                       ('family','GMAIL','gmail',1),
+                       ('family','WATCHED_FOLDER','folder',1),
+                       ('family','MANUAL_IMPORT','manual-import',1);
+                 INSERT INTO connector_binding_accounts
+                   (household_id,connector_kind,connection_key,account_id)
+                 VALUES('family','GOOGLE_DRIVE','drive','bank'),
+                       ('family','GMAIL','gmail','bank'),
+                       ('family','WATCHED_FOLDER','folder','bank'),
+                       ('family','MANUAL_IMPORT','manual-import','bank');",
+                drive_sha = "1".repeat(64),
+                gmail_sha = "2".repeat(64),
+                folder_sha = "3".repeat(64),
+                record_sha = "4".repeat(64),
+                gmail_record_sha = "5".repeat(64),
+                folder_record_sha = "6".repeat(64),
+                drive_fingerprint = "a".repeat(64),
+                gmail_fingerprint = "b".repeat(64),
+                drive_generation = "c".repeat(64),
+                gmail_generation = "d".repeat(64),
+                folder_generation = "e".repeat(64),
+                drive_inbox = "7".repeat(64),
+                gmail_inbox = "8".repeat(64),
+                folder_inbox = "9".repeat(64),
+            ))
+            .expect("seed released connector and provenance graph");
+
+        let snapshots = [
+            "SELECT id,name,base_currency,created_at,updated_at FROM households ORDER BY id",
+            "SELECT id,household_id,name,account_kind,account_subtype,is_archived FROM accounts ORDER BY id",
+            "SELECT id,household_id,status,adapter_id,adapter_version,started_at,completed_at FROM import_runs ORDER BY id",
+            "SELECT id,household_id,import_run_id,source_type,original_filename,media_type,byte_size,sha256,storage_path FROM source_documents ORDER BY id",
+            "SELECT id,source_document_id,row_number,record_hash,raw_payload_json FROM source_records ORDER BY id",
+            "SELECT id,household_id,account_id,occurred_on,amount_jpy,direction,review_status FROM transaction_candidates ORDER BY id",
+            "SELECT candidate_id,source_record_id,evidence_role FROM candidate_sources ORDER BY candidate_id,source_record_id",
+            "SELECT id,household_id,occurred_on,transaction_type,status FROM transactions ORDER BY id",
+            "SELECT id,transaction_id,account_id,entry_side,amount_jpy,line_number FROM journal_entries ORDER BY id",
+            "SELECT transaction_id,source_record_id,candidate_id FROM transaction_sources ORDER BY transaction_id,source_record_id",
+            "SELECT id,household_id,status,client_id_fingerprint FROM google_drive_connections ORDER BY id",
+            "SELECT connection_id,enabled,interval_minutes,last_result FROM google_drive_sync_schedules ORDER BY connection_id",
+            "SELECT connection_id,file_id,name,mime_type,generation_fingerprint,is_folder,can_download FROM google_drive_nodes ORDER BY connection_id,file_id",
+            "SELECT id,household_id,connection_id,file_id,generation_fingerprint,state,import_run_id FROM google_drive_inbox ORDER BY id",
+            "SELECT inbox_id,source_document_id,evidence_role,linked_at FROM google_drive_source_links ORDER BY inbox_id,source_document_id",
+            "SELECT id,household_id,status,client_id_fingerprint FROM gmail_connections ORDER BY id",
+            "SELECT connection_id,enabled,interval_minutes,last_result FROM gmail_sync_schedules ORDER BY connection_id",
+            "SELECT id,household_id,connection_id,provider_message_id,generation_fingerprint,state,import_run_id FROM gmail_inbox ORDER BY id",
+            "SELECT inbox_id,source_document_id,evidence_role,linked_at FROM gmail_source_links ORDER BY inbox_id,source_document_id",
+            "SELECT id,household_id,label,canonical_path,source_type,provider,is_enabled FROM watched_folders ORDER BY id",
+            "SELECT id,household_id,watched_folder_id,relative_path,fingerprint,state,import_run_id FROM watched_file_inbox ORDER BY id",
+            "SELECT household_id,connector_kind,connection_key,parser_profile_id,parser_profile_version,version,created_at,updated_at FROM connector_bindings ORDER BY household_id,connector_kind,connection_key",
+            "SELECT household_id,connector_kind,connection_key,account_id FROM connector_binding_accounts ORDER BY household_id,connector_kind,connection_key,account_id",
+        ];
+        let before = snapshots
+            .iter()
+            .map(|query| selected_values(&connection, query))
+            .collect::<Vec<_>>();
+
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .expect("migrate released database to latest");
+
+        let after = snapshots
+            .iter()
+            .map(|query| selected_values(&connection, query))
+            .collect::<Vec<_>>();
+        assert_eq!(after, before);
+        for table in [
+            "connector_refresh_batches",
+            "connector_refresh_batch_items",
+            "connector_runtime_observations",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .unwrap(),
+                0,
+                "{table} starts empty"
+            );
+        }
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_binding_generations
+                     WHERE generation=1",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            4
+        );
+        assert_eq!(schema_version(&connection).unwrap(), 72);
+        assert!(integrity_check(&connection).unwrap());
+    }
+
+    fn selected_values(connection: &Connection, query: &str) -> Vec<Vec<rusqlite::types::Value>> {
+        let mut statement = connection.prepare(query).unwrap();
+        let column_count = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..column_count)
+                    .map(|column| row.get(column))
+                    .collect::<rusqlite::Result<Vec<rusqlite::types::Value>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
     }
 
     #[test]
@@ -4806,6 +5460,34 @@ mod tests {
         state
             .with_connection(|connection| {
                 connection.execute("INSERT INTO households (id, name) VALUES ('family', 'Family')", [])?;
+                connection.execute_batch(
+                    "INSERT INTO accounts(id,household_id,name,account_kind,account_subtype)
+                     VALUES('bank','family','Bank','ASSET','BANK'),
+                           ('expense','family','Expense','EXPENSE','OTHER');
+                     INSERT INTO import_runs(id,household_id,status,adapter_id,adapter_version)
+                     VALUES('run','family','POSTED','test','1');
+                     INSERT INTO source_documents
+                       (id,household_id,import_run_id,source_type,original_filename,media_type,
+                        byte_size,sha256,storage_path)
+                     VALUES('document','family','run','MANUAL_UPLOAD','statement.csv','text/csv',10,
+                            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                            'vault://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+                     INSERT INTO source_records(id,source_document_id,row_number,record_hash,raw_payload_json)
+                     VALUES('record','document',1,
+                            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}');
+                     INSERT INTO transaction_candidates
+                       (id,household_id,account_id,occurred_on,amount_jpy,direction,review_status)
+                     VALUES('candidate','family','bank','2026-08-25',100,'OUT','POSTED');
+                     INSERT INTO candidate_sources(candidate_id,source_record_id,evidence_role)
+                     VALUES('candidate','record','PRIMARY');
+                     INSERT INTO transactions(id,household_id,occurred_on,transaction_type,status)
+                     VALUES('transaction','family','2026-08-25','EXPENSE','POSTED');
+                     INSERT INTO journal_entries(id,transaction_id,account_id,entry_side,amount_jpy,line_number)
+                     VALUES('debit','transaction','expense','DEBIT',100,1),
+                           ('credit','transaction','bank','CREDIT',100,2);
+                     INSERT INTO transaction_sources(transaction_id,source_record_id,candidate_id)
+                     VALUES('transaction','record','candidate');",
+                )?;
                 connection.execute(
                     "INSERT INTO watched_folders (id, household_id, label, canonical_path) VALUES ('folder', 'family', 'Inbox', '/device/private/inbox')",
                     [],
@@ -4821,6 +5503,37 @@ mod tests {
                        (id,household_id,client_id_fingerprint,status)
                      VALUES('gmail','family',?1,'AUTHORIZING')",
                     ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO connector_bindings
+                       (household_id,connector_kind,connection_key,version)
+                     VALUES('family','GOOGLE_DRIVE','drive',1),
+                           ('family','GMAIL','gmail',1),
+                           ('family','WATCHED_FOLDER','folder',1),
+                           ('family','MANUAL_IMPORT','manual-import',1);
+                     INSERT INTO connector_binding_accounts
+                       (household_id,connector_kind,connection_key,account_id)
+                     VALUES('family','GOOGLE_DRIVE','drive','bank'),
+                           ('family','GMAIL','gmail','bank'),
+                           ('family','WATCHED_FOLDER','folder','bank'),
+                           ('family','MANUAL_IMPORT','manual-import','bank');
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,
+                        succeeded_count,completed_at)
+                     VALUES('active-refresh','family','ACTIVE',1,0,0,NULL),
+                           ('historical-refresh','family','COMPLETE',1,1,1,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        changed_count,started_at,completed_at)
+                     VALUES('active-refresh','active-item','GOOGLE_DRIVE','drive','PENDING',0,0,NULL,NULL),
+                           ('historical-refresh','historical-item','GOOGLE_DRIVE','drive',
+                            'SUCCEEDED',1,1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     INSERT INTO connector_runtime_observations
+                       (household_id,connector_kind,connection_key,pending_review_count,
+                        consecutive_failures)
+                     VALUES('family','GOOGLE_DRIVE','drive',2,1);",
                 )?;
                 Ok(())
             })
@@ -4847,8 +5560,409 @@ mod tests {
             })
             .expect("count Gmail connections");
         assert_eq!(gmail_count, 0);
+        let binding_count: i64 = connection
+            .query_row("SELECT count(*) FROM connector_bindings", [], |row| {
+                row.get(0)
+            })
+            .expect("count connector bindings");
+        assert_eq!(binding_count, 0);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_refresh_batches WHERE status='ACTIVE'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count active refresh batches"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_runtime_observations",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count runtime observations"),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_refresh_batches
+                     WHERE batch_id='historical-refresh' AND status='COMPLETE'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count historical refresh evidence"),
+            1
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT count(*) FROM connector_refresh_batch_items
+                     WHERE batch_id='historical-refresh' AND status='SUCCEEDED'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .expect("count historical refresh items"),
+            1
+        );
+        for table in [
+            "source_documents",
+            "source_records",
+            "transaction_candidates",
+            "transactions",
+            "journal_entries",
+            "transaction_sources",
+        ] {
+            assert_eq!(
+                connection
+                    .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .expect("count preserved provenance"),
+                if table == "journal_entries" { 2 } else { 1 },
+                "{table} must survive portable restore"
+            );
+        }
         drop(connection);
         let _ = fs::remove_dir_all(test_directory);
+    }
+
+    #[test]
+    fn restored_semantics_reject_refresh_batch_aggregate_mismatch() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count)
+                     VALUES('refresh','family','ACTIVE',2);
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status)
+                     VALUES('refresh','item','GMAIL','gmail','PENDING');",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_err());
+
+                connection.execute(
+                    "UPDATE connector_refresh_batches SET total_count=1 WHERE batch_id='refresh'",
+                    [],
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_ok());
+                Ok(())
+            })
+            .expect("restore refresh audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_manual_pending_refresh_item() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count)
+                     VALUES('refresh','family','ACTIVE',1);
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status)
+                     VALUES('refresh','manual-item','MANUAL_IMPORT','manual-import','PENDING');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_err());
+                Ok(())
+            })
+            .expect("manual refresh restore audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_attempted_terminal_refresh_item_without_start() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                connection.execute_batch(
+                    "PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                        completed_at)
+                     VALUES('refresh','family','COMPLETE',1,1,1,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        completed_at)
+                     VALUES('refresh','gmail-item','GMAIL','gmail','NO_CHANGES',1,
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'));
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_err());
+                Ok(())
+            })
+            .expect("terminal refresh restore audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_malformed_refresh_item_fields() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                for (case, item_insert) in [
+                    (
+                        "connector kind",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status)
+                         VALUES('refresh','item','DROPBOX','dropbox','PENDING')",
+                    ),
+                    (
+                        "status",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status)
+                         VALUES('refresh','item','GMAIL','gmail','QUEUED')",
+                    ),
+                    (
+                        "lease",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,
+                            attempt_generation,lease_token,lease_expires_at,started_at)
+                         VALUES('refresh','item','GMAIL','gmail','RUNNING',1,'abc',
+                                strftime('%Y-%m-%dT%H:%M:%fZ','now','+5 minutes'),
+                                strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                    ),
+                    (
+                        "timestamp",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,updated_at)
+                         VALUES('refresh','item','GMAIL','gmail','PENDING',
+                                '2026-08-25 00:00:00')",
+                    ),
+                    (
+                        "count",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,changed_count)
+                         VALUES('refresh','item','GMAIL','gmail','PENDING',-1)",
+                    ),
+                    (
+                        "error code",
+                        "INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,
+                            attempt_generation,last_error_code,started_at,completed_at)
+                         VALUES('refresh','item','GMAIL','gmail','FAILED_RETRYABLE',1,
+                                'bad error',strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                                strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+                    ),
+                ] {
+                    connection.execute_batch("PRAGMA ignore_check_constraints=ON")?;
+                    connection.execute(
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count)
+                         VALUES('refresh','family','ACTIVE',1)",
+                        [],
+                    )?;
+                    connection.execute(item_insert, [])?;
+                    connection.execute_batch("PRAGMA ignore_check_constraints=OFF")?;
+                    assert!(
+                        validate_restored_semantics(connection, 71).is_err(),
+                        "restore accepted malformed refresh {case}"
+                    );
+                    connection.execute(
+                        "DELETE FROM connector_refresh_batches WHERE batch_id='refresh'",
+                        [],
+                    )?;
+                }
+                Ok(())
+            })
+            .expect("malformed refresh restore audits should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_accept_mixed_precision_utc_chronology() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute_batch(
+                    "INSERT INTO households(id,name) VALUES
+                       ('family','Family'),('other','Other');
+                     PRAGMA ignore_check_constraints=ON;
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                        created_at,updated_at,completed_at)
+                     VALUES('terminal','family','COMPLETE',1,1,1,
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.300Z',
+                            '2026-08-25T00:00:00.200Z');
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        created_at,started_at,completed_at,updated_at)
+                     VALUES('terminal','terminal-item','GMAIL','gmail','NO_CHANGES',1,
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.100Z',
+                            '2026-08-25T00:00:00.200Z','2026-08-25T00:00:00.300Z');
+                     INSERT INTO connector_refresh_batches
+                       (batch_id,household_id,status,total_count,created_at,updated_at)
+                     VALUES('running','other','ACTIVE',1,
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.100Z');
+                     INSERT INTO connector_refresh_batch_items
+                       (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                        lease_token,created_at,started_at,lease_expires_at,updated_at)
+                     VALUES('running','running-item','GOOGLE_DRIVE','drive','RUNNING',1,
+                            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                            '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00.200Z','2026-08-25T00:00:00.100Z');
+                     INSERT INTO connector_runtime_observations
+                       (household_id,connector_kind,connection_key,last_success_at,last_attempt_at,
+                        updated_at)
+                     VALUES('family','GMAIL','observation',
+                            '2026-08-25T00:00:00Z','2026-08-25T00:00:00.100Z',
+                            '2026-08-25T00:00:00.200Z'),
+                           ('family','GMAIL','observation-precision',
+                            '2026-08-25T00:00:00Z',
+                            '2026-08-25T00:00:00.00000000001Z',
+                            '2026-08-25T00:00:00.200Z');
+                     PRAGMA ignore_check_constraints=OFF;",
+                )?;
+                assert!(validate_restored_semantics(connection, 71).is_ok());
+                Ok(())
+            })
+            .expect("valid mixed-precision restore audit should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_reversed_mixed_precision_utc_chronology() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                let cases = [
+                    (
+                        "batch update",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,created_at,updated_at)
+                         VALUES('refresh','family','ACTIVE',1,
+                                '2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00Z')",
+                    ),
+                    (
+                        "batch completion",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,created_at,updated_at,
+                            completed_at)
+                         VALUES('refresh','family','COMPLETE',0,
+                                '2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00.300Z',
+                                '2026-08-25T00:00:00Z')",
+                    ),
+                    (
+                        "item completion",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,terminal_count,no_changes_count,
+                            created_at,updated_at,completed_at)
+                         VALUES('refresh','family','COMPLETE',1,1,1,
+                                '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00Z',
+                                '2026-08-25T00:00:00Z');
+                         INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                            created_at,started_at,completed_at,updated_at)
+                         VALUES('refresh','item','GMAIL','gmail','NO_CHANGES',1,
+                                '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00Z','2026-08-25T00:00:00Z')",
+                    ),
+                    (
+                        "lease expiry",
+                        "INSERT INTO connector_refresh_batches
+                           (batch_id,household_id,status,total_count,created_at,updated_at)
+                         VALUES('refresh','family','ACTIVE',1,
+                                '2026-08-24T23:59:59.900Z',
+                                '2026-08-25T00:00:00.300Z');
+                         INSERT INTO connector_refresh_batch_items
+                           (batch_id,item_id,connector_kind,connection_key,status,attempt_generation,
+                            lease_token,created_at,started_at,lease_expires_at,updated_at)
+                         VALUES('refresh','item','GOOGLE_DRIVE','drive','RUNNING',1,
+                                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                                '2026-08-24T23:59:59.900Z','2026-08-25T00:00:00.200Z',
+                                '2026-08-25T00:00:00.100Z',
+                                '2026-08-25T00:00:00.300Z')",
+                    ),
+                    (
+                        "observation attempt",
+                        "INSERT INTO connector_runtime_observations
+                           (household_id,connector_kind,connection_key,last_success_at,
+                            last_attempt_at,updated_at)
+                         VALUES('family','GMAIL','observation',
+                                '2026-08-25T00:00:00.100Z','2026-08-25T00:00:00Z',
+                                '2026-08-25T00:00:00.300Z')",
+                    ),
+                    (
+                        "observation update",
+                        "INSERT INTO connector_runtime_observations
+                           (household_id,connector_kind,connection_key,last_success_at,
+                            last_attempt_at,updated_at)
+                         VALUES('family','GMAIL','observation',
+                                '2026-08-25T00:00:00Z',
+                                '2026-08-25T00:00:00.200Z',
+                                '2026-08-25T00:00:00.100Z')",
+                    ),
+                ];
+                for (case, sql) in cases {
+                    connection.execute_batch("PRAGMA ignore_check_constraints=ON")?;
+                    connection.execute_batch(sql)?;
+                    connection.execute_batch("PRAGMA ignore_check_constraints=OFF")?;
+                    assert!(
+                        validate_restored_semantics(connection, 71).is_err(),
+                        "restore accepted reversed {case} chronology"
+                    );
+                    connection.execute("DELETE FROM connector_refresh_batches", [])?;
+                    connection.execute("DELETE FROM connector_runtime_observations", [])?;
+                }
+                Ok(())
+            })
+            .expect("reversed restore chronology audits should remain queryable");
+    }
+
+    #[test]
+    fn restored_semantics_reject_calendar_invalid_refresh_timestamps() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                connection.execute(
+                    "INSERT INTO households(id,name) VALUES('family','Family')",
+                    [],
+                )?;
+                for timestamp in ["2026-02-30T00:00:00Z", "2026-08-25T24:00:00Z"] {
+                    connection.execute_batch("PRAGMA ignore_check_constraints=ON")?;
+                    connection.execute(
+                        "INSERT INTO connector_runtime_observations
+                           (household_id,connector_kind,connection_key,last_attempt_at,updated_at)
+                         VALUES('family','GMAIL','invalid-date',?1,
+                                '2026-09-01T00:00:00Z')",
+                        [timestamp],
+                    )?;
+                    connection.execute_batch("PRAGMA ignore_check_constraints=OFF")?;
+                    assert!(
+                        validate_restored_semantics(connection, 71).is_err(),
+                        "restore accepted invalid timestamp {timestamp}"
+                    );
+                    connection.execute("DELETE FROM connector_runtime_observations", [])?;
+                }
+                Ok(())
+            })
+            .expect("invalid refresh timestamp audit should remain queryable");
     }
 
     #[test]

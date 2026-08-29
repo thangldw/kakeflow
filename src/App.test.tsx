@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
+import { delimitedParserProfilePlatform } from './features/parser-profiles/delimitedParserProfilePlatform'
 import { I18nProvider } from './i18n'
+import { platformClient } from './platform'
 
 async function renderApp() {
   const result = render(<App />)
@@ -10,6 +12,8 @@ async function renderApp() {
 }
 
 describe('KakeFlow application shell', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   it('renders the household overview with accounting KPIs', async () => {
     const { container } = await renderApp()
 
@@ -117,6 +121,30 @@ describe('KakeFlow application shell', () => {
       expect(document.querySelectorAll('.drive-state-UNAVAILABLE')).toHaveLength(2)
       expect(Array.from(document.querySelectorAll('.google-drive-settings')).every((panel) => panel.getAttribute('aria-busy') === 'false')).toBe(true)
     })
+  })
+
+  it('keeps the manual connector summary read-only when binding management is unavailable in the browser runtime', async () => {
+    const listBindings = vi.spyOn(platformClient, 'listConnectorBindings')
+    const upsertBinding = vi.spyOn(platformClient, 'upsertConnectorBinding')
+    const deleteBinding = vi.spyOn(platformClient, 'deleteConnectorBinding')
+    const listAccounts = vi.spyOn(platformClient, 'listAccounts')
+    const listProfiles = vi.spyOn(delimitedParserProfilePlatform, 'list')
+    await renderApp()
+    const accountCallsBeforeSettings = listAccounts.mock.calls.length
+
+    fireEvent.click(screen.getByRole('button', { name: '設定' }))
+
+    const card = await screen.findByRole('article', { name: 'Manual import' })
+    expect(within(card).getByText(/この実行環境では利用できません/)).toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: 'レビュー範囲を管理' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: '保存' })).not.toBeInTheDocument()
+    expect(within(card).queryByRole('button', { name: '削除' })).not.toBeInTheDocument()
+    expect(screen.queryByText('コネクタの状態を読み込めませんでした。')).not.toBeInTheDocument()
+    expect(listBindings).not.toHaveBeenCalled()
+    expect(upsertBinding).not.toHaveBeenCalled()
+    expect(deleteBinding).not.toHaveBeenCalled()
+    expect(listProfiles).not.toHaveBeenCalled()
+    expect(listAccounts).toHaveBeenCalledTimes(accountCallsBeforeSettings)
   })
 
   it('presents Family Space as local organization rather than access control', async () => {

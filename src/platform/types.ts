@@ -138,6 +138,7 @@ export interface PreviewCandidateDto extends Omit<NormalizedCandidateDto, 'evide
 export interface ImportPreviewDto {
   readonly summary: ImportSummaryDto
   readonly source: { readonly sourceType: string; readonly originalFilename: string; readonly mediaType: string; readonly byteSize: number; readonly sha256: string; readonly audienceVisibility: AudienceVisibilityDto; readonly audienceMemberId: string | null }
+  readonly expectedConnectorBinding: ImportBindingExpectationDto | null
   readonly candidates: readonly PreviewCandidateDto[]
   readonly duplicateSummary?: DuplicateSummaryDto
 }
@@ -924,6 +925,109 @@ export interface LastClassificationApplicationDto {
   readonly categoryAccountId: string; readonly categoryName: string; readonly labels: readonly string[]; readonly tags: readonly string[]; readonly appliedAt: string
 }
 
+export type ConnectorKindDto = 'GOOGLE_DRIVE' | 'GMAIL' | 'WATCHED_FOLDER' | 'MANUAL_IMPORT'
+export type ConnectorCapabilityDto = 'CONFIGURE' | 'DISCONNECT' | 'REFRESH_NOW' | 'SCHEDULE' | 'RETRY' | 'IMPORT_FILE' | 'ACCOUNT_BINDING'
+export type ConnectorAvailabilityDto = 'AVAILABLE' | 'RUNTIME_UNSUPPORTED' | 'CONFIG_MISSING'
+export type ConnectorLifecycleDto = 'DISCONNECTED' | 'CONFIGURING' | 'CONNECTED'
+export type ConnectorHealthDto = 'NEVER_REFRESHED' | 'MANUAL' | 'FRESH' | 'STALE' | 'RUNNING' | 'RETRY_BACKOFF' | 'NEEDS_ACTION'
+export type ConfigurationDestinationDto = 'GOOGLE_DRIVE_SETTINGS' | 'GMAIL_SETTINGS' | 'WATCHED_FOLDER_SETTINGS' | 'IMPORT_INBOX'
+export interface ConnectorBindingSummaryDto {
+  readonly allowedAccountCount: number
+  readonly parserProfileConfigured: boolean
+  readonly version: number
+}
+export interface ConnectorSummaryDto {
+  readonly schemaVersion: 1
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly displayLabel: string
+  readonly availability: ConnectorAvailabilityDto
+  readonly lifecycle: ConnectorLifecycleDto
+  readonly health: ConnectorHealthDto
+  readonly capabilities: readonly ConnectorCapabilityDto[]
+  readonly lastAttemptAt: string | null
+  readonly lastSuccessAt: string | null
+  readonly freshnessDeadlineAt: string | null
+  readonly nextDueAt: string | null
+  readonly pendingReviewCount: number
+  readonly consecutiveFailures: number
+  readonly lastErrorCode: string | null
+  readonly bindingSummary: ConnectorBindingSummaryDto | null
+  readonly configurationDestination: ConfigurationDestinationDto
+}
+export interface ConnectorCursorDto {
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+}
+export interface ConnectorSummaryPageDto {
+  readonly schemaVersion: 1
+  readonly items: readonly ConnectorSummaryDto[]
+  readonly nextCursor: ConnectorCursorDto | null
+}
+export type ConnectorRefreshBatchStatusDto = 'ACTIVE' | 'COMPLETE' | 'PARTIAL' | 'FAILED'
+export type ConnectorRefreshItemStatusDto = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'NO_CHANGES' | 'SKIPPED_MANUAL' | 'FAILED_RETRYABLE' | 'NEEDS_ACTION'
+export interface ConnectorRefreshBatchDto {
+  readonly batchId: string
+  readonly householdId: string
+  readonly status: ConnectorRefreshBatchStatusDto
+  readonly totalCount: number
+  readonly terminalCount: number
+  readonly succeededCount: number
+  readonly noChangesCount: number
+  readonly skippedManualCount: number
+  readonly failedCount: number
+  readonly changedCount: number
+  readonly createdAt: string
+  readonly updatedAt: string
+  readonly completedAt: string | null
+}
+export interface ConnectorRefreshItemDto {
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly status: ConnectorRefreshItemStatusDto
+  readonly changedCount: number
+  readonly lastErrorCode: string | null
+  readonly updatedAt: string
+  readonly startedAt: string | null
+  readonly completedAt: string | null
+}
+export interface ConnectorRefreshBatchProgressDto extends ConnectorRefreshBatchDto {
+  readonly schemaVersion: 1
+  readonly items: readonly ConnectorRefreshItemDto[]
+}
+export interface ConnectorBindingDto {
+  readonly householdId: string
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly allowedAccountIds: readonly string[]
+  readonly parserProfileId: string | null
+  readonly parserProfileVersion: number | null
+  readonly version: number
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+export interface ImportBindingExpectationDto {
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly version: number | null
+  readonly generation: number
+}
+export interface UpsertConnectorBindingInputDto {
+  readonly householdId: string
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly allowedAccountIds: readonly string[]
+  readonly parserProfileId: string | null
+  readonly parserProfileVersion: number | null
+  readonly expectedVersion: number | null
+}
+export interface DeleteConnectorBindingInputDto {
+  readonly householdId: string
+  readonly connectorKind: ConnectorKindDto
+  readonly connectionKey: string
+  readonly expectedVersion: number
+}
+
 export type AppCommand =
   | 'app_bootstrap'
   | 'app_health'
@@ -1024,6 +1128,14 @@ export type AppCommand =
   | 'watched_file_inbox_mark_needs_mapping'
   | 'watched_file_inbox_mark_failed'
   | 'watched_file_inbox_mark_staged'
+  | 'connector_control_list'
+  | 'connector_bindings_list'
+  | 'connector_binding_upsert'
+  | 'connector_binding_delete'
+  | 'connector_refresh_one'
+  | 'connector_refresh_all'
+  | 'connector_refresh_active_batch_get'
+  | 'connector_refresh_batch_get'
   | 'google_drive_availability'
   | 'google_drive_connections_list'
   | 'google_drive_connect'
@@ -1187,6 +1299,14 @@ export interface PlatformClient {
   updateSourceDocumentAudience(input: UpdateSourceDocumentAudienceInputDto): Promise<SourceDocumentViewDto>
   querySourceDocumentRecords(request: SourceRecordPageRequestDto): Promise<SourceRecordPageDto>
   listTransactionSourceRecords(householdId: string, transactionId: string): Promise<readonly SourceRecordViewDto[]>
+  listConnectorSummaries(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Promise<ConnectorSummaryPageDto>
+  listConnectorBindings(householdId: string): Promise<readonly ConnectorBindingDto[]>
+  upsertConnectorBinding(input: UpsertConnectorBindingInputDto): Promise<ConnectorBindingDto>
+  deleteConnectorBinding(input: DeleteConnectorBindingInputDto): Promise<void>
+  startConnectorRefresh(householdId: string, connectorKind: ConnectorKindDto, connectionKey: string): Promise<ConnectorRefreshBatchDto>
+  startConnectorRefreshAll(householdId: string): Promise<ConnectorRefreshBatchDto>
+  getActiveConnectorRefreshBatch(householdId: string): Promise<ConnectorRefreshBatchProgressDto | null>
+  getConnectorRefreshBatch(householdId: string, batchId: string): Promise<ConnectorRefreshBatchProgressDto>
   listWatchedFolders(householdId: string): Promise<readonly WatchedFolderDto[]>
   selectWatchedFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
   selectIcloudFolder(householdId: string, label: string): Promise<WatchedFolderDto | null>
@@ -1258,7 +1378,7 @@ export interface PlatformClient {
   startImport(request: StartImportDto, fileBytes: Uint8Array): Promise<ImportSummaryDto>
   previewImport(runId: string): Promise<ImportPreviewDto>
   setImportDuplicateResolution(runId: string, candidateId: string, resolution: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE'): Promise<ImportPreviewDto>
-  commitImport(runId: string, decisions: readonly PostingDecisionDto[]): Promise<CommitSummaryDto>
+  commitImport(runId: string, decisions: readonly PostingDecisionDto[], expectedConnectorBinding: ImportBindingExpectationDto | null): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
   createBackup(passphrase: string): Promise<BackupSummaryDto | null>
   stageBackupRestore(passphrase: string): Promise<BackupSummaryDto | null>
