@@ -182,6 +182,43 @@ describe('authoritative PWA ledger client', () => {
     expect(await client.revision()).toBe(revision)
   })
 
+  it('projects exactly one account-independent manual source with the current pending receipt count', async () => {
+    const client = await PwaLedgerClient.createVault('client-manual-source', passphrase, {
+      vaultId: 'vault-1',
+      evidence: { getDirectory: undefined },
+    })
+    await client.createHousehold({ id: 'household-1', name: 'Synthetic household' })
+
+    await expect(client.listConnectorSummaries('household-1')).resolves.toEqual([{
+      schemaVersion: 1,
+      connectorKind: 'MANUAL_IMPORT',
+      connectionKey: 'manual-import',
+      displayLabel: 'Manual import',
+      availability: 'AVAILABLE',
+      lifecycle: 'CONNECTED',
+      health: 'MANUAL',
+      capabilities: ['IMPORT_FILE'],
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      freshnessDeadlineAt: null,
+      nextDueAt: null,
+      pendingReviewCount: 0,
+      consecutiveFailures: 0,
+      lastErrorCode: null,
+      bindingSummary: null,
+      configurationDestination: 'IMPORT_INBOX',
+    }])
+
+    await stageReceipt(client)
+    await expect(client.listConnectorSummaries('household-1')).resolves.toEqual([
+      expect.objectContaining({
+        connectorKind: 'MANUAL_IMPORT',
+        capabilities: ['IMPORT_FILE'],
+        pendingReviewCount: 1,
+      }),
+    ])
+  })
+
   it('rejects every read and write after the local vault is locked', async () => {
     const client = await configuredClient('client-lock')
     client.lock()

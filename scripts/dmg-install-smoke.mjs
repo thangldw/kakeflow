@@ -4,15 +4,16 @@ import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { macDmgArtifactName } from './release-version-contract.mjs'
+import { macArtifactPaths } from './native-macos-build.mjs'
+import { verifyNativeBuildIdentity } from './native-build-identity.mjs'
+import { packagedBuildPathFindings } from './packaged-app-smoke.mjs'
 
 const execFile = promisify(execFileCallback)
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 
-export function dmgForVersion(version, architecture = process.arch, repositoryRoot = root) {
-  const tauriArchitecture = architecture === 'arm64' ? 'aarch64' : null
-  if (!tauriArchitecture) throw new Error(`Unsupported macOS DMG architecture: ${architecture}`)
-  return path.join(repositoryRoot, 'src-tauri', 'target', 'release', 'bundle', 'dmg', macDmgArtifactName(version, tauriArchitecture))
+export function dmgForVersion(version, options = {}) {
+  const normalized = typeof options === 'string' ? { repositoryRoot: options } : options
+  return macArtifactPaths(version, { repositoryRoot: root, ...normalized }).dmg
 }
 
 export function validateBundleMetadata(metadata, expectedVersion) {
@@ -57,6 +58,7 @@ async function detachDmg(device) {
 
 export async function runDmgInstallSmoke({
   platform = process.platform,
+  repositoryRoot = root,
   expectedVersion,
   dmg,
   artifactDirectory = process.env.KAKEFLOW_SMOKE_ARTIFACT_DIR,
@@ -65,11 +67,18 @@ export async function runDmgInstallSmoke({
   if (platform !== 'darwin') {
     throw new Error('DMG mount/install validation is supported only on macOS; Windows installer coverage is not claimed')
   }
-  const packageVersion = expectedVersion ?? JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).version
-  const image = dmg ?? process.env.KAKEFLOW_DMG_PATH ?? dmgForVersion(packageVersion)
+  const packageVersion = expectedVersion ?? JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')).version
+  const image = dmg ?? process.env.KAKEFLOW_DMG_PATH ?? dmgForVersion(packageVersion, { repositoryRoot })
   if (!existsSync(image)) throw new Error(`KakeFlow DMG does not exist: ${image}`)
   const imageStat = await stat(image)
   if (!imageStat.isFile() || imageStat.size === 0) throw new Error(`KakeFlow DMG is invalid: ${image}`)
+  await verifyNativeBuildIdentity({
+    repositoryRoot,
+    releaseDirectory: path.resolve(path.dirname(image), '..', '..'),
+    version: packageVersion,
+    artifact: 'dmg',
+    artifactPath: image,
+  })
 
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-dmg-smoke-'))
   const mountPoint = path.join(temporaryRoot, 'volume')
@@ -101,12 +110,16 @@ export async function runDmgInstallSmoke({
     if (!executableRealPath.startsWith(`${mountRealPath}${path.sep}`) || !executableStat.isFile() || executableStat.size === 0 || (executableStat.mode & 0o111) === 0) {
       throw new Error('Mounted KakeFlow executable is invalid')
     }
+    const buildPathFindings = await packagedBuildPathFindings(executable, 'darwin')
+    if (buildPathFindings.length > 0) {
+      throw new Error(`Mounted KakeFlow bundle contains personal build roots: ${buildPathFindings.join(', ')}`)
+    }
 
     const resources = path.join(app, 'Contents', 'Resources')
     const resourcesStat = await stat(resources)
     if (!resourcesStat.isDirectory()) throw new Error('Mounted KakeFlow resources are missing')
-    await execFile(process.execPath, [path.join(root, 'scripts', 'verify-ocr-resources.mjs')], {
-      cwd: root,
+    await execFile(process.execPath, [path.join(repositoryRoot, 'scripts', 'verify-ocr-resources.mjs'), '--target', 'macos-arm64', '--expected-architecture', 'arm64'], {
+      cwd: repositoryRoot,
       env: { ...process.env, KAKEFLOW_OCR_RESOURCE_ROOT: path.join(resources, 'ocr') },
     })
     await execFile('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
@@ -121,6 +134,7 @@ export async function runDmgInstallSmoke({
       executableBytes: executableStat.size,
       resourcesPresent: true,
       packagedOcrVerified: true,
+      packagedPrivacyVerified: true,
       codeSignatureValid: true,
       packagedUiGate: 'separate-app-bundle-smoke',
     }
@@ -145,7 +159,7 @@ export async function runDmgInstallSmoke({
     else if (detached) await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
   }
   if (failure) throw failure
-  console.log(`DMG mount smoke passed (${result.image}, ${result.bundle}, v${result.version}, read-only mount, bundle integrity)`)
+  console.log(`DMG mount smoke passed (${result.image}, ${result.bundle}, v${result.version}, read-only mount, bundle privacy, bundle integrity)`)
   return result
 }
 

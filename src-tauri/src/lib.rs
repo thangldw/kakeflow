@@ -6,6 +6,12 @@ pub mod backup;
 pub mod brokerage;
 pub mod card_settlement_mapping;
 pub mod change_package;
+pub mod connector_binding;
+pub mod connector_commands;
+pub mod connector_control;
+pub mod connector_projection;
+pub mod connector_refresh;
+mod connector_refresh_worker;
 pub mod dashboard_preferences;
 pub mod document_extract;
 pub mod document_pdf_ocr;
@@ -3738,17 +3744,32 @@ fn watched_folder_scan(
     household_id: String,
     watched_folder_id: String,
 ) -> Result<watched_folders::WatchedFolderScanDto, String> {
-    watched_folder_result(&state, |connection| {
-        let scan = watched_folders::scan_registered(connection, &household_id, &watched_folder_id)?;
-        watched_file_inbox::reconcile_scan(
-            connection,
-            &household_id,
-            &watched_folder_id,
-            &scan.files,
-        )
-        .map_err(|_| watched_folders::WatchedFolderError::Database)?;
-        Ok(scan)
-    })
+    watched_folder_scan_state(&state, &household_id, &watched_folder_id)
+}
+
+fn watched_folder_scan_state(
+    state: &AppState,
+    household_id: &str,
+    watched_folder_id: &str,
+) -> Result<watched_folders::WatchedFolderScanDto, String> {
+    folder_discovery::scan_registered_state(state, household_id, watched_folder_id)
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[cfg(test)]
+fn watched_folder_scan_state_with_scanner(
+    state: &AppState,
+    household_id: &str,
+    watched_folder_id: &str,
+    scanner: &impl folder_discovery::RegisteredFolderScanner,
+) -> Result<watched_folders::WatchedFolderScanDto, String> {
+    folder_discovery::scan_registered_state_with_scanner(
+        state,
+        household_id,
+        watched_folder_id,
+        scanner,
+    )
+    .map_err(|error| error.public_message().to_owned())
 }
 
 fn watched_file_inbox_result<T>(
@@ -4069,9 +4090,15 @@ fn import_commit(
     state: tauri::State<'_, AppState>,
     run_id: String,
     decisions: Vec<PostingDecision>,
+    expected_connector_binding: Option<connector_binding::ImportBindingExpectation>,
 ) -> Result<CommitSummary, String> {
     workflow_result(&state, |connection| {
-        import_workflow::commit_import(connection, &run_id, &decisions)
+        import_workflow::commit_import(
+            connection,
+            &run_id,
+            &decisions,
+            expected_connector_binding.as_ref(),
+        )
     })
 }
 
@@ -4798,6 +4825,11 @@ pub fn run() {
                 bundled_executable: bundled_ocr_available.then_some(bundled_ocr),
                 bundled_tessdata: bundled_ocr_available.then_some(bundled_tessdata),
             });
+            app.manage(if setup_smoke_config.is_none() {
+                connector_refresh_worker::BackgroundConnectorRefresh::start(app.handle().clone())
+            } else {
+                connector_refresh_worker::BackgroundConnectorRefresh::disabled()
+            });
             if setup_smoke_config.is_none() {
                 app.manage(folder_discovery::BackgroundFolderDiscovery::start(
                     app.handle().clone(),
@@ -4825,6 +4857,14 @@ pub fn run() {
             app_bootstrap,
             app_health,
             app_status,
+            connector_commands::connector_control_list,
+            connector_commands::connector_bindings_list,
+            connector_commands::connector_binding_upsert,
+            connector_commands::connector_binding_delete,
+            connector_commands::connector_refresh_one,
+            connector_commands::connector_refresh_all,
+            connector_commands::connector_refresh_active_batch_get,
+            connector_commands::connector_refresh_batch_get,
             local_sync_foundation_status,
             principal_member_binding_update,
             relay_status,
@@ -5065,18 +5105,153 @@ pub fn run() {
 mod command_authorization_tests {
     use super::{
         bundled_ocr_ready, cached_family_envelope_output, validate_import_metrics,
-        ImportEnvelopeMetrics, RestoreCommandAuthorization, MAX_IMPORT_CANDIDATES,
-        MAX_IMPORT_CARD_LINES, MAX_IMPORT_CARD_STATEMENTS, MAX_IMPORT_EVIDENCE_LINKS,
-        MAX_IMPORT_FILE_BYTES, MAX_IMPORT_METADATA_BYTES, MAX_IMPORT_RAW_PAYLOAD_BYTES,
-        MAX_IMPORT_RECORDS,
+        watched_folder_scan_state, watched_folder_scan_state_with_scanner, ImportEnvelopeMetrics,
+        RestoreCommandAuthorization, MAX_IMPORT_CANDIDATES, MAX_IMPORT_CARD_LINES,
+        MAX_IMPORT_CARD_STATEMENTS, MAX_IMPORT_EVIDENCE_LINKS, MAX_IMPORT_FILE_BYTES,
+        MAX_IMPORT_METADATA_BYTES, MAX_IMPORT_RAW_PAYLOAD_BYTES, MAX_IMPORT_RECORDS,
     };
     use crate::{
+        connector_control::ConnectorKind,
+        connector_refresh::{self, RefreshTarget},
         family_delivery_transport::CachedOutboundEnvelopeDto,
         family_encrypted_envelope::{
             seal_family_envelope, FamilyEnvelopeMetadata, RecipientKeyPair,
         },
+        folder_discovery::RegisteredFolderScanner,
+        persistence::AppState,
+        watched_folders::{self, RegisteredFolderScanPlan, RegisteredFolderScanResult},
     };
     use sha2::{Digest, Sha256};
+    use std::sync::{Arc, Condvar, Mutex};
+
+    #[derive(Default)]
+    struct CommandScanGate {
+        started: Mutex<bool>,
+        started_changed: Condvar,
+        released: Mutex<bool>,
+        released_changed: Condvar,
+    }
+
+    struct BlockingCommandScanner {
+        gate: Arc<CommandScanGate>,
+    }
+
+    impl RegisteredFolderScanner for BlockingCommandScanner {
+        fn scan(
+            &self,
+            plan: &RegisteredFolderScanPlan,
+        ) -> Result<RegisteredFolderScanResult, watched_folders::WatchedFolderError> {
+            *self.gate.started.lock().unwrap() = true;
+            self.gate.started_changed.notify_all();
+            let released = self.gate.released.lock().unwrap();
+            drop(
+                self.gate
+                    .released_changed
+                    .wait_while(released, |released| !*released)
+                    .unwrap(),
+            );
+            watched_folders::scan_prepared_registered(plan)
+        }
+    }
+
+    #[test]
+    fn manual_watched_scan_releases_database_for_batch_heartbeats_and_reconciles_once() {
+        let state = Arc::new(AppState::in_memory(b"manual-watched-scan-key").unwrap());
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("bank.csv"), b"date,amount\n").unwrap();
+        let canonical_directory = std::fs::canonicalize(directory.path()).unwrap();
+        let (folder_id, claim) = state
+            .with_connection(|connection| {
+                connection.execute("INSERT INTO households(id,name) VALUES('home','Home')", [])?;
+                let folder =
+                    watched_folders::register(connection, "home", "Bank", &canonical_directory)
+                        .unwrap();
+                let batch = connector_refresh::create_batch(
+                    connection,
+                    "home",
+                    &[RefreshTarget {
+                        connector_kind: ConnectorKind::WatchedFolder,
+                        connection_key: folder.id.clone(),
+                    }],
+                )
+                .unwrap();
+                let claim = connector_refresh::claim_next(connection, "home", &batch.batch_id)
+                    .unwrap()
+                    .unwrap();
+                Ok((folder.id, claim))
+            })
+            .unwrap();
+        let gate = Arc::new(CommandScanGate::default());
+        let scanner = Arc::new(BlockingCommandScanner {
+            gate: Arc::clone(&gate),
+        });
+        let scan_state = Arc::clone(&state);
+        let scan_scanner = Arc::clone(&scanner);
+        let scan_folder_id = folder_id.clone();
+        let scan = std::thread::spawn(move || {
+            watched_folder_scan_state_with_scanner(
+                scan_state.as_ref(),
+                "home",
+                &scan_folder_id,
+                scan_scanner.as_ref(),
+            )
+        });
+        let started = gate.started.lock().unwrap();
+        drop(
+            gate.started_changed
+                .wait_while(started, |started| !*started)
+                .unwrap(),
+        );
+
+        for _ in 0..2 {
+            state
+                .with_connection(|connection| {
+                    connector_refresh::heartbeat_item(
+                        connection,
+                        "home",
+                        &claim.batch_id,
+                        &claim.item_id,
+                        &claim.lease_token,
+                        claim.attempt_generation,
+                    )
+                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+                })
+                .unwrap();
+        }
+        *gate.released.lock().unwrap() = true;
+        gate.released_changed.notify_all();
+
+        let result = scan.join().unwrap().unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(result.files[0].relative_path, "bank.csv");
+        state
+            .with_connection(|connection| {
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM watched_file_inbox
+                         WHERE household_id='home' AND watched_folder_id=?1",
+                        [&folder_id],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    1
+                );
+                assert_eq!(
+                    connection.query_row(
+                        "SELECT count(*) FROM connector_runtime_observations
+                         WHERE household_id='home' AND connector_kind='WATCHED_FOLDER'",
+                        [],
+                        |row| row.get::<_, u64>(0),
+                    )?,
+                    0
+                );
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(
+            watched_folder_scan_state(&state, "home", "missing").unwrap_err(),
+            "Watched folder was not found"
+        );
+    }
 
     #[test]
     fn bundled_ocr_requires_both_models_the_tsv_config_and_an_executable() {

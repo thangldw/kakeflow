@@ -1,18 +1,53 @@
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { verifyNativeBuildIdentity } from './native-build-identity.mjs'
+import { resolveMacBuildContext } from './native-macos-build.mjs'
 
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 const defaultTimeoutMs = 90_000
+const personalBuildRootMarkers = ['/Users/', 'C:\\Users\\']
 
-export function executableForPlatform(platform = process.platform, repositoryRoot = root) {
-  const release = path.join(repositoryRoot, 'src-tauri', 'target', 'release')
+export function personalBuildPathFindings(bytes) {
+  const executableBytes = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  return personalBuildRootMarkers.filter((marker) => executableBytes.includes(Buffer.from(marker)))
+}
+
+async function regularFilesBelow(directory) {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const target = path.join(directory, entry.name)
+    if (entry.isDirectory()) return regularFilesBelow(target)
+    return entry.isFile() ? [target] : []
+  }))
+  return nested.flat()
+}
+
+export async function packagedBuildPathFindings(executable, platform = process.platform) {
+  const packageRoot = platform === 'darwin'
+    ? path.resolve(path.dirname(executable), '..', '..')
+    : executable
+  const files = platform === 'darwin' ? await regularFilesBelow(packageRoot) : [executable]
+  const findings = []
+  for (const file of files) {
+    for (const marker of personalBuildPathFindings(await readFile(file))) {
+      findings.push(`${path.relative(packageRoot, file) || path.basename(file)}:${marker}`)
+    }
+  }
+  return findings
+}
+
+export function executableForPlatform(platform = process.platform, options = {}) {
+  const normalized = typeof options === 'string' ? { repositoryRoot: options } : options
   if (platform === 'darwin') {
-    return path.join(release, 'bundle', 'macos', 'KakeFlow.app', 'Contents', 'MacOS', 'kakeflow')
+    const context = resolveMacBuildContext({ repositoryRoot: root, ...normalized })
+    return path.join(context.releaseDirectory, 'bundle', 'macos', 'KakeFlow.app', 'Contents', 'MacOS', 'kakeflow')
   }
   if (platform === 'win32') {
+    const repositoryRoot = path.resolve(normalized.repositoryRoot ?? root)
+    const release = path.join(repositoryRoot, 'src-tauri', 'target', 'release')
     return path.join(release, 'kakeflow.exe')
   }
   throw new Error(`Packaged app smoke is supported only on macOS and Windows, not ${platform}`)
@@ -136,6 +171,8 @@ function launch(executable, dataRoot, timeoutMs) {
 
 export async function runPackagedSmoke({
   executable = process.env.KAKEFLOW_SMOKE_EXECUTABLE || executableForPlatform(),
+  platform = process.platform,
+  repositoryRoot = root,
   timeoutMs = defaultTimeoutMs,
   keepData = process.env.KAKEFLOW_KEEP_SMOKE_DATA === '1',
   artifactDirectory = process.env.KAKEFLOW_SMOKE_ARTIFACT_DIR,
@@ -146,6 +183,22 @@ export async function runPackagedSmoke({
   const executableStat = await stat(executable)
   if (!executableStat.isFile() || executableStat.size === 0) {
     throw new Error(`Packaged app executable is invalid: ${executable}`)
+  }
+  if (platform === 'darwin') {
+    const app = path.resolve(path.dirname(executable), '..', '..')
+    const releaseDirectory = path.resolve(app, '..', '..', '..')
+    const packageVersion = JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')).version
+    await verifyNativeBuildIdentity({
+      repositoryRoot,
+      releaseDirectory,
+      version: packageVersion,
+      artifact: 'app',
+      artifactPath: app,
+    })
+  }
+  const buildPathFindings = await packagedBuildPathFindings(executable, platform)
+  if (buildPathFindings.length > 0) {
+    throw new Error(`Packaged app bundle contains personal build roots: ${buildPathFindings.join(', ')}`)
   }
 
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'kakeflow-packaged-smoke-'))
@@ -166,7 +219,7 @@ export async function runPackagedSmoke({
       artifactPaths.push(resultArtifact)
     }
     console.log(
-      `Packaged app smoke passed (${result.visualEvidence.visitedPages.length} visible page, ${result.visualEvidence.interactionCount} interaction, IPC, schema v${result.schemaVersion})`,
+      `Packaged app smoke passed (${result.visualEvidence.visitedPages.length} visible page, ${result.visualEvidence.interactionCount} interaction, IPC, schema v${result.schemaVersion}, bundle privacy)`,
     )
     return { ...result, dataRoot, artifactPaths }
   } finally {

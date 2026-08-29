@@ -104,6 +104,8 @@ pub struct SyncScheduleDto {
     pub next_due_at: Option<String>,
     pub running: bool,
     pub lease_expires_at: Option<String>,
+    pub last_attempt_at: Option<String>,
+    pub last_success_at: Option<String>,
     pub last_result: String,
     pub last_discovered_count: u64,
     pub consecutive_failures: u8,
@@ -264,9 +266,9 @@ pub fn configure_schedule(
 
 pub fn load_schedule(c: &Connection, household: &str, id: &str) -> Result<SyncScheduleDto> {
     scoped(household, id)?;
-    c.query_row("SELECT s.connection_id,s.enabled,s.interval_minutes,s.next_due_at,s.lease_token IS NOT NULL,s.lease_expires_at,s.last_result,s.last_discovered_count,s.consecutive_failures,s.suspended_until,s.suspension_reason,s.last_error_code,s.updated_at
+    c.query_row("SELECT s.connection_id,s.enabled,s.interval_minutes,s.next_due_at,s.lease_token IS NOT NULL,s.lease_expires_at,s.last_attempt_at,s.last_success_at,s.last_result,s.last_discovered_count,s.consecutive_failures,s.suspended_until,s.suspension_reason,s.last_error_code,s.updated_at
       FROM gmail_sync_schedules s JOIN gmail_connections g ON g.id=s.connection_id WHERE g.household_id=?1 AND s.connection_id=?2",params![household,id],|r|Ok(SyncScheduleDto{
-        connection_id:r.get(0)?,enabled:r.get(1)?,interval_minutes:r.get::<_,u32>(2)?,next_due_at:r.get(3)?,running:r.get(4)?,lease_expires_at:r.get(5)?,last_result:r.get(6)?,last_discovered_count:r.get::<_,u64>(7)?,consecutive_failures:r.get::<_,u8>(8)?,suspended_until:r.get(9)?,suspension_reason:r.get(10)?,last_error_code:r.get(11)?,updated_at:r.get(12)?
+        connection_id:r.get(0)?,enabled:r.get(1)?,interval_minutes:r.get::<_,u32>(2)?,next_due_at:r.get(3)?,running:r.get(4)?,lease_expires_at:r.get(5)?,last_attempt_at:r.get(6)?,last_success_at:r.get(7)?,last_result:r.get(8)?,last_discovered_count:r.get::<_,u64>(9)?,consecutive_failures:r.get::<_,u8>(10)?,suspended_until:r.get(11)?,suspension_reason:r.get(12)?,last_error_code:r.get(13)?,updated_at:r.get(14)?
       })).optional()?.ok_or(GmailStoreError::NotFound)
 }
 

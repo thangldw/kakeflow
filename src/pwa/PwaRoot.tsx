@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
+import {
+  ManualConnectorControlCenter,
+  type ManualConnectorControlCopy,
+} from '../features/connectors/ManualConnectorControlCenter'
 import type { ExtractedDocumentDto } from '../platform'
+import type { ConnectorSummaryDto } from '../platform/types'
 import { parseReceiptText, type ReceiptTextFields } from '../features/import/receiptText'
 import type { PwaLedgerClient } from '../platform/pwa/client'
 import type {
@@ -14,7 +19,7 @@ import type {
   TransactionDetail,
 } from '../platform/pwa/types'
 import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
-import { usePwaClient } from './usePwaClient'
+import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
 import './pwa.css'
 
 export type PwaOcrDocument = (
@@ -27,7 +32,7 @@ interface PwaRootProps {
   readonly ocrDocument?: PwaOcrDocument
 }
 
-type Screen = 'overview' | 'import' | 'review' | 'ledger' | 'evidence' | 'backup'
+type Screen = 'overview' | 'sources' | 'import' | 'review' | 'ledger' | 'evidence' | 'backup'
 
 interface ReceiptDraft {
   readonly filename: string
@@ -40,12 +45,39 @@ interface ReceiptDraft {
 
 const navigation: readonly { id: Screen; label: string; step: string }[] = [
   { id: 'overview', label: 'Overview', step: '01' },
-  { id: 'import', label: 'Import', step: '02' },
-  { id: 'review', label: 'Review', step: '03' },
-  { id: 'ledger', label: 'Ledger', step: '04' },
-  { id: 'evidence', label: 'Evidence', step: '05' },
-  { id: 'backup', label: 'Backup', step: '06' },
+  { id: 'sources', label: 'Sources', step: '02' },
+  { id: 'import', label: 'Import', step: '03' },
+  { id: 'review', label: 'Review', step: '04' },
+  { id: 'ledger', label: 'Ledger', step: '05' },
+  { id: 'evidence', label: 'Evidence', step: '06' },
+  { id: 'backup', label: 'Backup', step: '07' },
 ]
+
+const pwaDateFormatter = new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'short' })
+
+const pwaConnectorCopy: ManualConnectorControlCopy = {
+  frame: {
+    title: 'Connector control center',
+    description: 'Review the local source and pending items in one place.',
+    reviewNote: 'Imports create review candidates. Nothing is posted automatically.',
+    connected: 'Connected',
+    stale: 'Stale',
+    running: 'Running',
+    needsAction: 'Needs action',
+  },
+  manualState: 'Manual',
+  configure: 'Open settings',
+  lastSuccessLabel: 'Last successful refresh',
+  noLastSuccess: 'No successful refresh yet',
+  nextDueLabel: 'Next scheduled refresh',
+  noNextDue: 'Not scheduled',
+  pendingReviewLabel: 'Pending review',
+  pendingReview: (count) => `${count.toLocaleString('en-US')} ${count === 1 ? 'item' : 'items'}`,
+  bindingLabel: 'Review scope',
+  unboundBinding: 'Not configured',
+  bindingSummary: (count, parserConfigured, version) => `${count.toLocaleString('en-US')} accounts · ${parserConfigured ? 'parser profile set' : 'no parser profile'} · revision ${version.toLocaleString('en-US')}`,
+  formatDate: (value) => pwaDateFormatter.format(new Date(value)),
+}
 
 const defaultOcrDocument: PwaOcrDocument = async (bytes, mediaType) => {
   const { paddleOcrDocument } = await import('../features/import/paddleOcr')
@@ -113,6 +145,7 @@ export default function PwaRoot({
   const [accounts, setAccounts] = useState<Account[]>([])
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [connectorSummaries, setConnectorSummaries] = useState<readonly ConnectorSummaryDto[]>([])
   const [draft, setDraft] = useState<ReceiptDraft | null>(null)
   const [approved, setApproved] = useState(false)
   const [posted, setPosted] = useState<Transaction | null>(null)
@@ -122,28 +155,42 @@ export default function PwaRoot({
   const [creditAccountId, setCreditAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const vaultLoadGeneration = useRef(0)
   const serviceWorker = usePwaServiceWorker()
 
-  const loadVault = useCallback(async (client: PwaLedgerClient) => {
-    const households = await client.listHouseholds()
-    const active = households[0] ?? null
-    setHousehold(active)
-    if (!active) {
-      setAccounts([])
-      setSummary(null)
-      setTransactions([])
-      return
+  const loadVault = useCallback(async (client: PwaLedgerClient): Promise<boolean> => {
+    const generation = ++vaultLoadGeneration.current
+    try {
+      const households = await client.listHouseholds()
+      if (generation !== vaultLoadGeneration.current) return false
+      const active = households[0] ?? null
+      if (!active) {
+        setHousehold(null)
+        setAccounts([])
+        setSummary(null)
+        setTransactions([])
+        setConnectorSummaries([])
+        return true
+      }
+      const [nextAccounts, nextSummary, nextTransactions, nextConnectorSummaries] = await Promise.all([
+        client.listAccounts(active.id),
+        client.dashboard(active.id),
+        client.listTransactions(active.id),
+        client.listConnectorSummaries(active.id),
+      ])
+      if (generation !== vaultLoadGeneration.current) return false
+      setHousehold(active)
+      setAccounts(nextAccounts)
+      setSummary(nextSummary)
+      setTransactions(nextTransactions)
+      setConnectorSummaries(nextConnectorSummaries)
+      setDebitAccountId(nextAccounts.find((account) => account.kind === 'EXPENSE')?.id ?? '')
+      setCreditAccountId(nextAccounts.find((account) => account.kind === 'ASSET')?.id ?? '')
+      return true
+    } catch (cause) {
+      if (generation !== vaultLoadGeneration.current) return false
+      throw cause
     }
-    const [nextAccounts, nextSummary, nextTransactions] = await Promise.all([
-      client.listAccounts(active.id),
-      client.dashboard(active.id),
-      client.listTransactions(active.id),
-    ])
-    setAccounts(nextAccounts)
-    setSummary(nextSummary)
-    setTransactions(nextTransactions)
-    setDebitAccountId(nextAccounts.find((account) => account.kind === 'EXPENSE')?.id ?? '')
-    setCreditAccountId(nextAccounts.find((account) => account.kind === 'ASSET')?.id ?? '')
   }, [])
 
   const submitVault = async (create: boolean) => {
@@ -165,7 +212,7 @@ export default function PwaRoot({
       setScreen('overview')
       await loadVault(client)
     } catch (cause) {
-      setError(messageOf(cause))
+      if (!isPwaClientOperationSuperseded(cause)) setError(messageOf(cause))
     }
   }
 
@@ -224,6 +271,13 @@ export default function PwaRoot({
           })
         : null
       setDraft({ filename: file.name, mediaType: file.type, bytes, extracted, fields, candidate })
+      if (candidate) {
+        try {
+          setConnectorSummaries(await session.client.listConnectorSummaries(household.id))
+        } catch {
+          setError('Receipt staged, but source status could not be refreshed.')
+        }
+      }
       setScreen('review')
     } catch (cause) {
       setError(`Local OCR failed: ${messageOf(cause)}`)
@@ -246,7 +300,11 @@ export default function PwaRoot({
           { id: randomId('credit'), accountId: creditAccountId, side: 'CREDIT', amountJpy: draft.candidate.amountJpy },
         ],
       })
-      await loadVault(session.client)
+      try {
+        if (!await loadVault(session.client)) return
+      } catch {
+        setError('Transaction posted, but the refreshed vault status could not be loaded.')
+      }
       setPosted(transaction)
     } catch (cause) {
       setError(messageOf(cause))
@@ -287,6 +345,7 @@ export default function PwaRoot({
       setScreen('overview')
       await loadVault(client)
     } catch (cause) {
+      if (isPwaClientOperationSuperseded(cause)) return
       setError(messageOf(cause))
       throw cause
     } finally {
@@ -295,7 +354,10 @@ export default function PwaRoot({
   }
 
   const lockVault = () => {
+    vaultLoadGeneration.current += 1
     session.lockVault()
+    setBusy(false)
+    setError(null)
     setPassphrase('')
     setDraft(null)
     setPosted(null)
@@ -305,6 +367,7 @@ export default function PwaRoot({
     setAccounts([])
     setTransactions([])
     setSummary(null)
+    setConnectorSummaries([])
   }
 
   const status = session.mode === 'unlocked' ? 'UNLOCKED' : 'LOCKED'
@@ -368,6 +431,11 @@ export default function PwaRoot({
       <main className="pwa-content">
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
         {screen === 'overview' && <Overview household={household} summary={summary} transactions={transactions} onImport={() => setScreen('import')} />}
+        {screen === 'sources' && connectorSummaries[0] && <div className="pwa-sources"><ManualConnectorControlCenter
+          summary={connectorSummaries[0]}
+          copy={pwaConnectorCopy}
+          onConfigure={() => setScreen('import')}
+        /></div>}
         {screen === 'import' && <ImportScreen busy={busy} onFile={importReceipt} />}
         {screen === 'review' && <ReviewScreen
           draft={draft}
@@ -416,7 +484,7 @@ function ImportScreen({ busy, onFile }: {
   readonly onFile: (file: File) => Promise<void>
 }) {
   return <section>
-    <div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 02 · LOCAL OCR</p><h1>Import a receipt</h1></div></div>
+    <div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 03 · LOCAL OCR</p><h1>Import a receipt</h1></div></div>
     <label className="pwa-dropzone">
       <strong>{busy ? 'Reading locally…' : 'Choose a receipt image'}</strong>
       <span>PP-OCRv5 runs on this device. The original is encrypted before persistence.</span>
@@ -454,7 +522,7 @@ function ReviewScreen({
   readonly onApproval: (value: boolean) => void
   readonly onPost: () => Promise<void>
 }) {
-  if (!draft) return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 03</p><h1>Review candidate</h1></div></div><p>Import a receipt before approval.</p></section>
+  if (!draft) return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 04</p><h1>Review candidate</h1></div></div><p>Import a receipt before approval.</p></section>
   const candidate = draft.candidate
   if (!candidate) return <section>
     <div className="pwa-page-head"><div><p className="pwa-eyebrow">CANDIDATE · INCOMPLETE</p><h1>Candidate needs more information</h1></div></div>
@@ -499,14 +567,14 @@ function LedgerScreen({ transactions, onProvenance }: {
   readonly transactions: readonly Transaction[]
   readonly onProvenance: (id: string) => Promise<void>
 }) {
-  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 04 · APPEND-ONLY</p><h1>Posted ledger</h1></div></div><div className="pwa-panel">{transactions.length === 0 ? <p>No posted transactions.</p> : transactions.slice().reverse().map((transaction) => <article className="pwa-ledger-row" key={transaction.id}><div><time>{transaction.occurredOn}</time><h2>{transaction.payee}</h2><small>{transaction.transactionType} · {transaction.canonicalPostingHash.slice(0, 12)}…</small></div><strong>{formatJpy(transaction.amountJpy)}</strong><button className="pwa-quiet" type="button" onClick={() => void onProvenance(transaction.id)}>View provenance</button></article>)}</div></section>
+  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 05 · APPEND-ONLY</p><h1>Posted ledger</h1></div></div><div className="pwa-panel">{transactions.length === 0 ? <p>No posted transactions.</p> : transactions.slice().reverse().map((transaction) => <article className="pwa-ledger-row" key={transaction.id}><div><time>{transaction.occurredOn}</time><h2>{transaction.payee}</h2><small>{transaction.transactionType} · {transaction.canonicalPostingHash.slice(0, 12)}…</small></div><strong>{formatJpy(transaction.amountJpy)}</strong><button className="pwa-quiet" type="button" onClick={() => void onProvenance(transaction.id)}>View provenance</button></article>)}</div></section>
 }
 
 function EvidenceScreen({ detail, evidence }: {
   readonly detail: TransactionDetail | null
   readonly evidence: SourceEvidence | null
 }) {
-  if (!detail || !evidence) return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 05</p><h1>Evidence</h1></div></div><p>Open a ledger posting to inspect its source chain.</p></section>
+  if (!detail || !evidence) return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 06</p><h1>Evidence</h1></div></div><p>Open a ledger posting to inspect its source chain.</p></section>
   return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">SOURCE → CANDIDATE → POSTING</p><h1>Transaction provenance</h1></div><span className="pwa-chip">VERIFIED LOCAL</span></div><div className="pwa-provenance"><article className="pwa-panel"><span>01 · encrypted source</span><h2>{evidence.source.originalFilename}</h2><p>{evidence.source.mediaType} · {evidence.source.byteSize} bytes</p><code>SHA-256 {evidence.source.sha256}</code></article><article className="pwa-panel"><span>02 · approved candidate</span><h2>{detail.payee}</h2><p>{detail.occurredOn} · {formatJpy(detail.amountJpy)}</p><code>{detail.candidateId}</code></article><article className="pwa-panel"><span>03 · balanced posting</span><h2>{detail.entries.length} ledger entries</h2>{detail.entries.map((entry) => <p key={entry.id}>{entry.side} · {formatJpy(entry.amountJpy)}</p>)}<code>{detail.canonicalPostingHash}</code></article></div></section>
 }
 
@@ -559,7 +627,7 @@ export function BackupScreen({ client, busy, onRestore }: {
   }
 
   return <section>
-    <div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 06 · ENCRYPTED</p><h1>Backup and recovery</h1></div></div>
+    <div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 07 · ENCRYPTED</p><h1>Backup and recovery</h1></div></div>
     <div className="pwa-compare">
       <article className="pwa-panel">
         <h2>Export encrypted archive</h2>

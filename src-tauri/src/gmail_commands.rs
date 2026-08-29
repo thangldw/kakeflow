@@ -1,8 +1,12 @@
 //! Tauri command wiring for Gmail's review-gated desktop connector.
 
 use crate::{
+    connector_refresh::{
+        classify_provider_outcome, ConnectorRefreshClaimDto, InlineRefreshHeartbeat,
+        ProviderRunnerError, ProviderRunnerErrorKind,
+    },
     document_vault::DocumentVault,
-    gmail_api::{GmailApiClient, GmailLabelType},
+    gmail_api::{GmailApiClient, GmailApiError, GmailLabelType},
     gmail_command_service::{
         self, GmailAvailabilityDto, GmailBindInput, GmailLabelDto, GmailLabelKindDto,
         RedactedGmailConnectionDto, RedactedGmailInboxItemDto, RedactedGmailInboxLeaseDto,
@@ -14,17 +18,93 @@ use crate::{
         BoundGmailLoopbackSession, BrowserOpenError, BrowserOpener, DEFAULT_SESSION_TIMEOUT,
     },
     gmail_store::{self, SyncLeaseDto},
-    gmail_sync::{run_full_sync, run_incremental_sync, GmailSyncError, GmailSyncLimits},
+    gmail_sync::{
+        run_full_sync, run_incremental_sync, GmailHistoryPage, GmailMessagePage, GmailRawMessage,
+        GmailSyncApi, GmailSyncError, GmailSyncLimits,
+    },
     gmail_sync_adapter::GmailSqliteSyncStore,
     persistence::AppState,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::process::Command;
+use std::{
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tauri::{AppHandle, Manager, State};
 
 const CALLBACK_PATH: &str = "/oauth/gmail/callback";
 const COMPILED_CLIENT_ID: Option<&str> = option_env!("KAKEFLOW_GMAIL_CLIENT_ID");
+
+struct HeartbeatingGmailApi<'a, 'claim, A> {
+    inner: A,
+    connection: &'a rusqlite::Connection,
+    heartbeat: &'a InlineRefreshHeartbeat<'claim>,
+}
+
+impl<A> GmailSyncApi for HeartbeatingGmailApi<'_, '_, A>
+where
+    A: GmailSyncApi<Error = GmailApiError>,
+{
+    type Error = GmailApiError;
+
+    fn capture_profile_history_id(&mut self) -> Result<u64, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| GmailApiError::InvalidInput)?;
+        self.inner.capture_profile_history_id()
+    }
+
+    fn list_messages(
+        &mut self,
+        label_id: &str,
+        query: &str,
+        page_token: Option<&str>,
+        page_size: u16,
+    ) -> Result<GmailMessagePage, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| GmailApiError::InvalidInput)?;
+        self.inner
+            .list_messages(label_id, query, page_token, page_size)
+    }
+
+    fn get_raw_message(
+        &mut self,
+        message_id: &str,
+        max_decoded_bytes: usize,
+    ) -> Result<GmailRawMessage, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| GmailApiError::InvalidInput)?;
+        self.inner.get_raw_message(message_id, max_decoded_bytes)
+    }
+
+    fn list_history(
+        &mut self,
+        start_history_id: u64,
+        label_id: &str,
+        page_token: Option<&str>,
+        page_size: u16,
+    ) -> Result<GmailHistoryPage, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| GmailApiError::InvalidInput)?;
+        self.inner
+            .list_history(start_history_id, label_id, page_token, page_size)
+    }
+
+    fn is_history_cursor_expired(&self, error: &Self::Error) -> bool {
+        self.inner.is_history_cursor_expired(error)
+    }
+
+    fn is_message_not_found(&self, error: &Self::Error) -> bool {
+        self.inner.is_message_not_found(error)
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -412,29 +492,202 @@ pub async fn gmail_sync_now(
     .map_err(|_| "Gmail sync worker stopped".to_owned())?
 }
 
-fn sync_now_blocking(
+pub(crate) fn sync_now_blocking(
     app: &AppHandle,
     household: &str,
     connection_id: &str,
 ) -> Result<RedactedGmailScheduleDto, String> {
+    sync_now_internal(app, household, connection_id, None)
+        .map_err(|error| error.public_message().to_owned())
+}
+
+pub(crate) fn sync_for_refresh_blocking(
+    app: &AppHandle,
+    household: &str,
+    connection_id: &str,
+    claim: &ConnectorRefreshClaimDto,
+) -> Result<RedactedGmailScheduleDto, ProviderRunnerError> {
+    sync_now_internal(app, household, connection_id, Some(claim))
+}
+
+fn sync_now_internal(
+    app: &AppHandle,
+    household: &str,
+    connection_id: &str,
+    refresh_claim: Option<&ConnectorRefreshClaimDto>,
+) -> Result<RedactedGmailScheduleDto, ProviderRunnerError> {
+    const START_FAILED: &str = "Gmail synchronization could not start";
+    const RUN_FAILED: &str = "Gmail synchronization did not complete";
     let state = app.state::<AppState>();
-    let (lease, restore) = state.with_connection(|c| {
-        let schedule = gmail_store::load_schedule(c, household, connection_id).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let restore = !schedule.enabled;
-        if restore { gmail_store::configure_schedule(c, household, connection_id, true, schedule.interval_minutes).map_err(|_| rusqlite::Error::InvalidQuery)?; }
-        c.execute("UPDATE gmail_sync_schedules SET next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),suspended_until=NULL,suspension_reason=NULL WHERE connection_id=?1 AND lease_token IS NULL", [connection_id])?;
-        Ok((gmail_store::claim_due_sync(c, household, connection_id).map_err(|_| rusqlite::Error::InvalidQuery)?.ok_or(rusqlite::Error::InvalidQuery)?, restore))
-    }).map_err(|_| "Gmail synchronization could not start".to_owned())?;
-    let result = run_claimed_gmail_sync(app, &lease);
+    let (lease, restore) = state
+        .with_connection(|c| Ok(start_gmail_sync(c, household, connection_id, START_FAILED)))
+        .map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, START_FAILED)
+        })??;
+    let Some(lease) = lease else {
+        if restore {
+            let restored = state.with_connection(|c| { c.execute("UPDATE gmail_sync_schedules SET enabled=0,next_due_at=NULL WHERE connection_id=?1 AND lease_token IS NULL", [connection_id])?; Ok(()) });
+            if refresh_claim.is_some() {
+                restored.map_err(|_| {
+                    ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, START_FAILED)
+                })?;
+            }
+        }
+        return Err(ProviderRunnerError::new(
+            ProviderRunnerErrorKind::ProviderBusy,
+            START_FAILED,
+        ));
+    };
+    let heartbeat_failed = Arc::new(AtomicBool::new(false));
+    let result = run_claimed_gmail_sync_with_refresh(
+        app,
+        &lease,
+        refresh_claim,
+        Arc::clone(&heartbeat_failed),
+    );
+    let typed_result = if heartbeat_failed.load(Ordering::SeqCst) {
+        Err(ProviderRunnerError::new(
+            ProviderRunnerErrorKind::Infrastructure,
+            RUN_FAILED,
+        ))
+    } else {
+        match result {
+            Ok(schedule) if !schedule.running || refresh_claim.is_none() => Ok(schedule),
+            Ok(_) => Err(ProviderRunnerError::new(
+                ProviderRunnerErrorKind::Infrastructure,
+                RUN_FAILED,
+            )),
+            Err(message) => Err(classify_gmail_runner_failure(
+                state.inner(),
+                household,
+                connection_id,
+                &message,
+            )),
+        }
+    };
     if restore {
-        let _ = state.with_connection(|c| { c.execute("UPDATE gmail_sync_schedules SET enabled=0,next_due_at=NULL WHERE connection_id=?1 AND lease_token IS NULL", [connection_id])?; Ok(()) });
+        let restored = state.with_connection(|c| { c.execute("UPDATE gmail_sync_schedules SET enabled=0,next_due_at=NULL WHERE connection_id=?1 AND lease_token IS NULL", [connection_id])?; Ok(()) });
+        if refresh_claim.is_some() {
+            restored.map_err(|_| {
+                ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, RUN_FAILED)
+            })?;
+        }
     }
-    result
+    typed_result
+}
+
+fn start_gmail_sync(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    connection_id: &str,
+    public_message: &str,
+) -> Result<(Option<SyncLeaseDto>, bool), ProviderRunnerError> {
+    let schedule =
+        gmail_store::load_schedule(connection, household_id, connection_id).map_err(|error| {
+            match error {
+                gmail_store::GmailStoreError::Database(_) => ProviderRunnerError::new(
+                    ProviderRunnerErrorKind::Infrastructure,
+                    public_message,
+                ),
+                _ => ProviderRunnerError::new(
+                    ProviderRunnerErrorKind::NeedsAction {
+                        error_code: "CONFIGURATION_REQUIRED",
+                    },
+                    public_message,
+                ),
+            }
+        })?;
+    let restore = !schedule.enabled;
+    if restore {
+        gmail_store::configure_schedule(
+            connection,
+            household_id,
+            connection_id,
+            true,
+            schedule.interval_minutes,
+        )
+        .map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message)
+        })?;
+    }
+    connection.execute("UPDATE gmail_sync_schedules SET next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),suspended_until=NULL,suspension_reason=NULL WHERE connection_id=?1 AND lease_token IS NULL", [connection_id])
+        .map_err(|_| ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message))?;
+    let lease =
+        gmail_store::claim_due_sync(connection, household_id, connection_id).map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message)
+        })?;
+    Ok((lease, restore))
+}
+
+fn classify_gmail_runner_failure(
+    state: &AppState,
+    household_id: &str,
+    connection_id: &str,
+    public_message: &str,
+) -> ProviderRunnerError {
+    let loaded = state.with_connection(|connection| {
+        Ok((
+            gmail_store::load_schedule(connection, household_id, connection_id),
+            gmail_store::load_connection(connection, household_id, connection_id),
+        ))
+    });
+    let Ok((schedule, connection)) = loaded else {
+        return ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message);
+    };
+    let schedule = match schedule {
+        Ok(schedule) => schedule,
+        Err(gmail_store::GmailStoreError::Database(_)) => {
+            return ProviderRunnerError::new(
+                ProviderRunnerErrorKind::Infrastructure,
+                public_message,
+            );
+        }
+        Err(_) => {
+            return ProviderRunnerError::new(
+                ProviderRunnerErrorKind::NeedsAction {
+                    error_code: "CONFIGURATION_REQUIRED",
+                },
+                public_message,
+            );
+        }
+    };
+    if schedule.running {
+        return ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message);
+    }
+    let connection_status = match connection {
+        Ok(connection) => connection.status,
+        Err(gmail_store::GmailStoreError::Database(_)) => {
+            return ProviderRunnerError::new(
+                ProviderRunnerErrorKind::Infrastructure,
+                public_message,
+            );
+        }
+        Err(_) => "CONNECTION_CHANGED".to_owned(),
+    };
+    ProviderRunnerError::from_outcome(
+        classify_provider_outcome(
+            false,
+            &schedule.last_result,
+            schedule.last_discovered_count,
+            schedule.last_error_code.as_deref(),
+            Some(&connection_status),
+        ),
+        public_message,
+    )
 }
 
 pub(crate) fn run_claimed_gmail_sync(
     app: &AppHandle,
     lease: &SyncLeaseDto,
+) -> Result<RedactedGmailScheduleDto, String> {
+    run_claimed_gmail_sync_with_refresh(app, lease, None, Arc::new(AtomicBool::new(false)))
+}
+
+fn run_claimed_gmail_sync_with_refresh(
+    app: &AppHandle,
+    lease: &SyncLeaseDto,
+    refresh_claim: Option<&ConnectorRefreshClaimDto>,
+    heartbeat_failed: Arc<AtomicBool>,
 ) -> Result<RedactedGmailScheduleDto, String> {
     let raw = app
         .state::<AppState>()
@@ -489,12 +742,22 @@ pub(crate) fn run_claimed_gmail_sync(
             return Err("Gmail authorization is unavailable".into());
         }
     };
-    let mut api = GmailApiClient::production(&access.access_token).map_err(|_| {
+    let api = GmailApiClient::production(&access.access_token).map_err(|_| {
         finish_claim(app, lease, "GMAIL_UNAVAILABLE", false);
         "Gmail is unavailable".to_owned()
     })?;
     let vault = app.state::<DocumentVault>();
     let result = app.state::<AppState>().with_connection(|c| {
+        let refresh_heartbeat = InlineRefreshHeartbeat::new(
+            &lease.household_id,
+            refresh_claim,
+            Arc::clone(&heartbeat_failed),
+        );
+        let mut api = HeartbeatingGmailApi {
+            inner: api,
+            connection: c,
+            heartbeat: &refresh_heartbeat,
+        };
         let mut active = lease.clone();
         let mut store = GmailSqliteSyncStore::new(c, active.clone(), vault.inner(), &never_map)
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -626,9 +889,16 @@ pub async fn gmail_disconnect(
         let dto = app
             .state::<AppState>()
             .with_connection(|c| {
-                gmail_store::disconnect(c, &household_id, &connection_id)
-                    .map(gmail_command_service::project_connection)
-                    .map_err(|_| rusqlite::Error::InvalidQuery.into())
+                let disconnected = gmail_store::disconnect(c, &household_id, &connection_id)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                crate::connector_binding::delete_active_binding(
+                    c,
+                    &household_id,
+                    crate::connector_control::ConnectorKind::Gmail,
+                    &connection_id,
+                )
+                .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(gmail_command_service::project_connection(disconnected))
             })
             .map_err(|_| "Gmail connection could not be disconnected".to_owned())?;
         app.state::<GmailCredentialStore>()
@@ -657,4 +927,81 @@ fn random_connection_id() -> Result<String, String> {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     Ok(format!("gmail-{encoded}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FINGERPRINT: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    #[test]
+    fn refresh_runner_treats_a_still_running_schedule_as_infrastructure() {
+        let state = AppState::in_memory(&[29_u8; 32]).unwrap();
+        let lease = state
+            .with_connection(|connection| {
+                connection
+                    .execute("INSERT INTO households(id,name) VALUES('home','Home')", [])
+                    .unwrap();
+                gmail_store::begin_connection(connection, "home", "gmail", FINGERPRINT).unwrap();
+                gmail_store::mark_authorized(
+                    connection,
+                    "home",
+                    "gmail",
+                    "account-id",
+                    "home@example.com",
+                    "100",
+                )
+                .unwrap();
+                gmail_store::bind_label(
+                    connection,
+                    "home",
+                    "gmail",
+                    "has:attachment",
+                    "Label_1",
+                    "Inbox",
+                    "100",
+                )
+                .unwrap();
+                gmail_store::configure_schedule(connection, "home", "gmail", true, 30).unwrap();
+                Ok(gmail_store::claim_due_sync(connection, "home", "gmail")
+                    .unwrap()
+                    .unwrap())
+            })
+            .unwrap();
+
+        assert_eq!(
+            classify_gmail_runner_failure(
+                &state,
+                "home",
+                "gmail",
+                "Gmail synchronization did not complete",
+            )
+            .kind,
+            ProviderRunnerErrorKind::Infrastructure
+        );
+
+        state
+            .with_connection(|connection| {
+                gmail_store::fail_sync(connection, &lease, "REMOTE_RATE_LIMITED").unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let classified = classify_gmail_runner_failure(
+            &state,
+            "home",
+            "gmail",
+            "Gmail authorization is unavailable",
+        );
+        assert_eq!(
+            classified.kind,
+            ProviderRunnerErrorKind::Retryable {
+                error_code: "RATE_LIMITED",
+            }
+        );
+        assert_eq!(
+            classified.public_message(),
+            "Gmail authorization is unavailable"
+        );
+    }
 }

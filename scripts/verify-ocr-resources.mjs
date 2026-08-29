@@ -4,13 +4,34 @@ import { access, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
-import { assertOcrManifestContract, hostOcrTarget, inspectPeX64Imports, isAllowedStaticWindowsImport, tesseractSmokeArguments } from './ocr-resource-contract.mjs'
+import { assertMacOcrArchitectures, assertOcrManifestContract, hostOcrTarget, inspectPeX64Imports, isAllowedStaticWindowsImport, macOcrContractForTauriTarget, personalBuildPathFindings, tesseractSmokeArguments } from './ocr-resource-contract.mjs'
 
 const execFile = promisify(execFileCallback)
 const root = path.resolve(process.env.INIT_CWD || process.cwd())
 const resourceRoot = path.resolve(process.env.KAKEFLOW_OCR_RESOURCE_ROOT || path.join(root, 'src-tauri', 'generated-resources', 'ocr'))
-const target = process.env.KAKEFLOW_OCR_TARGET || hostOcrTarget()
+
+function parseArguments(args) {
+  const result = {}
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
+    if (!['--target', '--expected-architecture'].includes(argument) || !args[index + 1]) {
+      throw new Error(`Unsupported OCR verification argument: ${argument}`)
+    }
+    result[argument.slice(2)] = args[index + 1]
+    index += 1
+  }
+  return result
+}
+
+const verification = parseArguments(process.argv.slice(2))
+const target = verification.target || process.env.KAKEFLOW_OCR_TARGET || hostOcrTarget()
+const expectedArchitecture = verification['expected-architecture']
 const allowLegacyMacDiagnostic = process.env.KAKEFLOW_OCR_ALLOW_LEGACY_MAC_DIAGNOSTIC === '1'
+
+if (target === 'macos-arm64') {
+  const mac = macOcrContractForTauriTarget('aarch64-apple-darwin')
+  assert(expectedArchitecture === undefined || expectedArchitecture === mac.architecture, `Expected OCR architecture must be ${mac.architecture}`)
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -46,12 +67,14 @@ for (const [relative, metadata] of Object.entries(manifest.files ?? {})) {
 }
 const executable = path.join(resourceRoot, expected.executable)
 await access(executable)
+const personalBuildRoots = personalBuildPathFindings(await readFile(executable))
+assert(personalBuildRoots.length === 0, `Packaged Tesseract contains personal build roots: ${personalBuildRoots.join(', ')}`)
 if (target === 'macos-arm64') {
   assert(((await stat(executable)).mode & 0o111) !== 0, 'Packaged Tesseract is not executable')
 }
 if (target === 'macos-arm64' && process.platform === 'darwin') {
   const architectures = await execFile('/usr/bin/lipo', ['-archs', executable])
-  assert(architectures.stdout.trim().split(/\s+/u).includes('arm64'), 'Packaged Tesseract does not contain arm64 code')
+  assertMacOcrArchitectures(architectures.stdout, expectedArchitecture ?? 'arm64')
   const { stdout } = await execFile('/usr/bin/otool', ['-L', executable])
   const nonSystem = stdout.split(/\r?\n/u).slice(1).map((line) => line.trim().split(/\s+/u)[0]).filter(Boolean)
     .filter((dependency) => !dependency.startsWith('/usr/lib/') && !dependency.startsWith('/System/Library/') && !dependency.startsWith('@executable_path/') && !dependency.startsWith('@loader_path/'))

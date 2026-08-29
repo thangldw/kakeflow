@@ -8,6 +8,13 @@ export const OCR_FIXED_HASHES = Object.freeze({
   'tessdata/configs/tsv': '59d079bb75d8b3d7c839a3564580cb559e362c93a9d70f234e421c0c3e767e04',
 })
 
+const personalBuildRootMarkers = ['/Users/', 'C:\\Users\\']
+
+export function personalBuildPathFindings(bytes) {
+  const executableBytes = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  return personalBuildRootMarkers.filter((marker) => executableBytes.includes(Buffer.from(marker)))
+}
+
 const TARGETS = Object.freeze({
   'macos-arm64': Object.freeze({
     target: 'macos-arm64',
@@ -31,6 +38,21 @@ export function hostOcrTarget(platform = process.platform, architecture = proces
   if (platform === 'darwin' && architecture === 'arm64') return 'macos-arm64'
   if (platform === 'win32' && architecture === 'x64') return 'windows-x64'
   throw new Error(`Packaged OCR is not defined for ${platform}/${architecture}`)
+}
+
+export function macOcrContractForTauriTarget(target) {
+  if (target !== 'aarch64-apple-darwin') {
+    throw new Error(`OCR-backed macOS packaging supports only aarch64-apple-darwin, not ${target}`)
+  }
+  return { target: 'macos-arm64', architecture: 'arm64' }
+}
+
+export function assertMacOcrArchitectures(output, expectedArchitecture) {
+  const architectures = String(output).trim().split(/\s+/u).filter(Boolean)
+  if (expectedArchitecture !== 'arm64' || architectures.length !== 1 || architectures[0] !== expectedArchitecture) {
+    throw new Error(`Packaged Tesseract must contain exactly arm64 code; received ${architectures.join(' ') || 'none'}`)
+  }
+  return architectures
 }
 
 export function ocrTargetContract(target) {

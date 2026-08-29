@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,13 +26,19 @@ vi.mock('./serviceWorker', () => ({
   usePwaServiceWorker: () => ({ ...updateMock, offlineReady: true }),
 }))
 
-import { I18nProvider } from '../i18n'
-import type { PwaLedgerClient } from '../platform/pwa/client'
+import { PwaLedgerClient } from '../platform/pwa/client'
+import type { Household } from '../platform/pwa/types'
 import type { PwaOcrDocument } from './PwaRoot'
 import PwaRoot, { BackupScreen } from './PwaRoot'
 
 const originalFetch = globalThis.fetch
 const passphrase = 'correct horse battery staple'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((next) => { resolve = next })
+  return { promise, resolve }
+}
 
 const recognizedReceipt: Awaited<ReturnType<PwaOcrDocument>> = {
   method: 'OCR',
@@ -70,7 +76,7 @@ const recognizedReceipt: Awaited<ReturnType<PwaOcrDocument>> = {
 }
 
 async function createConfiguredVault(databaseName: string, ocrDocument: PwaOcrDocument) {
-  render(<I18nProvider><PwaRoot databaseName={databaseName} ocrDocument={ocrDocument} /></I18nProvider>)
+  render(<PwaRoot databaseName={databaseName} ocrDocument={ocrDocument} />)
 
   expect(screen.getByText('LOCAL')).toBeInTheDocument()
   expect(screen.getByText('LOCKED')).toBeInTheDocument()
@@ -107,6 +113,7 @@ describe('PWA receipt-to-provenance journey', () => {
 
   afterEach(() => {
     localStorage.clear()
+    vi.restoreAllMocks()
   })
 
   afterAll(() => {
@@ -118,7 +125,7 @@ describe('PWA receipt-to-provenance journey', () => {
     await createConfiguredVault('pwa-ui-complete', ocrDocument)
 
     const navigation = screen.getByRole('navigation', { name: 'PWA workflow' })
-    expect(within(navigation).getAllByRole('button')).toHaveLength(6)
+    expect(within(navigation).getAllByRole('button')).toHaveLength(7)
     fireEvent.click(within(navigation).getByRole('button', { name: 'Import' }))
 
     const receipt = new File(['synthetic receipt bytes'], 'synthetic-receipt.png', { type: 'image/png' })
@@ -163,6 +170,130 @@ describe('PWA receipt-to-provenance journey', () => {
 
     expect(screen.queryByText(/Money Forward|Gmail|Connect bank/u)).not.toBeInTheDocument()
     expect(document.body.textContent).not.toContain('Tanaka')
+  })
+
+  it('renders English without overwriting the shared saved locale', () => {
+    localStorage.setItem('kakeflow.locale', 'vi')
+
+    render(<PwaRoot databaseName="pwa-ui-locale-boundary" />)
+
+    expect(screen.getByRole('heading', { name: 'Own your financial record' })).toBeInTheDocument()
+    expect(localStorage.getItem('kakeflow.locale')).toBe('vi')
+  })
+
+  it('shows only the local manual source and routes Configure to Import with live pending review count', async () => {
+    await createConfiguredVault(
+      'pwa-ui-manual-source',
+      vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt),
+    )
+    const navigation = screen.getByRole('navigation', { name: 'PWA workflow' })
+    expect(within(navigation).getAllByRole('button')).toHaveLength(7)
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Sources' }))
+
+    const source = await screen.findByRole('article', { name: 'Manual import' })
+    expect(screen.getAllByRole('article')).toHaveLength(1)
+    expect(screen.getByRole('heading', { name: 'Connector control center' })).toBeInTheDocument()
+    expect(within(source).getByText('Manual')).toBeInTheDocument()
+    expect(within(source).getByText('Pending review').closest('div')).toHaveTextContent('Pending review0 items')
+    expect(within(source).getByText('Review scope').closest('div')).toHaveTextContent('Review scopeNot configured')
+    expect(within(source).getAllByRole('button')).toHaveLength(1)
+    expect(within(source).queryByRole('button', { name: /Refresh|Retry|Disconnect|Schedule/u })).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/Google|Gmail|OAuth|Keychain|\/Users\/|Connect bank|bank account|account required/iu)
+
+    fireEvent.click(within(source).getByRole('button', { name: 'Open settings' }))
+    expect(await screen.findByRole('heading', { name: 'Import a receipt' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Receipt image'), {
+      target: { files: [new File(['manual source receipt'], 'manual-source.png', { type: 'image/png' })] },
+    })
+    await screen.findByText('CANDIDATE')
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Sources' }))
+
+    const updatedSource = await screen.findByRole('article', { name: 'Manual import' })
+    expect(within(updatedSource).getByText('Pending review').closest('div')).toHaveTextContent('Pending review1 item')
+
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Review' }))
+    fireEvent.click(screen.getByLabelText('I compared the receipt and approve this posting'))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and post' }))
+    await screen.findByText('APPROVED')
+    fireEvent.click(within(navigation).getByRole('button', { name: 'Sources' }))
+    expect(within(await screen.findByRole('article', { name: 'Manual import' })).getByText('Pending review').closest('div')).toHaveTextContent('Pending review0 items')
+  })
+
+  it('keeps a durably staged candidate in Review when its source summary cannot reload', async () => {
+    await createConfiguredVault(
+      'pwa-ui-stage-summary-failure',
+      vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt),
+    )
+    vi.spyOn(PwaLedgerClient.prototype, 'listConnectorSummaries')
+      .mockRejectedValueOnce(new Error('projection unavailable'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    fireEvent.change(screen.getByLabelText('Receipt image'), {
+      target: { files: [new File(['staged receipt'], 'staged.png', { type: 'image/png' })] },
+    })
+
+    expect(await screen.findByRole('heading', { name: 'Compare source and candidate' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Receipt staged, but source status could not be refreshed.')
+    expect(screen.queryByText(/Local OCR failed/u)).not.toBeInTheDocument()
+  })
+
+  it('keeps a durably posted transaction visible when the vault summary cannot reload', async () => {
+    await createConfiguredVault(
+      'pwa-ui-post-summary-failure',
+      vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    fireEvent.change(screen.getByLabelText('Receipt image'), {
+      target: { files: [new File(['posted receipt'], 'posted.png', { type: 'image/png' })] },
+    })
+    await screen.findByText('CANDIDATE')
+    vi.spyOn(PwaLedgerClient.prototype, 'listConnectorSummaries')
+      .mockRejectedValueOnce(new Error('projection unavailable'))
+
+    fireEvent.click(screen.getByLabelText('I compared the receipt and approve this posting'))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and post' }))
+
+    expect(await screen.findByText('APPROVED')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Transaction posted, but the refreshed vault status could not be loaded.')
+  })
+
+  it('does not repopulate a locked screen from a stale vault load', async () => {
+    await createConfiguredVault(
+      'pwa-ui-load-fence',
+      vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+    fireEvent.change(screen.getByLabelText('Receipt image'), {
+      target: { files: [new File(['load fence'], 'load-fence.png', { type: 'image/png' })] },
+    })
+    await screen.findByText('CANDIDATE')
+
+    const staleLoad = deferred<Household[]>()
+    const currentLoad = deferred<Household[]>()
+    const listHouseholds = vi.spyOn(PwaLedgerClient.prototype, 'listHouseholds')
+      .mockReturnValueOnce(staleLoad.promise)
+      .mockReturnValueOnce(currentLoad.promise)
+    fireEvent.click(screen.getByLabelText('I compared the receipt and approve this posting'))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve and post' }))
+    await waitFor(() => expect(listHouseholds).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    await screen.findByRole('heading', { name: 'Unlock local vault' })
+    await act(async () => {
+      staleLoad.resolve([{ id: 'stale-household', name: 'Stale household', baseCurrency: 'JPY' }])
+      await Promise.resolve()
+    })
+
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock vault' }))
+    await waitFor(() => expect(listHouseholds).toHaveBeenCalledTimes(2))
+    expect(screen.getByRole('heading', { name: 'Set up your household' })).toBeInTheDocument()
+    expect(screen.queryByText('Stale household')).not.toBeInTheDocument()
+
+    await act(async () => {
+      currentLoad.resolve([{ id: 'household', name: 'Home', baseCurrency: 'JPY' }])
+    })
+    await screen.findByRole('heading', { name: 'Household overview' })
   })
 
   it('keeps incomplete OCR visible and prevents posting', async () => {

@@ -1,16 +1,21 @@
 //! Tauri command wiring for the Google Drive desktop connector.
 
 use crate::{
+    connector_refresh::{
+        classify_provider_outcome, ConnectorRefreshClaimDto, InlineRefreshHeartbeat,
+        ProviderRunnerError, ProviderRunnerErrorKind,
+    },
     document_vault::DocumentVault,
-    google_drive_api::DriveApiClient,
+    google_drive_api::{DriveApiClient, DriveApiError, DriveFile},
     google_drive_command_service::{
         self, GoogleDriveAvailabilityDto, RedactedGoogleDriveConnectionDto,
     },
     google_drive_credentials::{GoogleDriveCredentialBinding, GoogleDriveCredentialStore},
     google_drive_folder::{parse_folder_reference, GoogleDriveFolderMetadata},
-    google_drive_hydration::{claim_and_hydrate, HydrationBatchRequest},
+    google_drive_hydration::{claim_and_hydrate, DriveHydrationApi, HydrationBatchRequest},
     google_drive_initial_sync::{
-        run_incremental_sync, run_initial_sync, IncrementalSyncError, IncrementalSyncLimits,
+        run_incremental_sync, run_initial_sync, ChangePage, FolderPage, FullReconciliationReason,
+        IncrementalSyncApi, IncrementalSyncError, IncrementalSyncLimits, InitialSyncApi,
         InitialSyncLimits,
     },
     google_drive_oauth::{GoogleDriveOAuthClient, GoogleDriveOAuthError, ReqwestOAuthTransport},
@@ -23,13 +28,121 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 use std::process::Command;
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tauri::{AppHandle, Manager, State};
 use zeroize::Zeroizing;
 
 const CALLBACK_PATH: &str = "/oauth/google-drive/callback";
 const COMPILED_CLIENT_ID: Option<&str> = option_env!("KAKEFLOW_GOOGLE_DRIVE_CLIENT_ID");
+
+struct HeartbeatingDriveSyncApi<'a, 'claim, A> {
+    inner: A,
+    connection: &'a rusqlite::Connection,
+    heartbeat: &'a InlineRefreshHeartbeat<'claim>,
+}
+
+impl<A> InitialSyncApi for HeartbeatingDriveSyncApi<'_, '_, A>
+where
+    A: InitialSyncApi<Node = DriveFile, Error = DriveApiError>,
+{
+    type Node = DriveFile;
+    type Error = DriveApiError;
+
+    fn capture_start_page_token(&mut self, drive_id: Option<&str>) -> Result<String, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| DriveApiError::InvalidInput)?;
+        self.inner.capture_start_page_token(drive_id)
+    }
+
+    fn list_folder_children(
+        &mut self,
+        drive_id: Option<&str>,
+        folder_id: &str,
+        page_token: Option<&str>,
+        page_size: u16,
+    ) -> Result<FolderPage<Self::Node>, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| DriveApiError::InvalidInput)?;
+        self.inner
+            .list_folder_children(drive_id, folder_id, page_token, page_size)
+    }
+
+    fn list_changes(
+        &mut self,
+        drive_id: Option<&str>,
+        page_token: &str,
+        page_size: u16,
+    ) -> Result<ChangePage<Self::Node>, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| DriveApiError::InvalidInput)?;
+        InitialSyncApi::list_changes(&mut self.inner, drive_id, page_token, page_size)
+    }
+}
+
+impl<A> IncrementalSyncApi for HeartbeatingDriveSyncApi<'_, '_, A>
+where
+    A: IncrementalSyncApi<Node = DriveFile, Error = DriveApiError>,
+{
+    type Node = DriveFile;
+    type Error = DriveApiError;
+
+    fn list_changes(
+        &mut self,
+        drive_id: Option<&str>,
+        page_token: &str,
+        page_size: u16,
+    ) -> Result<ChangePage<Self::Node>, Self::Error> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| DriveApiError::InvalidInput)?;
+        IncrementalSyncApi::list_changes(&mut self.inner, drive_id, page_token, page_size)
+    }
+
+    fn reconciliation_reason(&self, error: &Self::Error) -> Option<FullReconciliationReason> {
+        self.inner.reconciliation_reason(error)
+    }
+}
+
+struct HeartbeatingDriveHydrationApi<'a, 'claim, A> {
+    inner: &'a A,
+    connection: &'a rusqlite::Connection,
+    heartbeat: &'a InlineRefreshHeartbeat<'claim>,
+}
+
+impl<A: DriveHydrationApi> DriveHydrationApi for HeartbeatingDriveHydrationApi<'_, '_, A> {
+    fn metadata(
+        &self,
+        file_id: &str,
+        resource_key: Option<&str>,
+    ) -> Result<DriveFile, DriveApiError> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| DriveApiError::InvalidInput)?;
+        self.inner.metadata(file_id, resource_key)
+    }
+
+    fn download_bytes(
+        &self,
+        file_id: &str,
+        resource_key: Option<&str>,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, DriveApiError> {
+        self.heartbeat
+            .before_provider_call(self.connection)
+            .map_err(|()| DriveApiError::InvalidInput)?;
+        self.inner.download_bytes(file_id, resource_key, max_bytes)
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -564,66 +677,229 @@ pub async fn google_drive_sync_now(
     connection_id: String,
 ) -> Result<SyncScheduleDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        google_drive_sync_now_blocking(&app, household_id, connection_id)
+        google_drive_sync_now_blocking(&app, &household_id, &connection_id)
     })
     .await
     .map_err(|_| "Google Drive sync worker stopped".to_owned())?
 }
 
-fn google_drive_sync_now_blocking(
+pub(crate) fn google_drive_sync_now_blocking(
     app: &AppHandle,
-    household_id: String,
-    connection_id: String,
+    household_id: &str,
+    connection_id: &str,
 ) -> Result<SyncScheduleDto, String> {
+    google_drive_sync_now_internal(app, household_id, connection_id, None)
+        .map_err(|error| error.public_message().to_owned())
+}
+
+pub(crate) fn google_drive_sync_for_refresh_blocking(
+    app: &AppHandle,
+    household_id: &str,
+    connection_id: &str,
+    claim: &ConnectorRefreshClaimDto,
+) -> Result<SyncScheduleDto, ProviderRunnerError> {
+    google_drive_sync_now_internal(app, household_id, connection_id, Some(claim))
+}
+
+fn google_drive_sync_now_internal(
+    app: &AppHandle,
+    household_id: &str,
+    connection_id: &str,
+    refresh_claim: Option<&ConnectorRefreshClaimDto>,
+) -> Result<SyncScheduleDto, ProviderRunnerError> {
+    const START_FAILED: &str = "Google Drive synchronization could not start";
+    const RUN_FAILED: &str = "Google Drive synchronization did not complete";
     let state = app.state::<AppState>();
     let (lease, restore_disabled) = state
         .with_connection(|connection| {
-            let schedule =
-                crate::google_drive_store::load_schedule(connection, &household_id, &connection_id)
-                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
-            let restore_disabled = !schedule.enabled;
-            if restore_disabled {
-                crate::google_drive_store::configure_schedule(
-                    connection,
-                    &household_id,
-                    &connection_id,
-                    true,
-                    schedule.interval_minutes,
-                )
-                .map_err(|_| rusqlite::Error::InvalidQuery)?;
-            }
-            connection.execute(
-                "UPDATE google_drive_sync_schedules SET
-                     next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-                     suspended_until=NULL,suspension_reason=NULL,
-                     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                 WHERE connection_id=?1 AND enabled=1 AND lease_token IS NULL",
-                [&connection_id],
-            )?;
-            let lease = crate::google_drive_store::claim_due_sync(
+            Ok(start_google_drive_sync(
                 connection,
-                &household_id,
-                &connection_id,
-            )
-            .map_err(|_| rusqlite::Error::InvalidQuery)?
-            .ok_or(rusqlite::Error::InvalidQuery)?;
-            Ok((lease, restore_disabled))
+                household_id,
+                connection_id,
+                START_FAILED,
+            ))
         })
-        .map_err(|_| "Google Drive synchronization could not start".to_owned())?;
+        .map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, START_FAILED)
+        })??;
+    let Some(lease) = lease else {
+        if restore_disabled {
+            let restored = state.with_connection(|connection| {
+                connection.execute(
+                    "UPDATE google_drive_sync_schedules SET enabled=0,next_due_at=NULL,
+                             updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                         WHERE connection_id=?1 AND lease_token IS NULL",
+                    [connection_id],
+                )?;
+                Ok(())
+            });
+            if refresh_claim.is_some() {
+                restored.map_err(|_| {
+                    ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, START_FAILED)
+                })?;
+            }
+        }
+        return Err(ProviderRunnerError::new(
+            ProviderRunnerErrorKind::ProviderBusy,
+            START_FAILED,
+        ));
+    };
 
-    let result = run_claimed_google_drive_sync(app, &lease);
+    let heartbeat_failed = Arc::new(AtomicBool::new(false));
+    let result = run_claimed_google_drive_sync_with_refresh(
+        app,
+        &lease,
+        refresh_claim,
+        Arc::clone(&heartbeat_failed),
+    );
+    let typed_result = if heartbeat_failed.load(Ordering::SeqCst) {
+        Err(ProviderRunnerError::new(
+            ProviderRunnerErrorKind::Infrastructure,
+            RUN_FAILED,
+        ))
+    } else {
+        match result {
+            Ok(schedule) if !schedule.running || refresh_claim.is_none() => Ok(schedule),
+            Ok(_) => Err(ProviderRunnerError::new(
+                ProviderRunnerErrorKind::Infrastructure,
+                RUN_FAILED,
+            )),
+            Err(message) => Err(classify_google_drive_runner_failure(
+                state.inner(),
+                household_id,
+                connection_id,
+                &message,
+            )),
+        }
+    };
     if restore_disabled {
-        let _ = state.with_connection(|connection| {
+        let restored = state.with_connection(|connection| {
             connection.execute(
                 "UPDATE google_drive_sync_schedules SET enabled=0,next_due_at=NULL,
-                     updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-                 WHERE connection_id=?1 AND lease_token IS NULL",
-                [&connection_id],
+                         updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                     WHERE connection_id=?1 AND lease_token IS NULL",
+                [connection_id],
             )?;
             Ok(())
         });
+        if refresh_claim.is_some() {
+            restored.map_err(|_| {
+                ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, RUN_FAILED)
+            })?;
+        }
     }
-    result
+    typed_result
+}
+
+fn start_google_drive_sync(
+    connection: &rusqlite::Connection,
+    household_id: &str,
+    connection_id: &str,
+    public_message: &str,
+) -> Result<(Option<crate::google_drive_store::SyncLeaseDto>, bool), ProviderRunnerError> {
+    let schedule = crate::google_drive_store::load_schedule(
+        connection,
+        household_id,
+        connection_id,
+    )
+    .map_err(|error| match error {
+        crate::google_drive_store::GoogleDriveStoreError::Database(_) => {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message)
+        }
+        _ => ProviderRunnerError::new(
+            ProviderRunnerErrorKind::NeedsAction {
+                error_code: "CONFIGURATION_REQUIRED",
+            },
+            public_message,
+        ),
+    })?;
+    let restore_disabled = !schedule.enabled;
+    if restore_disabled {
+        crate::google_drive_store::configure_schedule(
+            connection,
+            household_id,
+            connection_id,
+            true,
+            schedule.interval_minutes,
+        )
+        .map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message)
+        })?;
+    }
+    connection
+        .execute(
+            "UPDATE google_drive_sync_schedules SET
+                 next_due_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                 suspended_until=NULL,suspension_reason=NULL,
+                 updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE connection_id=?1 AND enabled=1 AND lease_token IS NULL",
+            [connection_id],
+        )
+        .map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message)
+        })?;
+    let lease = crate::google_drive_store::claim_due_sync(connection, household_id, connection_id)
+        .map_err(|_| {
+            ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message)
+        })?;
+    Ok((lease, restore_disabled))
+}
+
+fn classify_google_drive_runner_failure(
+    state: &AppState,
+    household_id: &str,
+    connection_id: &str,
+    public_message: &str,
+) -> ProviderRunnerError {
+    let loaded = state.with_connection(|connection| {
+        Ok((
+            crate::google_drive_store::load_schedule(connection, household_id, connection_id),
+            crate::google_drive_store::load_connection(connection, household_id, connection_id),
+        ))
+    });
+    let Ok((schedule, connection)) = loaded else {
+        return ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message);
+    };
+    let schedule = match schedule {
+        Ok(schedule) => schedule,
+        Err(crate::google_drive_store::GoogleDriveStoreError::Database(_)) => {
+            return ProviderRunnerError::new(
+                ProviderRunnerErrorKind::Infrastructure,
+                public_message,
+            );
+        }
+        Err(_) => {
+            return ProviderRunnerError::new(
+                ProviderRunnerErrorKind::NeedsAction {
+                    error_code: "CONFIGURATION_REQUIRED",
+                },
+                public_message,
+            );
+        }
+    };
+    if schedule.running {
+        return ProviderRunnerError::new(ProviderRunnerErrorKind::Infrastructure, public_message);
+    }
+    let connection_status = match connection {
+        Ok(connection) => connection.status,
+        Err(crate::google_drive_store::GoogleDriveStoreError::Database(_)) => {
+            return ProviderRunnerError::new(
+                ProviderRunnerErrorKind::Infrastructure,
+                public_message,
+            );
+        }
+        Err(_) => "CONNECTION_CHANGED".to_owned(),
+    };
+    ProviderRunnerError::from_outcome(
+        classify_provider_outcome(
+            false,
+            &schedule.last_result,
+            schedule.last_discovered_count,
+            schedule.last_error_code.as_deref(),
+            Some(&connection_status),
+        ),
+        public_message,
+    )
 }
 
 /// Executes an already claimed schedule lease. Background workers use this
@@ -633,6 +909,15 @@ fn google_drive_sync_now_blocking(
 pub(crate) fn run_claimed_google_drive_sync(
     app: &AppHandle,
     lease: &crate::google_drive_store::SyncLeaseDto,
+) -> Result<SyncScheduleDto, String> {
+    run_claimed_google_drive_sync_with_refresh(app, lease, None, Arc::new(AtomicBool::new(false)))
+}
+
+fn run_claimed_google_drive_sync_with_refresh(
+    app: &AppHandle,
+    lease: &crate::google_drive_store::SyncLeaseDto,
+    refresh_claim: Option<&ConnectorRefreshClaimDto>,
+    heartbeat_failed: Arc<AtomicBool>,
 ) -> Result<SyncScheduleDto, String> {
     let state = app.state::<AppState>();
     let raw = state
@@ -708,6 +993,11 @@ pub(crate) fn run_claimed_google_drive_sync(
 
     state
         .with_connection(|connection| {
+            let refresh_heartbeat = InlineRefreshHeartbeat::new(
+                &lease.household_id,
+                refresh_claim,
+                Arc::clone(&heartbeat_failed),
+            );
             let mut active_lease = lease.clone();
             let mut full_baseline = raw
                 .last_full_scan_at
@@ -715,12 +1005,16 @@ pub(crate) fn run_claimed_google_drive_sync(
                 .then(|| active_lease.change_page_token.clone());
 
             if full_baseline.is_none() {
-                let mut api = GoogleDriveInitialApi::new(
-                    &drive,
-                    &root_folder_id,
-                    raw.root_resource_key.as_deref(),
-                    None,
-                );
+                let mut api = HeartbeatingDriveSyncApi {
+                    inner: GoogleDriveInitialApi::new(
+                        &drive,
+                        &root_folder_id,
+                        raw.root_resource_key.as_deref(),
+                        None,
+                    ),
+                    connection,
+                    heartbeat: &refresh_heartbeat,
+                };
                 let mut store =
                     GoogleDriveInitialStore::new(connection, &active_lease, &root_folder_id)
                         .map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -740,7 +1034,13 @@ pub(crate) fn run_claimed_google_drive_sync(
                         )
                         .map_err(|_| rusqlite::Error::InvalidQuery)?
                         .ok_or(rusqlite::Error::InvalidQuery)?;
-                        full_baseline = match drive.start_page_token(raw.drive_id.as_deref()) {
+                        full_baseline = match refresh_heartbeat
+                            .before_provider_call(connection)
+                            .and_then(|()| {
+                                drive
+                                    .start_page_token(raw.drive_id.as_deref())
+                                    .map_err(|_| ())
+                            }) {
                             Ok(token) => Some(token),
                             Err(_) => {
                                 fail_active_sync(connection, &active_lease);
@@ -756,12 +1056,16 @@ pub(crate) fn run_claimed_google_drive_sync(
             }
 
             if let Some(full_baseline) = full_baseline {
-                let mut api = GoogleDriveInitialApi::new(
-                    &drive,
-                    &root_folder_id,
-                    raw.root_resource_key.as_deref(),
-                    Some(&full_baseline),
-                );
+                let mut api = HeartbeatingDriveSyncApi {
+                    inner: GoogleDriveInitialApi::new(
+                        &drive,
+                        &root_folder_id,
+                        raw.root_resource_key.as_deref(),
+                        Some(&full_baseline),
+                    ),
+                    connection,
+                    heartbeat: &refresh_heartbeat,
+                };
                 let mut store = GoogleDriveInitialStore::new_with_expected_baseline(
                     connection,
                     &active_lease,
@@ -795,6 +1099,11 @@ pub(crate) fn run_claimed_google_drive_sync(
                 .map(|item| item.id)
                 .collect::<Vec<_>>();
             if !item_ids.is_empty() {
+                let hydration_api = HeartbeatingDriveHydrationApi {
+                    inner: &drive,
+                    connection,
+                    heartbeat: &refresh_heartbeat,
+                };
                 claim_and_hydrate(
                     connection,
                     HydrationBatchRequest {
@@ -803,7 +1112,7 @@ pub(crate) fn run_claimed_google_drive_sync(
                         item_ids: &item_ids,
                         resource_keys: &BTreeMap::new(),
                     },
-                    &drive,
+                    &hydration_api,
                     vault.inner(),
                     &accept_without_mapping,
                 )
@@ -914,8 +1223,17 @@ fn google_drive_disconnect_blocking(
     }
     let disconnected = state
         .with_connection(|connection| {
-            google_drive_command_service::disconnect(connection, &household_id, &connection_id)
-                .map_err(|_| rusqlite::Error::InvalidQuery.into())
+            let disconnected =
+                google_drive_command_service::disconnect(connection, &household_id, &connection_id)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            crate::connector_binding::delete_active_binding(
+                connection,
+                &household_id,
+                crate::connector_control::ConnectorKind::GoogleDrive,
+                &connection_id,
+            )
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+            Ok(disconnected)
         })
         .map_err(|_| "Google Drive connection could not be disconnected".to_owned())?;
     credential_store
@@ -1002,6 +1320,84 @@ mod tests {
 
     fn binding() -> GoogleDriveCredentialBinding {
         GoogleDriveCredentialBinding::new("drive", "home", FINGERPRINT).unwrap()
+    }
+
+    #[test]
+    fn refresh_runner_treats_a_still_running_schedule_as_infrastructure() {
+        let state = setup();
+        let lease = state
+            .with_connection(|connection| {
+                crate::google_drive_store::begin_connection(
+                    connection,
+                    "home",
+                    "drive",
+                    FINGERPRINT,
+                )
+                .unwrap();
+                crate::google_drive_store::mark_authorized(
+                    connection,
+                    "home",
+                    "drive",
+                    "permission-id",
+                    "home@example.com",
+                )
+                .unwrap();
+                crate::google_drive_store::select_root_with_baseline(
+                    connection, "home", "drive", None, "root", "Inbox", None, "baseline",
+                )
+                .unwrap();
+                crate::google_drive_store::configure_schedule(
+                    connection, "home", "drive", true, 30,
+                )
+                .unwrap();
+                Ok(
+                    crate::google_drive_store::claim_due_sync(connection, "home", "drive")
+                        .unwrap()
+                        .unwrap(),
+                )
+            })
+            .unwrap();
+
+        assert_eq!(
+            classify_google_drive_runner_failure(
+                &state,
+                "home",
+                "drive",
+                "Google Drive synchronization did not complete",
+            )
+            .kind,
+            ProviderRunnerErrorKind::Infrastructure
+        );
+
+        state
+            .with_connection(|connection| {
+                crate::google_drive_store::fail_sync(
+                    connection,
+                    "home",
+                    "drive",
+                    &lease.lease_token,
+                    "REMOTE_RATE_LIMITED",
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+        let classified = classify_google_drive_runner_failure(
+            &state,
+            "home",
+            "drive",
+            "Google Drive authorization is unavailable",
+        );
+        assert_eq!(
+            classified.kind,
+            ProviderRunnerErrorKind::Retryable {
+                error_code: "RATE_LIMITED",
+            }
+        );
+        assert_eq!(
+            classified.public_message(),
+            "Google Drive authorization is unavailable"
+        );
     }
 
     fn seed_inbox_item(
