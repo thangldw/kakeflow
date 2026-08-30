@@ -34,7 +34,7 @@ base64 = "0.22"
 getrandom = "0.2"
 chacha20poly1305 = "0.10"
 hkdf = "0.12"
-x25519-dalek = { version = "2.0", features = ["static_secrets", "zeroize"] }
+x25519-dalek = { version = "3.0", features = ["static_secrets", "zeroize"] }
 argon2 = { version = "0.5", features = ["zeroize"] }
 pdf-extract = "0.12"
 encoding_rs = "0.8"
