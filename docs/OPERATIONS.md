@@ -16,7 +16,7 @@ On macOS, `npm run desktop:release` and `npm run desktop:build:mac:ci` must use 
 
 There is no automatic stale-lock recovery. Every existing lock path fails closed—whether its recorded PID is live, absent, reused, or malformed—and acquisition never renames, deletes, or temporarily vacates it; the legacy `KAKEFLOW_RECOVER_STALE_BUILD_LOCK` environment flag has no effect. After independently verifying that no build process remains, inspect the reported canonical path and owner metadata, remove only that exact lock directory out of band, and retry normally. Normal release validates the complete owner token, removes `owner.json` while the live lock directory still blocks contenders, then uses successful `rmdir` as the final and only unlock point. Any failure before that `rmdir` leaves an occupied, fail-closed path; release never renames/restores the shared path and performs no fallible cleanup after it becomes absent. Non-macOS `desktop:release` continues to dispatch directly to Tauri.
 
-Existing v1.2.0 installations query a retired release endpoint and therefore cannot receive automatic updates. Users on v1.2.0 must install v1.2.1 manually from the canonical releases page; v1.2.1 and later builds query this repository directly. Do not recreate a separate release repository.
+Existing v1.2.0 installations query a retired release endpoint and therefore cannot receive automatic updates. Users on v1.2.0 must install v1.2.1 or later manually from the canonical releases page; v1.2.1 and later builds query this repository directly. Do not recreate a separate release repository.
 
 For OCR release QA, start the local preview and open `/ocr-regression.html`. The page must report that every synthetic PP-OCRv5 case passed. The fixtures contain only invented, anonymized receipt data; their expected date, total, tax and item values are also covered by `npm test`.
 
@@ -24,7 +24,7 @@ Treat temporary ports, comparison copies and release worktrees as disposable loc
 
 GitHub Pages uses **GitHub Actions** as its source. `.github/workflows/pages.yml` builds the production PWA, copies `docs/` to the artifact root and mounts `dist/` at `app/`; do not commit the generated 148 MB build. After each merge, wait for the exact commit's Pages workflow and verify the landing page plus `/kakeflow/app/` online and offline.
 
-The v1.2.1 macOS community binary is ad-hoc signed and not notarized. Do not describe it as a frictionless production installer. A paid Apple Developer Program membership is not maintained, so preserve the explicit ad-hoc/not-notarized disclosure and direct users who want no Gatekeeper installation path to the account-free PWA. Publish future desktop versions only after substantive dependency, test, or release changes pass every gate.
+The v1.3.0 macOS community binary is ad-hoc signed and not notarized. Do not describe it as a frictionless production installer. A paid Apple Developer Program membership is not maintained, so preserve the explicit ad-hoc/not-notarized disclosure and direct users who want no Gatekeeper installation path to the account-free PWA. Publish future desktop versions only after substantive dependency, test, or release changes pass every gate.
 
 Delete only merged or strict-ancestor feature branches. Keep release tags, changelog entries, migration files and compatibility readers that are required to install, restore or open previously supported data.
 
@@ -44,7 +44,7 @@ Trên macOS, `npm run desktop:release` và `npm run desktop:build:mac:ci` phải
 
 Không có automatic stale-lock recovery. Mọi lock path đã tồn tại—dù PID được ghi nhận còn chạy, đã dừng, bị reuse hoặc metadata hỏng—đều fail closed; acquisition code không rename, xóa hay tạm thời tạo khoảng trống, và legacy env `KAKEFLOW_RECOVER_STALE_BUILD_LOCK` không có tác dụng. Sau khi xác minh độc lập rằng không còn build process, operator phải kiểm tra canonical path và owner metadata được báo, xóa out of band đúng lock directory đó rồi retry bình thường. Release bình thường xác thực toàn bộ owner token, xóa `owner.json` khi live lock directory vẫn chặn contender, rồi dùng `rmdir` thành công làm điểm unlock cuối cùng và duy nhất. Mọi lỗi trước `rmdir` đều để path tồn tại và fail closed; release không rename/restore shared path và không chạy cleanup có thể lỗi sau khi path biến mất. Trên nền tảng khác, `desktop:release` vẫn gọi Tauri trực tiếp.
 
-Các bản v1.2.0 hiện tại truy vấn một endpoint release đã ngừng hoạt động nên không thể tự động cập nhật. Người dùng v1.2.0 phải cài thủ công v1.2.1 từ trang release chính thức; các build từ v1.2.1 trở đi truy vấn trực tiếp repo này. Không tạo lại repo release riêng.
+Các bản v1.2.0 hiện tại truy vấn một endpoint release đã ngừng hoạt động nên không thể tự động cập nhật. Người dùng v1.2.0 phải cài thủ công v1.2.1 hoặc mới hơn từ trang release chính thức; các build từ v1.2.1 trở đi truy vấn trực tiếp repo này. Không tạo lại repo release riêng.
 
 Để QA OCR trước khi release, chạy bản xem trước local và mở `/ocr-regression.html`. Trang phải báo toàn bộ case PP-OCRv5 tổng hợp đã pass. Fixture chỉ chứa dữ liệu biên lai giả lập, đã ẩn danh; ngày, tổng tiền, thuế và giá từng món cũng được kiểm tra trong `npm test`.
 
@@ -52,7 +52,7 @@ Các bản port tạm, thư mục so sánh và release worktree chỉ là dữ l
 
 GitHub Pages dùng **GitHub Actions** làm source. `.github/workflows/pages.yml` build PWA production, copy `docs/` vào root artifact và mount `dist/` tại `app/`; không commit build 148 MB đã generate. Sau mỗi lần merge, chờ Pages workflow của đúng commit rồi kiểm tra landing page và `/kakeflow/app/` cả online lẫn offline.
 
-Binary cộng đồng macOS v1.2.1 được ký ad-hoc và chưa notarize; không mô tả đây là installer production frictionless. Dự án không duy trì gói Apple Developer Program trả phí, vì vậy phải giữ disclosure rõ ràng và hướng người dùng muốn tránh Gatekeeper sang PWA không cần account. Chỉ phát hành desktop version tiếp theo sau khi thay đổi dependency, test hoặc release thực chất vượt qua mọi gate.
+Binary cộng đồng macOS v1.3.0 được ký ad-hoc và chưa notarize; không mô tả đây là installer production frictionless. Dự án không duy trì gói Apple Developer Program trả phí, vì vậy phải giữ disclosure rõ ràng và hướng người dùng muốn tránh Gatekeeper sang PWA không cần account. Chỉ phát hành desktop version tiếp theo sau khi thay đổi dependency, test hoặc release thực chất vượt qua mọi gate.
 
 Chỉ xoá feature branch đã merge hoặc là ancestor của `main`. Giữ release tag, changelog, migration và compatibility reader cần thiết để cài đặt, restore hoặc mở dữ liệu từng được hỗ trợ.
 
@@ -72,7 +72,7 @@ macOS の `npm run desktop:release` と `npm run desktop:build:mac:ci` は、同
 
 automatic stale-lock recovery はありません。記録 PID が稼働中、停止済み、reuse の可能性あり、または metadata 不正のいずれでも、既存 lock path は必ず fail closed し、acquisition code は rename、削除、一時的な空き状態の作成を行いません。旧 `KAKEFLOW_RECOVER_STALE_BUILD_LOCK` 環境変数も無効です。build process が残っていないことを独立に確認した後、報告された canonical path と owner metadata を調査し、その lock directory だけを out-of-band で削除して通常どおり retry します。通常 release は完全な owner token を検証し、live lock directory が contender を遮断したまま `owner.json` を削除して、成功した `rmdir` を最後かつ唯一の unlock point とします。`rmdir` 前の失敗では path が残って fail closed し、shared path の rename／restore や path 消失後の fallible cleanup は行いません。macOS 以外の `desktop:release` は Tauri を直接呼び出します。
 
-既存の v1.2.0 は廃止された release endpoint を参照するため、自動更新を受信できません。v1.2.0 の利用者は canonical release page から v1.2.1 を手動でインストールする必要があります。v1.2.1 以降の build は本 repository を直接参照します。別の release repository は再作成しません。
+既存の v1.2.0 は廃止された release endpoint を参照するため、自動更新を受信できません。v1.2.0 の利用者は canonical release page から v1.2.1 以降を手動でインストールする必要があります。v1.2.1 以降の build は本 repository を直接参照します。別の release repository は再作成しません。
 
 OCR の release QA では local preview を起動し、`/ocr-regression.html` を開きます。匿名の合成 receipt を使うすべての PP-OCRv5 case が passed になることを確認してください。日付・合計・税・品目金額の期待値は `npm test` でも検証されます。
 
@@ -80,6 +80,6 @@ OCR の release QA では local preview を起動し、`/ocr-regression.html` �
 
 GitHub Pages の source は **GitHub Actions** です。`.github/workflows/pages.yml` が production PWA を build し、`docs/` を artifact root、`dist/` を `app/` に配置します。生成済み 148 MB build は commit しません。merge ごとに exact commit の Pages workflow を待ち、landing page と `/kakeflow/app/` を online／offline で確認します。
 
-macOS v1.2.1 community binary は ad-hoc 署名済み・未公証で、frictionless production installer と表現しません。有料 Apple Developer Program は維持していないため、この disclosure を明示し、Gatekeeper の install path を避けたい利用者には account 不要の PWA を案内します。今後の desktop version は、実質的な dependency／test／release 変更が全 gate を通過した場合だけ公開します。
+macOS v1.3.0 community binary は ad-hoc 署名済み・未公証で、frictionless production installer と表現しません。有料 Apple Developer Program は維持していないため、この disclosure を明示し、Gatekeeper の install path を避けたい利用者には account 不要の PWA を案内します。今後の desktop version は、実質的な dependency／test／release 変更が全 gate を通過した場合だけ公開します。
 
 削除する feature branch は merge 済み、または `main` の strict ancestor に限ります。過去に対応したデータの install／restore／open に必要な release tag、changelog、migration、compatibility reader は保持します。
