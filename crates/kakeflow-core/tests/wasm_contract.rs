@@ -51,6 +51,7 @@ fn argon2id_derivation_is_deterministic_salt_bound_and_32_bytes() {
 #[test]
 fn argon2id_derivation_rejects_invalid_parameters() {
     let valid_salt = (0_u8..16).collect::<Vec<_>>();
-    assert!(derive_key_argon2id_bytes(b"passphrase", b"short", 64, 2, 1).is_err());
+    let undersized_salt = &valid_salt[..7];
+    assert!(derive_key_argon2id_bytes(b"passphrase", undersized_salt, 64, 2, 1).is_err());
     assert!(derive_key_argon2id_bytes(b"passphrase", &valid_salt, 0, 2, 1).is_err());
 }
