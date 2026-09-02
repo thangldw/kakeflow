@@ -16,6 +16,8 @@ KakeFlow's authoritative ledger and evidence vault are local. Gmail, Google Driv
 
 GHSA-wrw7-89jp-8q8g-55p8 applies to `glib` 0.18.5 in the Linux GUI dependency path `tauri -> webkit2gtk/gtk -> glib`. The dependency is absent from the current macOS release graph, and KakeFlow does not directly call `VariantStrIter`. The maintained Tauri/GTK dependency line does not yet provide a compatible patched `glib` release; forcing a second major line would not replace the affected path. Re-evaluate this risk before any Linux release and whenever Tauri migrates to a patched GTK/`glib` graph.
 
+The current CodeQL findings and their source-level disposition are recorded in [the 31 August 2026 triage](evidence/codeql-triage-2026-08-31.md). Test-only findings are removed at source rather than treated as production vulnerabilities; macro-expansion false positives require an exact-analysis trace before dismissal.
+
 ### PWA vault and browser boundary
 
 PWA records use Argon2id-derived, non-extractable AES-GCM keys and authenticated per-record envelopes. Export archives encrypt their manifest and every event, projection, and evidence payload; restore validates all entries in a staging vault before atomic activation. The passphrase and unwrapped key are not persisted or service-worker cached.

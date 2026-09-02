@@ -727,11 +727,7 @@ mod tests {
                 .unwrap();
         assert_eq!(attempt.status, "SUCCESS");
         let document = attempt.document.unwrap();
-        assert!(
-            document.text.contains("PRIVATE TOTAL 2400"),
-            "extracted text was {:?}",
-            document.text
-        );
+        assert!(document.text.contains("PRIVATE TOTAL 2400"));
     }
 
     #[test]
