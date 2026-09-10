@@ -1,5 +1,7 @@
 # KakeFlow
 
+> **v1.3.0 manual upgrade / Nâng cấp thủ công / 手動更新:** The old updater private key was lost. Users of v1.2.1 and earlier must install v1.3.0 manually once; subsequent updates use the new key. [Upgrade instructions and data-preservation precautions](docs/releases/v1.3.0.md#install).
+
 [English](#english) · [Tiếng Việt](#tiếng-việt) · [日本語](#日本語)
 
 Local-first household finance for desktop and the browser, built for Japan.
