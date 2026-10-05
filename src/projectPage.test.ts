@@ -43,10 +43,10 @@ describe('KakeFlow project page', () => {
       for (const screen of ['overview', 'ocr-import', 'budgets', 'investments']) {
         expect(localAssetExists(`assets/demo/${screen}-${locale}.jpg`)).toBe(true)
       }
-      expect(localAssetExists(`assets/demo/kakeflow-feature-tour-${locale}.gif`)).toBe(true)
+      expect(localAssetExists(`assets/demo/kakeflow-feature-tour-en.gif`)).toBe(true)
     }
-    expect(script).toContain("assets/demo/${screen.file}-${state.locale}.jpg")
-    expect(script).toContain("assets/demo/kakeflow-feature-tour-${locale}.gif")
+    expect(script).toContain("assets/demo/${screen.file}-en.jpg")
+    expect(script).toContain("assets/demo/kakeflow-feature-tour-en.gif")
     expect(localAssetExists('assets/support/mb-bank-vietqr.png')).toBe(true)
   })
 
@@ -117,7 +117,7 @@ describe('KakeFlow project page', () => {
     const budgetsTab = document.querySelector<HTMLButtonElement>('[data-screen="budgets"]')
     budgetsTab?.click()
     expect(budgetsTab?.getAttribute('aria-selected')).toBe('true')
-    expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('budgets-vi.jpg')
+    expect(document.querySelector<HTMLImageElement>('#screen-image')?.src).toContain('budgets-en.jpg')
     expect(document.querySelector('#screen-caption')).toHaveTextContent('mục tiêu tiết kiệm')
 
     document.querySelector<HTMLButtonElement>('[data-locale="en"]')?.click()
