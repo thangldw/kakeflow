@@ -62,7 +62,7 @@
   }
   function setLocale(locale) {
     if (!translations[locale]) return;
-    state.locale = locale; localStorage.setItem('kakeflow.site.locale', locale); document.documentElement.lang = locale;
+    state.locale = locale; try { localStorage?.setItem('kakeflow.site.locale', locale); } catch {} document.documentElement.lang = locale;
     document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = copy(element.dataset.i18n); });
     document.querySelectorAll('[data-i18n-html]').forEach((element) => { element.innerHTML = copy(element.dataset.i18nHtml); });
     document.querySelectorAll('[data-locale]').forEach((button) => { const active = button.dataset.locale === locale; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
@@ -91,7 +91,7 @@
   supportBackdrop?.addEventListener('mousedown', (event) => { if (event.target === supportBackdrop) closeSupport(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && supportBackdrop && !supportBackdrop.hidden) closeSupport(); if (event.key === 'Tab' && supportBackdrop && !supportBackdrop.hidden && supportDialog) { const focusable = [...supportDialog.querySelectorAll('button, a, input')].filter((element) => !element.disabled); if (!focusable.length) return; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } });
   window.addEventListener('resize', () => { if (window.innerWidth > 820) closeMenu(); });
-  const saved = localStorage.getItem('kakeflow.site.locale');
+  let saved; try { saved = localStorage?.getItem('kakeflow.site.locale'); } catch {}
   const inferred = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : navigator.language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
   setLocale(saved && translations[saved] ? saved : inferred);
 })();

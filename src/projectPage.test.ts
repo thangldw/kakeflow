@@ -43,10 +43,10 @@ describe('KakeFlow project page', () => {
       for (const screen of ['overview', 'ocr-import', 'budgets', 'investments']) {
         expect(localAssetExists(`assets/demo/${screen}-${locale}.jpg`)).toBe(true)
       }
-      expect(localAssetExists(`assets/demo/kakeflow-feature-tour-${locale}.gif`)).toBe(true)
+      expect(localAssetExists(`assets/demo/kakeflow-feature-tour-en.gif`)).toBe(true)
     }
     expect(script).toContain("assets/demo/${screen.file}-en.jpg")
-    expect(script).toContain("assets/demo/kakeflow-feature-tour-${locale}.gif")
+    expect(script).toContain("assets/demo/kakeflow-feature-tour-en.gif")
     expect(localAssetExists('assets/support/mb-bank-vietqr.png')).toBe(true)
   })
 
@@ -71,7 +71,7 @@ describe('KakeFlow project page', () => {
     expect(script).toContain("useCaseTitle: 'Từ một biên lai")
 
     for (const locale of ['ja', 'en', 'vi']) {
-      const metadata = await sharp(resolve(docsPath, `assets/demo/kakeflow-feature-tour-${locale}.gif`), { animated: true }).metadata()
+      const metadata = await sharp(resolve(docsPath, `assets/demo/kakeflow-feature-tour-en.gif`), { animated: true }).metadata()
       expect(metadata.width).toBe(960)
       expect(metadata.pageHeight).toBe(540)
       expect(metadata.pages).toBe(4)

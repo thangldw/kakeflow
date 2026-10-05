@@ -1,0 +1,133 @@
+:root {
+  /* Canonical color contract. Component and product styles should alias these
+     roles instead of redefining raw light/dark palettes. */
+  --color-canvas: #fbfaf6;
+  --color-surface: #fbfaf6;
+  --color-surface-raised: #ffffff;
+  --color-surface-subtle: #e9e6dd;
+  --color-text: #1d211e;
+  --color-text-body: #505750;
+  --color-text-strong: #343a35;
+  --color-text-muted: #697169;
+  --color-border: #d9d5cb;
+  --color-border-strong: #bbb8ad;
+  --color-accent: #a83a00;
+  --color-on-accent: #ffffff;
+  --color-accent-soft: #fff2e8;
+  --color-brand: #4a5aad;
+  --color-brand-soft: #eef0ff;
+  --color-success: #237447;
+  --color-success-soft: #eaf6ef;
+  --color-danger: #b44545;
+  --color-danger-soft: #fff0f0;
+  --color-warning: #9a5b00;
+  --color-warning-soft: #fffbeb;
+  --color-info: #236aa8;
+  --color-info-soft: #eef6ff;
+  --color-contact: #1b1e1b;
+
+  /* Data-series colors are roles too. Their dark-theme values are adjusted
+     below so charts and category markers remain legible on dark surfaces. */
+  --color-series-rust: #a83a00;
+  --color-series-ochre: #9a5b00;
+  --color-series-violet: #7956a8;
+  --color-series-blue: #236aa8;
+  --color-series-green: #35745a;
+  --color-series-rose: #a04458;
+  --color-series-indigo: #4a5aad;
+  --color-series-purple: #684fa3;
+  --color-series-amber: #9a5b00;
+  --color-series-cyan: #087b99;
+
+  /* Backward-compatible aliases. New CSS should prefer --color-* roles. */
+  --bg: var(--color-canvas);
+  --surface: var(--color-surface);
+  --ink: var(--color-text);
+  --body: var(--color-text-body);
+  --strong: var(--color-text-strong);
+  --muted: var(--color-text-muted);
+  --border: var(--color-border);
+  --border-strong: var(--color-border-strong);
+  --accent: var(--color-accent);
+  --accent-ink: var(--color-on-accent);
+  --success: var(--color-success);
+  --chip: var(--color-surface-subtle);
+  --contact: var(--color-contact);
+
+  --text: var(--ink);
+  --text-muted: var(--body);
+  --text-dim: var(--muted);
+  --surface-2: var(--chip);
+  --bg-soft: var(--color-surface-raised);
+  --accent-soft: var(--color-accent);
+  --accent-glow: var(--color-accent-soft);
+
+  /* Keep Vietnamese UI and Japanese study content on separate font paths.
+     The UI stack prioritizes native fonts with complete Vietnamese glyphs;
+     Japanese content opts into the CJK stacks explicitly. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-jp-sans: "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", Meiryo, sans-serif;
+  --font-jp-serif: "Hiragino Mincho ProN", "Yu Mincho", YuMincho, serif;
+  --font-sans: var(--font-ui);
+  --font-display: var(--font-ui);
+  --font-serif: ui-serif, Georgia, "Times New Roman", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --content-width: 1180px;
+  --space-2xs: .35rem;
+  --space-xs: .65rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3.5rem;
+  --space-2xl: 5rem;
+  --step--1: .82rem;
+  --step-0: .95rem;
+  --step-1: 1.08rem;
+  --step-2: 1.4rem;
+  --step-3: 2rem;
+  --step-4: 2.75rem;
+  --radius: 8px;
+  --radius-sm: var(--radius);
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --shadow: none;
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --color-canvas: #11130f;
+  --color-surface: #191b17;
+  --color-surface-raised: #1f211d;
+  --color-surface-subtle: #23271f;
+  --color-text: #f1efe8;
+  --color-text-body: #bec2b9;
+  --color-text-strong: #d9dacf;
+  --color-text-muted: #9ca398;
+  --color-border: #30342d;
+  --color-border-strong: #52584d;
+  --color-accent: #ff9a5d;
+  --color-on-accent: #11130f;
+  --color-accent-soft: #35251d;
+  --color-brand: #8e9cff;
+  --color-brand-soft: #202844;
+  --color-success: #75d7a0;
+  --color-success-soft: #173126;
+  --color-danger: #ff8b8b;
+  --color-danger-soft: #3a2023;
+  --color-warning: #f6a94a;
+  --color-warning-soft: #302410;
+  --color-info: #7dc4ff;
+  --color-info-soft: #172b3c;
+  --color-contact: #0b0c0a;
+  --color-series-rust: #ff9a5d;
+  --color-series-ochre: #f6a94a;
+  --color-series-violet: #b8a9ff;
+  --color-series-blue: #7dc4ff;
+  --color-series-green: #75d7a0;
+  --color-series-rose: #ff9cab;
+  --color-series-indigo: #8e9cff;
+  --color-series-purple: #c7a6ff;
+  --color-series-amber: #f6a94a;
+  --color-series-cyan: #62d6f5;
+  color-scheme: dark;
+}
