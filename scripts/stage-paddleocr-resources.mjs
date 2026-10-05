@@ -59,13 +59,27 @@ async function stageModel(model) {
   await mkdir(dirname(target), { recursive: true })
   const partial = `${target}.part`
   await rm(partial, { force: true })
-  const response = await fetch(model.url)
-  if (!response.ok) throw new Error(`Could not download ${model.filename}: HTTP ${response.status}`)
-  await writeFile(partial, new Uint8Array(await response.arrayBuffer()))
-  if (!await validModel(partial, model)) {
-    await rm(partial, { force: true })
-    throw new Error(`Checksum or size mismatch for ${model.filename}`)
+  // The deployed copy is accepted only under the same pinned size and hash.
+  const urls = [
+    `https://thangldw.github.io/kakeflow/app/ocr/paddleocr/models/${model.filename}`,
+    model.url,
+  ]
+  let verified = false
+  const failures = []
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      await writeFile(partial, new Uint8Array(await response.arrayBuffer()))
+      if (!await validModel(partial, model)) throw new Error('Checksum or size mismatch')
+      verified = true
+      break
+    } catch (error) {
+      failures.push(`${url}: ${error.message}`)
+      await rm(partial, { force: true })
+    }
   }
+  if (!verified) throw new Error(`Could not stage ${model.filename}: ${failures.join('; ')}`)
   await rename(partial, target)
 }
 
