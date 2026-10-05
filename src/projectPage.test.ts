@@ -71,7 +71,7 @@ describe('KakeFlow project page', () => {
     expect(script).toContain("useCaseTitle: 'Từ một biên lai")
 
     for (const locale of ['ja', 'en', 'vi']) {
-      const metadata = await sharp(resolve(docsPath, `assets/demo/kakeflow-feature-tour-en.gif`), { animated: true }).metadata()
+      const metadata = await sharp(resolve(docsPath, `assets/demo/kakeflow-feature-tour-${locale}.gif`), { animated: true }).metadata()
       expect(metadata.width).toBe(960)
       expect(metadata.pageHeight).toBe(540)
       expect(metadata.pages).toBe(4)
