@@ -55,18 +55,18 @@
     if (!screen || !screenImage || !screenCaption || !screenPanel) return;
     state.screen = tab.dataset.screen;
     tabs.forEach((candidate) => { const selected = candidate === tab; candidate.setAttribute('aria-selected', String(selected)); candidate.tabIndex = selected ? 0 : -1; });
-    screenImage.src = `assets/demo/${screen.file}-${state.locale}.jpg`; screenImage.alt = screen.alt;
+    screenImage.src = `assets/demo/${screen.file}-en.jpg`; screenImage.alt = screen.alt;
     screenCaption.replaceChildren(Object.assign(document.createElement('b'), { textContent: copy(screen.title) }), Object.assign(document.createElement('span'), { textContent: copy(screen.caption) }));
     screenPanel.setAttribute('aria-labelledby', tab.id);
     if (moveFocus) tab.focus();
   }
   function setLocale(locale) {
     if (!translations[locale]) return;
-    state.locale = locale; localStorage.setItem('kakeflow.site.locale', locale); document.documentElement.lang = locale;
+    state.locale = locale; try { localStorage?.setItem('kakeflow.site.locale', locale); } catch {} document.documentElement.lang = locale;
     document.querySelectorAll('[data-i18n]').forEach((element) => { element.textContent = copy(element.dataset.i18n); });
     document.querySelectorAll('[data-i18n-html]').forEach((element) => { element.innerHTML = copy(element.dataset.i18nHtml); });
     document.querySelectorAll('[data-locale]').forEach((button) => { const active = button.dataset.locale === locale; button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active)); });
-    if (tourImage) { tourImage.src = `assets/demo/kakeflow-feature-tour-${locale}.gif?v=20260807-2`; tourImage.alt = copy('tourAlt'); }
+    if (tourImage) { tourImage.src = `assets/demo/kakeflow-feature-tour-en.gif?v=20260807-2`; tourImage.alt = copy('tourAlt'); }
     const activeTab = tabs.find((tab) => tab.dataset.screen === state.screen); if (activeTab) selectScreen(activeTab);
     const title = locale === 'vi' ? 'KakeFlow — Tài chính của bạn, ngay trên thiết bị.' : locale === 'en' ? 'KakeFlow — Your finances, on your device.' : 'KakeFlow — 家計の流れを、正しくひとつに。';
     document.title = title; document.querySelector('meta[property="og:title"]')?.setAttribute('content', title);
@@ -91,7 +91,7 @@
   supportBackdrop?.addEventListener('mousedown', (event) => { if (event.target === supportBackdrop) closeSupport(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && supportBackdrop && !supportBackdrop.hidden) closeSupport(); if (event.key === 'Tab' && supportBackdrop && !supportBackdrop.hidden && supportDialog) { const focusable = [...supportDialog.querySelectorAll('button, a, input')].filter((element) => !element.disabled); if (!focusable.length) return; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } });
   window.addEventListener('resize', () => { if (window.innerWidth > 820) closeMenu(); });
-  const saved = localStorage.getItem('kakeflow.site.locale');
+  let saved; try { saved = localStorage?.getItem('kakeflow.site.locale'); } catch {}
   const inferred = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : navigator.language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
   setLocale(saved && translations[saved] ? saved : inferred);
 })();
