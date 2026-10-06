@@ -18,11 +18,11 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="product-tokens.css">
   <link rel="stylesheet" href="product-shell.css?v=20261005">
-  <link rel="stylesheet" href="kakeflow-page.css?v=20261006clean">
+  <link rel="stylesheet" href="kakeflow-page.css?v=20261007support"><link rel="stylesheet" href="product-support.css?v=20261007sharedsupport"><script defer src="product-support.js?v=20261007sharedsupport"></script>
   <link rel="preload" href="assets/fonts/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
   <script src="product-shell.js?v=20261005"></script>
 </head>
-<body>
+<body data-support-shared>
   <a class="skip-link" href="#main" data-i18n="skip">本文へ移動</a>
 
   <header class="site-header">
@@ -172,25 +172,6 @@
     <a class="apps-link" href="https://thangldw.github.io/apps/">Explore more apps →</a>
   </footer>
 
-  <div class="support-backdrop" data-support-backdrop hidden>
-    <section class="support-dialog" role="dialog" aria-modal="true" aria-labelledby="support-title">
-      <button class="support-close" type="button" data-support-close aria-label="Close"><img src="assets/support/close-control.png" width="28" height="28" alt=""></button>
-      <header><p>SUPPORT</p><h2 id="support-title" data-i18n="supportTitle">Support my work</h2><span data-i18n="supportIntro">KakeFlowが役に立ったら、継続開発を応援していただけます。支援はいつでも任意です。</span></header>
-      <div class="support-grid">
-        <article class="support-card sponsors-card">
-          <p>INTERNATIONAL</p><h3>GitHub Sponsors</h3><span data-i18n="sponsorIntro">USDで支援方法と金額を選べます。</span>
-          <div class="sponsor-tabs" role="group" aria-label="Contribution frequency"><button class="active" type="button" data-i18n="monthly">毎月</button><button type="button" data-i18n="oneTime">一回</button></div>
-          <label><span data-i18n="amount">金額</span><small>USD</small><div><b>$</b><input type="number" min="1" value="5" aria-label="Amount in USD"></div></label>
-          <a class="sponsor-button" href="https://github.com/sponsors/thangldw" target="_blank" rel="noopener noreferrer" data-i18n="continueGithub">GitHubで続ける</a>
-          <small data-i18n="githubNote">GitHubで内容を確認して確定します。</small>
-        </article>
-        <article class="support-card bank-card">
-          <p>VIETNAM</p><h3 data-i18n="bankTransfer">銀行振込</h3><img src="assets/support/mb-bank-vietqr.png" width="214" height="291" alt="MB Bank VietQR for LUU DUC THANG, account 919324689999"><span data-i18n="qrHint">ベトナムの銀行アプリで読み取ってください。</span>
-        </article>
-      </div>
-    </section>
-  </div>
-
-  <script src="kakeflow-page.js?v=20260807-2"></script>
+  <script src="kakeflow-page.js?v=20261007support"></script>
 </body>
 </html>

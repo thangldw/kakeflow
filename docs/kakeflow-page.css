@@ -147,36 +147,7 @@ footer .wordmark span { color: var(--color-text); }
 footer p { margin: 0; color: var(--color-text-muted); font-size: 12px; }
 footer .apps-link { color: var(--color-text-muted); font-size: 12px; }
 
-/* Support dialog */
-.support-trigger:hover { border-color: #9ba894; background: white; }
-.support-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: 6px; background: rgba(24,31,27,.44); }
-.support-backdrop[hidden] { display: none; }
-.support-close { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; padding: 0; overflow: hidden; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
-.support-close img { width: 28px; height: 28px; }
-.support-dialog > header { padding-right: 36px; }
-.support-grid { margin-top: 11px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.sponsors-card label small { color: #777a76; font: 7px var(--font-mono); }
-.sponsors-card label b { font-size: 11px; font-weight: 500; }
-.sponsors-card input { width: 100%; border: 0; outline: 0; background: transparent; font-size: 11px; }
-.sponsors-card > small { display: block; margin-top: 5px; color: #989993; font-size: 7.5px; }
-.bank-card img { width: min(214px,100%); height: auto; margin: 8px auto 0; border-radius: 5px; }
-.support-trigger { min-height: 36px; padding: 0 12px; border: 1px solid #cde2eb; border-radius: 8px; color: var(--color-text); cursor: pointer; font-size: 11px; font-weight: 800; background: #fff; }
-.support-dialog { position: relative; width: min(590px,calc(100vw - 12px)); max-height: calc(100vh - 12px); overflow: auto; padding: 18px; border: 2px solid var(--color-border); border-radius: 11px; background: var(--color-surface-raised); box-shadow: none; }
-.support-card { min-width: 0; min-height: 385px; padding: 15px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface-raised); box-shadow: none; }
-.support-dialog > header h2 { margin: 0; font-size: 23px; line-height: 1.15; letter-spacing: -.04em; color: var(--color-text); }
-.support-card h3 { margin: 0; font-size: 16px; font-weight: 500; letter-spacing: -.02em; color: var(--color-text); }
-.sponsors-card label { margin-top: 11px; display: grid; grid-template-columns: 1fr auto; gap: 4px; font-size: 9px; font-weight: 800; color: var(--color-text); }
-.support-dialog > header > span { display: block; max-width: 430px; margin-top: 4px; font-size: 11px; line-height: 1.4; color: var(--color-text-body); }
-.support-card > span { display: block; margin-top: 5px; font-size: 10px; line-height: 1.4; color: var(--color-text-body); }
-.support-dialog > header p { margin: 0 0 4px; font-size: 8px; font-weight: 900; letter-spacing: .08em; color: var(--color-accent); }
-.support-card > p { margin: 0 0 4px; font-size: 8px; font-weight: 900; letter-spacing: .08em; color: var(--color-accent); }
-.sponsor-tabs { margin-top: 12px; padding: 3px; display: grid; grid-template-columns: 1fr 1fr; border-radius: 7px; background: var(--color-surface-subtle); }
-.sponsor-tabs button { min-height: 28px; border: 0; border-radius: 5px; background: transparent; cursor: default; font-size: 9px; color: var(--color-text-body); }
-.sponsor-tabs button.active { border: 1px solid var(--color-border); box-shadow: 0 1px 3px rgba(35,39,36,.08); font-weight: 700; background: var(--color-surface-raised); color: var(--color-text); }
-.sponsors-card label div { grid-column: 1 / -1; min-height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface-raised); color: var(--color-text); }
-.sponsor-button { min-height: 35px; margin-top: 8px; padding: 0 10px; display: flex; align-items: center; justify-content: center; border-radius: 5px; text-decoration: none; font-size: 10px; font-weight: 800; background: var(--color-accent); color: var(--color-on-accent); }
-body.modal-open { overflow: hidden; }
-.bank-card > span { display: block; margin-top: 5px; color: var(--color-text-body); text-align: center; font-size: 8px; line-height: 1.4; }
+.support-trigger { min-height:36px; padding:0 12px; border:1px solid var(--color-border); border-radius:8px; color:var(--color-text); cursor:pointer; font-size:11px; font-weight:600; background:var(--color-surface-raised); }
 
 /* Responsive layout */
 
@@ -231,9 +202,6 @@ body.modal-open { overflow: hidden; }
 
 @media (max-width: 600px) {
   .language-switcher button { min-width: 32px; padding: 0 5px; }
-  .support-dialog { padding: 16px; }
-  .support-grid { grid-template-columns: 1fr; }
-  .support-card { min-height: 0; }
 }
 
 @media (max-width: 540px) {

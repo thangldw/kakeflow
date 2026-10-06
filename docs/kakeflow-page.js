@@ -80,17 +80,6 @@
     tab.addEventListener('keydown', (event) => { if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); let next = index; if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % tabs.length; if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (index - 1 + tabs.length) % tabs.length; if (event.key === 'Home') next = 0; if (event.key === 'End') next = tabs.length - 1; selectScreen(tabs[next], true); });
   });
 
-  const supportBackdrop = document.querySelector('[data-support-backdrop]');
-  const supportDialog = supportBackdrop?.querySelector('.support-dialog');
-  const supportClose = supportBackdrop?.querySelector('[data-support-close]');
-  let returnFocus = null;
-  function openSupport(event) { returnFocus = event.currentTarget; supportBackdrop.hidden = false; document.body.classList.add('modal-open'); supportClose?.focus(); }
-  function closeSupport() { supportBackdrop.hidden = true; document.body.classList.remove('modal-open'); returnFocus?.focus(); }
-  document.querySelectorAll('[data-support-open]').forEach((button) => button.addEventListener('click', openSupport));
-  if (location.hash === "#support" && supportBackdrop) openSupport({ currentTarget: document.querySelector("#support") });
-  supportClose?.addEventListener('click', closeSupport);
-  supportBackdrop?.addEventListener('mousedown', (event) => { if (event.target === supportBackdrop) closeSupport(); });
-  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && supportBackdrop && !supportBackdrop.hidden) closeSupport(); if (event.key === 'Tab' && supportBackdrop && !supportBackdrop.hidden && supportDialog) { const focusable = [...supportDialog.querySelectorAll('button, a, input')].filter((element) => !element.disabled); if (!focusable.length) return; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } });
   window.addEventListener('resize', () => { if (window.innerWidth > 820) closeMenu(); });
   let saved; try { saved = localStorage?.getItem('kakeflow.site.locale'); } catch {}
   const inferred = navigator.language.toLowerCase().startsWith('vi') ? 'vi' : navigator.language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
