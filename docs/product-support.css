@@ -1,0 +1,617 @@
+/* Shared Support my work trigger and dialog for project and certification pages. */
+
+.support-floating-trigger {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 900;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 9px 13px;
+  border: 1px solid var(--support-border, #d8d2c7);
+  border-radius: 7px;
+  background: var(--support-accent, #b83a06);
+  color: #fff;
+  box-shadow: 0 12px 30px rgba(20, 22, 18, .16);
+  font: 650 11px/1.2 var(--font-ui, Inter, system-ui, sans-serif);
+  letter-spacing: .01em;
+  cursor: pointer;
+}
+
+.support-floating-trigger:hover {
+  filter: brightness(1.06);
+}
+
+.support-floating-trigger:focus-visible {
+  outline: 2px solid var(--support-accent, #b83a06);
+  outline-offset: 3px;
+}
+
+.support-dialog {
+  --support-bg: #fbfaf7;
+  --support-surface: #f6f4ef;
+  --support-raised: #fff;
+  --support-ink: #1d201c;
+  --support-body: #5e645d;
+  --support-muted: #7d837b;
+  --support-border: #d8d2c7;
+  --support-border-strong: #b9b2a6;
+  --support-chip: #ece9e2;
+  --support-accent: #b83a06;
+  --support-accent-ink: #fff;
+  width: min(590px, calc(100% - 40px));
+  max-width: none;
+  max-height: min(520px, calc(100dvh - 40px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--support-border-strong);
+  border-radius: 10px;
+  background: var(--support-bg);
+  color: var(--support-ink);
+  box-shadow: 0 24px 80px rgba(20, 22, 18, .24);
+  font-family: var(--font-ui, Inter, system-ui, sans-serif);
+  overflow: auto;
+}
+
+:root[data-theme="dark"] .support-dialog {
+  --support-bg: #1c1f1a;
+  --support-surface: #171a16;
+  --support-raised: #20231e;
+  --support-ink: #f4f1ea;
+  --support-body: #b1b6ae;
+  --support-muted: #8e958b;
+  --support-border: #353a32;
+  --support-border-strong: #4a5146;
+  --support-chip: #242820;
+  --support-accent: #ff9c65;
+  --support-accent-ink: #171a16;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .52);
+}
+
+.support-dialog::backdrop {
+  background: rgba(16, 18, 15, .68);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.support-dialog *,
+.support-dialog *::before,
+.support-dialog *::after {
+  box-sizing: border-box;
+}
+
+.support-dialog-shell {
+  position: relative;
+  padding: 18px;
+}
+
+.support-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--support-border);
+  border-radius: 5px;
+  background: var(--support-surface);
+  color: var(--support-ink);
+  font: 500 18px/1 var(--font-ui, Inter, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.support-dialog-close:hover {
+  border-color: var(--support-border-strong);
+  color: var(--support-accent);
+}
+
+.support-dialog-close:focus-visible,
+.support-primary:focus-visible,
+.support-kofi-button:focus-visible {
+  outline: 2px solid var(--support-accent);
+  outline-offset: 3px;
+}
+
+.support-dialog-heading {
+  position: static;
+  top: auto;
+  z-index: auto;
+  display: block;
+  width: auto;
+  height: auto;
+  padding: 0 36px 0 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.support-dialog-heading .support-kicker,
+.support-option-label {
+  margin: 0 0 4px;
+  color: var(--support-accent);
+  font: 650 8px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.support-dialog-heading .support-kicker {
+  font-family: var(--font-ui, Inter, system-ui, sans-serif);
+}
+
+.support-dialog-heading h2 {
+  margin: 4px 0 5px;
+  color: var(--support-ink);
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -.04em;
+}
+
+.support-dialog-heading > p:last-child {
+  max-width: 62ch;
+  margin: 0;
+  color: var(--support-body);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: normal;
+  text-wrap: pretty;
+}
+
+.support-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.support-international,
+.support-option {
+  min-width: 0;
+  border: 1px solid var(--support-border);
+  border-radius: 8px;
+  background: var(--support-surface);
+}
+
+.support-international {
+  overflow: hidden;
+}
+
+.support-github,
+.support-kofi {
+  position: relative;
+  min-width: 0;
+  padding: 14px 16px 12px;
+}
+
+.support-kofi {
+  border-top: 1px solid var(--support-border);
+}
+
+.support-options h3 {
+  margin: 0;
+  color: var(--support-ink);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+}
+
+.support-github > p:not(.support-option-label),
+.support-kofi-copy {
+  margin: 6px 0 0;
+  color: var(--support-body);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.sponsor-form {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--support-border);
+}
+
+.sponsor-frequency {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 9px;
+  padding: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--support-chip);
+}
+
+.support-dialog .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sponsor-frequency-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.support-dialog .sponsor-frequency label {
+  display: block;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--support-body);
+  font-size: 9px;
+  font-weight: 650;
+  text-align: center;
+  cursor: pointer;
+}
+
+.sponsor-frequency-input:checked + label {
+  border-color: var(--support-border);
+  background: var(--support-raised);
+  color: var(--support-ink);
+}
+
+.sponsor-frequency-input:focus-visible + label {
+  outline: 2px solid var(--support-accent);
+  outline-offset: 2px;
+}
+
+.support-dialog label.sponsor-amount-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--support-ink);
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.support-dialog label.sponsor-amount-label span {
+  display: inline;
+  color: var(--support-muted);
+  font: 650 7px ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .04em;
+  text-transform: none;
+}
+
+.sponsor-amount-control {
+  position: relative;
+}
+
+.sponsor-amount-control > span {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  color: var(--support-muted);
+  font-size: 11px;
+  font-weight: 650;
+  transform: translateY(-50%);
+}
+
+.sponsor-amount-control input {
+  width: 100%;
+  padding: 9px 10px 9px 28px;
+  border: 1px solid var(--support-border-strong);
+  border-radius: 5px;
+  background: var(--support-raised);
+  color: var(--support-ink);
+  font: 650 11px var(--font-ui, Inter, system-ui, sans-serif);
+  appearance: textfield;
+}
+
+.sponsor-amount-control input::-webkit-inner-spin-button,
+.sponsor-amount-control input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.sponsor-amount-control input:focus {
+  border-color: var(--support-accent);
+  outline: 2px solid var(--support-accent);
+  outline-offset: 2px;
+}
+
+.support-primary {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--support-accent);
+  border-radius: 5px;
+  background: var(--support-accent);
+  color: var(--support-accent-ink);
+  font: 650 10px var(--font-ui, Inter, system-ui, sans-serif);
+  cursor: pointer;
+}
+
+.support-primary:hover {
+  filter: brightness(1.06);
+}
+
+.sponsor-help {
+  margin: 5px 0 0;
+  color: var(--support-muted);
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.support-kofi-copy {
+  margin-top: 5px;
+  font-size: 9px;
+}
+
+.support-kofi-button {
+  display: inline-flex;
+  margin-top: 8px;
+  border-radius: 5px;
+  transition: transform .2s, filter .2s;
+}
+
+.support-kofi-button:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.support-kofi-button img {
+  display: block;
+  width: auto;
+  height: 28px;
+  border: 0;
+}
+
+.support-bank {
+  padding: 10px;
+}
+
+.support-bank-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 3px 7px;
+}
+
+.support-bank-heading > span {
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: #eef0ff;
+  color: #4b5ab4;
+  font: 650 7px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.support-bank figure {
+  margin: 0;
+}
+
+.support-bank img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: min(290px, calc(100dvh - 180px));
+  margin-inline: auto;
+  border-radius: 5px;
+  background: var(--support-surface);
+  object-fit: contain;
+}
+
+.support-bank figcaption {
+  margin-top: 5px;
+  color: var(--support-muted);
+  font-size: 8px;
+  text-align: center;
+}
+
+body.support-dialog-open {
+  overflow: hidden;
+}
+
+@media (min-width: 681px) {
+  .support-dialog.support-dialog--japan {
+    width: min(980px, calc(100% - 48px));
+    max-height: calc(100dvh - 48px);
+  }
+
+  .support-dialog--japan .support-dialog-shell {
+    padding: 26px;
+  }
+
+  .support-dialog--japan .support-dialog-close {
+    top: 20px;
+    right: 20px;
+    padding: 7px 10px;
+    font-size: 9px;
+  }
+
+  .support-dialog--japan .support-dialog-heading {
+    padding-right: 58px;
+  }
+
+  .support-dialog--japan .support-dialog-heading h2 {
+    margin: 6px 0 8px;
+    font-size: 30px;
+  }
+
+  .support-dialog--japan .support-dialog-heading > p:last-child {
+    font-size: 12px;
+  }
+
+  .support-dialog--japan .support-options {
+    grid-template-columns: minmax(470px, 1.08fr) minmax(380px, .92fr);
+    gap: 16px;
+    margin-top: 18px;
+  }
+
+  .support-dialog--japan .support-github,
+  .support-dialog--japan .support-kofi {
+    padding: 22px 22px 20px;
+  }
+
+  .support-dialog--japan .support-option-label,
+  .support-dialog--japan .support-dialog-heading .support-kicker {
+    margin-bottom: 6px;
+    font-size: 9px;
+  }
+
+  .support-dialog--japan .support-options h3 {
+    font-size: 20px;
+  }
+
+  .support-dialog--japan .support-github > p:not(.support-option-label),
+  .support-dialog--japan .support-kofi-copy {
+    margin-top: 8px;
+    font-size: 12px;
+  }
+
+  .support-dialog--japan .sponsor-form {
+    margin-top: 15px;
+    padding-top: 15px;
+  }
+
+  .support-dialog--japan .sponsor-frequency {
+    margin-bottom: 12px;
+    padding: 3px;
+  }
+
+  .support-dialog--japan .sponsor-frequency label {
+    padding: 9px;
+    font-size: 11px;
+  }
+
+  .support-dialog--japan label.sponsor-amount-label {
+    margin-bottom: 6px;
+    font-size: 11px;
+  }
+
+  .support-dialog--japan label.sponsor-amount-label span {
+    font-size: 8px;
+  }
+
+  .support-dialog--japan .sponsor-amount-control input {
+    padding-block: 12px;
+    font-size: 13px;
+  }
+
+  .support-dialog--japan .support-primary {
+    margin-top: 11px;
+    padding: 12px;
+    font-size: 12px;
+  }
+
+  .support-dialog--japan .sponsor-help {
+    margin-top: 7px;
+    font-size: 9px;
+  }
+
+  .support-dialog--japan .support-kofi-button {
+    margin-top: 12px;
+  }
+
+  .support-dialog--japan .support-kofi-button img {
+    height: 32px;
+  }
+
+  .support-dialog--japan .support-bank {
+    padding: 14px;
+  }
+
+  .support-dialog--japan .support-bank-heading {
+    padding: 5px 5px 11px;
+  }
+
+  .support-dialog--japan .support-bank img {
+    height: min(430px, calc(100dvh - 230px));
+  }
+
+  .support-dialog--japan .support-bank figcaption {
+    margin-top: 8px;
+    font-size: 9px;
+  }
+}
+
+@media (max-width: 680px) {
+  .support-floating-trigger {
+    right: 14px;
+    bottom: 76px;
+  }
+
+  .support-dialog {
+    width: calc(100% - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+
+  .support-dialog-shell {
+    padding: 28px 18px 18px;
+  }
+
+  .support-dialog-heading {
+    padding-right: 42px;
+  }
+
+  .support-dialog-heading h2 {
+    font-size: 24px;
+  }
+
+  .support-dialog-heading > p:last-child {
+    font-size: 11px;
+    white-space: normal;
+  }
+
+  .support-options {
+    grid-template-columns: 1fr;
+  }
+
+  .support-github,
+  .support-kofi {
+    padding: 18px;
+  }
+
+  .support-bank img {
+    width: 100%;
+    height: auto;
+    max-height: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .support-kofi-button {
+    transition: none;
+  }
+
+  .support-dialog::backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Isolate shared support controls from each app's header, section and button rules. */
+.support-dialog .support-dialog-heading{min-height:0;max-width:none;margin:0;border:0;gap:normal;align-items:normal;justify-content:normal;flex-wrap:nowrap;letter-spacing:normal}
+.support-dialog .support-international{padding:0;margin:0;scroll-margin:0}
+.support-dialog .support-github,.support-dialog .support-kofi,.support-dialog .support-bank{margin:0}
+.support-dialog .support-dialog-close{min-height:28px;max-height:28px;letter-spacing:normal}
+.support-dialog .support-primary{min-height:0;letter-spacing:normal;text-decoration:none}
+.support-dialog .support-primary:hover{border-color:var(--support-accent);color:var(--support-accent-ink);text-decoration:none}
+.support-dialog .support-kofi-button:hover{text-decoration:none}
+
+.support-dialog{font-size:16px;line-height:1.5}
