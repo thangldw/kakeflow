@@ -1,9 +1,9 @@
 import { readFileSync } from 'node:fs'
-import { URL } from 'node:url'
+import { resolve } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it } from 'vitest'
 
-const script = readFileSync(new URL('../public/support-web.js', import.meta.url), 'utf8')
+const script = readFileSync(resolve('public/support-web.js'), 'utf8')
 function render(origin: string, pathname: string) {
   const links: Record<string, unknown>[] = []
   const document = { createElement: () => ({ style: { cssText: '' } }), body: { appendChild: (link: Record<string, unknown>) => links.push(link) } }
