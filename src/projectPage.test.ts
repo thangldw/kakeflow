@@ -8,6 +8,9 @@ const docsPath = resolve(process.cwd(), 'docs')
 const html = readFileSync(resolve(docsPath, 'index.html'), 'utf8')
 const css = readFileSync(resolve(docsPath, 'kakeflow-page.css'), 'utf8')
 const script = readFileSync(resolve(docsPath, 'kakeflow-page.js'), 'utf8')
+const supportScript = readFileSync(resolve(docsPath, 'product-support.js'), 'utf8')
+const supportCss = readFileSync(resolve(docsPath, 'product-support.css'), 'utf8')
+const modalMethods = Object.fromEntries(['showModal', 'close'].map(method => [method, Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, method)]))
 
 function localAssetExists(path: string) {
   return existsSync(resolve(docsPath, path.split('?')[0]))
@@ -15,6 +18,10 @@ function localAssetExists(path: string) {
 
 describe('KakeFlow project page', () => {
   afterEach(() => {
+    for (const [method, descriptor] of Object.entries(modalMethods)) {
+      if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, method, descriptor)
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, method)
+    }
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
     document.documentElement.innerHTML = '<head></head><body></body>'
@@ -55,8 +62,11 @@ describe('KakeFlow project page', () => {
     expect(html).toContain('予算閾値、貯蓄目標、定期支出の変化')
     expect(html).toContain('スナップショット、FIFO実現損益、配当、資産配分')
     expect(html).toContain('署名を検証する安全な自動更新')
-    expect(html).toContain('https://github.com/sponsors/thangldw')
-    expect(html).toContain('data-support-backdrop')
+    expect(supportScript).toContain('https://github.com/sponsors/thangldw')
+    expect(html).toContain('data-support-shared')
+    expect(localAssetExists('product-support.js')).toBe(true)
+    expect(localAssetExists('product-support.css')).toBe(true)
+    expect(localAssetExists('assets/support-vietqr-mb.jpg')).toBe(true)
     expect(html.match(/role="tab"/g)).toHaveLength(3)
     expect(html.match(/role="tab"[^>]+tabindex="-1"/g)).toHaveLength(2)
   })
@@ -92,7 +102,8 @@ describe('KakeFlow project page', () => {
     expect(css).toContain('@media (max-width: 820px)')
     expect(css).toContain('@media (max-width: 540px)')
     expect(css).toContain('@media (prefers-reduced-motion: reduce)')
-    expect(css).toContain('.support-grid { grid-template-columns: 1fr; }')
+    expect(supportCss).toContain('.support-options')
+    expect(supportCss).toContain('grid-template-columns: 1fr;')
     expect(css).toContain('object-fit: contain')
     expect(css).toContain(".hero-product img[src*='.gif']")
     expect(html).not.toMatch(/<script[^>]+https?:\/\//)
@@ -127,10 +138,22 @@ describe('KakeFlow project page', () => {
     expect(document.querySelector<HTMLImageElement>('#tour-image')?.src).toContain('?v=20260807-2')
     expect(document.querySelector<HTMLImageElement>('#tour-image')?.alt).toContain('Tanaka family')
 
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: function (this: HTMLDialogElement) { this.setAttribute('open', '') } })
+    Object.defineProperty(HTMLDialogElement.prototype, 'close', { configurable: true, value: function (this: HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new Event('close')) } })
+    window.eval(supportScript)
     const supportButton = document.querySelector<HTMLButtonElement>('[data-support-open]')
     supportButton?.click()
-    expect(document.querySelector('[data-support-backdrop]')).not.toHaveAttribute('hidden')
-    document.querySelector<HTMLButtonElement>('[data-support-close]')?.click()
-    expect(document.querySelector('[data-support-backdrop]')).toHaveAttribute('hidden')
+    expect(document.querySelector('#supportDialog')).toHaveAttribute('open')
+    document.querySelector<HTMLLabelElement>('label[for=sharedSponsorOneTime]')?.click()
+    const amount = document.querySelector<HTMLInputElement>('#sharedSponsorAmount')!
+    amount.value = '7'
+    const form = document.querySelector<HTMLFormElement>('.sponsor-form')!
+    const data = new FormData(form)
+    expect(data.get('frequency')).toBe('one-time')
+    expect(data.get('amount')).toBe('7')
+    expect(form.action).toContain('/sponsors/thangldw/sponsorships')
+    expect(document.querySelector('.support-kofi-button')).toHaveAttribute('href', 'https://ko-fi.com/F4N224DDUV')
+    document.querySelector<HTMLButtonElement>('#supportClose')?.click()
+    expect(document.querySelector('#supportDialog')).not.toHaveAttribute('open')
   })
 })
