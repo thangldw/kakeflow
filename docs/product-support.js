@@ -37,7 +37,7 @@
                 '<div class="sponsor-amount-control"><span aria-hidden="true">$</span>' +
                   '<input id="sharedSponsorAmount" name="amount" type="number" min="1" max="12000" step="1" inputmode="numeric" placeholder="5" aria-describedby="sharedSponsorAmountHelp" required>' +
                 '</div>' +
-                '<button class="support-primary" type="submit">Continue on GitHub <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></button>' +
+                '<button class="support-primary" type="submit">Continue on GitHub <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12h16m-6-6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
                 '<p class="sponsor-help" id="sharedSponsorAmountHelp">GitHub will open to review and confirm your sponsorship.</p>' +
               '</form>' +
             '</article>' +
@@ -69,7 +69,7 @@
     trigger.className = "support-floating-trigger";
     trigger.setAttribute("aria-haspopup", "dialog");
     trigger.setAttribute("aria-controls", "supportDialog");
-    trigger.innerHTML = '<i class="fa-solid fa-wallet" aria-hidden="true"></i><span>Support my work</span>';
+    trigger.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M4 4h15v3H5a1 1 0 0 0 0 2h15a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm12 9v4h6v-4h-6Zm2 1a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg><span>Support my work</span>';
 
     document.body.insertAdjacentHTML("beforeend", dialogMarkup());
     var slot = document.getElementById('supportSlot');
