@@ -87,6 +87,7 @@
   function openSupport(event) { returnFocus = event.currentTarget; supportBackdrop.hidden = false; document.body.classList.add('modal-open'); supportClose?.focus(); }
   function closeSupport() { supportBackdrop.hidden = true; document.body.classList.remove('modal-open'); returnFocus?.focus(); }
   document.querySelectorAll('[data-support-open]').forEach((button) => button.addEventListener('click', openSupport));
+  if (location.hash === "#support" && supportBackdrop) openSupport({ currentTarget: document.querySelector("#support") });
   supportClose?.addEventListener('click', closeSupport);
   supportBackdrop?.addEventListener('mousedown', (event) => { if (event.target === supportBackdrop) closeSupport(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && supportBackdrop && !supportBackdrop.hidden) closeSupport(); if (event.key === 'Tab' && supportBackdrop && !supportBackdrop.hidden && supportDialog) { const focusable = [...supportDialog.querySelectorAll('button, a, input')].filter((element) => !element.disabled); if (!focusable.length) return; const first = focusable[0]; const last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } });
