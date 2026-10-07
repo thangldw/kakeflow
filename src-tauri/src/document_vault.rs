@@ -3,6 +3,13 @@
 //! The vault deliberately does not accept an original filename. Objects are
 //! addressed only by the SHA-256 digest of their plaintext and are encrypted
 //! with a key dedicated to document storage.
+//!
+//! SHA-256 here is a content identifier/integrity checksum, not a password
+//! hash or encryption-key derivation. Known plaintext can be fingerprinted
+//! through an object name or its authenticated header; this format does not
+//! hide equality/existence. Access to the owner-only vault directory is part
+//! of the confidentiality boundary. Keys are independently derived by HKDF
+//! and object contents are authenticated with XChaCha20-Poly1305.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
@@ -125,7 +132,7 @@ impl DocumentVault {
             .map_err(|_| DocumentVaultError::KeyDerivation)?;
         let ciphertext = cipher
             .encrypt(
-                XNonce::from_slice(&nonce),
+                &XNonce::from(nonce),
                 Payload {
                     msg: plaintext,
                     aad: &header,
@@ -189,7 +196,7 @@ impl DocumentVault {
             .map_err(|_| DocumentVaultError::KeyDerivation)?;
         let plaintext = cipher
             .decrypt(
-                XNonce::from_slice(&parsed.nonce),
+                &XNonce::from(parsed.nonce),
                 Payload {
                     msg: ciphertext,
                     aad: header,

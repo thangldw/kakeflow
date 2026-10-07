@@ -10,7 +10,7 @@ Thank you for helping improve KakeFlow. Keep changes focused, reviewable and com
 
 ## Development
 
-Requirements: Node.js 20.19+ or 22.12+, Rust 1.97 and the Tauri 2 platform dependencies.
+Requirements: Node.js `^20.19.0 || >=22.12.0` as declared in `package.json`, Rust 1.97 and the Tauri 2 platform dependencies. Use Node 22 (GitHub CI) or Node 24 for local validation. Node 26 produced localStorage/DOM failures in the local test harness; it is not a validated substitute for those environments.
 
 ```bash
 npm ci
