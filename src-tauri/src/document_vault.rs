@@ -125,7 +125,7 @@ impl DocumentVault {
             .map_err(|_| DocumentVaultError::KeyDerivation)?;
         let ciphertext = cipher
             .encrypt(
-                XNonce::from_slice(&nonce),
+                &XNonce::from(nonce),
                 Payload {
                     msg: plaintext,
                     aad: &header,
@@ -189,7 +189,7 @@ impl DocumentVault {
             .map_err(|_| DocumentVaultError::KeyDerivation)?;
         let plaintext = cipher
             .decrypt(
-                XNonce::from_slice(&parsed.nonce),
+                &XNonce::from(parsed.nonce),
                 Payload {
                     msg: ciphertext,
                     aad: header,
