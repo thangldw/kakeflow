@@ -40,6 +40,9 @@ describe('repository hygiene', () => {
       const markdown = readFileSync(file, 'utf8')
       expect(markdown).not.toContain('thangldw/kakeflow-releases')
       for (const match of markdown.matchAll(/\[[^\]]+\]\((?!https?:|mailto:|#)([^)#?]+)(?:[?#][^)]*)?\)/g)) {
+        // The upstream crate README uses rustdoc intra-doc links, not file paths.
+        if (relative(root, file) === 'vendor/glib-0.18.5/README.md'
+          && /^(?:struct@|[A-Za-z_][A-Za-z0-9_]*::)[A-Za-z_][A-Za-z0-9_:]*$/.test(match[1])) continue
         const target = resolve(dirname(file), decodeURIComponent(match[1]))
         if (!existsSync(target)) brokenLinks.push(`${relative(root, file)} -> ${match[1]}`)
       }

@@ -4,6 +4,8 @@
 
 ## English
 
+Use Node 22 (CI) or Node 24 for quality validation. Main-source, GitHub Pages/PWA and signed desktop release states are separate; verify each exact commit or artifact before reporting it released.
+
 Canonical project endpoints:
 
 - Source: [github.com/thangldw/kakeflow](https://github.com/thangldw/kakeflow)
@@ -32,6 +34,8 @@ Delete only merged or strict-ancestor feature branches. Keep release tags, chang
 
 ## Tiếng Việt
 
+Dùng Node 22 (CI) hoặc Node 24 để chạy quality gate. Source main, Pages/PWA và release desktop có chữ ký là ba trạng thái riêng; xác minh đúng commit hoặc artifact trước khi báo đã phát hành.
+
 Địa chỉ chính thức của dự án:
 
 - Mã nguồn: [github.com/thangldw/kakeflow](https://github.com/thangldw/kakeflow)
@@ -59,6 +63,8 @@ Binary cộng đồng macOS v1.3.0 được ký ad-hoc và chưa notarize; khôn
 Chỉ xoá feature branch đã merge hoặc là ancestor của `main`. Giữ release tag, changelog, migration và compatibility reader cần thiết để cài đặt, restore hoặc mở dữ liệu từng được hỗ trợ.
 
 ## 日本語
+
+Quality validation は Node 22 (CI) または Node 24 で実行します。Main source、Pages/PWA、署名済み desktop release は別の状態です。公開完了と記載する前に exact commit または artifact を検証します。
 
 公式 project endpoint:
 

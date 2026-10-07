@@ -29,6 +29,8 @@ flowchart LR
 
 ## English
 
+Published desktop downloads remain at [v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1); the [live website](https://thangldw.github.io/kakeflow/) and [PWA](https://thangldw.github.io/kakeflow/app/) are deployed independently from `main`. A dependency or website update does not publish a new signed native installer.
+
 KakeFlow imports user-provided bank, card, wallet, brokerage, spreadsheet, PDF, email and receipt data into an auditable double-entry ledger only after review. It keeps source evidence and row-level lineage, handles card settlement and investment snapshots, and provides Japanese, English and Vietnamese UI catalogs.
 
 Receipt images are processed locally with bundled PP-OCRv5 models. The receipt normalizer accepts wide-spaced yen amounts and tax-marked prices, but it does not invent a transaction date when the source image has none; incomplete results stay outside the ledger for review.
@@ -37,7 +39,7 @@ The PWA foundation provides an account-free encrypted browser vault, household a
 
 Version 1.3.0 adds a read-only Connector Control Center and durable, fail-closed refresh recovery for native sources; the PWA does not contain provider clients or credentials. It checks the signed stable update channel after startup and also exposes a manual check in Settings. Release QA includes synthetic receipt images and the local `/ocr-regression.html` PP-OCRv5 model gate. The [public landing page](https://thangldw.github.io/kakeflow/) presents one synthetic Tanaka-family journey from receipt review through budgets and investments, with separate Japanese, English and Vietnamese animations.
 
-Requirements: Node.js 20.19+ or 22.12+, Rust 1.97 and Tauri 2 platform dependencies.
+Requirements: Node.js 22.22.2, compatible 24.15+, or 26+, Rust 1.97 and Tauri 2 platform dependencies.
 
 ```bash
 npm ci
@@ -53,6 +55,8 @@ KakeFlow does not initiate payments or treat extracted records as confirmed acco
 
 ## Tiếng Việt
 
+Bản desktop đã phát hành vẫn là [v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1); [website](https://thangldw.github.io/kakeflow/) và [PWA](https://thangldw.github.io/kakeflow/app/) deploy riêng từ `main`. Cập nhật dependency hoặc website không đồng nghĩa đã phát hành installer native có chữ ký mới.
+
 KakeFlow nhập dữ liệu ngân hàng, thẻ, ví, chứng khoán, bảng tính, PDF, email và hóa đơn do người dùng cung cấp vào sổ kép có thể kiểm toán, nhưng chỉ sau bước duyệt. Hệ thống giữ bằng chứng nguồn và lineage theo từng dòng, hỗ trợ đối soát thẻ, snapshot đầu tư và giao diện Nhật–Anh–Việt.
 
 Ảnh biên lai được xử lý cục bộ bằng model PP-OCRv5 đóng gói. Bộ chuẩn hóa hỗ trợ số tiền yên có khoảng cách và giá có dấu thuế, nhưng không tự tạo ngày giao dịch nếu ảnh nguồn không có ngày; kết quả chưa đủ luôn nằm ngoài sổ cái để chờ duyệt.
@@ -64,6 +68,8 @@ Bản v1.3.0 bổ sung Connector Control Center chỉ đọc và cơ chế refre
 Ứng dụng không thực hiện thanh toán và không coi dữ liệu trích xuất là bút toán đã xác nhận. Dữ liệu mơ hồ hoặc chưa hỗ trợ luôn bị khóa để người dùng duyệt. Repo này là nguồn mã và nơi phát hành canonical duy nhất. Dùng các lệnh ở phần English để kiểm thử và build.
 
 ## 日本語
+
+公開済み desktop は [v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1) です。[Website](https://thangldw.github.io/kakeflow/) と [PWA](https://thangldw.github.io/kakeflow/app/) は `main` から個別に deploy します。Dependency や website の更新は新しい署名済み native installer の公開を意味しません。
 
 KakeFlow は、ユーザーが提供した銀行、カード、ウォレット、証券、表計算、PDF、メール、レシートのデータを、確認後にのみ監査可能な複式簿記台帳へ取り込みます。ソース証拠と行単位の来歴を保持し、カード決済照合、投資スナップショット、日本語・英語・ベトナム語 UI を提供します。
 

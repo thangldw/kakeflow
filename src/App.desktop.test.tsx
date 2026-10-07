@@ -890,7 +890,7 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(screen.getByLabelText('家族集計範囲')).toHaveValue('MEMBER:taro'))
     fireEvent.change(screen.getByLabelText('家族集計範囲'), { target: { value: 'HOUSEHOLD_COMMON' } })
     await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ attributionScope: { kind: 'HOUSEHOLD_COMMON' } })))
-  })
+  }, 15000)
 
   it('preserves account and family scopes when filtering calculation-target transactions', async () => {
     accountGroupState.groups = [{

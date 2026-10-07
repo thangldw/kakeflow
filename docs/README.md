@@ -9,8 +9,8 @@ This directory contains the current project documentation for the canonical repo
 | [PWA storyboard](demo/KakeFlow-90-second-storyboard.md) | Timing and claim boundary for the reviewed receipt-to-provenance video. |
 | [Operations](OPERATIONS.md) | Build, release, updater, Pages and repository maintenance procedures. |
 | [Security](SECURITY.md) | Supported versions, private reporting and prohibited data. |
-| [v1.3.0 release notes](releases/v1.3.0.md) | Current installation, connector-control scope and verification evidence. |
-| [v1.2.1 release notes](releases/v1.2.1.md) | Historical PWA foundation and installation evidence. |
+| [v1.3.0 release notes](releases/v1.3.0.md) | Prepared release candidate; publication and installed-upgrade evidence remain gated. |
+| [v1.2.1 release notes](releases/v1.2.1.md) | Published desktop installation, release scope and verification evidence; separate from newer main/PWA changes. |
 | [v1.2.0 release notes](releases/v1.2.0.md) | Historical installation and updater boundary. |
 
 Project-wide policies remain at the repository root: [README](../README.md), [Contributing](../CONTRIBUTING.md), [Code of Conduct](../CODE_OF_CONDUCT.md), [Changelog](../CHANGELOG.md) and [MIT License](../LICENSE).
