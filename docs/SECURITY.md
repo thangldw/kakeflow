@@ -79,3 +79,9 @@ production CSP は script／connection を same-origin に限定し inline scrip
 ### Connector control と credential の境界
 
 connector summary、refresh batch、binding projection は contract 上 redaction され、credential、authorization code、durable cursor、raw local path、provider folder／label identifier、financial row、provider response body を含みません。binding が欠落・曖昧・cross-household・version 不一致なら immutable evidence を削除せず commit を防ぎます。PWA は native provider client や credential state を同梱しません。
+
+## Document-vault content identifiers
+
+Vault v1 uses a public SHA-256 plaintext digest for immutable object addressing, deduplication and integrity. This is not password storage or key derivation: an HKDF-derived document key and fresh XChaCha20-Poly1305 nonce protect each object, and duplicate objects are authenticated before reuse. Changing this address algorithm would break existing document/backup references.
+
+Object names and headers permit equality checks and matching a known document's digest. Encryption does not conceal that metadata from a party who can read the vault directory. The directory must retain owner-only access, and the format must not be advertised as hiding document existence. CodeQL weak-sensitive-data-hashing at this content-checksum operation is a purpose mismatch; encryption, wrong-key, tamper and private-permission tests remain required.

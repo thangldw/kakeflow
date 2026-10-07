@@ -143,6 +143,8 @@ jobs:
         run: |
           rustup toolchain install 1.97.0 --profile minimal --component rustfmt,clippy
           rustup default 1.97.0
+      - name: Verify native GLib security backport
+        run: cargo test --manifest-path vendor/glib-0.18.5/Cargo.toml --test variant_str_security --release
       - working-directory: src-tauri
         run: cargo fmt --all -- --check
       - working-directory: src-tauri
