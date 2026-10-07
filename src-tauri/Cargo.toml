@@ -73,3 +73,8 @@ zip = "8.6.0"
 # Backport the upstream GLib 0.20.0 mutable FFI out-pointer fix without changing GTK ABI.
 [patch.crates-io]
 glib = { path = "../vendor/glib-0.18.5" }
+
+# Keep build-time proc-macros loadable on macOS 27 (rust-lang/rust#157750).
+# These host libraries are not included in the packaged application.
+[profile.release.build-override]
+strip = "none"
