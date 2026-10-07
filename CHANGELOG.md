@@ -5,6 +5,41 @@
 - Upgrade the Vite/React-plugin/jsdom toolchain as a compatible group and align the development Node baseline.
 - Upgrade ZIP and X25519/ChaCha dependencies; use fixed-size nonce construction and verify legacy cipher/key compatibility.
 
+## 1.3.0 — 2026-09-11
+
+### English
+
+- Rotated the updater key after loss of the previous private key. All earlier desktop versions, including v1.2.1, require one manual installation of v1.3.0; future releases use the new trust root. Application identity and data locations are unchanged by the rotation.
+
+- Added a read-only Connector Control Center that inventories native sources and makes account bindings an explicit posting-authorization boundary.
+- Added durable refresh batches with per-source cursors, backoff, version and generation fencing, fail-closed recovery, and redacted operational summaries.
+- Hardened the isolated macOS ARM64 release wrapper with canonical path checks, atomic physical-path locks, source/resource identity digests, and packaged artifact verification.
+- Removed two test-only CodeQL data flows at their source and documented the remaining generated-macro false positive; the Linux-only `glib` advisory remains disclosed.
+- Kept connector provider clients and credentials out of the PWA. This release does not claim direct bank aggregation or Money Forward parity.
+- Published the macOS ARM64 desktop build as an ad-hoc-signed, non-notarized community artifact; the account-free PWA remains the no-Gatekeeper option.
+
+### Tiếng Việt
+
+- Đổi khóa updater do mất private key cũ. Mọi bản desktop trước đó, kể cả v1.2.1, cần cài v1.3.0 thủ công một lần; các bản tiếp theo dùng khóa mới. Việc đổi khóa giữ nguyên định danh ứng dụng và vị trí dữ liệu.
+
+- Bổ sung Connector Control Center chỉ đọc để kiểm kê nguồn native và dùng account binding làm ranh giới cấp quyền ghi sổ rõ ràng.
+- Bổ sung refresh batch bền vững với cursor/backoff theo nguồn, version/generation fencing, khôi phục fail-closed và summary vận hành đã che dữ liệu nhạy cảm.
+- Củng cố wrapper release macOS ARM64 cô lập bằng kiểm tra canonical path, khóa nguyên tử theo physical path, digest nhận dạng source/resource và xác minh artifact đã đóng gói.
+- Loại hai data flow CodeQL chỉ xuất hiện trong test và ghi lại false positive còn lại từ macro sinh mã; advisory `glib` chỉ áp dụng Linux vẫn được công khai.
+- Không đưa provider client hoặc credential connector vào PWA. Bản này không tuyên bố kết nối ngân hàng trực tiếp hay tương đương Money Forward.
+- Phát hành desktop macOS ARM64 dưới dạng community artifact được ký ad-hoc và chưa notarize; PWA không cần account vẫn là lựa chọn không gặp Gatekeeper.
+
+### 日本語
+
+- 旧秘密鍵の紛失により updater 鍵を更新しました。v1.2.1 を含む旧 desktop 版からは v1.3.0 の手動インストールが一度必要です。以降の更新は新しい鍵を使用し、今回の鍵更新によるアプリ識別子とデータ保存先の変更はありません。
+
+- native source を一覧化し、account binding を明示的な記帳承認境界として扱う read-only Connector Control Center を追加しました。
+- source ごとの cursor／backoff、version／generation fencing、fail-closed recovery、秘匿化済み運用 summary を備えた durable refresh batch を追加しました。
+- canonical path 検査、physical path 単位の atomic lock、source／resource identity digest、packaged artifact 検証により、分離された macOS ARM64 release wrapper を強化しました。
+- test のみに存在した CodeQL data flow を 2 件除去し、生成 macro に残る false positive を記録しました。Linux のみ該当する `glib` advisory は引き続き開示します。
+- PWA には connector provider client と credential を含めません。本 release は銀行への直接接続や Money Forward 同等性を主張しません。
+- macOS ARM64 desktop build を ad-hoc 署名済み・未公証の community artifact として公開しました。account 不要の PWA は Gatekeeper を必要としない選択肢です。
+
 ## 1.2.1 — 2026-08-25
 
 ### English
