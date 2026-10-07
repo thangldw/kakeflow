@@ -310,7 +310,7 @@ fn seal_with_limit(
         .map_err(|_| FamilyEnvelopeError::InvalidInput)?;
     let ciphertext = payload_cipher
         .encrypt(
-            XNonce::from_slice(&payload_nonce_bytes),
+            &XNonce::from(payload_nonce_bytes),
             Payload {
                 msg: plaintext,
                 aad: &payload_aad,
@@ -340,7 +340,7 @@ fn seal_with_limit(
                 .map_err(|_| FamilyEnvelopeError::InvalidInput)?;
             let wrapped = cipher
                 .encrypt(
-                    XNonce::from_slice(&wrap_nonce),
+                    &XNonce::from(wrap_nonce),
                     Payload {
                         msg: content_key.as_ref(),
                         aad: &context,
@@ -435,7 +435,7 @@ fn open_with_limit(
     let content_key = Zeroizing::new(
         wrap_cipher
             .decrypt(
-                XNonce::from_slice(&wrap_nonce),
+                &XNonce::from(wrap_nonce),
                 Payload {
                     msg: &wrapped_key,
                     aad: &context,
@@ -458,7 +458,7 @@ fn open_with_limit(
         .map_err(|_| FamilyEnvelopeError::Malformed)?;
     let plaintext = payload_cipher
         .decrypt(
-            XNonce::from_slice(&payload_nonce),
+            &XNonce::from(payload_nonce),
             Payload {
                 msg: parsed.ciphertext,
                 aad: &aad,

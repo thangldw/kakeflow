@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-No changes yet.
+- Upgrade the Vite/React-plugin/jsdom toolchain as a compatible group and align the development Node baseline.
+- Upgrade ZIP and X25519/ChaCha dependencies; use fixed-size nonce construction and verify legacy cipher/key compatibility.
 
 ## 1.2.1 — 2026-08-25
 
