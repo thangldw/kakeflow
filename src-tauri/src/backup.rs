@@ -521,7 +521,7 @@ fn write_record(
     let nonce = record_nonce(nonce_prefix, index);
     let ciphertext = cipher
         .encrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: plaintext,
                 aad: &aad,
@@ -802,7 +802,7 @@ fn read_record(
     let nonce = record_nonce(nonce_prefix, index);
     let plaintext = cipher
         .decrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: &ciphertext,
                 aad: &aad,

@@ -37,7 +37,7 @@ The PWA foundation provides an account-free encrypted browser vault, household a
 
 Version 1.2.1 checks the signed stable update channel after startup and also exposes a manual check in Settings. Release QA includes synthetic receipt images and the local `/ocr-regression.html` PP-OCRv5 model gate. The [public landing page](https://thangldw.github.io/kakeflow/) presents one synthetic Tanaka-family journey from receipt review through budgets and investments, with separate Japanese, English and Vietnamese animations.
 
-Requirements: Node.js 20.19+ or 22.12+, Rust 1.97 and Tauri 2 platform dependencies.
+Requirements: Node.js 22.22.2, compatible 24.15+, or 26+, Rust 1.97 and Tauri 2 platform dependencies.
 
 ```bash
 npm ci
