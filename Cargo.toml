@@ -1,5 +1,5 @@
 [workspace]
 members = ["crates/kakeflow-core"]
-exclude = ["src-tauri"]
+exclude = ["src-tauri", "vendor/glib-0.18.5"]
 resolver = "2"
 

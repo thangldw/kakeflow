@@ -170,3 +170,10 @@ analysis/outputs/
 analysis/*-artifact.json
 analysis/*.html
 NamiQuant-Claude-Design.html
+
+# ABI-preserving security backport; generated native build files stay ignored.
+!vendor/
+!vendor/glib-0.18.5/
+!vendor/glib-0.18.5/**
+vendor/glib-0.18.5/target/
+vendor/glib-0.18.5/Cargo.lock
