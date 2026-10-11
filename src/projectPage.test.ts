@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -21,7 +22,7 @@ function localAssetExists(path: string) {
 }
 
 describe('KakeFlow project page', () => {
-  afterEach(() => { document.documentElement.innerHTML = '<head></head><body></body>' })
+  afterEach(() => { document.documentElement.innerHTML = '<head></head><body></body>'; localStorage.clear() })
 
   it('keeps published download, source and signing boundaries aligned with the release', () => {
     loadPage()
@@ -53,6 +54,7 @@ describe('KakeFlow project page', () => {
     const browser = document.querySelector<HTMLElement>('#browser-panel')!
     expect(desktop.hidden).toBe(false)
     expect(browser.hidden).toBe(true)
+    expect(browser.contains(document.querySelector('.browser-demo'))).toBe(true)
     expect(desktop).toHaveTextContent('Multiple source imports, budgets, recurring costs, card matching, and investments')
     expect(desktop).toHaveTextContent('App UI: Japanese, English, Vietnamese')
     document.querySelector<HTMLButtonElement>('[data-environment="browser"]')!.click()
@@ -95,9 +97,9 @@ describe('KakeFlow project page', () => {
     const styles = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
     expect(styles.at(-1)?.href).toBe('https://thangldw.github.io/css/site-shell.css?v=20261011vi')
     const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[src]'))
-    expect(scripts.filter(s => s.src.startsWith('https://')).map(s => new URL(s.src).hostname)).toEqual(['thangldw.github.io', 'thangldw.github.io'])
-    expect(html).toContain('/js/site-shell.js')
-    expect(html).toContain('/js/support-dialog.js')
+    expect(scripts.filter(s => s.src.startsWith('https://')).map(s => new URL(s.src).hostname)).toEqual([])
+    expect(html).toContain('product-shell.js')
+    expect(html).toContain('product-support.js')
     expect(document.body).toHaveAttribute('data-support-shared')
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
@@ -112,6 +114,34 @@ describe('KakeFlow project page', () => {
       expect(document.querySelector(`[data-locale="${locale}"]`)).toHaveAttribute('aria-pressed', 'true')
       expect(document.querySelectorAll('[data-locale][aria-pressed="true"]')).toHaveLength(1)
       expect(document.querySelector('.site-brand')).toHaveTextContent('thang.')
+      expect(document.title).toContain('KakeFlow')
+      expect(document.querySelector('.skip-link')?.textContent?.trim()).toBeTruthy()
+      expect(document.querySelector('video')?.getAttribute('aria-label')).toBeTruthy()
     }
+  })
+  it('preserves an explicit locale after reinitialization while new visitors start in English', () => {
+    loadPage()
+    expect(document.documentElement.lang).toBe('en')
+    document.querySelector<HTMLButtonElement>('[data-locale="vi"]')!.click()
+    const title = document.title
+    loadPage()
+    expect(document.documentElement.lang).toBe('vi')
+    expect(document.title).toBe(title)
+    expect(document.querySelector('.skip-link')).toHaveTextContent('Đi tới nội dung')
+    expect(document.querySelector('[data-environment="browser"]')).toHaveTextContent('Trình duyệt')
+    expect(document.querySelector('video')).toHaveAttribute('aria-label', 'Demo PWA KakeFlow không cần tài khoản')
+    expect(document.querySelector('.usecase-row img')?.getAttribute('alt')).toContain('Chi tiêu hằng ngày')
+  })
+
+  it('bundles reviewed shared script bytes rather than executing mutable root-site responses', () => {
+    loadPage()
+    const manifest = JSON.parse(readFileSync(resolve(docsPath, 'shared-assets.json'), 'utf8'))
+    for (const name of ['product-shell.js', 'product-support.js']) {
+      const bytes = readFileSync(resolve(docsPath, name))
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(manifest.assets[name].sha256)
+      expect(manifest.assets[name].source).toMatch(/^https:\/\/thangldw\.github\.io\/js\//)
+      expect(document.querySelector(`script[src^="${name}"]`)).not.toBeNull()
+    }
+    expect(document.querySelector('script[src^="https:"]')).toBeNull()
   })
 })
