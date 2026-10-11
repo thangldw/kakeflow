@@ -8,9 +8,9 @@
       var saved = localStorage.getItem("theme");
       if (saved === "dark" || saved === "light") return saved;
     } catch {
-      // Use the system preference when storage is unavailable.
+      // Use the default light theme when storage is unavailable.
     }
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    return "light";
   }
 
   function syncThemeButton(button) {

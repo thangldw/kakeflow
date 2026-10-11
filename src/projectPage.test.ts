@@ -9,12 +9,14 @@ const docsPath = resolve(process.cwd(), 'docs')
 const html = readFileSync(resolve(docsPath, 'index.html'), 'utf8')
 const css = readFileSync(resolve(docsPath, 'kakeflow-page.css'), 'utf8')
 const script = readFileSync(resolve(docsPath, 'kakeflow-page.js'), 'utf8')
+const themeScript = readFileSync(resolve(docsPath, 'product-shell.js'), 'utf8')
 
 function loadPage() {
   const page = new DOMParser().parseFromString(html, 'text/html')
   document.documentElement.innerHTML = page.documentElement.innerHTML
   document.documentElement.lang = page.documentElement.lang
-  document.documentElement.dataset.theme = page.documentElement.dataset.theme
+  delete document.documentElement.dataset.theme
+  window.eval(themeScript)
   window.eval(script)
 }
 function localAssetExists(path: string) {
@@ -143,5 +145,15 @@ describe('KakeFlow project page', () => {
       expect(document.querySelector(`script[src^="${name}"]`)).not.toBeNull()
     }
     expect(document.querySelector('script[src^="https:"]')).toBeNull()
+  })
+  it('defaults to light and preserves explicit theme selections across reloads', () => {
+    loadPage()
+    expect(document.documentElement.dataset.theme).toBe('light')
+    document.querySelector<HTMLButtonElement>('#themeToggle')!.click()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    loadPage()
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    document.querySelector<HTMLButtonElement>('#themeToggle')!.click()
+    expect(document.documentElement.dataset.theme).toBe('light')
   })
 })
