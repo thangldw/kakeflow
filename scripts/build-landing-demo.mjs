@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url'
 
 import sharp from 'sharp'
 
+// Backward-compatible standalone story export; the current landing uses static screenshots.
+console.log('Exporting archival story GIFs. This command does not update the current landing; see docs/DEMO_USE_CASE.md.')
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const width = 960
 const pageHeight = 540
@@ -62,5 +65,5 @@ for (const locale of Object.keys(stories)) {
   })
     .gif({ loop: 0, delay: frameDelay, colours: 160, dither: 0.7, effort: 6 })
     .toFile(output)
-  console.log(`Landing demo GIF written to ${output}.`)
+  console.log(`Standalone story GIF written to ${output}.`)
 }
