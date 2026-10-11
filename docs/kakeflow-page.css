@@ -4,3 +4,5 @@
 .flow .mobile-connector{display:none}@media(max-width:600px){.flow .mobile-connector{display:block;height:32px}.ledger-row{margin-top:0}}
 
 @media(max-width:600px){.ledger-row .example{display:none}.flow .mobile-connector{width:24px;margin-inline:auto}}
+
+.browser-demo{margin-top:var(--space-24)}video{display:block;width:100%;height:auto;max-width:960px;margin-block:var(--space-16);object-fit:contain}
