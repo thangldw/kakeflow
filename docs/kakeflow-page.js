@@ -6,7 +6,6 @@
     const button = document.getElementById('themeToggle');
     const dark = document.documentElement.dataset.theme === 'dark';
     button.textContent = dark ? '☀' : '☾';
-    button.setAttribute('aria-label', translate(dark ? 'themeLight' : 'themeDark'));
   };
   const setLocale = next => {
     locale = ['en', 'vi', 'ja', 'zh'].includes(next) ? next : 'en';

@@ -16,7 +16,15 @@
   function syncThemeButton(button) {
     if (!button) return;
     var dark = root.dataset.theme === "dark";
-    button.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+    var labels = {
+      en: ["Switch to dark theme", "Switch to light theme"],
+      vi: ["Chuyển sang giao diện tối", "Chuyển sang giao diện sáng"],
+      ja: ["ダークテーマに切り替える", "ライトテーマに切り替える"],
+      zh: ["切换深色主题", "切换浅色主题"]
+    };
+    var language = root.lang.split("-")[0];
+    var copy = labels[language] || labels.en;
+    button.setAttribute("aria-label", copy[dark ? 1 : 0]);
     var icon = button.querySelector("i");
     if (icon) icon.className = dark ? "fa-solid fa-sun" : "fa-solid fa-moon";
   }
@@ -34,9 +42,10 @@
 
   function bindThemeControl() {
     var button = document.getElementById("themeToggle");
-    if (!button || button.dataset.siteShellBound === "true") return;
-    button.dataset.siteShellBound = "true";
+    if (!button) return;
     syncThemeButton(button);
+    if (button.dataset.siteShellBound === "true") return;
+    button.dataset.siteShellBound = "true";
     button.addEventListener("click", function () {
       setTheme(root.dataset.theme === "dark" ? "light" : "dark", button);
     });
@@ -44,9 +53,11 @@
 
   function observeThemeControl() {
     if (!document.body || typeof MutationObserver === "undefined") return;
-    new MutationObserver(bindThemeControl).observe(document.body, {
+    new MutationObserver(bindThemeControl).observe(root, {
       childList: true,
-      subtree: true
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["lang"]
     });
   }
 
