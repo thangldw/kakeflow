@@ -58,7 +58,7 @@
     "fflate": "^0.8.3",
     "idb": "8.0.3",
     "lucide-react": "^0.468.0",
-    "postal-mime": "^2.7.5",
+    "postal-mime": "^4.0.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "read-excel-file": "^9.3.1"
