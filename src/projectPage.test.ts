@@ -101,7 +101,9 @@ describe('KakeFlow project page', () => {
     const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[src]'))
     expect(scripts.filter(s => s.src.startsWith('https://')).map(s => new URL(s.src).hostname)).toEqual([])
     expect(document.querySelector('script[src^="product-shell.js"]')).not.toBeNull()
-    expect(document.querySelector('script[src^="product-support.js"]')).toBeNull()
+    expect(document.querySelector('script[src^="product-support.js"]')).not.toBeNull()
+    expect(document.querySelector('link[href*="/css/support-dialog.css"]')).not.toBeNull()
+    expect(document.querySelector('#supportSlot, [data-support-open]')).toBeNull()
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
