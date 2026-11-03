@@ -93,16 +93,15 @@ describe('KakeFlow project page', () => {
     expect(document.querySelector('.browser-demo')).toHaveTextContent('synthetic demo')
   })
 
-  it('inherits the official design entry and shared theme/support owners', () => {
+  it('inherits the official design entry and loads the shared theme control', () => {
     loadPage()
     expect(document.documentElement.dataset.theme).toBe('light')
     const styles = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]'))
     expect(styles.at(-1)?.href).toBe('https://thangldw.github.io/css/site-shell.css?v=20261011vi')
     const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[src]'))
     expect(scripts.filter(s => s.src.startsWith('https://')).map(s => new URL(s.src).hostname)).toEqual([])
-    expect(html).toContain('product-shell.js')
-    expect(html).toContain('product-support.js')
-    expect(document.body).toHaveAttribute('data-support-shared')
+    expect(document.querySelector('script[src^="product-shell.js"]')).not.toBeNull()
+    expect(document.querySelector('script[src^="product-support.js"]')).toBeNull()
     expect(css).not.toMatch(/#[0-9a-f]{3,8}\b/i)
   })
 
@@ -116,6 +115,8 @@ describe('KakeFlow project page', () => {
       expect(document.querySelector(`[data-locale="${locale}"]`)).toHaveAttribute('aria-pressed', 'true')
       expect(document.querySelectorAll('[data-locale][aria-pressed="true"]')).toHaveLength(1)
       expect(document.querySelector('.site-brand')).toHaveTextContent('thang.')
+      expect(document.querySelector('footer')?.textContent?.trim())
+        .toBe(`KakeFlow © ${new Date().getFullYear()} thang. crafted with care. stay steadfast, stay free`)
       expect(document.title).toContain('KakeFlow')
       expect(document.querySelector('.skip-link')?.textContent?.trim()).toBeTruthy()
       expect(document.querySelector('video')?.getAttribute('aria-label')).toBeTruthy()
@@ -142,7 +143,6 @@ describe('KakeFlow project page', () => {
       const bytes = readFileSync(resolve(docsPath, name))
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(manifest.assets[name].sha256)
       expect(manifest.assets[name].source).toMatch(/^https:\/\/thangldw\.github\.io\/js\//)
-      expect(document.querySelector(`script[src^="${name}"]`)).not.toBeNull()
     }
     expect(document.querySelector('script[src^="https:"]')).toBeNull()
   })
