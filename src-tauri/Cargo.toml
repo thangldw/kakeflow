@@ -68,7 +68,7 @@ tauri-plugin-updater = "2.10.0"
 
 [dev-dependencies]
 tempfile = "3"
-zip = "8.6.0"
+zip = "9.0.5"
 
 # Backport the upstream GLib 0.20.0 mutable FFI out-pointer fix without changing GTK ABI.
 [patch.crates-io]
