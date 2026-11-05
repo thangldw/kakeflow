@@ -14,7 +14,7 @@ describe('optional web support', () => {
   it('opens the existing payment choices from the published PWA', () => {
     const links = render('https://thangldw.github.io', '/kakeflow/app/')
     expect(links).toHaveLength(1)
-    expect(links[0]).toMatchObject({ href: 'https://thangldw.github.io/kakeflow/#support', target: '_blank', rel: 'noopener noreferrer', textContent: 'Support my work' })
+    expect(links[0]).toMatchObject({ href: 'https://thangldw.github.io/kakeflow/#support', target: '_blank', rel: 'noopener noreferrer', textContent: 'Fuel my next build' })
   })
   it('keeps desktop and local offline runtimes independent of the website', () => {
     for (const [origin, pathname] of [['tauri://localhost', '/'], ['http://localhost:5173', '/'], ['https://thangldw.github.io', '/kakeflow/']]) expect(render(origin, pathname)).toHaveLength(0)
