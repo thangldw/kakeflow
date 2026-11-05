@@ -133,10 +133,72 @@ function receiptProvenance(
   })
 }
 
-export default function PwaRoot({
+interface VaultEntry { id: string; name: string }
+interface VaultDirectory { active: string; vaults: VaultEntry[] }
+
+export default function PwaRoot(props: PwaRootProps) {
+  const base = props.databaseName ?? 'kakeflow-pwa-v1'
+  const registryKey = `kakeflow.pwa.directory.${base}`
+  function readDirectory(): VaultDirectory {
+    const original = { id: base, name: 'Original vault' }
+    try {
+      const saved = JSON.parse(localStorage.getItem(registryKey) ?? 'null') as VaultDirectory | null
+      if (saved && Array.isArray(saved.vaults)) {
+        const vaults = [original, ...saved.vaults.filter(v =>
+          typeof v?.id === 'string' && v.id.startsWith(`${base}-vault-`) && typeof v.name === 'string')]
+        if (vaults.some(v => v.id === saved.active)) return { active: saved.active, vaults }
+      }
+    } catch { /* A missing or invalid directory must not hide the original vault. */ }
+    return { active: base, vaults: [original] }
+  }
+  const [directory, setDirectory] = useState<VaultDirectory>(readDirectory)
+  const [directoryError, setDirectoryError] = useState('')
+  useEffect(() => {
+    function syncDirectory(event: StorageEvent) {
+      if (event.key !== registryKey || event.storageArea !== localStorage) return
+      const latest = readDirectory()
+      // Other tabs may add vaults, but must not switch this tab's active session.
+      setDirectory(current => ({ ...current, vaults: [...new Map([...current.vaults, ...latest.vaults].map(v => [v.id, v])).values()] }))
+    }
+    window.addEventListener('storage', syncDirectory)
+    return () => window.removeEventListener('storage', syncDirectory)
+  }, [registryKey, base])
+  async function selectDirectory(next: VaultDirectory) {
+    try {
+      if (!navigator.locks) {
+        setDirectoryError('This browser cannot safely coordinate vault changes across tabs. Use a browser with Web Locks support.')
+        return
+      }
+      const saved = await navigator.locks.request(registryKey, () => {
+        const latest = readDirectory()
+        const merged = { active: next.active, vaults: [...new Map([...latest.vaults, ...next.vaults].map(v => [v.id, v])).values()] }
+        localStorage.setItem(registryKey, JSON.stringify(merged))
+        return merged
+      })
+      setDirectory(current => ({ ...saved, vaults: [...new Map([...current.vaults, ...saved.vaults].map(v => [v.id, v])).values()] }))
+      setDirectoryError('')
+    } catch {
+      setDirectoryError('Could not save the vault selection. Check browser storage and try again.')
+    }
+  }
+  return <PwaVaultRoot {...props} key={directory.active} databaseName={directory.active}
+    vaults={directory.vaults} directoryError={directoryError}
+    onSelectVault={active => selectDirectory({ ...directory, active })}
+    onCreateNewVault={() => {
+      const id = crypto.randomUUID()
+      const entry = { id: `${base}-vault-${id}`, name: `Vault ${directory.vaults.length + 1} · ${id.slice(0, 8)}` }
+      selectDirectory({ active: entry.id, vaults: [...directory.vaults, entry] })
+    }} />
+}
+
+function PwaVaultRoot({
   databaseName = 'kakeflow-pwa-v1',
   ocrDocument = defaultOcrDocument,
-}: PwaRootProps) {
+  vaults, directoryError, onSelectVault, onCreateNewVault,
+}: PwaRootProps & {
+  vaults: VaultEntry[]; directoryError: string;
+  onSelectVault: (id: string) => void; onCreateNewVault: () => void;
+}) {
   const session = usePwaClient(databaseName)
   const [passphrase, setPassphrase] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -400,12 +462,21 @@ export default function PwaRoot({
         <p className="pwa-eyebrow">ACCOUNT-FREE · ON-DEVICE</p>
         <h1>{session.mode === 'new' ? 'Own your financial record' : 'Unlock local vault'}</h1>
         <p>Your passphrase derives the encryption key in this browser. It is never stored or sent.</p>
+        {vaults.length > 1 && <label>Local vault<select aria-label="Local vault" value={databaseName} disabled={session.busy} onChange={event => onSelectVault(event.target.value)}>
+          {vaults.map(vault => <option key={vault.id} value={vault.id}>{vault.name}</option>)}
+        </select></label>}
+        {vaults.length > 1 && <p>Each vault has its own passphrase. Your other vaults and their data are kept on this device.</p>}
+        {directoryError && <p className="pwa-error" role="alert">{directoryError}</p>}
         <label>Vault passphrase<input type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
         {session.mode === 'new' && <label>Confirm passphrase<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>}
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
         <button className="pwa-primary" type="button" disabled={session.busy} onClick={() => void submitVault(session.mode === 'new')}>
           {session.mode === 'new' ? 'Create encrypted vault' : 'Unlock vault'}
         </button>
+        {session.mode === 'locked' && <>
+          <button className="pwa-quiet pwa-new-vault" type="button" disabled={session.busy} onClick={onCreateNewVault}>Create new vault</button>
+          <p>Create a separate vault with a new passphrase. This does not unlock or delete the existing vault.</p>
+        </>}
       </section>
     </main>}
 

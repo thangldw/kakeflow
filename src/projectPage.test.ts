@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import sharp from 'sharp'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import packageJson from '../package.json'
 
 const docsPath = resolve(process.cwd(), 'docs')
@@ -157,5 +157,26 @@ describe('KakeFlow project page', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
     document.querySelector<HTMLButtonElement>('#themeToggle')!.click()
     expect(document.documentElement.dataset.theme).toBe('light')
+  })
+})
+
+
+describe('direct PWA support link', () => {
+  it('opens the QR modal for #support without a custom trigger', () => {
+    document.body.innerHTML = ''
+    const original = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, 'showModal')
+    const showModal = vi.fn()
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { configurable: true, value: showModal })
+    window.history.replaceState(null, '', '#support')
+    try {
+      new Function('document', 'window', readFileSync(resolve(docsPath, 'product-support.js'), 'utf8'))(document, window)
+      expect(showModal).toHaveBeenCalledOnce()
+      expect(document.querySelectorAll('#supportDialog img')).toHaveLength(2)
+    } finally {
+      window.history.replaceState(null, '', window.location.pathname)
+      if (original) Object.defineProperty(HTMLDialogElement.prototype, 'showModal', original)
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal')
+      document.body.classList.remove('support-dialog-open')
+    }
   })
 })

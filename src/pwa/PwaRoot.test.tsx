@@ -31,6 +31,7 @@ import type { Household } from '../platform/pwa/types'
 import type { PwaOcrDocument } from './PwaRoot'
 import PwaRoot, { BackupScreen } from './PwaRoot'
 
+const originalLocks = Object.getOwnPropertyDescriptor(navigator, 'locks')
 const originalFetch = globalThis.fetch
 const passphrase = 'correct horse battery staple'
 
@@ -95,6 +96,14 @@ async function createConfiguredVault(databaseName: string, ocrDocument: PwaOcrDo
 
 describe('PWA receipt-to-provenance journey', () => {
   beforeEach(() => {
+    let queue = Promise.resolve()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+      request: (_name: string, callback: () => unknown) => {
+        const result = queue.then(callback)
+        queue = result.then(() => undefined, () => undefined)
+        return result
+      },
+    } })
     updateMock.updateAvailable = false
     updateMock.activating = false
     updateMock.activateUpdate.mockReset()
@@ -112,6 +121,8 @@ describe('PWA receipt-to-provenance journey', () => {
   })
 
   afterEach(() => {
+    if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks)
+    else Reflect.deleteProperty(navigator, 'locks')
     localStorage.clear()
     vi.restoreAllMocks()
   })
@@ -255,6 +266,59 @@ describe('PWA receipt-to-provenance journey', () => {
 
     expect(await screen.findByText('APPROVED')).toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent('Transaction posted, but the refreshed vault status could not be loaded.')
+  })
+
+  it('merges two stale tab snapshots and syncs entries without switching active vaults', async () => {
+    const base = 'pwa-ui-two-tabs'
+    localStorage.setItem(`kakeflow.pwa.vault.${base}`, '1')
+    const first = render(<PwaRoot databaseName={base} />)
+    const second = render(<PwaRoot databaseName={base} />)
+    fireEvent.click(within(first.container).getByRole('button', { name: 'Create new vault' }))
+    fireEvent.click(within(second.container).getByRole('button', { name: 'Create new vault' }))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(`kakeflow.pwa.directory.${base}`)!).vaults).toHaveLength(3))
+    const firstSelection = within(first.container).getByLabelText('Local vault') as HTMLSelectElement
+    const secondSelection = within(second.container).getByLabelText('Local vault') as HTMLSelectElement
+    const firstId = firstSelection.value
+    const secondId = secondSelection.value
+    expect(firstId).not.toBe(secondId)
+    fireEvent(window, new StorageEvent('storage', { key: `kakeflow.pwa.directory.${base}`, storageArea: localStorage }))
+    await waitFor(() => expect(firstSelection.options).toHaveLength(3))
+    expect(secondSelection.options).toHaveLength(3)
+    expect(firstSelection.value).toBe(firstId)
+    expect(secondSelection.value).toBe(secondId)
+    expect(JSON.parse(localStorage.getItem(`kakeflow.pwa.directory.${base}`)!).vaults.map((v: {id: string}) => v.id)).toEqual(expect.arrayContaining([base, firstId, secondId]))
+  })
+
+  it('keeps the original vault selected when cross-tab locking is unavailable', async () => {
+    const base = 'pwa-ui-no-locks'
+    localStorage.setItem(`kakeflow.pwa.vault.${base}`, '1')
+    Reflect.deleteProperty(navigator, 'locks')
+    render(<PwaRoot databaseName={base} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Create new vault' }))
+    await screen.findByText(/cannot safely coordinate vault changes/)
+    expect(screen.getByRole('heading', { name: 'Unlock local vault' })).toBeInTheDocument()
+    expect(localStorage.getItem(`kakeflow.pwa.directory.${base}`)).toBeNull()
+  })
+
+  it('creates a separate vault and can unlock the preserved original vault', async () => {
+    await createConfiguredVault('pwa-ui-new-vault', vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt))
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: 'forgotten attempt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create new vault' }))
+    await screen.findByRole('heading', { name: 'Own your financial record' })
+    expect(screen.getByLabelText('Vault passphrase')).toHaveValue('')
+    const newPassphrase = 'a different vault passphrase'
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: newPassphrase } })
+    fireEvent.change(screen.getByLabelText('Confirm passphrase'), { target: { value: newPassphrase } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    await screen.findByRole('heading', { name: 'Set up your household' })
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    fireEvent.change(screen.getByLabelText('Local vault'), { target: { value: 'pwa-ui-new-vault' } })
+    await waitFor(() => expect(screen.getByLabelText('Local vault')).toHaveValue('pwa-ui-new-vault'))
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock vault' }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+    expect(screen.getByText('Home · JPY')).toBeInTheDocument()
   })
 
   it('does not repopulate a locked screen from a stale vault load', async () => {
