@@ -139,7 +139,7 @@ interface VaultDirectory { active: string; vaults: VaultEntry[] }
 export default function PwaRoot(props: PwaRootProps) {
   const base = props.databaseName ?? 'kakeflow-pwa-v1'
   const registryKey = `kakeflow.pwa.directory.${base}`
-  const [directory, setDirectory] = useState<VaultDirectory>(() => {
+  function readDirectory(): VaultDirectory {
     const original = { id: base, name: 'Original vault' }
     try {
       const saved = JSON.parse(localStorage.getItem(registryKey) ?? 'null') as VaultDirectory | null
@@ -150,12 +150,32 @@ export default function PwaRoot(props: PwaRootProps) {
       }
     } catch { /* A missing or invalid directory must not hide the original vault. */ }
     return { active: base, vaults: [original] }
-  })
+  }
+  const [directory, setDirectory] = useState<VaultDirectory>(readDirectory)
   const [directoryError, setDirectoryError] = useState('')
-  function selectDirectory(next: VaultDirectory) {
+  useEffect(() => {
+    function syncDirectory(event: StorageEvent) {
+      if (event.key !== registryKey || event.storageArea !== localStorage) return
+      const latest = readDirectory()
+      // Other tabs may add vaults, but must not switch this tab's active session.
+      setDirectory(current => ({ ...current, vaults: [...new Map([...current.vaults, ...latest.vaults].map(v => [v.id, v])).values()] }))
+    }
+    window.addEventListener('storage', syncDirectory)
+    return () => window.removeEventListener('storage', syncDirectory)
+  }, [registryKey, base])
+  async function selectDirectory(next: VaultDirectory) {
     try {
-      localStorage.setItem(registryKey, JSON.stringify(next))
-      setDirectory(next)
+      if (!navigator.locks) {
+        setDirectoryError('This browser cannot safely coordinate vault changes across tabs. Use a browser with Web Locks support.')
+        return
+      }
+      const saved = await navigator.locks.request(registryKey, () => {
+        const latest = readDirectory()
+        const merged = { active: next.active, vaults: [...new Map([...latest.vaults, ...next.vaults].map(v => [v.id, v])).values()] }
+        localStorage.setItem(registryKey, JSON.stringify(merged))
+        return merged
+      })
+      setDirectory(current => ({ ...saved, vaults: [...new Map([...current.vaults, ...saved.vaults].map(v => [v.id, v])).values()] }))
       setDirectoryError('')
     } catch {
       setDirectoryError('Could not save the vault selection. Check browser storage and try again.')
@@ -165,7 +185,8 @@ export default function PwaRoot(props: PwaRootProps) {
     vaults={directory.vaults} directoryError={directoryError}
     onSelectVault={active => selectDirectory({ ...directory, active })}
     onCreateNewVault={() => {
-      const entry = { id: `${base}-vault-${crypto.randomUUID()}`, name: `Vault ${directory.vaults.length + 1}` }
+      const id = crypto.randomUUID()
+      const entry = { id: `${base}-vault-${id}`, name: `Vault ${directory.vaults.length + 1} · ${id.slice(0, 8)}` }
       selectDirectory({ active: entry.id, vaults: [...directory.vaults, entry] })
     }} />
 }
