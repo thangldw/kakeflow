@@ -75,7 +75,7 @@
         openSupport();
       });
     });
-    if (customTriggers.length && window.location.hash === "#support") {
+    if (window.location.hash === "#support") {
       openSupport();
     }
     closeButton.addEventListener("click", function () {

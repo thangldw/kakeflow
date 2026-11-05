@@ -257,6 +257,26 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Transaction posted, but the refreshed vault status could not be loaded.')
   })
 
+  it('creates a separate vault and can unlock the preserved original vault', async () => {
+    await createConfiguredVault('pwa-ui-new-vault', vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt))
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: 'forgotten attempt' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create new vault' }))
+    expect(screen.getByRole('heading', { name: 'Own your financial record' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Vault passphrase')).toHaveValue('')
+    const newPassphrase = 'a different vault passphrase'
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: newPassphrase } })
+    fireEvent.change(screen.getByLabelText('Confirm passphrase'), { target: { value: newPassphrase } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    await screen.findByRole('heading', { name: 'Set up your household' })
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    fireEvent.change(screen.getByLabelText('Local vault'), { target: { value: 'pwa-ui-new-vault' } })
+    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock vault' }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+    expect(screen.getByText('Home · JPY')).toBeInTheDocument()
+  })
+
   it('does not repopulate a locked screen from a stale vault load', async () => {
     await createConfiguredVault(
       'pwa-ui-load-fence',

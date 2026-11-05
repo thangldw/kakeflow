@@ -7,8 +7,8 @@
     },
     "product-support.js": {
       "source": "https://thangldw.github.io/js/support-dialog.js",
-      "sha256": "e7cbdae636f40913cfc1f40c756d7aa9daf2fcf74dce56461d7304b4c27ff3c4",
-      "canonicalCommit": "35d1df8f4daea704b8326669976842040ddf1c5b"
+      "sha256": "b72f51956c6cc63cc8b6429a25d9915ed70b2e097aae538d9aac69c01c812d49",
+      "canonicalCommit": "6c9c246e70d9493caef17a1d0b2995a295b6c28c"
     }
   }
 }
