@@ -3,6 +3,11 @@ name: Deploy GitHub Pages
 on:
   push:
     branches: [main]
+    # Workflow policy edits can be exercised with an explicit dispatch.
+    paths-ignore:
+      - ".github/dependabot.yml"
+      - ".github/workflows/pages.yml"
+      - ".github/workflows/quality.yml"
   workflow_dispatch:
 
 permissions:
