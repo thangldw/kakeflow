@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { EmailImportError, extractSingleEmailTabularAttachment, qualifyEmailParsedImport } from './emailImport'
 
-function eml(attachments: readonly { name: string; type?: string; content: string; disposition?: string }[]): Uint8Array {
+function eml(attachments: readonly { name: string; type?: string; content: string | Uint8Array; disposition?: string }[]): Uint8Array {
   const boundary = 'kakeflow-test-boundary'
   const parts = attachments.map((attachment) => [
     `--${boundary}`,
@@ -9,7 +9,7 @@ function eml(attachments: readonly { name: string; type?: string; content: strin
     `Content-Disposition: ${attachment.disposition ?? 'attachment'}; filename="${attachment.name}"`,
     'Content-Transfer-Encoding: base64',
     '',
-    Buffer.from(attachment.content).toString('base64'),
+    Buffer.from(typeof attachment.content === 'string' ? new TextEncoder().encode(attachment.content) : attachment.content).toString('base64'),
   ].join('\r\n'))
   return new TextEncoder().encode([
     'From: statements@example.test',
@@ -30,6 +30,14 @@ describe('email attachment ingestion', () => {
     const attachment = await extractSingleEmailTabularAttachment(eml([{ name: 'statement.csv', content }]))
     expect(attachment).toMatchObject({ name: 'statement.csv', mediaType: 'text/csv' })
     expect(new TextDecoder().decode(attachment.bytes)).toBe(content)
+  })
+
+  it('preserves binary XLSX attachment bytes through MIME decoding', async () => {
+    const content = Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x80, 0xff])
+    const type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    const attachment = await extractSingleEmailTabularAttachment(eml([{ name: 'statement.xlsx', type, content }]))
+    expect(attachment).toMatchObject({ name: 'statement.xlsx', mediaType: type })
+    expect(Array.from(attachment.bytes)).toEqual(Array.from(content))
   })
 
   it('ignores inline presentation assets but never auto-selects between financial attachments', async () => {
