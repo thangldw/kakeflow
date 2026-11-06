@@ -8,6 +8,9 @@ on:
       - ".github/dependabot.yml"
       - ".github/workflows/pages.yml"
       - ".github/workflows/quality.yml"
+      # The browser build uses the separate kakeflow-core workspace.
+      - "src-tauri/Cargo.toml"
+      - "src-tauri/Cargo.lock"
   workflow_dispatch:
 
 permissions:
