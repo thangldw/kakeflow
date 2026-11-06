@@ -41,7 +41,7 @@ encoding_rs = "0.8"
 notify = "8.2.0"
 hayro = "0.7.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
-rust_xlsxwriter = "0.96.0"
+rust_xlsxwriter = "0.100.0"
 printpdf = { version = "0.9.1", default-features = false, features = ["text_layout"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -64,11 +64,11 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.0"
+tauri-plugin-updater = "2.14.1"
 
 [dev-dependencies]
 tempfile = "3"
-zip = "8.6.0"
+zip = "9.0.5"
 
 # Backport the upstream GLib 0.20.0 mutable FFI out-pointer fix without changing GTK ABI.
 [patch.crates-io]
