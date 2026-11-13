@@ -424,7 +424,7 @@ html body .household-trigger strong { font-size: 12px !important; } /* !importan
 @media (max-width: 560px) {
   html body .kpi-card { min-height: 0; padding: 12px 14px; }
   html body .kpi-card > strong { margin: 8px 0 4px; }
-  html body .page-header { flex-wrap: wrap; }
+  html body .page-header { align-items: flex-start; flex-wrap: wrap; } /* column layout on phones: left-align the title instead of centring the block */
   html body .page-actions { flex: 1 1 100%; justify-content: flex-start; max-width: 100%; min-width: 0; }
   html body .dashboard-controls-shell { max-width: 100%; min-width: 0; width: 100%; }
   html body .dashboard-controls { flex-wrap: wrap; justify-content: flex-start; min-width: 0; }
@@ -440,7 +440,7 @@ html body .transaction-row strong { font-variant-numeric: tabular-nums; }
 /* Touch devices get 44px targets; pointer devices keep the denser desktop sizing. */
 @media (pointer: coarse) {
   html body .nav-item,
-  html body .sidebar button,
+  html body .mobile-close,
   html body .topbar button,
   html body .topbar select,
   html body .page-actions button,

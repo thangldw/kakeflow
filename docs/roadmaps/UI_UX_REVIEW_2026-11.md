@@ -45,3 +45,13 @@ Verified by re-rendering the browser demo at 375, 768 and 1440 px (light and dar
 | 10 Reduced motion | Fixed: a `prefers-reduced-motion` rule now exists. |
 
 Still not seen: the mobile drawer, Transactions/Import on mobile, empty/error/loading states, keyboard-only walkthrough, the real Tauri window, largest text size. At 375 px the page title block is indented about 42 px relative to the content; not investigated.
+
+## Reach, and the PWA review (added after the fix pass)
+
+**Which UI actually ships.** The Tauri window has `minWidth: 1024`, and GitHub Pages deploys only the PWA build (`PwaRoot`, its own UI). The full `App` at phone width therefore exists only in the development demo runtime (`npm run dev`). The phone-width fixes above (title bar, KPI cards, chips, title alignment) are harmless but do not reach shipped users. Desktop-relevant fixes are the text size and contrast changes, action cards, the budget overspend bug, the reference-rate note and the decimals.
+
+**Phone-width defects in the demo runtime left unfixed on purpose** (not shipped): on Import the review panel collapses into a column about 20 px wide next to the file list; on Transactions the filter chips wrap one character per line and the amount column sits off-screen to the right.
+
+**Newly fixed:** at 375 px the page title block was centred (42 px indent) because `.page-header` becomes a column with `align-items: center`; it is now left-aligned. The first 44 px touch rule also enlarged the household picker button and misaligned its label, so the rule no longer targets it.
+
+**PWA (shipped phone UI), 375 and 1440 px, vault creation, household setup and overview.** Clean layout, no horizontal overflow. Fixed: four text rules at 10 to 11 px raised to 12 px, and input, quiet-button and navigation heights raised to 44 px (navigation and brand only for coarse pointers). Re-measured on a 375 px touch context: 0 text nodes under 12 px and 0 controls under 44 px on the overview. Not checked in the PWA: Sources, Import, Review, Ledger, Evidence and Backup screens, error states, and the production build (the Playwright PWA E2E was not run locally; CI runs it). The dev server logs a 404 for `/kakeflow/app/kakeflow/app/support-web.js` (doubled base path); the built `dist/index.html` references the correct path, so this looks dev-only.
