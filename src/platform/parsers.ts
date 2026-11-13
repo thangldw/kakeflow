@@ -1,4 +1,5 @@
 import type {
+  TransferPairDecisionDto,
   AppBootstrapDto,
   AppHealthDto,
   AppStatusDto,
@@ -2312,4 +2313,16 @@ export function asIsoTimestamp(value: unknown): string {
 export function asNullableSafeInteger(value: unknown): number | null {
   if (value === null || typeof value === 'undefined') return null
   return asSafeInteger(value)
+}
+
+export function parseTransferPairDecisions(value: unknown): readonly TransferPairDecisionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('transfer pair decisions')
+  return value.map((item) => {
+    const record = asRecord(item)
+    if (typeof record.pairKey !== 'string' || typeof record.outTransactionId !== 'string' || typeof record.inTransactionId !== 'string'
+      || (record.state !== 'REJECTED' && record.state !== 'LINKED') || typeof record.decidedAt !== 'string') {
+      throw new TypeError('transfer pair decision')
+    }
+    return { pairKey: record.pairKey, outTransactionId: record.outTransactionId, inTransactionId: record.inTransactionId, state: record.state, decidedAt: record.decidedAt }
+  })
 }

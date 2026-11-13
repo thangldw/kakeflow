@@ -179,6 +179,9 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0072_connector_binding_generations.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0073_transfer_pair_decisions.sql"
+    )),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -4145,6 +4148,63 @@ mod tests {
                         "DELETE FROM card_payment_link_corrections WHERE payment_id='payment'",
                         [],
                     )
+                    .is_err());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn migration_73_installs_append_only_transfer_pair_decisions_without_sync_capture() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let objects: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_master
+                     WHERE (type='table' AND name='transfer_pair_decisions')
+                        OR (type='trigger' AND name IN (
+                          'transfer_pair_decisions_immutable_update',
+                          'transfer_pair_decisions_immutable_delete'))",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(objects, 3);
+                // Device-local by design: no sync capture trigger may reference the table.
+                let captured: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_master
+                     WHERE type='trigger' AND tbl_name='transfer_pair_decisions'
+                       AND name NOT LIKE 'transfer_pair_decisions_immutable_%'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(captured, 0);
+                connection.execute(
+                    "INSERT INTO transfer_pair_decisions(
+                       id,household_id,out_transaction_id,in_transaction_id,pair_key,decision)
+                     VALUES('0123456789abcdef0123456789abcdef','family','out','in','in|out','REJECTED')",
+                    [],
+                )?;
+                assert!(connection
+                    .execute(
+                        "INSERT INTO transfer_pair_decisions(
+                           id,household_id,out_transaction_id,in_transaction_id,pair_key,decision)
+                         VALUES('fedcba9876543210fedcba9876543210','family','x','x','x|x','REJECTED')",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute(
+                        "INSERT INTO transfer_pair_decisions(
+                           id,household_id,out_transaction_id,in_transaction_id,pair_key,decision)
+                         VALUES('fedcba9876543210fedcba9876543211','family','out','in','in|out','LINKED')",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute("UPDATE transfer_pair_decisions SET decision='CLEARED'", [])
+                    .is_err());
+                assert!(connection
+                    .execute("DELETE FROM transfer_pair_decisions", [])
                     .is_err());
                 Ok(())
             })
