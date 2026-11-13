@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a read-only what-if scenario panel to the cash forecast (income/spending deltas and a first-month one-time outflow); nothing is saved or posted.
 - Block Amazon Mastercard statements whose explicitly labelled total disagrees with the detail sum (a guessed last-row total still only warns); record `statementTotalSource` for Amazon and Rakuten.
 - Add fail-closed OFX/QFX (bank `STMTRS`, JPY only, durable FITID identity) and QIF (`!Type:Bank`, file-proven date order) import adapters; credit-card/investment statements, multi-account files, fractional yen, splits and corrections are blocked for review.
 - Upgrade the Vite/React-plugin/jsdom toolchain as a compatible group and align the development Node baseline.

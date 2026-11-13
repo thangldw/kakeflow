@@ -44,3 +44,13 @@
 .assumption-grid { display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); margin-top: 10px; } .assumption-grid span { color: #617080; display: grid; gap: 3px; } .assumption-grid strong { color: var(--text, #17202a); }
 @media (max-width: 1050px) { .forecast-action-layout { grid-template-columns: 1fr; } .home-action-center .action-list { grid-template-columns: 1fr; } }
 @media (max-width: 680px) { .forecast-months, .assumption-grid { grid-template-columns: 1fr; } .action-item { grid-template-columns: auto 1fr; } .action-item > button { grid-column: 1 / -1; } }
+.scenario-simulator .scenario-note { color: #617080; font-size: 12px; margin: 8px 0 14px; }
+.scenario-fields { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.scenario-fields label { display: grid; font-size: 12px; font-weight: 650; gap: 4px; }
+.scenario-fields input { border: 1px solid var(--border, #d9e0e7); border-radius: 8px; font: inherit; min-height: 40px; padding: 6px 10px; }
+.scenario-fields input[aria-invalid="true"] { border-color: #b6333e; }
+.scenario-table { border-collapse: collapse; font-size: 12px; margin-top: 14px; width: 100%; }
+.scenario-table th, .scenario-table td { border-bottom: 1px solid var(--border, #d9e0e7); padding: 8px 6px; text-align: right; }
+.scenario-table th:first-child { text-align: left; }
+.scenario-table .is-negative, .scenario-error, .scenario-warning { color: #b6333e; }
+.scenario-error, .scenario-warning { font-size: 12px; margin: 10px 0 0; }
