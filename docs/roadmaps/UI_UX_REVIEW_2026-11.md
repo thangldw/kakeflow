@@ -26,3 +26,22 @@ Method: the browser demo runtime (`vite`, synthetic Tanaka-family data) was rend
 ## Works well
 
 Consistent token system and clear nav grouping with badges; one clear primary action colour; a coherent dark palette; no horizontal overflow at 375, 768 or 1440 px; no page errors; no unlabelled buttons among the measured controls.
+
+## Status after the fix pass (same day)
+
+Verified by re-rendering the browser demo at 375, 768 and 1440 px (light and dark) and re-measuring.
+
+| Finding | Status |
+| --- | --- |
+| 1 Fake title bar over the phone top bar | Fixed: hidden at 720 px and below; tablet keeps it and its 38 px offsets. |
+| 2 Tiny and low-contrast text | Home/shell text below 12 px went from 162 nodes to 24 (the rest is the demo title bar, visually hidden labels and select options). Low-contrast colour kinds in light mode went from 19 to 5; dark tokens were not changed and the dark measurement is noisy. `src/readabilityFloor.test.ts` stops the 367 remaining sub-12 px CSS declarations from growing. |
+| 3 Touch targets | Fixed for coarse pointers (44 px); mouse sizing unchanged. |
+| 4 Home action list | Fixed: compact two-column cards, theme tokens (no white outline in dark mode). |
+| 5 Budget overspend | Fixed, and worse than reported: on the desktop runtime an `!important` rule painted overspent bars green. Rows now get `budget-row-over` / `budget-row-review` classes, the error colour and a text label. The "2026年7月" caption is demo data only; not changed. |
+| 6 Simulator inputs | **Not done.** Needs a decision on the input pattern (separators and a yen suffix) and touches existing label-based tests. |
+| 7 Mobile Home | Fixed: shorter KPI cards; template chips scroll inside their row. |
+| 8 Sub-currency decimals | Fixed (two decimals). Separate finding: the conversion rates are hard-coded in `GeminiFeatureSuite.tsx` (USD 158.0, EUR 171.5, GBP 201.2, AUD 103.4) and shown as real conversions. |
+| 9 Monospace numerals | Partly: tabular numerals added to KPI, currency and transaction amounts; the monospace face itself is unchanged. |
+| 10 Reduced motion | Fixed: a `prefers-reduced-motion` rule now exists. |
+
+Still not seen: the mobile drawer, Transactions/Import on mobile, empty/error/loading states, keyboard-only walkthrough, the real Tauri window, largest text size. At 375 px the page title block is indented about 42 px relative to the content; not investigated.

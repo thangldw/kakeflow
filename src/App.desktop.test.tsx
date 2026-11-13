@@ -2896,6 +2896,28 @@ describe('KakeFlow desktop read models', () => {
     await waitFor(() => expect(desktop.createSavingsGoal).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: '旅行', targetJpy: 100000, status: 'ACTIVE' })))
   })
 
+  it('marks overspent and near-limit budget rows with status classes and a text label', async () => {
+    desktop.listBudgets.mockResolvedValue([
+      { householdId: 'family', month: '2026-07', categoryAccountId: 'family-food-expense', categoryName: '食費', budgetJpy: 150000, actualJpy: 180000, remainingJpy: -30000 },
+      { householdId: 'family', month: '2026-07', categoryAccountId: 'family-home-expense', categoryName: '住居', budgetJpy: 100000, actualJpy: 92000, remainingJpy: 8000 },
+      { householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 100000, actualJpy: 20000, remainingJpy: 80000 },
+    ])
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '予算・目標' }))
+    await screen.findByText('カテゴリー予算')
+    const rows = await waitFor(() => {
+      const found = [...container.querySelectorAll('.budget-row')]
+      expect(found).toHaveLength(3)
+      return found
+    })
+    expect(rows[0]).toHaveClass('budget-row-over')
+    expect(rows[0]).toHaveTextContent('超過 20%')
+    expect(rows[1]).toHaveClass('budget-row-review')
+    expect(rows[1]).not.toHaveTextContent('超過')
+    expect(rows[2].className).toBe('budget-row')
+  })
+
   it('requires explicit per-candidate approval before posting an import', async () => {
     const { container } = render(<App />)
     await screen.findByText('生協')

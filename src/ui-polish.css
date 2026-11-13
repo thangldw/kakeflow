@@ -214,8 +214,8 @@ button { transition: background-color 120ms ease, border-color 120ms ease, color
 .budget-row .progress > span { background: var(--asset) !important; }
 .budget-row-review > div:first-child small { color: var(--review); }
 .budget-row-review .progress > span { background: var(--review) !important; }
-.budget-row-over > div:first-child small { color: var(--warn); }
-.budget-row-over .progress > span { background: var(--warn) !important; }
+.budget-row-over > div:first-child small { color: var(--err); }
+.budget-row-over .progress > span { background: var(--err) !important; }
 .budget-caption { margin: 12px 0 0; padding-top: 10px; color: var(--text2); border-top: 1px solid var(--hairline); font-size: 9.5px; }
 .demo-goal { display: grid; gap: 7px; padding: 12px 0; border-top: 1px solid var(--hairline); }
 .demo-goal > div:first-child { display: flex; align-items: center; justify-content: space-between; }
@@ -436,3 +436,20 @@ html body .household-trigger strong { font-size: 12px !important; } /* !importan
 html body .kpi-card > strong,
 html body .currency-value strong,
 html body .transaction-row strong { font-variant-numeric: tabular-nums; }
+
+/* Touch devices get 44px targets; pointer devices keep the denser desktop sizing. */
+@media (pointer: coarse) {
+  html body .nav-item,
+  html body .sidebar button,
+  html body .topbar button,
+  html body .topbar select,
+  html body .page-actions button,
+  html body .dashboard-template-chips button,
+  html body .period-stepper button,
+  html body .action-item > button,
+  html body .panel-head .text-btn { min-height: 44px; min-width: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
