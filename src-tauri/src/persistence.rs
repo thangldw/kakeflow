@@ -2415,7 +2415,11 @@ mod tests {
                 .unwrap(),
             4
         );
-        assert_eq!(schema_version(&connection).unwrap(), 72);
+        // The released database must end at the newest schema, whatever that is.
+        assert_eq!(
+            schema_version(&connection).unwrap(),
+            i64::try_from(MIGRATIONS.len()).unwrap()
+        );
         assert!(integrity_check(&connection).unwrap());
     }
 
