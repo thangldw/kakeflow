@@ -21,6 +21,8 @@ export type AdapterId =
   | 'japanese-brokerage-transactions-v1'
   | 'money-forward-me-asset-trend-v1'
   | 'money-forward-me-household-ledger-v1'
+  | 'ofx-bank-statement-v1'
+  | 'qif-bank-v1'
   | 'custom-delimited-v1'
 
 export type ParseIssueSeverity = 'warning' | 'error'

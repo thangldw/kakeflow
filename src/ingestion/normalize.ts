@@ -40,3 +40,18 @@ export function parseJapaneseDateTime(value: string | undefined): string | null 
 export function clampScore(score: number): number {
   return Math.max(0, Math.min(1, score))
 }
+
+/**
+ * Parses a plain decimal JPY amount that must be an exact integer ("1200",
+ * "-1,200", "1200.00"). Fractional yen, exponents and non-numeric text return
+ * null so exchange-format adapters fail closed instead of rounding.
+ */
+export function parseExactIntegerAmount(value: string | undefined): number | null {
+  if (value == null) return null
+  const normalized = value.normalize('NFKC').trim().replace(/,/g, '')
+  const match = normalized.match(/^([+-]?)(\d+)(?:\.0+)?$/)
+  if (!match) return null
+  const amount = Number(match[2])
+  if (!Number.isSafeInteger(amount)) return null
+  return match[1] === '-' ? -amount : amount
+}

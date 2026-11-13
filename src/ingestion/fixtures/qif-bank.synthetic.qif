@@ -1,0 +1,11 @@
+!Type:Bank
+D1/ 5'26
+T-1,200.00
+PSynthetic Store
+MGroceries
+LFood
+^
+D1/25'26
+T250000
+PSynthetic Employer
+^
