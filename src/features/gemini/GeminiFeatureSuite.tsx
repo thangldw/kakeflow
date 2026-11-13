@@ -66,7 +66,7 @@ const currencyRates: Readonly<Record<string, { symbol: string; jpy: number }>> =
 export function SecondaryCurrencySummary({ netWorth, income, expense }: { netWorth: number; income: number; expense: number }) {
   const [currency, setCurrency] = useState('USD')
   const selected = currencyRates[currency]
-  const format = (value: number) => `${selected.symbol}${(value / selected.jpy).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
+  const format = (value: number) => `${selected.symbol}${(value / selected.jpy).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   return <section className="panel currency-strip" aria-label={localize('サブ通貨換算')}>
     <label><span><Globe2 size={14} /> {localize('サブ通貨')}</span><select value={currency} onChange={(event) => setCurrency(event.target.value)}>{Object.keys(currencyRates).map((code) => <option key={code}>{code}</option>)}</select></label>
     <div className="currency-value"><span>{localize('換算純資産')}</span><strong>{format(netWorth)}</strong></div>

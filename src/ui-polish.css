@@ -419,3 +419,20 @@ html body .action-copy h3,
 html body .panel > span,
 html body .panel > button.secondary-btn,
 html body .household-trigger strong { font-size: 12px !important; } /* !important: these lose to later page-scoped rules */
+
+/* Home on phones: shorter KPI cards and template chips that scroll instead of breaking mid-label. */
+@media (max-width: 560px) {
+  html body .kpi-card { min-height: 0; padding: 12px 14px; }
+  html body .kpi-card > strong { margin: 8px 0 4px; }
+  html body .page-header { flex-wrap: wrap; }
+  html body .page-actions { flex: 1 1 100%; justify-content: flex-start; max-width: 100%; min-width: 0; }
+  html body .dashboard-controls-shell { max-width: 100%; min-width: 0; width: 100%; }
+  html body .dashboard-controls { flex-wrap: wrap; justify-content: flex-start; min-width: 0; }
+  html body .dashboard-template-chips { display: flex; flex: 1 1 100%; flex-wrap: nowrap; min-width: 0; overflow-x: auto; padding-bottom: 4px; }
+  html body .dashboard-template-chips button { flex: 0 0 auto; white-space: nowrap; }
+}
+
+/* Tabular numerals keep money columns aligned without switching to the code font. */
+html body .kpi-card > strong,
+html body .currency-value strong,
+html body .transaction-row strong { font-variant-numeric: tabular-nums; }
