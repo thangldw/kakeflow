@@ -63,6 +63,7 @@ const currencyRates: Readonly<Record<string, { symbol: string; jpy: number }>> =
   USD: { symbol: '$', jpy: 158.0 }, EUR: { symbol: '€', jpy: 171.5 }, GBP: { symbol: '£', jpy: 201.2 }, AUD: { symbol: 'A$', jpy: 103.4 },
 }
 
+/** Rates are fixed reference values bundled with the app, not live market data; the note says so. */
 export function SecondaryCurrencySummary({ netWorth, income, expense }: { netWorth: number; income: number; expense: number }) {
   const [currency, setCurrency] = useState('USD')
   const selected = currencyRates[currency]
@@ -72,6 +73,7 @@ export function SecondaryCurrencySummary({ netWorth, income, expense }: { netWor
     <div className="currency-value"><span>{localize('換算純資産')}</span><strong>{format(netWorth)}</strong></div>
     <div className="currency-value"><span>{localize('今月収入')}</span><strong>{format(income)}</strong></div>
     <div className="currency-value"><span>{localize('今月支出')}</span><strong>{format(expense)}</strong></div>
+    <p className="currency-note">{localize('参考レート（固定値・実勢とは異なります）')}: 1 {currency} = ¥{selected.jpy.toFixed(1)}</p>
   </section>
 }
 

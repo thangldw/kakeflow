@@ -1267,6 +1267,7 @@
   "銀行": "bank",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Manage your banks, wallets, cards, income and spending categories.",
   "銀行CSVの取込先銀行口座を選択してください。": "Please select the bank account to import the bank CSV to.",
+  "参考レート（固定値・実勢とは異なります）": "Reference rate (fixed value, differs from the market rate)",
   "もしも試算": "What-if",
   "シナリオ試算": "Scenario simulation",
   "試算は保存されず、台帳や予測の前提には反映されません。": "Simulations are not saved and do not change the ledger or the forecast assumptions.",
