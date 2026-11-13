@@ -23,6 +23,8 @@ export { monexUsStockTradeHistoryAdapter } from './adapters/monexUsStockTradeHis
 export { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
 export { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
 export { moneyForwardHouseholdLedgerAdapter } from './adapters/moneyForwardHouseholdLedger'
+export { ofxBankStatementAdapter } from './adapters/ofx'
+export { qifBankAdapter } from './adapters/qif'
 export * from './adapters/customDelimited'
 
 import { amazonMastercardAdapter } from './adapters/amazonMastercard'
@@ -47,6 +49,8 @@ import { monexUsStockTradeHistoryAdapter } from './adapters/monexUsStockTradeHis
 import { japaneseBrokerageTransactionsAdapter } from './adapters/japaneseBrokerageTransactions'
 import { moneyForwardAssetTrendAdapter } from './adapters/moneyForwardAssetTrend'
 import { moneyForwardHouseholdLedgerAdapter } from './adapters/moneyForwardHouseholdLedger'
+import { ofxBankStatementAdapter } from './adapters/ofx'
+import { qifBankAdapter } from './adapters/qif'
 import type { ImportAdapter, ImportInput } from './types'
 
 export const importAdapters = [
@@ -72,6 +76,8 @@ export const importAdapters = [
   japaneseBrokerageTransactionsAdapter,
   moneyForwardAssetTrendAdapter,
   moneyForwardHouseholdLedgerAdapter,
+  ofxBankStatementAdapter,
+  qifBankAdapter,
 ] as const
 
 export function detectImportAdapter(input: ImportInput): { adapter: ImportAdapter<unknown>; score: number } | null {

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add fail-closed OFX/QFX (bank `STMTRS`, JPY only, durable FITID identity) and QIF (`!Type:Bank`, file-proven date order) import adapters; credit-card/investment statements, multi-account files, fractional yen, splits and corrections are blocked for review.
 - Upgrade the Vite/React-plugin/jsdom toolchain as a compatible group and align the development Node baseline.
 - Upgrade ZIP and X25519/ChaCha dependencies; use fixed-size nonce construction and verify legacy cipher/key compatibility.
 

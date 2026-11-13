@@ -1267,6 +1267,8 @@
   "銀行": "ngân hàng",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Quản lý ngân hàng, ví, thẻ, danh mục thu nhập và chi tiêu của bạn.",
   "銀行CSVの取込先銀行口座を選択してください。": "Vui lòng chọn tài khoản ngân hàng để nhập CSV ngân hàng vào.",
+  "OFX/QFX明細の取込先銀行口座を選択してください。": "Chọn tài khoản ngân hàng đích cho sao kê OFX/QFX.",
+  "QIF明細の取込先銀行口座を選択してください。": "Chọn tài khoản ngân hàng đích cho sao kê QIF.",
   "銀行口座": "tài khoản ngân hàng",
   "銀行口座は推測せず、支払余力の計算にも含めません。": "Chúng tôi không đưa ra các giả định về tài khoản ngân hàng của bạn và chúng tôi không đưa nó vào tính toán khả năng thanh toán của bạn.",
   "銀行口座を選択": "Chọn tài khoản ngân hàng",
