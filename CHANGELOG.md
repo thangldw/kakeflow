@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add own-account transfer review on the desktop Transactions page: possible pairs can be confirmed (both legs become calculation-excluded transfers, journals unchanged) or dismissed, with undo. Decisions are stored in a new append-only, device-local table (migration 0073).
 - Add a read-only carry-over and unassigned-pool panel to the desktop Budgets page, rolling budgets and accrual income forward from the first budgeted month.
 - Fix overspent budget bars rendering green on the desktop runtime; raise Home and PWA text to 12px, darken low-contrast light-mode colours, add 44px touch targets and `prefers-reduced-motion`.
 - Label the sub-currency strip as using fixed reference rates.

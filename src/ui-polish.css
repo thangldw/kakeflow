@@ -463,3 +463,20 @@ html body .transaction-row strong { font-variant-numeric: tabular-nums; }
 .envelope-table th, .envelope-table td { border-bottom: 1px solid var(--hairline); font-variant-numeric: tabular-nums; padding: 8px 6px; text-align: right; }
 .envelope-table th:first-child { text-align: left; }
 .envelope-panel .is-negative { color: var(--err); }
+
+.transfer-pair-strip { margin-bottom: 15px; }
+.transfer-pair-strip .panel-head p { color: var(--text2); font-size: 12px; max-width: 70ch; }
+.transfer-pair-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
+.transfer-pair-list > li { align-items: center; border: 1px solid var(--hairline); border-radius: 10px; display: grid; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto auto; padding: 10px 12px; }
+.transfer-pair-legs { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.transfer-pair-legs small { color: var(--text2); font-size: 12px; }
+.transfer-pair-meta { color: var(--text2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.transfer-pair-actions { display: flex; gap: 6px; }
+.transfer-pair-error { color: var(--err); font-size: 12px; margin: 8px 0 0; }
+.transfer-pair-note { color: var(--text2); font-size: 12px; margin: 10px 0 0; }
+.transfer-pair-history { margin-top: 12px; }
+.transfer-pair-history summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+@media (max-width: 720px) {
+  .transfer-pair-list > li { grid-template-columns: 1fr; }
+  .transfer-pair-actions { flex-wrap: wrap; }
+}

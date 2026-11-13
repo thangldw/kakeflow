@@ -2,24 +2,23 @@
 
 Status: proposal. Nothing here is implemented. Each section names the decision that blocks it and the default I would take. Written after delivering the items in `docs/roadmaps/SURE_REFERENCE_GAP_ANALYSIS.md`.
 
-## 1. Transfer pair decisions (persistence, review UI, accept)
+## 1. Transfer pair decisions (implemented, device-local)
 
-**Goal.** Let the user accept or dismiss own-account transfer proposals from `proposeTransferPairs`, and never be shown a dismissed pair again.
+Status: implemented on this branch with the default decision (decisions are **not** replicated).
 
-**Non-goals.** Automatic linking; cross-household pairs; matching card payments (already handled by card reconciliation).
+**What was built.**
+- Migration `0073_transfer_pair_decisions.sql` (append-only log, 0065 pattern, no sync capture trigger; a migration test asserts that) and `src-tauri/src/transfer_pairs.rs`.
+- Two Tauri commands: `transfer_pair_decisions_list` and `transfer_pair_decide` (`REJECT`, `LINK`, `CLEAR`), each a single SQLite transaction.
+- `LINK` retypes both legs as `TRANSFER` with `calculation_target = 0` and records their previous values; journal entries are not touched. It refuses unequal amounts, legs sharing a money account, card-linked legs, legs that are already transfers, and cross-household ids. `CLEAR` restores the legs only while they still look exactly as the link left them.
+- TypeScript: DTOs, validated parser, client methods, `transferCandidatesFromRows`, and a "possible transfers" strip on the desktop Transactions page (confirm, not a transfer, history with undo).
 
-**Precedent in the repo.** `0065_card_payment_link_corrections.sql` is the closest analogue: a `STRICT` table with id/household checks, a unique key, an index and immutable update/delete triggers, registered in the migration list in `src-tauri/src/persistence.rs` and covered by tests there. Planning and rule tables are captured for sync (`0034_replicable_planning_capture.sql`, `0047_family_planning_configuration.sql`), so a new table must choose between replicated and device-local.
+**Correction to the earlier draft of this section.** The draft proposed accepting a pair by calling the existing transaction update path on each leg. Reading `update_posted_transaction` showed two problems: two separate updates are not atomic, and a card-linked leg refuses a type change. Hence the dedicated atomic command above.
 
-**Proposed design.**
-- Table `transfer_pair_decisions(id, household_id, out_transaction_id, in_transaction_id, decision CHECK IN ('REJECTED','LINKED'), decided_at, UNIQUE(household_id, pair_key))`, where `pair_key` is `rejectionKey(out, in)` from `src/domain/transferMatching.ts`. Append-only with the 0065 immutability triggers; an "undo" is a new row, not an update.
-- Commands: list decisions for a household; record a decision. DTO parser in `src/platform/parsers.ts`; client methods; PWA parity in `src/platform/pwa` (event type for the same record).
-- Proposals are computed in TypeScript from the already loaded transaction rows, then filtered by `rejectedKeys`.
-- Accept = set both legs to `TRANSFER` and `calculationTarget=false` through the existing transaction update path (Rust already requires an imported transfer to be excluded from calculations), then record `LINKED`. This must be verified against `update_transaction` before relying on it.
-- UI: a "possible transfers" strip on the Transactions page with Accept / Not a transfer; ambiguous legs are listed without a suggested partner.
+**Accounting semantics to be aware of.** A confirmed pair is two transactions typed `TRANSFER` and excluded from calculations (the existing "calculation target" mechanism), not one merged transfer journal. The legs keep their original journals, so the earlier expense/income account postings still exist and are only excluded from household totals. Merging a pair into a single journal would delete a posted transaction and its evidence lineage, and was deliberately not done.
 
-**Decision needed.** Replicate decisions across devices? Default: **no** for the first version (device-local, not added to the sync capture lists), because a wrongly replicated "rejected" row hides a pair on every device and the change touches family-delivery contracts. Revisit with Stage 2 sync.
+**Known limits.** Proposals are computed from the rows currently loaded on the Transactions page, so a pair split across pages is not proposed. The strip was checked in a standalone Playwright render in light mode at 1100 px and 375 px; dark mode and the real Tauri window were not viewed. Because decisions are device-local, a pair rejected on one device can be proposed again on another; confirmed links replicate because they are ordinary ledger edits.
 
-**Acceptance.** Dismissed pair never reappears after restart; accepting leaves household income/expense totals unchanged apart from removing both legs; undo restores them; a pair across two households is never proposed; migration test mirrors the 0065 tests; PWA and desktop agree on proposals for the same fixture.
+**Still open.** Replicating rejections (Stage 2 sync); proposals beyond the loaded page; an explicit "merge into one journal" option.
 
 ## 2. Envelope assignment and credit-card payment envelopes
 

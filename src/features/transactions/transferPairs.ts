@@ -22,7 +22,8 @@ export function transferCandidatesFromRows(rows: readonly TransactionRowDto[]): 
 }
 
 export function proposeFromRows(rows: readonly TransactionRowDto[], decisions: readonly TransferPairDecisionDto[]): TransferMatchResult {
-  const rejectedKeys = new Set(decisions.filter((decision) => decision.state === 'REJECTED').map((decision) => decision.pairKey))
+  // A linked pair stays hidden even before the rows reload, so it cannot be confirmed twice.
+  const rejectedKeys = new Set(decisions.map((decision) => decision.pairKey))
   return proposeTransferPairs(transferCandidatesFromRows(rows), { rejectedKeys })
 }
 

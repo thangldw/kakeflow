@@ -22,7 +22,7 @@ describe('transfer candidates from ledger rows', () => {
     expect(candidates.map((candidate) => [candidate.id, candidate.direction, candidate.accountId])).toEqual([['e1', 'OUT', 'bank-a'], ['i1', 'IN', 'bank-b']])
   })
 
-  it('proposes a pair and hides it once the pair was rejected', () => {
+  it('proposes a pair and hides it once the pair was rejected or linked', () => {
     const rows = [
       row('e1', 'EXPENSE', '2026-07-01', 50_000, { debit: 'food', credit: 'bank-a' }, { payee: '振込 ミツイ' }),
       row('i1', 'INCOME', '2026-07-02', 50_000, { debit: 'bank-b', credit: 'salary' }),
@@ -30,6 +30,6 @@ describe('transfer candidates from ledger rows', () => {
     expect(proposeFromRows(rows, []).proposals.map((proposal) => [proposal.outId, proposal.inId])).toEqual([['e1', 'i1']])
     const rejected: TransferPairDecisionDto = { pairKey: 'e1|i1', outTransactionId: 'e1', inTransactionId: 'i1', state: 'REJECTED', decidedAt: '2026-07-03T00:00:00.000Z' }
     expect(proposeFromRows(rows, [rejected]).proposals).toEqual([])
-    expect(proposeFromRows(rows, [{ ...rejected, state: 'LINKED' }]).proposals).toHaveLength(1)
+    expect(proposeFromRows(rows, [{ ...rejected, state: 'LINKED' }]).proposals).toEqual([])
   })
 })
