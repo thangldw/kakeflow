@@ -121,7 +121,7 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomColumnRole, CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient, PlatformIpcError } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, LastClassificationApplicationDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, LastClassificationApplicationDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 import { localize, useI18n } from './i18n'
 import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
@@ -141,6 +141,8 @@ import type { ReviewInboxRows } from './features/connectors/connectorBindingMode
 import type { ConnectorBindingDto, ConnectorRefreshBatchProgressDto, ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
 
 import { STANDARD_IMPORT_ACCOUNT_REQUIREMENTS, builtInAdapterVersion, dedicatedBrokerageImport, eligibleMoneyForwardAccounts, hasCompatibleStandardImportAccount, hasCompleteMoneyForwardMapping, importAccountDescriptionId, isBrokerageTransactionAdapter, moneyForwardInstitutions } from './features/import/importAccountRequirements'
+import { applyClassificationRuleToDecision, applyLocalCategorySuggestionToDecision, clearClassificationProvenance, decisionUsesCategory, eligibleClassificationDecision, initialPostingDraft, matchingClassificationRule } from './features/import/postingDecisions'
+import type { PostingDraft } from './features/import/postingDecisions'
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const hasRakutenStatementMismatch = (item: Pick<ImportPreview, 'issues'>) => item.issues.some((issue) => issue.code === 'RAKUTEN_PDF_TOTAL_MISMATCH')
 const customColumnRoleLabels: Readonly<Record<CustomColumnRole, string>> = {
@@ -1132,112 +1134,6 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
   </>
 }
 
-function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDecisionDto {
-  const source = accounts.find((account) => account.id === candidate.accountId)
-  if (!source) throw new Error('Candidate source account is missing')
-  const expenseAccount = accounts.find((account) => account.id === `${householdId}-other-expense` && account.accountKind === 'EXPENSE')
-  const incomeAccount = accounts.find((account) => account.id === `${householdId}-income` && account.accountKind === 'INCOME')
-  const text = `${candidate.merchantRaw ?? ''} ${candidate.descriptionRaw ?? ''}`
-  const cardAccounts = accounts.filter((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
-  const cardAccount = /(?:楽天|RAKUTEN)/i.test(text)
-    ? cardAccounts.find((account) => /Rakuten/i.test(account.name))
-    : /(?:AMAZON|SMBC|三井住友)/i.test(text)
-      ? cardAccounts.find((account) => /Amazon/i.test(account.name))
-      : cardAccounts.find((account) => account.id.endsWith('-card')) ?? cardAccounts[0]
-  const looksLikeCardPayment = source.accountSubtype === 'BANK' && /(カード|CARD|JCB|AMEX|アメックス)/i.test(text)
-  const looksLikeRefund = /(返金|返品|REFUND|REVERSAL)/i.test(text)
-  let transactionType: string
-  let debitAccount: AccountDto | undefined
-  let creditAccount: AccountDto | undefined
-  if (candidate.suggestedTransactionType === 'TRANSFER') {
-    transactionType = 'TRANSFER'
-    const counterpart = accounts.find((account) => account.id !== source.id && (account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY'))
-    if (candidate.direction === 'OUT') { debitAccount = counterpart; creditAccount = source }
-    else { debitAccount = source; creditAccount = counterpart }
-  } else if (looksLikeCardPayment && candidate.direction === 'OUT') {
-    transactionType = 'CARD_PAYMENT'; debitAccount = cardAccount; creditAccount = source
-  } else if (candidate.direction === 'OUT') {
-    transactionType = source.accountSubtype === 'CREDIT_CARD' ? 'CARD_PURCHASE' : 'EXPENSE'
-    debitAccount = expenseAccount; creditAccount = source
-  } else if (looksLikeRefund) {
-    transactionType = 'REFUND'; debitAccount = source; creditAccount = expenseAccount
-  } else {
-    transactionType = 'INCOME'; debitAccount = source; creditAccount = incomeAccount
-  }
-  if (!debitAccount || !creditAccount) throw new Error('Required ledger account is missing')
-  return {
-    candidateId: candidate.id,
-    transactionId: globalThis.crypto.randomUUID(),
-    transactionType,
-    payee: candidate.merchantRaw,
-    description: candidate.descriptionRaw,
-    calculationTarget: candidate.suggestedTransactionType === 'TRANSFER' ? false : candidate.calculationTarget,
-    attributionKind: candidate.attributionKind,
-    attributedMemberId: candidate.attributedMemberId,
-    audienceVisibility: candidate.audienceVisibility,
-    audienceMemberId: candidate.audienceMemberId,
-    duplicateResolution: candidate.duplicateMatch?.decision && candidate.duplicateMatch.decision !== 'UNRESOLVED' ? candidate.duplicateMatch.decision : undefined,
-    entries: [
-      { id: globalThis.crypto.randomUUID(), accountId: debitAccount.id, side: 'DEBIT', amountJpy: candidate.amountJpy },
-      { id: globalThis.crypto.randomUUID(), accountId: creditAccount.id, side: 'CREDIT', amountJpy: candidate.amountJpy },
-    ],
-  }
-}
-
-interface PostingDraft {
-  readonly approved: boolean
-  readonly decision: PostingDecisionDto
-  readonly error: string | null
-  readonly touched: boolean
-}
-
-function matchingClassificationRule(rules: readonly ClassificationRuleDto[], merchant: string | null, description: string | null): ClassificationRuleDto | null {
-  const contains = (value: string | null, needle: string | null) => needle === null || Boolean(value?.toLocaleLowerCase().includes(needle.toLocaleLowerCase()))
-  return [...rules]
-    .filter((rule) => rule.isEnabled && contains(merchant, rule.merchantContains) && contains(description, rule.descriptionContains))
-    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))[0] ?? null
-}
-
-function eligibleClassificationDecision(decision: PostingDecisionDto, accounts: readonly AccountDto[]): boolean {
-  if (!['EXPENSE', 'CARD_PURCHASE', 'REFUND'].includes(decision.transactionType)) return false
-  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-  const expectedSide = decision.transactionType === 'REFUND' ? 'CREDIT' : 'DEBIT'
-  return expenseEntries.length === 1 && expenseEntries[0].side === expectedSide
-}
-
-function applyClassificationRuleToDecision(decision: PostingDecisionDto, rule: ClassificationRuleDto, accounts: readonly AccountDto[]): PostingDecisionDto | null {
-  if (!eligibleClassificationDecision(decision, accounts) || !accounts.some((account) => account.id === rule.categoryAccountId && account.accountKind === 'EXPENSE')) return null
-  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-  if (expenseEntries.length !== 1) return null
-  return {
-    ...decision,
-    entries: decision.entries.map((entry) => entry.id === expenseEntries[0].id ? { ...entry, accountId: rule.categoryAccountId } : entry),
-    classificationRuleId: rule.id,
-    expectedClassificationRuleUpdatedAt: rule.updatedAt,
-  }
-}
-
-function applyLocalCategorySuggestionToDecision(decision: PostingDecisionDto, suggestion: LocalCategorySuggestion, accounts: readonly AccountDto[]): PostingDecisionDto | null {
-  if (!eligibleClassificationDecision(decision, accounts) || !accounts.some((account) => account.id === suggestion.categoryAccountId && account.accountKind === 'EXPENSE')) return null
-  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-  if (expenseEntries.length !== 1) return null
-  return clearClassificationProvenance({
-    ...decision,
-    entries: decision.entries.map((entry) => entry.id === expenseEntries[0].id ? { ...entry, accountId: suggestion.categoryAccountId } : entry),
-  })
-}
-
-function clearClassificationProvenance(decision: PostingDecisionDto): PostingDecisionDto {
-  const { classificationRuleId: _ruleId, expectedClassificationRuleUpdatedAt: _updatedAt, ...manualDecision } = decision
-  void _ruleId; void _updatedAt
-  return manualDecision
-}
-
-function decisionUsesCategory(decision: PostingDecisionDto, categoryAccountId: string, accounts: readonly AccountDto[]): boolean {
-  const expectedSide = decision.transactionType === 'REFUND' ? 'CREDIT' : 'DEBIT'
-  return decision.entries.some((entry) => entry.side === expectedSide && entry.accountId === categoryAccountId && accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-}
-
 function LocalCategorySuggestionView({ suggestion, merchantLabel, selected, onApply }: { suggestion: LocalCategorySuggestion; merchantLabel: string; selected: boolean; onApply: () => void }) {
   const { locale, text } = useI18n()
   const confidence = Math.round(suggestion.confidenceBps / 100)
@@ -1246,35 +1142,6 @@ function LocalCategorySuggestionView({ suggestion, merchantLabel, selected, onAp
     ? locale === 'ja' ? `${suggestion.sampleCount}件の類似取引・${suggestion.historySharePercent ?? 0}%がこのカテゴリー${suggestion.amountConsistent === false ? '・金額差を考慮済み' : ''}` : locale === 'vi' ? `${suggestion.sampleCount} giao dịch tương tự; ${suggestion.historySharePercent ?? 0}% thuộc danh mục này${suggestion.amountConsistent === false ? '; đã giảm độ tin cậy do chênh lệch số tiền' : ''}` : `${suggestion.sampleCount} similar transactions; ${suggestion.historySharePercent ?? 0}% used this category${suggestion.amountConsistent === false ? '; confidence reduced for the amount difference' : ''}`
     : locale === 'ja' ? `キーワード「${suggestion.matchedKeyword ?? ''}」に一致` : locale === 'vi' ? `Khớp từ khóa “${suggestion.matchedKeyword ?? ''}”` : `Matched keyword “${suggestion.matchedKeyword ?? ''}”`
   return <div className="classification-rule-suggestion classification-local-suggestion"><span><strong>{source}</strong><small>{suggestion.categoryName} ・ {text("信頼度")} {confidence}%</small><small>{reason} ・ {text("端末内だけで判定")}</small></span><button type="button" className="mini-btn" aria-label={`${merchantLabel} — ${text("ローカルカテゴリー候補を適用")}`} disabled={selected} onClick={onApply}>{selected ? text("選択済み") : text("提案を適用")}</button></div>
-}
-
-function initialPostingDraft(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDraft {
-  try {
-    return { approved: false, decision: suggestedPosting(candidate, accounts, householdId), error: null, touched: false }
-  } catch {
-    return {
-      approved: false,
-      touched: false,
-      error: localize("取込先または相手勘定が見つかりません。口座設定を確認するか、このインポートを取り消してください。"),
-      decision: {
-        candidateId: candidate.id,
-        transactionId: globalThis.crypto.randomUUID(),
-        transactionType: candidate.suggestedTransactionType ?? 'EXPENSE',
-        payee: candidate.merchantRaw,
-        description: candidate.descriptionRaw,
-        calculationTarget: candidate.calculationTarget,
-        attributionKind: candidate.attributionKind,
-        attributedMemberId: candidate.attributedMemberId,
-        audienceVisibility: candidate.audienceVisibility,
-        audienceMemberId: candidate.audienceMemberId,
-        duplicateResolution: candidate.duplicateMatch?.decision && candidate.duplicateMatch.decision !== 'UNRESOLVED' ? candidate.duplicateMatch.decision : undefined,
-        entries: [
-          { id: globalThis.crypto.randomUUID(), accountId: '', side: 'DEBIT', amountJpy: candidate.amountJpy },
-          { id: globalThis.crypto.randomUUID(), accountId: '', side: 'CREDIT', amountJpy: candidate.amountJpy },
-        ],
-      },
-    }
-  }
 }
 
 export function DuplicateReviewGate({ preview, onResolution }: { preview: ImportPreviewDto; onResolution: (candidateId: string, resolution: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE') => void | Promise<void> }) {
