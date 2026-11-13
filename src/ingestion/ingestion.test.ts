@@ -44,6 +44,20 @@ describe('card statement adapters', () => {
     expect(statement.statementTotal).toBe(1500)
   })
 
+  it('blocks an Amazon statement whose labelled total disagrees with the detail sum, but only warns on a guessed last-row total', () => {
+    const head = 'Taro,****1234,Amazon Mastercard\n2026/07/01,AMAZON.CO.JP,本人,一括,2000,,\n2026/07/02,返品,本人,一括,-500,,\n'
+    const labelled = amazonMastercardAdapter.parse({ text: `${head}ご請求金額合計,,,,1400,,` })
+    expect(labelled.issues).toContainEqual(expect.objectContaining({ code: 'AMAZON_TOTAL_MISMATCH', severity: 'error' }))
+    expect(labelled.metadata).toMatchObject({ statementTotalSource: 'LABELLED_TOTAL' })
+
+    const guessed = amazonMastercardAdapter.parse({ text: `${head},,,,1400,,` })
+    expect(guessed.issues).toContainEqual(expect.objectContaining({ code: 'AMAZON_TOTAL_MISMATCH', severity: 'warning' }))
+    expect(guessed.metadata).toMatchObject({ statementTotalSource: 'LAST_ROW_HEURISTIC' })
+
+    const proven = amazonMastercardAdapter.parse({ text: `${head}ご請求金額合計,,,,1500,,` })
+    expect(proven.issues.filter((issue) => issue.severity === 'error')).toEqual([])
+  })
+
   it('attaches Rakuten FX continuation rows to the preceding transaction', () => {
     const text = '利用日,利用店名・商品名,利用者,支払方法,利用金額,手数料/利息,支払総額,7月支払金額,当月請求額,8月繰越残高\n2026/06/12,ANTHROPIC* CLAUDE SU,本人,一括,3666,0,3666,3666,3666,0\n現地利用額 22.000 USD 変換レート 166.637円,,,,,,,,,'
     const transaction = rakutenEnaviAdapter.parse({ text }).records[0].transactions[0]
