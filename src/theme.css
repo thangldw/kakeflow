@@ -387,6 +387,11 @@ html[lang='vi'] .scope-popover { width: 270px; }
   .gemini-tools-grid { grid-template-columns: 1fr; }
 }
 
+/* Phone layout has no window chrome offset; the browser-demo title bar would cover the top bar. */
+@media (max-width: 720px) {
+  .desktop-titlebar { display: none; }
+}
+
 @media (max-width: 640px) {
   main { padding: 18px 14px 28px; }
   .global-search { display: none; }
