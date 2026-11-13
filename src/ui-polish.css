@@ -455,3 +455,11 @@ html body .transaction-row strong { font-variant-numeric: tabular-nums; }
 }
 
 .currency-strip .currency-note { color: var(--text2); font-size: 12px; grid-column: 1 / -1; margin: 0; }
+
+.envelope-panel { margin-top: 15px; }
+.envelope-panel .panel-head > strong { font-size: 13px; }
+.envelope-note { color: var(--text2); font-size: 12px; margin: 8px 0 12px; }
+.envelope-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.envelope-table th, .envelope-table td { border-bottom: 1px solid var(--hairline); font-variant-numeric: tabular-nums; padding: 8px 6px; text-align: right; }
+.envelope-table th:first-child { text-align: left; }
+.envelope-panel .is-negative { color: var(--err); }

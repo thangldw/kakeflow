@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a read-only carry-over and unassigned-pool panel to the desktop Budgets page, rolling budgets and accrual income forward from the first budgeted month.
+- Fix overspent budget bars rendering green on the desktop runtime; raise Home and PWA text to 12px, darken low-contrast light-mode colours, add 44px touch targets and `prefers-reduced-motion`.
+- Label the sub-currency strip as using fixed reference rates.
 - Add a read-only what-if scenario panel to the cash forecast (income/spending deltas and a first-month one-time outflow); nothing is saved or posted.
 - Block Amazon Mastercard statements whose explicitly labelled total disagrees with the detail sum (a guessed last-row total still only warns); record `statementTotalSource` for Amazon and Rakuten.
 - Add fail-closed OFX/QFX (bank `STMTRS`, JPY only, durable FITID identity) and QIF (`!Type:Bank`, file-proven date order) import adapters; credit-card/investment statements, multi-account files, fractional yen, splits and corrections are blocked for review.
