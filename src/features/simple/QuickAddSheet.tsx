@@ -15,8 +15,8 @@ interface QuickAddSheetProps {
   readonly accounts: readonly AccountDto[]
   readonly onClose: () => void
   readonly onSaved: (result: { transactionId: string; amountJpy: number; categoryName: string }) => void
-  /** Opens account settings from the empty state. */
-  readonly onSetupAccounts?: () => void
+  /** Opens account settings (or sets accounts up) from the empty state; gets the kind being recorded. */
+  readonly onSetupAccounts?: (kind: QuickAddKind) => void
   /** The ledger client: the desktop app passes its platform client, the PWA its own adapter. */
   readonly client: QuickAddClient
   readonly now?: () => Date
@@ -161,7 +161,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
       {empty
         ? <div className="quick-add-empty">
           <p>{localize("記録できる口座がありません")}</p>
-          {onSetupAccounts && <button type="button" className="primary-btn" onClick={onSetupAccounts}>{localize("口座を設定する")}</button>}
+          {onSetupAccounts && <button type="button" className="primary-btn" onClick={() => onSetupAccounts(kind)}>{localize("口座を設定する")}</button>}
         </div>
         : <>
           <div className="quick-add-amount">

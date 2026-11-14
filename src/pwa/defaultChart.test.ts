@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { translateText } from '../i18n'
 import type { Account, CreateAccountInput } from '../platform/pwa/types'
-import { addDefaultChart, defaultChart } from './defaultChart'
+import { addDefaultChart, addQuickAddEssentials, defaultChart } from './defaultChart'
 
 const english = (source: string) => translateText('en', source)
 const vietnamese = (source: string) => translateText('vi', source)
@@ -69,5 +69,57 @@ describe('addDefaultChart', () => {
     // A same name of another kind does not count.
     expect(created).toContain('income-salary')
     expect(client.accounts.slice(0, 3)).toEqual([asset, other, salaryAsExpense])
+  })
+
+  it('matches a name typed with combining marks against the same precomposed name', async () => {
+    const decomposed = 'Lương'.normalize('NFD')
+    expect(decomposed).not.toBe('Lương')
+    const client = fakeClient([{ id: 'salary', householdId: 'household', name: decomposed, kind: 'INCOME', currency: 'JPY' }])
+    await addDefaultChart(client, 'household', vietnamese)
+    expect(client.createAccount.mock.calls.map(([input]) => input.id)).not.toContain('income-salary')
+  })
+})
+
+describe('addQuickAddEssentials', () => {
+  function fakeClient(accounts: Account[]) {
+    return {
+      accounts,
+      listAccounts: vi.fn(async () => [...accounts]),
+      createAccount: vi.fn(async (input: CreateAccountInput) => { accounts.push({ ...input, currency: 'JPY' }) }),
+    }
+  }
+  const setupFormAccounts = (): Account[] => [
+    { id: 'asset', householdId: 'household', name: '財布', kind: 'ASSET', currency: 'JPY' },
+    { id: 'expense', householdId: 'household', name: '食費', kind: 'EXPENSE', currency: 'JPY' },
+  ]
+
+  it('gives a two-account vault only the income account when income has nowhere to go', async () => {
+    const client = fakeClient(setupFormAccounts())
+    await addQuickAddEssentials(client, 'household', 'INCOME', english)
+    expect(client.createAccount.mock.calls.map(([input]) => input)).toEqual([
+      { id: 'income-salary', householdId: 'household', name: 'Salary', kind: 'INCOME' },
+    ])
+  })
+
+  it('creates nothing when the kind already works', async () => {
+    const client = fakeClient(setupFormAccounts())
+    await addQuickAddEssentials(client, 'household', 'EXPENSE', english)
+    expect(client.createAccount).not.toHaveBeenCalled()
+  })
+
+  it('creates the minimum for a vault with no category and nothing that can pay', async () => {
+    const client = fakeClient([{ id: 'card', householdId: 'household', name: 'Card', kind: 'LIABILITY', currency: 'JPY' }])
+    await addQuickAddEssentials(client, 'household', 'INCOME', english)
+    expect(client.accounts.map((account) => account.id)).toEqual(['card', 'income-salary', 'asset-cash'])
+
+    const empty = fakeClient([])
+    await addQuickAddEssentials(empty, 'household', 'EXPENSE', english)
+    expect(empty.accounts.map((account) => account.id)).toEqual(['expense-other', 'asset-cash'])
+  })
+
+  it('skips a chart id that already exists', async () => {
+    const client = fakeClient([{ id: 'income-salary', householdId: 'household', name: 'Bonus', kind: 'EXPENSE', currency: 'JPY' }])
+    await addQuickAddEssentials(client, 'household', 'INCOME', english)
+    expect(client.createAccount.mock.calls.map(([input]) => input.id)).toEqual(['asset-cash'])
   })
 })

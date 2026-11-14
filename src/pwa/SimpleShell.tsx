@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BudgetEditor } from '../features/simple/BudgetEditor'
 import { GoalsPanel, type NewGoalInput } from '../features/simple/GoalsPanel'
 import { tokyoDate } from '../features/simple/homeMath'
+import type { QuickAddKind } from '../features/simple/quickAdd'
 import { QuickAddSheet } from '../features/simple/QuickAddSheet'
 import { SimpleHome } from '../features/simple/SimpleHome'
 import { UiModeSwitch } from '../features/simple/SimpleMorePage'
@@ -12,7 +13,7 @@ import { localize, useI18n } from '../i18n'
 import type { PwaLedgerClient } from '../platform/pwa/client'
 import type { Account, Household, MonthlyBudgetRow, Transaction } from '../platform/pwa/types'
 import type { AccountDto, SavingsGoalDto } from '../platform/types'
-import { addDefaultChart } from './defaultChart'
+import { addQuickAddEssentials } from './defaultChart'
 import { formatJpy } from './formatJpy'
 import { LanguageSwitch } from './LanguageSwitch'
 import { PostedLedgerList } from './PostedLedgerList'
@@ -26,6 +27,8 @@ interface SimpleShellProps {
   /** Opens one of the classic PWA pages (receipt import, the posted ledger with its evidence, backup). */
   readonly onOpenPage: (page: PwaPage) => void
   readonly onSwitchToClassic: () => void
+  /** Called when the user moves on (another tab, accounts set up), so a notice shown around the shell can clear. */
+  readonly onActivity?: () => void
 }
 
 /** How long the "Saved ¥X · category" line stays after a quick add. */
@@ -41,7 +44,7 @@ function newId(prefix: string) {
  * Simple mode in the PWA: the five-tab bar (Today, History, Budget, Savings, More), the floating
  * "+ Add spending" button and the quick-add sheet, all served from the vault through the Simple adapter.
  */
-export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic }: SimpleShellProps) {
+export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic, onActivity }: SimpleShellProps) {
   // Subscribes the shell to the language, so every tab re-renders when it changes.
   const { text } = useI18n()
   const adapter = useMemo(() => createSimpleAdapter(client, household.id), [client, household.id])
@@ -54,6 +57,8 @@ export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic }
   const [savedText, setSavedText] = useState('')
   const [setupFailed, setSetupFailed] = useState(false)
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // A second tap while the accounts are being created must not create them again.
+  const settingUp = useRef(false)
   const changed = useCallback(() => setRevision((value) => value + 1), [])
 
   useEffect(() => {
@@ -66,6 +71,8 @@ export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic }
 
   const selectTab = (next: SimpleTab) => {
     setTab(next)
+    setSetupFailed(false)
+    onActivity?.()
     // A new tab starts at its top, like a new page.
     if (document.scrollingElement) document.scrollingElement.scrollTop = 0
   }
@@ -78,14 +85,19 @@ export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic }
     savedTimer.current = setTimeout(() => setSavedText(''), SAVED_STATUS_MS)
   }
 
-  const setupAccounts = async () => {
+  const setupAccounts = async (kind: QuickAddKind) => {
+    if (settingUp.current) return
+    settingUp.current = true
     setSetupFailed(false)
     try {
-      await addDefaultChart(client, household.id, text)
+      await addQuickAddEssentials(client, household.id, kind, text)
+      onActivity?.()
     } catch {
       setSetupFailed(true)
+    } finally {
+      settingUp.current = false
+      changed()
     }
-    changed()
   }
 
   return <div className="pwa-simple">
@@ -107,7 +119,7 @@ export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic }
     <SimpleTabBar active={tab} onSelect={selectTab} />
     <QuickAddSheet
       open={quickAddOpen} householdId={household.id} accounts={accounts} client={adapter}
-      onClose={() => setQuickAddOpen(false)} onSaved={quickAddSaved} onSetupAccounts={() => { void setupAccounts() }}
+      onClose={() => setQuickAddOpen(false)} onSaved={quickAddSaved} onSetupAccounts={(kind) => { void setupAccounts(kind) }}
     />
   </div>
 }

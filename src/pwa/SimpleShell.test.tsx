@@ -211,14 +211,19 @@ describe.each(['en', 'vi'] as const)('SimpleShell in %s', (locale) => {
     const sheet = await screen.findByRole('dialog', { name: t('支出を記録') })
     expect(within(sheet).getByRole('button', { name: /財布/u })).toBeInTheDocument()
 
-    // Nothing can receive income yet: the sheet's empty state sets up the starter accounts.
+    // Nothing can receive income yet: the sheet's empty state adds only the income account, once even on a double tap.
     fireEvent.click(within(sheet).getByRole('button', { name: t('収入') }))
     expect(within(sheet).getByText(t('記録できる口座がありません'))).toBeInTheDocument()
-    fireEvent.click(within(sheet).getByRole('button', { name: t('口座を設定する') }))
+    const setUp = within(sheet).getByRole('button', { name: t('口座を設定する') })
+    fireEvent.click(setUp)
+    fireEvent.click(setUp)
     expect(await within(sheet).findByRole('button', { name: t('給与収入') })).toBeInTheDocument()
     expect(within(sheet).getByLabelText(t('記録する金額'))).toBeInTheDocument()
-    const names = (await client.listAccounts(household.id)).map((account) => account.id).sort()
-    expect(names).toEqual(expect.arrayContaining(['asset', 'expense', 'asset-cash', 'income-salary', 'expense-groceries']))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    const ids = (await client.listAccounts(household.id)).map((account) => account.id)
+    expect(ids.filter((id) => id === 'income-salary')).toHaveLength(1)
+    expect(ids.filter((id) => !id.startsWith('expense-'))).toEqual(['asset', 'expense', 'income-salary'])
+    expect(ids).not.toEqual(expect.arrayContaining(['expense-groceries']))
   })
 })
 
