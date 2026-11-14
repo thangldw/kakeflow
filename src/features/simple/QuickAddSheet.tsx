@@ -1,7 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { X } from 'lucide-react'
 import { localize } from '../../i18n'
-import { platformClient } from '../../platform'
 import type { AccountDto, PlatformClient } from '../../platform/types'
 import { parseYenText } from '../../ui/yen'
 import { tokyoDate } from './homeMath'
@@ -18,7 +17,8 @@ interface QuickAddSheetProps {
   readonly onSaved: (result: { transactionId: string; amountJpy: number; categoryName: string }) => void
   /** Opens account settings from the empty state. */
   readonly onSetupAccounts?: () => void
-  readonly client?: QuickAddClient
+  /** The ledger client: the desktop app passes its platform client, the PWA its own adapter. */
+  readonly client: QuickAddClient
   readonly now?: () => Date
 }
 
@@ -36,7 +36,7 @@ export function QuickAddSheet(props: QuickAddSheetProps) {
   return <QuickAddSheetBody {...props} householdId={props.householdId} />
 }
 
-function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAccounts, client = platformClient, now }: QuickAddSheetProps & { readonly householdId: string }) {
+function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAccounts, client, now }: QuickAddSheetProps & { readonly householdId: string }) {
   const titleId = useId()
   const payingLabelId = useId()
   const amountId = useId()

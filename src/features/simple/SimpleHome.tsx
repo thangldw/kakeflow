@@ -2,7 +2,6 @@ import { useEffect, useId, useState } from 'react'
 import { goalPace } from '../../domain/goalPace'
 import { localize, useI18n } from '../../i18n'
 import { formatMonthLabel } from '../../monthLabel'
-import { platformClient } from '../../platform'
 import type { SavingsGoalDto } from '../../platform/types'
 import { YenInput } from '../../ui/YenInput'
 import { loadSimpleHome, type HomeClient, type SimpleHomeData } from './homeLoader'
@@ -23,7 +22,8 @@ interface SimpleHomeProps {
   readonly onOpenSavings: () => void
   /** Switches the shown month back to the current Tokyo month; offered when another month is shown. */
   readonly onGoToCurrentMonth?: () => void
-  readonly client?: HomeClient
+  /** The ledger client: the desktop app passes its platform client, the PWA its own adapter. */
+  readonly client: HomeClient
 }
 
 type LoadState =
@@ -36,7 +36,7 @@ type LoadState =
  * goal and at most one category that needs attention. Always reads the whole
  * household on the accrual basis.
  */
-export function SimpleHome({ householdId, householdName, month, revision, onSetLimit, onOpenBudgets, onOpenSavings, onGoToCurrentMonth, client = platformClient }: SimpleHomeProps) {
+export function SimpleHome({ householdId, householdName, month, revision, onSetLimit, onOpenBudgets, onOpenSavings, onGoToCurrentMonth, client }: SimpleHomeProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [reloadKey, setReloadKey] = useState(0)
   const key = `${householdId ?? ''}|${month}`

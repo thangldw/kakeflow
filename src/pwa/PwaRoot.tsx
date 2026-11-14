@@ -22,6 +22,10 @@ import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
 import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
 import './pwa.css'
 
+// Bundles the Simple components into the PWA build until Task 4 mounts them here (see simpleComponentsSmoke.ts).
+// eslint-disable-next-line react-refresh/only-export-components
+export { simpleComponentsSmoke } from './simpleComponentsSmoke'
+
 export type PwaOcrDocument = (
   fileBytes: Uint8Array,
   mediaType: string,
