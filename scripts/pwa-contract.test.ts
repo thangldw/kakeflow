@@ -132,9 +132,9 @@ describe('production PWA contract', () => {
 
   it('bundles the Simple components with the catalog subset instead of the desktop client and full catalogs', async () => {
     const bundle = (await javascriptArtifactsBelow(dist)).map((artifact) => artifact.source).join('\n')
-    // Class names from SimpleTabBar, the More list, SimpleHome and QuickAddSheet (mounted by the PWA's Simple shell), and a
-    // Simple tab label from the subset.
-    for (const marker of ['simple-tabbar', 'simple-more-list', 'simple-home', 'quick-add-sheet', '取引一覧']) {
+    // Class names from SimpleTabBar, the More list, SimpleHome and QuickAddSheet (mounted by the PWA's Simple shell), and the
+    // English and Vietnamese values of the Home hero label: they exist only in the catalog subsets, never as a source literal.
+    for (const marker of ['simple-tabbar', 'simple-more-list', 'simple-home', 'quick-add-sheet', 'Left to spend this month', 'Còn được tiêu tháng này']) {
       expect(bundle, marker).toContain(marker)
     }
     // A command only the desktop platform client sends, and a key only the full desktop catalog holds.
