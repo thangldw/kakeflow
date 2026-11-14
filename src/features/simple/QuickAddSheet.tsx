@@ -12,6 +12,11 @@ type QuickAddClient = Pick<PlatformClient, 'createManualTransaction'>
 interface QuickAddSheetProps {
   readonly open: boolean
   readonly householdId: string | null
+  /**
+   * Where the chip order and default paying account are remembered (defaults to the household id). The PWA passes
+   * a per-vault key, because every PWA vault uses the same household id.
+   */
+  readonly usageKey?: string
   readonly accounts: readonly AccountDto[]
   readonly onClose: () => void
   readonly onSaved: (result: { transactionId: string; amountJpy: number; categoryName: string }) => void
@@ -38,7 +43,7 @@ export function QuickAddSheet(props: QuickAddSheetProps) {
   return <QuickAddSheetBody {...props} householdId={props.householdId} />
 }
 
-function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAccounts, client, now }: QuickAddSheetProps & { readonly householdId: string }) {
+function QuickAddSheetBody({ householdId, usageKey = householdId, accounts, onClose, onSaved, onSetupAccounts, client, now }: QuickAddSheetProps & { readonly householdId: string }) {
   const titleId = useId()
   const payingLabelId = useId()
   const amountId = useId()
@@ -57,7 +62,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
   const [failed, setFailed] = useState(false)
 
   // Read once per opening; the result may be a shared frozen object and is never mutated.
-  const [usage] = useState(() => readQuickAddUsage(householdId))
+  const [usage] = useState(() => readQuickAddUsage(usageKey))
   const choices = useMemo(() => quickAddChoices(accounts, kind, usage), [accounts, kind, usage])
   const [payingChoice, setPayingChoice] = useState<string | null>(null)
   // An explicit choice wins while it is still offered for the current kind; otherwise the remembered default.
@@ -118,7 +123,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
       setFailed(true)
       return
     }
-    recordQuickAddUse(householdId, category.id, payingAccount.id)
+    recordQuickAddUse(usageKey, category.id, payingAccount.id)
     onSaved({ transactionId, amountJpy: amount, categoryName: category.name })
     setAmountText('')
     setBusy(false)

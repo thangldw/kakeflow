@@ -162,6 +162,19 @@ describe('QuickAddSheet', () => {
     expect(readQuickAddUsage('h1')).toEqual({ categoryCounts: { daily: 1 }, lastPayingAccountId: 'cash' })
   })
 
+  it('reads and records usage under the usage key when one is given, keeping the household id for the journal', async () => {
+    localStorage.setItem('kakeflow.simpleUsage.vault-a:h1', JSON.stringify({ categoryCounts: {}, lastPayingAccountId: 'card' }))
+    const props = renderSheet({ usageKey: 'vault-a:h1' })
+    expect(screen.getByRole('button', { name: /楽天カード/u })).toBeInTheDocument()
+    tapKeys('800')
+    fireEvent.click(screen.getByRole('button', { name: '日用品' }))
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalled())
+    expect(props.client.createManualTransaction.mock.calls[0][0]).toMatchObject({ householdId: 'h1' })
+    expect(readQuickAddUsage('vault-a:h1')).toEqual({ categoryCounts: { daily: 1 }, lastPayingAccountId: 'card' })
+    expect(localStorage.getItem('kakeflow.simpleUsage.h1')).toBeNull()
+  })
+
   it('keeps the sheet open and the amount when saving fails, and says so', async () => {
     const client = fakeClient({ fail: true })
     const props = renderSheet({ client })

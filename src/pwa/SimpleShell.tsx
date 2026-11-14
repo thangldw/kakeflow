@@ -24,6 +24,8 @@ export type PwaPage = 'import' | 'ledger' | 'backup'
 interface SimpleShellProps {
   readonly client: PwaLedgerClient
   readonly household: Household
+  /** Names this vault's quick-add usage history in localStorage (`<databaseName>:<householdId>`), so vaults on one device stay apart. */
+  readonly usageKey: string
   /** Opens one of the classic PWA pages (receipt import, the posted ledger with its evidence, backup). */
   readonly onOpenPage: (page: PwaPage) => void
   readonly onSwitchToClassic: () => void
@@ -44,7 +46,7 @@ function newId(prefix: string) {
  * Simple mode in the PWA: the five-tab bar (Today, History, Budget, Savings, More), the floating
  * "+ Add spending" button and the quick-add sheet, all served from the vault through the Simple adapter.
  */
-export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic, onActivity }: SimpleShellProps) {
+export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchToClassic, onActivity }: SimpleShellProps) {
   // Subscribes the shell to the language, so every tab re-renders when it changes.
   const { text } = useI18n()
   const adapter = useMemo(() => createSimpleAdapter(client, household.id), [client, household.id])
@@ -118,7 +120,7 @@ export function SimpleShell({ client, household, onOpenPage, onSwitchToClassic, 
     <button type="button" className="primary-btn simple-add-fab" onClick={() => setQuickAddOpen(true)}>{localize("＋ 支出を記録")}</button>
     <SimpleTabBar active={tab} onSelect={selectTab} />
     <QuickAddSheet
-      open={quickAddOpen} householdId={household.id} accounts={accounts} client={adapter}
+      open={quickAddOpen} householdId={household.id} usageKey={usageKey} accounts={accounts} client={adapter}
       onClose={() => setQuickAddOpen(false)} onSaved={quickAddSaved} onSetupAccounts={(kind) => { void setupAccounts(kind) }}
     />
   </div>

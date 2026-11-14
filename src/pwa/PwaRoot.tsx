@@ -563,7 +563,7 @@ function PwaVaultRoot({
 
     {showSimple && session.client && household && <>
       {effectiveError && <p className="pwa-error pwa-simple-error" role="alert">{effectiveError}</p>}
-      <SimpleShell client={session.client} household={household} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }}
+      <SimpleShell client={session.client} household={household} usageKey={uiModeKey(databaseName, household.id)} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }}
         onActivity={() => setError(null)} />
     </>}
 

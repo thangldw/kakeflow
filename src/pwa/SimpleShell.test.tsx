@@ -56,7 +56,7 @@ function renderShell(client: PwaLedgerClient, locale: 'en' | 'vi') {
   const onOpenPage = vi.fn()
   const onSwitchToClassic = vi.fn()
   const view = render(<I18nProvider>
-    <SimpleShell client={client} household={household} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />
+    <SimpleShell client={client} household={household} usageKey={`simple-shell:${household.id}`} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />
   </I18nProvider>)
   return { ...view, onOpenPage, onSwitchToClassic }
 }

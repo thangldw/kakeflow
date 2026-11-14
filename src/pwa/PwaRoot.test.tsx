@@ -589,6 +589,35 @@ describe('PWA Simple mode and language', () => {
     expect(readUiMode('pwa-simple-vault-a:household')).toBe('full')
   })
 
+  it('keeps the quick-add usage history of each vault separate', async () => {
+    browserLanguage('en-US')
+    async function quickAdd(category: string) {
+      fireEvent.click(await screen.findByRole('button', { name: '+ Add spending' }))
+      const sheet = await screen.findByRole('dialog', { name: 'Add spending' })
+      fireEvent.change(within(sheet).getByLabelText('Amount'), { target: { value: '1200' } })
+      fireEvent.click(within(sheet).getByRole('button', { name: category }))
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    }
+    const usage = (key: string) => JSON.parse(localStorage.getItem(`kakeflow.simpleUsage.${key}`) ?? 'null') as { categoryCounts: Record<string, number> } | null
+
+    await createVault('pwa-simple-usage-a')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    await quickAdd('Groceries')
+    cleanup()
+
+    await createVault('pwa-simple-usage-b')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    await quickAdd('Transport')
+
+    expect(usage('pwa-simple-usage-a:household')?.categoryCounts).toEqual({ 'expense-groceries': 1 })
+    expect(usage('pwa-simple-usage-b:household')?.categoryCounts).toEqual({ 'expense-transport': 1 })
+    // The bare household id would be shared by every vault on the device.
+    expect(localStorage.getItem('kakeflow.simpleUsage.household')).toBeNull()
+  })
+
   it('clears a starter-account alert once the user moves on in Simple', async () => {
     browserLanguage('en-US')
     const createAccount = PwaLedgerClient.prototype.createAccount
