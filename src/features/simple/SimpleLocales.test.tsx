@@ -124,9 +124,9 @@ describe('Simple screens in English', () => {
     expect(lowerCaseStarts(container)).toEqual([])
   })
 
-  it('tab bar reads Today, Transactions, Budget, Savings, More', () => {
+  it('tab bar reads Today, History, Budget, Savings, More', () => {
     const { container } = inLocale('en', <SimpleTabBar active="today" onSelect={() => undefined} />)
-    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Today', 'Transactions', 'Budget', 'Savings', 'More'])
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Today', 'History', 'Budget', 'Savings', 'More'])
     expect(lowerCaseStarts(container)).toEqual([])
   })
 

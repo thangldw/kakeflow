@@ -136,7 +136,7 @@ describe('Simple mode in the app shell', () => {
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
     expect(screen.queryByRole('button', { name: 'テンプレート: キャッシュフロー' })).not.toBeInTheDocument()
-    expect(within(tabBar()).getAllByRole('button').map((button) => button.textContent)).toEqual(['今日', '取引', '予算管理', '貯金', 'そのほか'])
+    expect(within(tabBar()).getAllByRole('button').map((button) => button.textContent)).toEqual(['今日', '取引一覧', '予算管理', '貯金', 'そのほか'])
     expect(screen.queryByRole('group', { name: '計上基準' })).not.toBeInTheDocument()
     expect(screen.queryByText('範囲:')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '前月' })).toBeInTheDocument()
@@ -152,18 +152,18 @@ describe('Simple mode in the app shell', () => {
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
     const entries = within(sidebar()).getAllByRole('button').filter((button) => button.classList.contains('nav-item') && button.closest('nav'))
-    expect(entries.map((button) => button.getAttribute('aria-label'))).toEqual(['今日', '取引', '予算管理', '貯金', 'そのほか'])
+    expect(entries.map((button) => button.getAttribute('aria-label'))).toEqual(['今日', '取引一覧', '予算管理', '貯金', 'そのほか'])
     expect(within(sidebar()).getByRole('button', { name: '今日' })).toHaveAttribute('aria-current', 'page')
     expect(within(sidebar()).queryByRole('button', { name: 'インポート' })).not.toBeInTheDocument()
 
-    fireEvent.click(within(sidebar()).getByRole('button', { name: '取引' }))
-    expect(within(sidebar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(within(sidebar()).getByRole('button', { name: '取引一覧' }))
+    expect(within(sidebar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
     expect(within(sidebar()).getByRole('button', { name: '今日' })).not.toHaveAttribute('aria-current')
-    expect(within(tabBar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
+    expect(within(tabBar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
 
     fireEvent.click(within(sidebar()).getByRole('button', { name: 'サイドバーを折りたたむ' }))
     expect(sidebar()).toHaveClass('sidebar--collapsed')
-    for (const name of ['今日', '取引', '予算管理', '貯金', 'そのほか']) expect(within(sidebar()).getByRole('button', { name })).toBeInTheDocument()
+    for (const name of ['今日', '取引一覧', '予算管理', '貯金', 'そのほか']) expect(within(sidebar()).getByRole('button', { name })).toBeInTheDocument()
   })
 
   it('opens the quick-add sheet from the top bar instead of navigating', async () => {
@@ -196,7 +196,7 @@ describe('Simple mode in the app shell', () => {
     const savedId = (desktop.createManualTransaction.mock.calls[0][0] as { id: string }).id
     await waitFor(() => expect(desktop.getTransactionDetail).toHaveBeenCalledWith('family', savedId))
     expect(await screen.findByRole('dialog', { name: 'お弁当' })).toBeInTheDocument()
-    expect(within(sidebar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
+    expect(within(sidebar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
   })
 
   it('labels a saved earlier month neutrally and goes back to this month from the Home', async () => {

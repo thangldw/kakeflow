@@ -13,7 +13,7 @@ describe('SimpleTabBar', () => {
     const nav = screen.getByRole('navigation')
     expect(nav).toHaveAccessibleName()
     const buttons = within(nav).getAllByRole('button')
-    expect(buttons.map((button) => button.textContent)).toEqual(['今日', '取引', '予算管理', '貯金', 'そのほか'])
+    expect(buttons.map((button) => button.textContent)).toEqual(['今日', '取引一覧', '予算管理', '貯金', 'そのほか'])
     expect(buttons.filter((button) => button.getAttribute('aria-current') === 'page')).toEqual([screen.getByRole('button', { name: '予算管理' })])
   })
 
