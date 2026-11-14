@@ -480,3 +480,9 @@ html body .transaction-row strong { font-variant-numeric: tabular-nums; }
   .transfer-pair-list > li { grid-template-columns: 1fr; }
   .transfer-pair-actions { flex-wrap: wrap; }
 }
+
+.yen-field { display: block; position: relative; }
+.yen-field input { box-sizing: border-box; font-variant-numeric: tabular-nums; text-align: right; width: 100%; }
+.yen-field--suffix input { padding-right: 28px; }
+.yen-field--suffix::after { color: var(--text2); content: '円'; font-size: 12px; pointer-events: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
+.yen-field input[aria-invalid="true"] { border-color: var(--err); }

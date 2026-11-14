@@ -38,9 +38,9 @@ Status: implemented on this branch with the default decision (decisions are **no
 
 **Acceptance.** A test proves that with the feature off no ledger data is passed to the assistant layer; the payload log matches what was sent; revoking consent clears session context.
 
-## 3a. Simulator input pattern
+## 3a. Simulator input pattern (implemented)
 
-Money inputs in the budgets simulators and the scenario panel are plain numbers. Proposal: text input with `inputMode="numeric"`, thousand separators on blur, a visible yen suffix outside the label (so label-based tests keep working), and the existing integer validation. Needs a shared `YenInput` component; do it once for all four forms.
+`src/ui/YenInput.tsx` and `src/ui/yen.ts`: text input with `inputMode="numeric"`, raw digits while focused, thousands separators after blur, a 円 mark drawn with CSS (so label-based queries still match), invalid text flagged with `aria-invalid` and never passed to the parent, and no silent revert. Applied to the three yen fields of the budgets simulators. Not applied to the what-if scenario panel on the forecast: its fields start empty, already say (円) in the label, and its tests rely on the text-level validation message.
 
 ## 4. Third-party history importers (Mint, YNAB, Monarch, Actual)
 
