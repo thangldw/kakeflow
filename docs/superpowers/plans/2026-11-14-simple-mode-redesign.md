@@ -41,7 +41,7 @@
 **Interfaces:**
 - Produces: `export interface GoalPace { readonly remaining: number; readonly months: number; readonly monthly: number; readonly overdue: boolean }` and `export function goalPace(goal: Pick<SavingsGoalDto, 'targetJpy' | 'savedJpy' | 'targetDate'>, now?: Date): GoalPace`
 
-- [ ] **Step 1: Write the failing test** in `goalPace.test.ts` with a fixed `now`: target ¥600,000, saved ¥342,000, target date 2027-02-14, now 2026-11-14 → `{ remaining: 258000, months: 3, monthly: 86000, overdue: false }`; saved ≥ target → `remaining 0, monthly 0`; target date in the past with remaining > 0 → `overdue: true, months: 1`.
+- [ ] **Step 1: Write the failing test** in `goalPace.test.ts` with a fixed `now`: target ¥600,000, saved ¥342,000, target date 2027-02-12, now `new Date(2026, 10, 14, 12)` (local) → `{ remaining: 258000, months: 3, monthly: 86000, overdue: false }` (90 days / 30.4375 rounds up to 3); saved ≥ target → `remaining 0, monthly 0`; target date in the past with remaining > 0 → `overdue: true, months: 1`.
 - [ ] **Step 2: Run** `npx vitest run src/domain/goalPace.test.ts` → FAIL (module missing).
 - [ ] **Step 3: Implement** `goalPace` by moving the existing body verbatim (same rounding: `months = max(1, ceil(max(0, days) / (365.25 / 12)))`), with `now` defaulting to `new Date()`. Replace the closure in `BudgetsPage` with the import; behavior must not change.
 - [ ] **Step 4: Run** `npx vitest run src/domain/goalPace.test.ts src/App.test.tsx` → PASS.
