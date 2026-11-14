@@ -57,6 +57,14 @@ export function quickAddChoices(accounts: readonly AccountDto[], kind: QuickAddK
   return { chips, allCategories, payingAccounts, defaultCategoryId: chips[0]?.id ?? null, defaultPayingAccountId: defaultPaying }
 }
 
+/** True for a YYYY-MM-DD string naming a real calendar day (2026-02-31 is rejected). */
+export function isCalendarDate(text: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text)
+  if (!match) return false
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+  return date.toISOString().slice(0, 10) === text
+}
+
 export function buildQuickAddInput(args: {
   id: string; householdId: string; kind: QuickAddKind; amountJpy: number
   categoryId: string; payingAccountId: string; occurredOn: string; note: string; accounts: readonly AccountDto[]

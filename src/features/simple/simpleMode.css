@@ -54,7 +54,7 @@
 .quick-add-close { width: 44px; height: 44px; color: var(--text2); }
 
 .quick-add-kind { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface2); }
-.quick-add-kind button { min-height: 40px; border: 0; border-radius: 9px; color: var(--text2); background: transparent; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.quick-add-kind button { min-height: 44px; border: 0; border-radius: 9px; color: var(--text2); background: transparent; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .quick-add-kind button[aria-pressed='true'] { color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--hairline); }
 
 .quick-add-amount { display: grid; gap: 4px; color: var(--text2); font-size: 13px; font-weight: 600; }

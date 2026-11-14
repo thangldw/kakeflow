@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AccountDto, CreateManualTransactionInputDto, TransactionRowDto } from '../../platform/types'
+import { isCalendarDate } from './quickAdd'
 import { QuickAddSheet } from './QuickAddSheet'
 import { readQuickAddUsage } from './uiMode'
 
@@ -211,6 +212,41 @@ describe('QuickAddSheet', () => {
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
     fireEvent.keyDown(amountField(), { key: 'Enter' })
     await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps Save disabled when the date is empty or not a real calendar date', () => {
+    renderSheet()
+    tapKeys('500')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    const date = screen.getByLabelText('日付')
+    expect(date).toHaveValue('2026-11-14')
+    expect(saveButton()).toBeEnabled()
+    fireEvent.change(date, { target: { value: '' } })
+    expect(saveButton()).toBeDisabled()
+    fireEvent.keyDown(screen.getByLabelText('金額'), { key: 'Enter' })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.change(date, { target: { value: '2026-11-13' } })
+    expect(saveButton()).toBeEnabled()
+  })
+
+  it('treats impossible dates such as 2026-02-31 as invalid', () => {
+    expect(isCalendarDate('2026-02-31')).toBe(false)
+    expect(isCalendarDate('2026-13-01')).toBe(false)
+    expect(isCalendarDate('')).toBe(false)
+    expect(isCalendarDate('2026-2-3')).toBe(false)
+    expect(isCalendarDate('2024-02-29')).toBe(true)
+    expect(isCalendarDate('2026-11-14')).toBe(true)
+  })
+
+  it('does not save on Enter while an IME composition is being confirmed', () => {
+    const props = renderSheet()
+    tapKeys('700')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    const note = screen.getByLabelText('メモ（任意）')
+    fireEvent.keyDown(note, { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(note, { key: 'Enter', keyCode: 229 })
+    expect(props.client.createManualTransaction).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('offers the categories beyond the chips through More…', async () => {

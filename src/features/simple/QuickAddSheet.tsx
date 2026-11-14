@@ -5,7 +5,7 @@ import { platformClient } from '../../platform'
 import type { AccountDto, PlatformClient } from '../../platform/types'
 import { parseYenText } from '../../ui/yen'
 import { tokyoDate } from './homeMath'
-import { buildQuickAddInput, quickAddChoices, type QuickAddKind } from './quickAdd'
+import { buildQuickAddInput, isCalendarDate, quickAddChoices, type QuickAddKind } from './quickAdd'
 import { readQuickAddUsage, recordQuickAddUse } from './uiMode'
 
 type QuickAddClient = Pick<PlatformClient, 'createManualTransaction'>
@@ -68,7 +68,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
 
   const amount = parseYenText(amountText)
   const amountValid = amount !== null && amount > 0
-  const canSave = amountValid && category !== null && payingAccount !== null && !busy
+  const canSave = amountValid && category !== null && payingAccount !== null && isCalendarDate(occurredOn) && !busy
 
   // Focus the amount on open and give focus back to whatever opened the sheet.
   useEffect(() => {
@@ -124,6 +124,8 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key === 'Escape') { if (!busy) { event.preventDefault(); onClose() }; return }
     if (event.key === 'Enter') {
+      // Enter that confirms an IME conversion (Japanese input) must not save.
+      if (event.nativeEvent.isComposing || event.keyCode === 229) return
       // Enter in a text or date field saves; buttons and selects keep their own Enter behavior.
       if (event.target instanceof HTMLInputElement) { event.preventDefault(); void save() }
       return
