@@ -1267,6 +1267,7 @@
   "銀行": "bank",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Manage your banks, wallets, cards, income and spending categories.",
   "銀行CSVの取込先銀行口座を選択してください。": "Please select the bank account to import the bank CSV to.",
+  "予算の引き継ぎ元": "Budgets carried over from",
   "保管庫の状態": "Runtime state",
   "ローカル保存中": "LOCAL",
   "施錠中": "LOCKED",

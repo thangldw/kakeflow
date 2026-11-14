@@ -2,6 +2,7 @@ import { Archive, BookOpen, ChevronRight, Receipt, type LucideIcon } from 'lucid
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BudgetEditor } from '../features/simple/BudgetEditor'
 import { GoalsPanel, type NewGoalInput } from '../features/simple/GoalsPanel'
+import { findBudgetMonth } from '../features/simple/homeLoader'
 import { tokyoDate } from '../features/simple/homeMath'
 import type { QuickAddKind } from '../features/simple/quickAdd'
 import { QuickAddSheet } from '../features/simple/QuickAddSheet'
@@ -161,28 +162,65 @@ function HistoryTab({ client, householdId, revision }: { readonly client: PwaLed
 interface BudgetData {
   readonly categories: readonly Account[]
   readonly budgets: readonly MonthlyBudgetRow[]
+  /** The earlier month the budgets come from when the month has none of its own (the month Home falls back to). */
+  readonly carriedOverFrom: string | null
 }
 
 function BudgetTab({ client, householdId, month, onChanged }: { readonly client: PwaLedgerClient; readonly householdId: string; readonly month: string; readonly onChanged: () => void }) {
-  // Reloaded only for the month and after a new category: a saved amount stays in its row (which keeps its "Saved" note).
-  const [categoryRevision, setCategoryRevision] = useState(0)
+  // Reloaded only for the month, after a new category and after a carry-over; rows are keyed by category, so a saved
+  // amount stays in its row (which keeps its "Saved" note).
+  const [reload, setReload] = useState(0)
   const [state, retry] = useLoad<BudgetData>(async () => {
-    const [accounts, budgets] = await Promise.all([client.listAccounts(householdId), client.listBudgets(householdId, month)])
-    return { categories: accounts.filter((account) => account.kind === 'EXPENSE'), budgets }
-  }, `${householdId}|${month}|${categoryRevision}`)
+    const [accounts, found] = await Promise.all([
+      client.listAccounts(householdId),
+      findBudgetMonth<MonthlyBudgetRow>(month, (candidate) => client.listBudgets(householdId, candidate)),
+    ])
+    return {
+      categories: accounts.filter((account) => account.kind === 'EXPENSE'),
+      budgets: found.budgets,
+      carriedOverFrom: found.month !== null && found.month !== month ? found.month : null,
+    }
+  }, `${householdId}|${month}|${reload}`)
+  // The one copy of an earlier month's budgets into this month, shared by saves that race.
+  const carryOver = useRef<{ readonly month: string; readonly done: Promise<void> } | null>(null)
   if (state.kind !== 'ready') return <LoadProblem state={state} retry={retry} />
+  const data = state.data
+
+  /**
+   * Home budgets a month from the nearest earlier month until the month has rows of its own. The first save in such a
+   * month therefore writes all those rows for the month before the edit, so no other category drops out of "Left to spend".
+   */
+  const carryOverOnce = (from: string) => {
+    if (carryOver.current?.month !== month) {
+      const categoryIds = new Set(data.categories.map((category) => category.id))
+      const done = (async () => {
+        for (const row of data.budgets) {
+          if (row.month !== from || !categoryIds.has(row.categoryAccountId)) continue
+          await client.upsertBudget({ householdId, month, categoryAccountId: row.categoryAccountId, budgetJpy: row.budgetJpy })
+        }
+      })()
+      carryOver.current = { month, done }
+      // A failed copy is tried again by the next save (each write replaces the same row).
+      done.catch(() => { if (carryOver.current?.done === done) carryOver.current = null })
+    }
+    return carryOver.current.done
+  }
+
   return <div className="pwa-simple-page">
     <BudgetEditor
       month={month}
-      categories={state.data.categories}
-      budgets={state.data.budgets}
+      categories={data.categories}
+      budgets={data.budgets}
+      carriedOverFrom={data.carriedOverFrom}
       onSave={async (categoryAccountId, budgetJpy) => {
+        if (data.carriedOverFrom !== null) await carryOverOnce(data.carriedOverFrom)
         await client.upsertBudget({ householdId, month, categoryAccountId, budgetJpy })
+        if (data.carriedOverFrom !== null) setReload((value) => value + 1)
         onChanged()
       }}
       onAddCategory={async (name) => {
         await client.createAccount({ id: newId('expense'), householdId, name, kind: 'EXPENSE' })
-        setCategoryRevision((value) => value + 1)
+        setReload((value) => value + 1)
         onChanged()
       }}
     />

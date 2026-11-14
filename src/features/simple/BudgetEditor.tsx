@@ -9,6 +9,11 @@ interface BudgetEditorProps {
   readonly categories: readonly { readonly id: string; readonly name: string }[]
   readonly budgets: readonly { readonly categoryAccountId: string; readonly budgetJpy: number }[]
   readonly onSave: (categoryAccountId: string, budgetJpy: number) => Promise<void>
+  /**
+   * The earlier `YYYY-MM` month whose budgets `budgets` holds because `month` has none yet; shown as
+   * "Budgets carried over from <month>". Null or absent when the budgets are the month's own.
+   */
+  readonly carriedOverFrom?: string | null
   /** When given, a form to add a spending category is shown. */
   readonly onAddCategory?: (name: string) => Promise<void>
 }
@@ -17,7 +22,7 @@ interface BudgetEditorProps {
 const NAME_MAX_LENGTH = 120
 
 /** Simple-mode budget editor: one yen field per spending category for one month. Props only. */
-export function BudgetEditor({ month, categories, budgets, onSave, onAddCategory }: BudgetEditorProps) {
+export function BudgetEditor({ month, categories, budgets, carriedOverFrom = null, onSave, onAddCategory }: BudgetEditorProps) {
   const id = useId()
   const { localeCode } = useI18n()
   const budgetOf = (categoryId: string) => budgets.find((budget) => budget.categoryAccountId === categoryId)?.budgetJpy ?? 0
@@ -25,14 +30,14 @@ export function BudgetEditor({ month, categories, budgets, onSave, onAddCategory
   return <section className="simple-card simple-budget-editor" aria-labelledby={`${id}-title`}>
     <h2 id={`${id}-title`} className="simple-panel-title">{localize("カテゴリーごとの月予算")}</h2>
     <p className="simple-hero-month">{formatMonthLabel(month, localeCode)}</p>
+    {carriedOverFrom !== null && <p className="simple-note"><span>{localize("予算の引き継ぎ元")}</span> <strong>{formatMonthLabel(carriedOverFrom, localeCode)}</strong></p>}
     {categories.length === 0
       ? <p className="simple-note">{localize("支出カテゴリーがまだありません")}</p>
       : <ul className="simple-budget-rows">
         {categories.map((category) => {
-          const budgetJpy = budgetOf(category.id)
-          // A new budget from the parent remounts the row so its field and baseline follow it.
-          return <li key={`${category.id}:${budgetJpy}`}>
-            <BudgetRow category={category} budgetJpy={budgetJpy} onSave={onSave} />
+          // Keyed by category only: a reload after a save keeps the row (its focus and its "Saved" note).
+          return <li key={category.id}>
+            <BudgetRow category={category} budgetJpy={budgetOf(category.id)} onSave={onSave} />
           </li>
         })}
       </ul>}
@@ -48,6 +53,13 @@ function BudgetRow({ category, budgetJpy, onSave }: { readonly category: { reado
   const [draftValid, setDraftValid] = useState(true)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<'idle' | 'saved' | 'failed'>('idle')
+  // A new stored amount from the parent becomes the baseline; it replaces the field only while the field is untouched.
+  const [stored, setStored] = useState(budgetJpy)
+  if (stored !== budgetJpy) {
+    setStored(budgetJpy)
+    setSaved(budgetJpy)
+    if (draft === saved && draftValid) setDraft(budgetJpy)
+  }
 
   const save = async (event: FormEvent) => {
     event.preventDefault()

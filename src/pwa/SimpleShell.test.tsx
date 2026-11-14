@@ -19,6 +19,8 @@ vi.mock('../platform/pwa/argonWorker', () => ({ deriveArgon2idInWorker: argonMoc
 import { I18nProvider, translateText } from '../i18n'
 import { PwaLedgerClient } from '../platform/pwa/client'
 import type { Household } from '../platform/pwa/types'
+import { previousMonths } from '../features/simple/homeMath'
+import { formatMonthLabel } from '../monthLabel'
 import { defaultChart } from './defaultChart'
 import { SimpleShell } from './SimpleShell'
 
@@ -189,6 +191,59 @@ describe.each(['en', 'vi'] as const)('SimpleShell in %s', (locale) => {
     fireEvent.click(within(await screen.findByRole('group', { name: t('言語') })).getByRole('button', { name: other === 'en' ? 'English' : 'Tiếng Việt' }))
     expect(within(tabBar()).getByRole('button', { name: translateText(other, 'そのほか') })).toBeInTheDocument()
     expect(localStorage.getItem('kakeflow.locale')).toBe(other)
+  })
+
+  it('prefills an empty month from the last budgeted month and carries every row over on the first save', async () => {
+    const client = await chartVault(locale)
+    const month = currentMonth()
+    const earlier = previousMonths(month, 2)[1]
+    for (const [categoryAccountId, budgetJpy] of [['expense-groceries', 40_000], ['expense-transport', 10_000]] as const) {
+      await client.upsertBudget({ householdId: household.id, month: earlier, categoryAccountId, budgetJpy })
+    }
+    const { container } = renderShell(client, locale)
+    // Home already uses the earlier month's budgets.
+    await waitFor(() => expect(heroValue(container)).toBe('¥50,000'))
+
+    fireEvent.click(within(tabBar()).getByRole('button', { name: t('予算管理') }))
+    const groceries = await screen.findByRole('form', { name: t('食料品の買い物') })
+    const transport = screen.getByRole('form', { name: t('交通費') })
+    expect(within(groceries).getByLabelText(t('食料品の買い物'))).toHaveValue('40,000')
+    expect(within(transport).getByLabelText(t('交通費'))).toHaveValue('10,000')
+    const label = screen.getByText(t('予算の引き継ぎ元'))
+    expect(label.parentElement).toHaveTextContent(`${t('予算の引き継ぎ元')} ${formatMonthLabel(earlier, locale === 'en' ? 'en-US' : 'vi-VN')}`)
+
+    fireEvent.change(within(groceries).getByLabelText(t('食料品の買い物')), { target: { value: '45000' } })
+    fireEvent.click(within(groceries).getByRole('button', { name: t('予算を保存する') }))
+    expect(await within(groceries).findByRole('status')).toHaveTextContent(t('予算を保存しました'))
+    expect((await client.listBudgets(household.id, month)).map(({ categoryAccountId, budgetJpy }) => [categoryAccountId, budgetJpy]).sort())
+      .toEqual([['expense-groceries', 45_000], ['expense-transport', 10_000]])
+    // The month has its own rows now, so the label goes and the Saved note stays.
+    await waitFor(() => expect(screen.queryByText(t('予算の引き継ぎ元'))).not.toBeInTheDocument())
+    expect(within(groceries).getByRole('status')).toHaveTextContent(t('予算を保存しました'))
+
+    // A later save is a normal single write.
+    const upsert = vi.spyOn(client, 'upsertBudget')
+    fireEvent.change(within(transport).getByLabelText(t('交通費')), { target: { value: '12000' } })
+    fireEvent.click(within(transport).getByRole('button', { name: t('予算を保存する') }))
+    expect(await within(transport).findByRole('status')).toHaveTextContent(t('予算を保存しました'))
+    expect(upsert).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(within(tabBar()).getByRole('button', { name: t('今日') }))
+    await waitFor(() => expect(heroValue(container)).toBe('¥57,000'))
+  })
+
+  it('keeps an empty editor without a carry-over label when no month has budgets', async () => {
+    const client = await chartVault(locale)
+    renderShell(client, locale)
+    fireEvent.click(within(tabBar()).getByRole('button', { name: t('予算管理') }))
+    const groceries = await screen.findByRole('form', { name: t('食料品の買い物') })
+    expect(within(groceries).getByLabelText(t('食料品の買い物'))).toHaveValue('0')
+    expect(screen.queryByText(t('予算の引き継ぎ元'))).not.toBeInTheDocument()
+    fireEvent.change(within(groceries).getByLabelText(t('食料品の買い物')), { target: { value: '30000' } })
+    fireEvent.click(within(groceries).getByRole('button', { name: t('予算を保存する') }))
+    expect(await within(groceries).findByRole('status')).toHaveTextContent(t('予算を保存しました'))
+    expect((await client.listBudgets(household.id, currentMonth())).map(({ categoryAccountId, budgetJpy }) => [categoryAccountId, budgetJpy]))
+      .toEqual([['expense-groceries', 30_000]])
   })
 
   it('works on a vault with only the two setup accounts', async () => {
