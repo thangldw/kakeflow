@@ -1,0 +1,46 @@
+/* Simple mode: Home. Colors come from the theme tokens in src/theme.css. */
+.simple-home { display: grid; gap: 12px; width: 100%; max-width: 640px; margin: 0 auto; padding: 0 16px 24px; box-sizing: border-box; color: var(--text); }
+.simple-home-household { margin: 4px 0 0; color: var(--text2); font-size: 13px; font-weight: 600; }
+
+.simple-card { display: grid; gap: 10px; min-width: 0; padding: 18px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); }
+.simple-card h2 { margin: 0; }
+.simple-card-label { margin: 0; color: var(--text2); font-size: 13px; font-weight: 600; }
+.simple-card button { min-height: 44px; }
+
+.simple-hero-label { color: var(--text2); font-size: 14px; font-weight: 600; }
+.simple-hero-value { margin: 0; font-size: 40px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.simple-hero-over .simple-hero-label,
+.simple-hero-over .simple-hero-value { color: var(--err); }
+.simple-hero-action { justify-self: start; }
+
+.simple-bar { height: 10px; overflow: hidden; border-radius: 999px; background: var(--surface2); border: 1px solid var(--hairline); }
+.simple-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--brand); }
+.simple-hero-over .simple-bar > span { background: var(--err); }
+
+.simple-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin: 0; }
+.simple-figures > div { display: grid; gap: 2px; min-width: 0; }
+.simple-figures dt { color: var(--text2); font-size: 13px; }
+.simple-figures dd { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.simple-note { margin: 0; color: var(--text2); font-size: 13px; }
+.simple-note strong { color: var(--text); font-weight: 600; }
+
+.simple-attention { grid-template-columns: minmax(0, 1fr) auto; align-items: center; border-color: var(--err); background: var(--err-bg); }
+.simple-attention > div { display: grid; gap: 4px; min-width: 0; }
+.simple-attention-detail { margin: 0; font-size: 15px; }
+.simple-over-amount { color: var(--err); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.simple-goal-name { font-size: 18px; font-weight: 700; }
+.simple-goal-amounts { margin: 0; font-size: 15px; font-variant-numeric: tabular-nums; }
+.simple-goal-pace { margin: 0; color: var(--text2); font-size: 13px; }
+.simple-goal-pace b { color: var(--text); }
+.simple-goal-update { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.simple-goal-update label { display: grid; gap: 4px; flex: 1 1 160px; min-width: 0; color: var(--text2); font-size: 13px; }
+.simple-goal-update input { width: 100%; min-height: 44px; box-sizing: border-box; }
+.simple-error-text { margin: 0; color: var(--err); font-size: 13px; }
+
+.simple-home-error { justify-items: start; border-color: var(--err); background: var(--err-bg); }
+.simple-home-error p { margin: 0; font-weight: 600; }
+
+.simple-skeleton-hero { min-height: 180px; }
+.simple-skeleton-card { min-height: 140px; }
