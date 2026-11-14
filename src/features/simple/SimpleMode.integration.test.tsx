@@ -39,6 +39,7 @@ vi.mock('../../platform', async () => {
 })
 
 import App from '../../App'
+import { platformClient } from '../../platform'
 
 const FAMILY = { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }
 const OTHER = { id: 'other', name: '実家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }
@@ -452,6 +453,40 @@ describe('Simple mode in the app shell', () => {
     fireEvent.click(within(screen.getByRole('group', { name: '表示モード' })).getByRole('button', { name: '詳細' }))
     await waitFor(() => expect(desktop.queryDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ accountGroupId: 'g1', attributionScope: { kind: 'MEMBER', memberId: 'taro' } })))
     expect(document.querySelector('.attribution-scope-disclosure')).not.toBeNull()
+  })
+
+  it('skips the Full dashboard reads in Simple mode, keeps the shared ones and runs all of them again in Full', async () => {
+    setUpDesktop()
+    // Not part of the desktop overrides, so they reach the preview client; spy on them through the mocked module.
+    const importSummary = vi.spyOn(platformClient, 'importSummary')
+    const listCardSettlements = vi.spyOn(platformClient, 'listCardSettlements')
+    storeMode({ family: 'simple' })
+    render(<App />)
+    await screen.findByRole('heading', { name: '今月あと使える金額' })
+    await waitFor(() => expect(importSummary).toHaveBeenCalledWith('family'))
+    await waitFor(() => expect(listCardSettlements).toHaveBeenCalledWith('family'))
+
+    // The shell's four recent rows are never read; every dashboard read comes from the Simple Home's own loader,
+    // which reads the budgets of the shown month once per load.
+    const shownMonth = (desktop.queryDashboard.mock.calls[0][0] as { month: string }).month
+    const homeLoads = () => desktop.listBudgets.mock.calls.filter(([, month]) => month === shownMonth).length
+    expect(desktop.queryTransactions).not.toHaveBeenCalled()
+    expect(desktop.queryDashboard.mock.calls.length).toBe(homeLoads())
+
+    // A change of month reruns the shell batch: still without the Full reads.
+    const summaryCalls = importSummary.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '前月' }))
+    await screen.findByRole('heading', { name: '残り金額' })
+    await waitFor(() => expect(importSummary.mock.calls.length).toBeGreaterThan(summaryCalls))
+    expect(desktop.queryTransactions).not.toHaveBeenCalled()
+
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'そのほか' }))
+    fireEvent.click(within(screen.getByRole('group', { name: '表示モード' })).getByRole('button', { name: '詳細' }))
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', page: 1, pageSize: 4 })))
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' })))
+    // The Full Home leaves its loading state with the dashboard figures.
+    expect(await screen.findByRole('button', { name: 'テンプレート: キャッシュフロー' })).toBeInTheDocument()
+    expect(document.querySelector('.dashboard-loading')).toBeNull()
   })
 
   it('stores simple for a household created through onboarding', async () => {

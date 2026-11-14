@@ -3650,18 +3650,20 @@ function App() {
     setLiveDashboard(null)
     const requestGeneration = ++dashboardRequestGenerationRef.current
     const period = periodFromMonth(selectedMonth)
+    // The dashboard totals and the four recent rows are read only by the Full Home; the Simple Home loads its own
+    // figures. The import summary (Import, Audit) and the card settlements (Cards) are still needed in Simple mode.
     void Promise.all([
-      platformClient.queryDashboard({ householdId, accountGroupId: effectiveAccountGroupId, attributionScope: effectiveAttributionScope, month: period.month, accountingBasis: homeBasis }),
-      platformClient.queryTransactions({ householdId, accountGroupId: effectiveAccountGroupId, attributionScope: effectiveAttributionScope, accountingBasis: homeBasis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
+      simple ? null : platformClient.queryDashboard({ householdId, accountGroupId: effectiveAccountGroupId, attributionScope: effectiveAttributionScope, month: period.month, accountingBasis: homeBasis }),
+      simple ? null : platformClient.queryTransactions({ householdId, accountGroupId: effectiveAccountGroupId, attributionScope: effectiveAttributionScope, accountingBasis: homeBasis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
       platformClient.importSummary(householdId),
       platformClient.listCardSettlements(householdId),
     ]).then(([dashboard, page, summary, cards]) => {
-      if (active && dashboardRequestGenerationRef.current === requestGeneration && dashboard.accountingBasis === homeBasis) { setLiveDashboard(dashboard); setLiveTransactions(page.items); setImportCounts(summary); setLiveCards(cards); setDashboardLoading(false) }
+      if (active && dashboardRequestGenerationRef.current === requestGeneration && (dashboard === null || dashboard.accountingBasis === homeBasis)) { setLiveDashboard(dashboard); setLiveTransactions(page?.items ?? []); setImportCounts(summary); setLiveCards(cards); setDashboardLoading(false) }
     }).catch(() => {
       if (active && dashboardRequestGenerationRef.current === requestGeneration) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]); setDashboardLoading(false) }
     })
     return () => { active = false }
-  }, [activeHouseholdId, effectiveAccountGroupId, effectiveAttributionScope, homeBasis, ledgerRevision, selectedMonth])
+  }, [activeHouseholdId, effectiveAccountGroupId, effectiveAttributionScope, homeBasis, ledgerRevision, selectedMonth, simple])
 
   useEffect(() => {
     hydratedFolderItemsRef.current.clear()
