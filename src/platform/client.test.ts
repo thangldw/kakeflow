@@ -1466,3 +1466,24 @@ describe('budget move command', () => {
     await expect(demo.moveBudget(input)).rejects.toMatchObject({ command: 'budget_move' })
   })
 })
+
+describe('envelope card activity command', () => {
+  const dto = { month: '2026-07', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: -3000, paymentsJpy: 1200 }], activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: -500 }] }
+
+  it('queries by household and month and accepts signed whole yen', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return dto as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.queryEnvelopeCardActivity('family', '2026-07')).resolves.toEqual(dto)
+    expect(calls).toEqual([['envelope_card_activity_query', { householdId: 'family', month: '2026-07' }]])
+  })
+
+  it('rejects fractional yen and malformed payloads, and is unavailable outside Tauri', async () => {
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => ({ ...dto, cards: [{ ...dto.cards[0], owedJpy: 1.5 }] }) as T })
+    await expect(bad.queryEnvelopeCardActivity('family', '2026-07')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'envelope_card_activity_query' })
+    const malformed = createPlatformClient({ tauri: true, invoke: async <T,>() => ({ month: '2026-07' }) as T })
+    await expect(malformed.queryEnvelopeCardActivity('family', '2026-07')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.queryEnvelopeCardActivity('family', '2026-07')).rejects.toMatchObject({ command: 'envelope_card_activity_query' })
+  })
+})

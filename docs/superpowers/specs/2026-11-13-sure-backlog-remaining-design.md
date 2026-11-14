@@ -32,7 +32,13 @@ Status: implemented on this branch with the default decision (decisions are **no
 
 **Known limits.** The source cap ignores carry-over from earlier months (it is the month-level remainder), so a category whose positive balance is mostly carry-in cannot lend it. Moves are within one month only. Assigning from the unassigned pool is still done with the existing budget field. The cover form was rendered in a standalone Playwright preview, not in the Tauri window.
 
-**Not done.** Credit-card payment envelopes (a per-card pseudo-category funded when card spending is posted). They overlap card settlement reconciliation and should be specified together with it.
+**Credit-card payment envelopes (implemented, owner request 2026-11-14), read-only.** The envelope panel gets a "set aside for card payments" table per card: set aside, balance owed, and the part not set aside.
+- Rust `envelope_card_activity` (command `envelope_card_activity_query`): per month, card activity per expense category (only transactions whose single money-account entry is one credit card; mixed cash and card postings are never guessed at), card payments (debits on the card in `CARD_PAYMENT` transactions) and the card liability balance. Same filters as the budget actuals.
+- `rollCardEnvelopes` (`src/domain/cardEnvelopes.ts`): per category and month, card spending counts as funded only as far as the envelope still had money after its cash spending (`carry-in + assigned - cash activity`, clamped to the card spending); a net refund reduces it. Funded amounts are split across cards pro rata (exact integer arithmetic via BigInt, remainder on the last card), accumulate per card and are reduced by card payments. Gap = owed - set aside.
+- **Assumptions to review.** Cash spending is assumed to consume the envelope before card spending; spending in categories without a budget is never set aside (it shows up as gap); pre-existing card debt from before the first budgeted month is gap by construction; only the trailing six months are read. These are planning estimates, not accounting facts, and nothing is stored or posted.
+- **Relation to card settlement reconciliation.** The existing reconciliation and the CARD_BALANCE_SHORTFALL action are untouched; this view does not feed them.
+
+**Not done.** Moving money between a card envelope and a category (a card envelope here is derived, not assigned), and any posting or persistence for cards.
 
 ## 3. AI assistant (read-only): deferred to the future
 

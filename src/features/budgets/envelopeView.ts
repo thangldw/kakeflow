@@ -1,10 +1,13 @@
+import { rollCardEnvelopes, type CardEnvelopeState } from '../../domain/cardEnvelopes'
 import { rollEnvelopes } from '../../domain/envelopeBudget'
-import type { MonthlyCategoryBudgetDto } from '../../platform/types'
+import type { EnvelopeCardActivityDto, MonthlyCategoryBudgetDto } from '../../platform/types'
 
 export interface EnvelopeMonthData {
   readonly month: string
   readonly incomeJpy: number
   readonly budgets: readonly MonthlyCategoryBudgetDto[]
+  /** Card spending, payments and balances for the month; absent when it could not be read. */
+  readonly cardActivity?: EnvelopeCardActivityDto | null
 }
 
 export interface EnvelopeViewRow {
@@ -21,6 +24,8 @@ export interface EnvelopeView {
   readonly startMonth: string
   readonly readyToAssignJpy: number
   readonly rows: readonly EnvelopeViewRow[]
+  /** Credit-card payment envelopes; empty when there is no card data or nothing to show. */
+  readonly cards: readonly CardEnvelopeState[]
 }
 
 /**
@@ -42,10 +47,21 @@ export function buildEnvelopeView(months: readonly EnvelopeMonthData[], selected
     envelopes: item.budgets.map((budget) => ({ categoryId: budget.categoryAccountId, assignedJpy: budget.budgetJpy, activityJpy: budget.actualJpy })),
   })))
   const last = rolled.at(-1)!
+  const cards = window.some((item) => item.cardActivity)
+    ? rollCardEnvelopes(window.map((item, index) => ({
+      month: item.month,
+      categories: rolled[index].envelopes.map((state) => ({
+        categoryId: state.categoryId, carryInJpy: state.carryInJpy, assignedJpy: state.assignedJpy, activityJpy: state.activityJpy,
+        cardActivityJpy: Object.fromEntries((item.cardActivity?.activities ?? []).filter((activity) => activity.categoryAccountId === state.categoryId).map((activity) => [activity.cardAccountId, activity.amountJpy])),
+      })),
+      cards: (item.cardActivity?.cards ?? []).map((card) => ({ cardId: card.cardAccountId, cardName: card.cardName, paymentsJpy: card.paymentsJpy, owedJpy: card.owedJpy })),
+    }))).at(-1)!.cards.filter((card) => card.reservedJpy !== 0 || card.owedJpy !== 0 || card.paymentsJpy !== 0 || card.fundedJpy !== 0)
+    : []
   return {
     month: last.month,
     startMonth: window[0].month,
     readyToAssignJpy: last.readyToAssignJpy,
+    cards,
     rows: last.envelopes.map((state) => ({
       categoryAccountId: state.categoryId, categoryName: names.get(state.categoryId) ?? state.categoryId,
       carryInJpy: state.carryInJpy, assignedJpy: state.assignedJpy, activityJpy: state.activityJpy, availableJpy: state.availableJpy,

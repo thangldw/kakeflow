@@ -42,3 +42,25 @@ describe('movable budget', () => {
     expect(movableJpy({ assignedJpy: 0, activityJpy: 0 })).toBe(0)
   })
 })
+
+describe('card payment envelopes in the view', () => {
+  const food = (month: string, budgetJpy: number, actualJpy: number) => budget('food', '食費', month, budgetJpy, actualJpy)
+
+  it('builds reserved, owed and gap per card from budgets and card activity', () => {
+    const view = buildEnvelopeView([
+      { month: '2026-08', incomeJpy: 100_000, budgets: [food('2026-08', 50_000, 30_000)], cardActivity: { month: '2026-08', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: 30_000, paymentsJpy: 0 }], activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: 30_000 }] } },
+      { month: '2026-09', incomeJpy: 100_000, budgets: [food('2026-09', 10_000, 25_000)], cardActivity: { month: '2026-09', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: 55_000, paymentsJpy: 0 }], activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: 25_000 }] } },
+    ], '2026-09')!
+    // Aug: 30k funded. Sep: carry 20k + assigned 10k = 30k available, 25k card spend fully funded.
+    expect(view.cards).toEqual([{ cardId: 'visa', cardName: 'Visa', reservedJpy: 55_000, fundedJpy: 25_000, paymentsJpy: 0, owedJpy: 55_000, gapJpy: 0 }])
+  })
+
+  it('has no cards without card data, and tolerates a month whose card data could not be read', () => {
+    expect(buildEnvelopeView([{ month: '2026-09', incomeJpy: 1, budgets: [food('2026-09', 1, 0)] }], '2026-09')!.cards).toEqual([])
+    const view = buildEnvelopeView([
+      { month: '2026-08', incomeJpy: 1, budgets: [food('2026-08', 50_000, 10_000)], cardActivity: null },
+      { month: '2026-09', incomeJpy: 1, budgets: [food('2026-09', 50_000, 10_000)], cardActivity: { month: '2026-09', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: 10_000, paymentsJpy: 0 }], activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: 10_000 }] } },
+    ], '2026-09')!
+    expect(view.cards[0]).toMatchObject({ reservedJpy: 10_000, gapJpy: 0 })
+  })
+})

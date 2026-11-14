@@ -68,6 +68,17 @@ export function EnvelopeCarryPanel({ householdId, month, revision, onChanged, lo
         {onChanged && <td>{row.availableJpy < 0 && <button type="button" className="secondary-btn" disabled={busy} onClick={() => startCover(row.categoryAccountId)}>{localize("不足を補う")}</button>}</td>}
       </tr>)}</tbody>
     </table>
+    {view.cards.length > 0 && <>
+      <h3 className="envelope-subtitle">{localize("カード支払いの確保")}</h3>
+      <p className="envelope-note">{localize("カード利用のうち、その月に予算が残っていた分を「確保済み」とみなし、カードの支払いで減らします（試算）。予算のないカテゴリーのカード利用は確保されません。")}</p>
+      <table className="envelope-table">
+        <thead><tr><th scope="col">{localize("カード")}</th><th scope="col">{localize("確保済み")}</th><th scope="col">{localize("未払い残高")}</th><th scope="col">{localize("確保不足")}</th></tr></thead>
+        <tbody>{view.cards.map((card) => <tr key={card.cardId}>
+          <th scope="row">{card.cardName}</th><td>{yen(card.reservedJpy)}</td><td>{yen(card.owedJpy)}</td>
+          <td className={card.gapJpy > 0 ? 'is-negative' : ''}>{card.gapJpy > 0 && <>{localize("不足")} </>}{yen(Math.max(0, card.gapJpy))}</td>
+        </tr>)}</tbody>
+      </table>
+    </>}
     {target && <div className="envelope-cover" role="group" aria-label={`${target.categoryName} ${localize("不足を補う")}`}>
       {sources.length === 0 ? <p className="envelope-note">{localize("補填元にできるカテゴリーに今月の残りがありません。")}</p> : <>
         <label>{localize("補填元")}<select value={sourceId} onChange={(event) => { setSourceId(event.target.value); const next = sources.find((row) => row.categoryAccountId === event.target.value); if (next) setAmount(Math.min(-target.availableJpy, movableJpy(next))) }}>{sources.map((row) => <option key={row.categoryAccountId} value={row.categoryAccountId}>{row.categoryName} ({yen(movableJpy(row))})</option>)}</select></label>

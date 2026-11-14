@@ -90,3 +90,29 @@ describe('EnvelopeCarryPanel cover flow', () => {
     expect(within(readonly.container).queryByRole('button', { name: '不足を補う' })).not.toBeInTheDocument()
   })
 })
+
+describe('EnvelopeCarryPanel card payment envelopes', () => {
+  const month = (name: string, income: number, b: MonthlyCategoryBudgetDto[], cardActivity: unknown) => ({ month: name, incomeJpy: income, budgets: b, cardActivity }) as never
+  const row = (m: string, budgetJpy: number, actualJpy: number): MonthlyCategoryBudgetDto => ({ householdId: 'h', month: m, categoryAccountId: 'food', categoryName: '食費', budgetJpy, actualJpy, remainingJpy: budgetJpy - actualJpy })
+
+  it('shows set-aside, owed and the unfunded gap per card', async () => {
+    const load = async () => [month('2026-09', 100_000, [row('2026-09', 20_000, 35_000)], {
+      month: '2026-09', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: 35_000, paymentsJpy: 0 }],
+      activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: 35_000 }],
+    })]
+    render(<EnvelopeCarryPanel householdId="h" month="2026-09" revision={0} load={load} />)
+    expect(await screen.findByText('カード支払いの確保')).toBeInTheDocument()
+    const visa = screen.getByRole('row', { name: /Visa/ })
+    expect(visa).toHaveTextContent('¥20,000')
+    expect(visa).toHaveTextContent('¥35,000')
+    expect(visa).toHaveTextContent('不足')
+    expect(visa).toHaveTextContent('¥15,000')
+  })
+
+  it('omits the card section when there is no card data', async () => {
+    const load = async () => [month('2026-09', 1, [row('2026-09', 20_000, 5_000)], null)]
+    render(<EnvelopeCarryPanel householdId="h" month="2026-09" revision={0} load={load} />)
+    await screen.findByText('繰越と未割当')
+    expect(screen.queryByText('カード支払いの確保')).not.toBeInTheDocument()
+  })
+})

@@ -3986,6 +3986,17 @@ fn card_payment_link_unlink(
 }
 
 #[tauri::command]
+fn envelope_card_activity_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+) -> Result<read_model::EnvelopeCardActivityDto, String> {
+    repository_result(&state, |connection| {
+        read_model::envelope_card_activity(connection, &household_id, &month)
+    })
+}
+
+#[tauri::command]
 fn budget_move(
     state: tauri::State<'_, AppState>,
     input: read_model::MoveMonthlyBudgetInput,
@@ -5112,6 +5123,7 @@ pub fn run() {
             card_match_confirm,
             card_payment_link_confirm,
             card_payment_link_unlink,
+            envelope_card_activity_query,
             budget_move,
             transfer_pair_decisions_list,
             transfer_pair_decide,
