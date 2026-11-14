@@ -8,7 +8,7 @@ describe('simple navigation model', () => {
       ['today', 'overview', '今日'],
       ['transactions', 'transactions', '取引一覧'],
       ['budget', 'budgets', '予算管理'],
-      ['savings', 'budgets', '貯金'],
+      ['savings', 'budgets', '貯蓄管理'],
       ['more', 'more', 'そのほか'],
     ])
   })

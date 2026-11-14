@@ -246,7 +246,7 @@ describe('QuickAddSheet', () => {
     renderSheet()
     tapKeys('500')
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
-    const date = screen.getByLabelText('日にち')
+    const date = screen.getByLabelText('記録する日付')
     expect(date).toHaveValue('2026-11-14')
     expect(saveButton()).toBeEnabled()
     fireEvent.change(date, { target: { value: '' } })

@@ -207,7 +207,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
                 <strong>{payingAccount.name}</strong>
               </button>}
             <label className="quick-add-field">
-              <span>{localize("日にち")}</span>
+              <span>{localize("記録する日付")}</span>
               <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />
             </label>
             <label className="quick-add-field">

@@ -136,7 +136,7 @@ describe('Simple mode in the app shell', () => {
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
     expect(screen.queryByRole('button', { name: 'テンプレート: キャッシュフロー' })).not.toBeInTheDocument()
-    expect(within(tabBar()).getAllByRole('button').map((button) => button.textContent)).toEqual(['今日', '取引一覧', '予算管理', '貯金', 'そのほか'])
+    expect(within(tabBar()).getAllByRole('button').map((button) => button.textContent)).toEqual(['今日', '取引一覧', '予算管理', '貯蓄管理', 'そのほか'])
     expect(screen.queryByRole('group', { name: '計上基準' })).not.toBeInTheDocument()
     expect(screen.queryByText('範囲:')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '前月' })).toBeInTheDocument()
@@ -152,7 +152,7 @@ describe('Simple mode in the app shell', () => {
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
     const entries = within(sidebar()).getAllByRole('button').filter((button) => button.classList.contains('nav-item') && button.closest('nav'))
-    expect(entries.map((button) => button.getAttribute('aria-label'))).toEqual(['今日', '取引一覧', '予算管理', '貯金', 'そのほか'])
+    expect(entries.map((button) => button.getAttribute('aria-label'))).toEqual(['今日', '取引一覧', '予算管理', '貯蓄管理', 'そのほか'])
     expect(within(sidebar()).getByRole('button', { name: '今日' })).toHaveAttribute('aria-current', 'page')
     expect(within(sidebar()).queryByRole('button', { name: 'インポート' })).not.toBeInTheDocument()
 
@@ -163,7 +163,7 @@ describe('Simple mode in the app shell', () => {
 
     fireEvent.click(within(sidebar()).getByRole('button', { name: 'サイドバーを折りたたむ' }))
     expect(sidebar()).toHaveClass('sidebar--collapsed')
-    for (const name of ['今日', '取引一覧', '予算管理', '貯金', 'そのほか']) expect(within(sidebar()).getByRole('button', { name })).toBeInTheDocument()
+    for (const name of ['今日', '取引一覧', '予算管理', '貯蓄管理', 'そのほか']) expect(within(sidebar()).getByRole('button', { name })).toBeInTheDocument()
   })
 
   it('opens the quick-add sheet from the top bar instead of navigating', async () => {
@@ -256,11 +256,11 @@ describe('Simple mode in the app shell', () => {
       expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
       expect(within(tabBar()).getByRole('button', { name: '予算管理' })).toHaveAttribute('aria-current', 'page')
 
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
       expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById('goals'))
-      expect(within(tabBar()).getByRole('button', { name: '貯金' })).toHaveAttribute('aria-current', 'page')
-      expect(within(sidebar()).getByRole('button', { name: '貯金' })).toHaveAttribute('aria-current', 'page')
+      expect(within(tabBar()).getByRole('button', { name: '貯蓄管理' })).toHaveAttribute('aria-current', 'page')
+      expect(within(sidebar()).getByRole('button', { name: '貯蓄管理' })).toHaveAttribute('aria-current', 'page')
 
       fireEvent.click(within(tabBar()).getByRole('button', { name: '予算管理' }))
       expect(within(tabBar()).getByRole('button', { name: '予算管理' })).toHaveAttribute('aria-current', 'page')
@@ -273,7 +273,7 @@ describe('Simple mode in the app shell', () => {
     storeMode({ 'demo-tanaka-family': 'simple' })
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
-    fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+    fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
     expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
   })
 
@@ -308,7 +308,7 @@ describe('Simple mode in the app shell', () => {
       render(<App />)
       await waitFor(() => expect(simpleHome()).not.toBeNull())
       requests.length = 0
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(requests).toContain('goals'))
       await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
       expect(requests).toContain('top')
@@ -328,7 +328,7 @@ describe('Simple mode in the app shell', () => {
     try {
       render(<App />)
       await waitFor(() => expect(simpleHome()).not.toBeNull())
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(requests.at(-1)).toBe('goals'))
       requests.length = 0
 
@@ -338,7 +338,7 @@ describe('Simple mode in the app shell', () => {
       expect(within(tabBar()).getByRole('button', { name: '予算管理' })).toHaveAttribute('aria-current', 'page')
 
       // Savings still scrolls to the goals for every new tap.
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(requests.at(-1)).toBe('goals'))
     } finally {
       delete (Element.prototype as Partial<Element>).scrollIntoView
@@ -365,7 +365,7 @@ describe('Simple mode in the app shell', () => {
       desktop.listBudgets.mockImplementation(async (householdId: string, month: string) => { await budgetsLoaded; return budgetsImpl?.(householdId, month) })
       desktop.listSavingsGoals.mockImplementation(async () => { await goalsLoaded; return [GOAL] })
 
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
       await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
       expect(scrolled).toEqual([])
@@ -387,7 +387,7 @@ describe('Simple mode in the app shell', () => {
       expect(scrolled).toEqual([])
       const loadsBefore = desktop.listBudgets.mock.calls.length
 
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(scrolled).toHaveLength(1))
       expect(scrolled[0]).toBe(document.getElementById('goals'))
       expect(desktop.listBudgets.mock.calls.length).toBe(loadsBefore)
