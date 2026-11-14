@@ -188,12 +188,13 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(document.body.textContent).not.toContain('Tanaka')
   })
 
-  it('renders English without overwriting the shared saved locale', () => {
+  it('follows the shared saved locale without overwriting it', () => {
+    // Phase 2 deliberately changed this: the PWA used to ignore the saved locale and always render English.
     localStorage.setItem('kakeflow.locale', 'vi')
 
     render(<PwaRoot databaseName="pwa-ui-locale-boundary" />)
 
-    expect(screen.getByRole('heading', { name: 'Own your financial record' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Tự giữ sổ sách tài chính của bạn' })).toBeInTheDocument()
     expect(localStorage.getItem('kakeflow.locale')).toBe('vi')
   })
 
@@ -492,9 +493,10 @@ describe('PWA Simple mode and language', () => {
 
   async function createVault(databaseName: string) {
     render(<PwaRoot databaseName={databaseName} ocrDocument={vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt)} />)
-    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: passphrase } })
-    fireEvent.change(screen.getByLabelText('Confirm passphrase'), { target: { value: passphrase } })
-    fireEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    // The create and unlock cards follow the language, so the helpers accept the English or the Vietnamese label.
+    fireEvent.change(screen.getByLabelText(/^(?:Vault passphrase|Cụm mật khẩu của kho dữ liệu)$/), { target: { value: passphrase } })
+    fireEvent.change(screen.getByLabelText(/^(?:Confirm passphrase|Xác nhận cụm mật khẩu)$/), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: /^(?:Create encrypted vault|Tạo kho dữ liệu mã hóa)$/ }))
   }
 
   async function setUpHousehold(labels = { title: 'Set up your household', household: 'Household name', money: 'Money account', expense: 'Expense account', save: 'Save local setup' }) {
@@ -506,8 +508,8 @@ describe('PWA Simple mode and language', () => {
   }
 
   function unlock() {
-    fireEvent.change(screen.getByLabelText('Vault passphrase'), { target: { value: passphrase } })
-    fireEvent.click(screen.getByRole('button', { name: 'Unlock vault' }))
+    fireEvent.change(screen.getByLabelText(/^(?:Vault passphrase|Cụm mật khẩu của kho dữ liệu)$/), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: /^(?:Unlock vault|Mở khóa kho dữ liệu)$/ }))
   }
 
   it('starts a new vault in Simple mode with the default chart', async () => {

@@ -186,7 +186,7 @@ export default function PwaRoot(props: PwaRootProps) {
   async function selectDirectory(next: VaultDirectory) {
     try {
       if (!navigator.locks) {
-        setDirectoryError('This browser cannot safely coordinate vault changes across tabs. Use a browser with Web Locks support.')
+        setDirectoryError(localize("このブラウザはタブ間で保管庫の変更を安全に調整できません。Web Locks に対応したブラウザを使ってください。"))
         return
       }
       const saved = await navigator.locks.request(registryKey, () => {
@@ -198,7 +198,7 @@ export default function PwaRoot(props: PwaRootProps) {
       setDirectory(current => ({ ...saved, vaults: [...new Map([...current.vaults, ...saved.vaults].map(v => [v.id, v])).values()] }))
       setDirectoryError('')
     } catch {
-      setDirectoryError('Could not save the vault selection. Check browser storage and try again.')
+      setDirectoryError(localize("保管庫の選択を保存できませんでした。ブラウザのストレージを確認して、もう一度お試しください。"))
     }
   }
   return <I18nProvider fallbackLocale={browserLocale()}>
@@ -287,11 +287,11 @@ function PwaVaultRoot({
   const submitVault = async (create: boolean) => {
     setError(null)
     if (passphrase.length < 12) {
-      setError('Use a passphrase of at least 12 characters')
+      setError(localize("パスフレーズは12文字以上にしてください"))
       return
     }
     if (create && passphrase !== confirmation) {
-      setError('Passphrases do not match')
+      setError(localize("確認用のパスフレーズが違います"))
       return
     }
     try {
@@ -504,7 +504,7 @@ function PwaVaultRoot({
     activeOperation: busy || Boolean(draft?.candidate && !posted),
   })
 
-  // The header's vault status pills and Lock vault follow the language. The receipt-flow, ledger, evidence and
+  // The vault chrome (status pills, Lock vault, the create/unlock card, the household setup) follows the language. The receipt-flow, ledger, evidence and
   // backup/restore screens stay English in this phase (see the PWA Simple spec).
   return <div className={`pwa-shell${showSimple ? ' pwa-shell--simple' : ''}`}>
     <header className="pwa-header">
@@ -526,23 +526,23 @@ function PwaVaultRoot({
 
     {session.mode !== 'unlocked' && <main className="pwa-auth">
       <section className="pwa-auth-card">
-        <p className="pwa-eyebrow">ACCOUNT-FREE · ON-DEVICE</p>
-        <h1>{session.mode === 'new' ? 'Own your financial record' : 'Unlock local vault'}</h1>
-        <p>Your passphrase derives the encryption key in this browser. It is never stored or sent.</p>
-        {vaults.length > 1 && <label>Local vault<select aria-label="Local vault" value={databaseName} disabled={session.busy} onChange={event => onSelectVault(event.target.value)}>
+        <p className="pwa-eyebrow">{localize("アカウント不要・端末内保存")}</p>
+        <h1>{session.mode === 'new' ? localize("家計の記録を自分の手元に") : localize("この端末の保管庫を開く")}</h1>
+        <p>{localize("暗号鍵はパスフレーズからこのブラウザ内で作られます。パスフレーズは保存も送信もされません。")}</p>
+        {vaults.length > 1 && <label>{localize("使用する保管庫")}<select aria-label={localize("使用する保管庫")} value={databaseName} disabled={session.busy} onChange={event => onSelectVault(event.target.value)}>
           {vaults.map(vault => <option key={vault.id} value={vault.id}>{vault.name}</option>)}
         </select></label>}
-        {vaults.length > 1 && <p>Each vault has its own passphrase. Your other vaults and their data are kept on this device.</p>}
+        {vaults.length > 1 && <p>{localize("保管庫ごとにパスフレーズが異なります。ほかの保管庫とそのデータはこの端末に残ります。")}</p>}
         {directoryError && <p className="pwa-error" role="alert">{directoryError}</p>}
-        <label>Vault passphrase<input type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
-        {session.mode === 'new' && <label>Confirm passphrase<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>}
+        <label>{localize("保管庫用パスフレーズ")}<input type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
+        {session.mode === 'new' && <label>{localize("パスフレーズを確認")}<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>}
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
         <button className="pwa-primary" type="button" disabled={session.busy} onClick={() => void submitVault(session.mode === 'new')}>
-          {session.mode === 'new' ? 'Create encrypted vault' : 'Unlock vault'}
+          {session.mode === 'new' ? localize("暗号化した保管庫を作成") : localize("ロックを解除する")}
         </button>
         {session.mode === 'locked' && <>
-          <button className="pwa-quiet pwa-new-vault" type="button" disabled={session.busy} onClick={onCreateNewVault}>Create new vault</button>
-          <p>Create a separate vault with a new passphrase. This does not unlock or delete the existing vault.</p>
+          <button className="pwa-quiet pwa-new-vault" type="button" disabled={session.busy} onClick={onCreateNewVault}>{localize("新しい保管庫を作る")}</button>
+          <p>{localize("新しいパスフレーズで別の保管庫を作ります。今の保管庫のロック解除や削除は行いません。")}</p>
         </>}
       </section>
     </main>}

@@ -18,6 +18,12 @@ interface SimpleLabels {
   readonly leftToSpend: string
   readonly spent: string
   readonly budgetHeading: string
+  readonly vaultHeading: string
+  readonly passphrase: string
+  readonly confirmPassphrase: string
+  readonly createVault: string
+  readonly unlockHeading: string
+  readonly unlockVault: string
   readonly groceries: string
   readonly saveBudget: string
   readonly budgetSaved: string
@@ -40,6 +46,12 @@ const english: SimpleLabels = {
   leftToSpend: 'Left to spend this month',
   spent: 'Spent',
   budgetHeading: 'Monthly budget by category',
+  vaultHeading: 'Own your financial record',
+  passphrase: 'Vault passphrase',
+  confirmPassphrase: 'Confirm passphrase',
+  createVault: 'Create encrypted vault',
+  unlockHeading: 'Unlock local vault',
+  unlockVault: 'Unlock vault',
   groceries: 'Groceries',
   saveBudget: 'Save budget',
   budgetSaved: 'Budget saved',
@@ -62,6 +74,12 @@ const vietnamese: SimpleLabels = {
   leftToSpend: 'Còn được tiêu tháng này',
   spent: 'Đã chi',
   budgetHeading: 'Ngân sách tháng theo danh mục',
+  vaultHeading: 'Tự giữ sổ sách tài chính của bạn',
+  passphrase: 'Cụm mật khẩu của kho dữ liệu',
+  confirmPassphrase: 'Xác nhận cụm mật khẩu',
+  createVault: 'Tạo kho dữ liệu mã hóa',
+  unlockHeading: 'Mở khóa kho dữ liệu trên máy',
+  unlockVault: 'Mở khóa kho dữ liệu',
   groceries: 'Thực phẩm',
   saveBudget: 'Lưu ngân sách',
   budgetSaved: 'Đã lưu ngân sách',
@@ -77,13 +95,13 @@ function tab(page: Page, labels: SimpleLabels, name: keyof SimpleLabels['tabs'])
   return page.getByRole('navigation', { name: labels.mainPages }).getByRole('button', { name: labels.tabs[name], exact: true })
 }
 
-/** The vault create/unlock screens are English-only; the household setup and everything after it follow the browser language. */
+/** The create/unlock cards, the household setup and everything after them follow the browser language. */
 async function createVault(page: Page, labels: SimpleLabels) {
   await page.goto('/kakeflow/app/')
-  await expect(page.getByRole('heading', { name: 'Own your financial record' })).toBeVisible()
-  await page.getByLabel('Vault passphrase').fill(passphrase)
-  await page.getByLabel('Confirm passphrase').fill(passphrase)
-  await page.getByRole('button', { name: 'Create encrypted vault' }).click()
+  await expect(page.getByRole('heading', { name: labels.vaultHeading })).toBeVisible()
+  await page.getByLabel(labels.passphrase).fill(passphrase)
+  await page.getByLabel(labels.confirmPassphrase).fill(passphrase)
+  await page.getByRole('button', { name: labels.createVault }).click()
 
   await expect(page.getByRole('heading', { name: labels.setupHeading })).toBeVisible()
   await page.getByLabel(labels.householdName).fill('Synthetic Simple Household 4b1d')
@@ -99,16 +117,16 @@ async function expectTodayRemaining(page: Page, labels: SimpleLabels) {
   await expect(hero.getByText(labels.spent, { exact: true })).toBeVisible()
 }
 
-async function reloadOfflineAndUnlock(context: BrowserContext, page: Page) {
+async function reloadOfflineAndUnlock(context: BrowserContext, page: Page, labels: SimpleLabels) {
   await page.evaluate(async () => { await navigator.serviceWorker.ready })
   // Reloading online first lets the service worker take control of the page.
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller))
   await context.setOffline(true)
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await expect(page.getByRole('heading', { name: 'Unlock local vault' })).toBeVisible()
-  await page.getByLabel('Vault passphrase').fill(passphrase)
-  await page.getByRole('button', { name: 'Unlock vault' }).click()
+  await expect(page.getByRole('heading', { name: labels.unlockHeading })).toBeVisible()
+  await page.getByLabel(labels.passphrase).fill(passphrase)
+  await page.getByRole('button', { name: labels.unlockVault }).click()
 }
 
 async function simpleBudgetJourney(context: BrowserContext, page: Page, labels: SimpleLabels) {
@@ -150,7 +168,7 @@ async function simpleBudgetJourney(context: BrowserContext, page: Page, labels: 
   await expectTodayRemaining(page, labels)
 
   // Budget and spending survive an offline reload and a fresh unlock.
-  await reloadOfflineAndUnlock(context, page)
+  await reloadOfflineAndUnlock(context, page, labels)
   await expectTodayRemaining(page, labels)
   await tab(page, labels, 'budget').click()
   await expect(page.getByRole('form', { name: labels.groceries, exact: true }).getByRole('textbox')).toHaveValue(yen(budgetJpy).slice(1))
