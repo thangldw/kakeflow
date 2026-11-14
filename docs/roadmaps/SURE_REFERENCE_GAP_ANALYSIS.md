@@ -2,7 +2,7 @@
 
 Reviewed 2026-11-13 against [we-promise/sure](https://github.com/we-promise/sure) (upstream), its [ohmzi/sure](https://github.com/ohmzi/sure) fork, and the [sure.am](https://sure.am/) feature page.
 
-**Licence boundary.** Sure is AGPLv3 and KakeFlow is MIT. Only product ideas and public file-format specifications are used; no Sure source is copied. Sure is also a server-hosted Rails/Postgres application, so its sync, multi-user and hosted-provider architecture does not transfer to KakeFlow's local-first ledger.
+**Licence boundary.** Sure is AGPLv3 and KakeFlow is Apache-2.0. Only product ideas and public file-format specifications are used; no Sure source is copied. Sure is also a server-hosted Rails/Postgres application, so its sync, multi-user and hosted-provider architecture does not transfer to KakeFlow's local-first ledger.
 
 ## Delivered
 
