@@ -46,6 +46,22 @@
 .simple-skeleton-hero { min-height: 180px; }
 .simple-skeleton-card { min-height: 140px; }
 
+/* Simple mode: budget editor and savings goals panel (props-only components used by the PWA). */
+.simple-panel-title { margin: 0; font-size: 18px; font-weight: 700; }
+.simple-budget-rows { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.simple-budget-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; min-width: 0; }
+.simple-budget-row .simple-field { flex: 1 1 160px; }
+.simple-budget-row > p { flex: 1 0 100%; }
+.simple-budget-name { color: var(--text); font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.simple-field { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; min-width: 0; color: var(--text2); font-size: 13px; }
+.simple-field input { width: 100%; min-height: 44px; box-sizing: border-box; font-size: 15px; }
+.simple-add-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.simple-add-form button { min-height: 44px; justify-self: start; }
+.simple-add-form h3 { margin: 0; }
+.simple-goals-panel { display: grid; gap: 12px; width: 100%; max-width: 640px; margin: 0 auto; padding: 0 16px 24px; box-sizing: border-box; color: var(--text); }
+.simple-goals-list { display: grid; gap: 12px; min-width: 0; }
+.simple-goal h3 { margin: 0; overflow-wrap: anywhere; }
+
 /* Simple mode: quick-add sheet. A bottom sheet below 720px, a centered dialog above. */
 /* Same veil as the Full manual-transaction dialog. On the dark theme that tint is about as dark as the page itself,
    so a deeper black veil is used there to still dim what is behind the sheet. */
