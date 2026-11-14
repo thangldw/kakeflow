@@ -273,6 +273,32 @@ describe('Simple mode in the app shell', () => {
     }
   })
 
+  it('scrolls back to the top when Budget is tapped after Savings on the same page', async () => {
+    storeMode({ 'demo-tanaka-family': 'simple' })
+    const requests: string[] = []
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value(this: Element) { requests.push(this.id === 'goals' ? 'goals' : 'other') } })
+    Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, writable: true, value(this: Element) { if (this.matches('.main-shell > main')) requests.push('top') } })
+    try {
+      render(<App />)
+      await waitFor(() => expect(simpleHome()).not.toBeNull())
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄' }))
+      await waitFor(() => expect(requests.at(-1)).toBe('goals'))
+      requests.length = 0
+
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '予算' }))
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
+      expect(requests).toEqual(['top'])
+      expect(within(tabBar()).getByRole('button', { name: '予算' })).toHaveAttribute('aria-current', 'page')
+
+      // Savings still scrolls to the goals for every new tap.
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄' }))
+      await waitFor(() => expect(requests.at(-1)).toBe('goals'))
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView
+      delete (Element.prototype as Partial<Element>).scrollTo
+    }
+  })
+
   describe('Savings scroll on the desktop runtime', () => {
     const scrolled: Element[] = []
     beforeEach(() => {

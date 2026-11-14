@@ -250,6 +250,13 @@ const pageMeta: Readonly<Record<PageId, { title: string; description: string }>>
   more: { title: 'その他', description: 'すべての機能と表示モード' },
 }
 
+function scrollWorkspaceToTop(): void {
+  const workspaceScroller = document.querySelector<HTMLElement>('.main-shell > main')
+  if (!workspaceScroller) return
+  if (typeof workspaceScroller.scrollTo === 'function') workspaceScroller.scrollTo({ top: 0, left: 0 })
+  else workspaceScroller.scrollTop = 0
+}
+
 function householdInitials(name: string): string { return name.trim().slice(0, 2) || localize("家計") }
 
 function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, bootstrap, households, activeHouseholdId, selectHousehold, createHousehold, importActionableCount, capturePendingCount, simple = false, savingsActive = false, onSelectTab }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; collapsed: boolean; toggleCollapsed: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; createHousehold: () => void; importActionableCount: number; capturePendingCount: number; simple?: boolean; savingsActive?: boolean; onSelectTab?: (tab: SimpleTab) => void }) {
@@ -3437,12 +3444,7 @@ function App() {
   // Let the stored page follow what is shown, whichever path left More requested in Full mode (household switch, mode change).
   useEffect(() => { if (!simple && requestedPage === 'more') setPage('overview') }, [requestedPage, simple])
 
-  useEffect(() => {
-    const workspaceScroller = document.querySelector<HTMLElement>('.main-shell > main')
-    if (!workspaceScroller) return
-    if (typeof workspaceScroller.scrollTo === 'function') workspaceScroller.scrollTo({ top: 0, left: 0 })
-    else workspaceScroller.scrollTop = 0
-  }, [page])
+  useEffect(() => { scrollWorkspaceToTop() }, [page])
 
   const refreshFolderInbox = useCallback(async (hydrate = folderAutoScanRef.current) => {
     const householdId = activeHouseholdId
@@ -3783,7 +3785,10 @@ function App() {
   const selectSimpleTab = (tab: SimpleTab) => {
     if (tab === 'savings') { openSavings(); return }
     const target = SIMPLE_TABS.find((item) => item.id === tab)
-    if (target) navigateToPage(target.page)
+    if (!target) return
+    // A tab for the page already open (Budget after Savings) does not change `page`, so the reset effect would not run.
+    if (target.page === page) scrollWorkspaceToTop()
+    navigateToPage(target.page)
   }
   const changeUiMode = (mode: UiMode) => {
     if (activeHouseholdId) writeUiMode(activeHouseholdId, mode)
