@@ -4,19 +4,19 @@
   --surface: #fffefa;
   --surface2: #f7f6f1;
   --text: #29332c;
-  --text2: #68736c;
+  --text2: #5b665f;
   --hairline: #d9ded5;
   --divider: #c9d0c6;
   --brand: #4a7c59;
   --primary: #4a7c59;
   --primary-fg: #fff;
   --navsel: #edf2e9;
-  --income: #38a169;
-  --asset: #38a169;
-  --ok: #38a169;
+  --income: #2f855a;
+  --asset: #2f855a;
+  --ok: #2f855a;
   --ok-bg: #edf2e9;
-  --expense: #e87562;
-  --liability: #e87562;
+  --expense: #c64832;
+  --liability: #c64832;
   --warn: #b17920;
   --warn-bg: #f8efce;
   --review: #a86d20;
@@ -385,6 +385,11 @@ html[lang='vi'] .scope-popover { width: 270px; }
   .global-search { width: min(330px,45vw); }
   .gemini-quick-actions { display: none; }
   .gemini-tools-grid { grid-template-columns: 1fr; }
+}
+
+/* Phone layout has no window chrome offset; the browser-demo title bar would cover the top bar. */
+@media (max-width: 720px) {
+  .desktop-titlebar { display: none; }
 }
 
 @media (max-width: 640px) {

@@ -41,7 +41,7 @@ body {
 .pwa-brand small {
   display: block;
   color: #64746b;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: .13em;
   text-transform: uppercase;
@@ -71,7 +71,7 @@ body {
   border-radius: 999px;
   color: #165c3a;
   background: #eef5ee;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: .08em;
 }
@@ -79,7 +79,7 @@ body {
 .pwa-auth-card input,
 .pwa-auth-card select,
 .pwa-account-grid select {
-  min-height: 42px;
+  min-height: 44px;
   border: 1px solid #b8c3ba;
   border-radius: 9px;
   color: #10221b;
@@ -126,7 +126,7 @@ body {
 .pwa-eyebrow {
   margin: 0;
   color: #3c6f55;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: .14em;
 }
@@ -155,7 +155,7 @@ body {
 }
 
 .pwa-quiet {
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 13px;
   color: #254a37;
   background: #e7eee7;
@@ -182,7 +182,7 @@ body {
 }
 
 .pwa-update .pwa-primary {
-  min-height: 38px;
+  min-height: 44px;
   margin: 0;
 }
 
@@ -217,7 +217,7 @@ body {
 
 .pwa-navigation button span {
   color: #829087;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .pwa-navigation button[aria-current="page"] {
@@ -492,3 +492,7 @@ body {
 }
 
 .pwa-new-vault { display: block; margin-top: 12px; }
+
+@media (pointer: coarse) {
+  .pwa-navigation button, .pwa-brand { min-height: 44px; }
+}

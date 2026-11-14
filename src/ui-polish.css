@@ -214,8 +214,8 @@ button { transition: background-color 120ms ease, border-color 120ms ease, color
 .budget-row .progress > span { background: var(--asset) !important; }
 .budget-row-review > div:first-child small { color: var(--review); }
 .budget-row-review .progress > span { background: var(--review) !important; }
-.budget-row-over > div:first-child small { color: var(--warn); }
-.budget-row-over .progress > span { background: var(--warn) !important; }
+.budget-row-over > div:first-child small { color: var(--err); }
+.budget-row-over .progress > span { background: var(--err) !important; }
 .budget-caption { margin: 12px 0 0; padding-top: 10px; color: var(--text2); border-top: 1px solid var(--hairline); font-size: 9.5px; }
 .demo-goal { display: grid; gap: 7px; padding: 12px 0; border-top: 1px solid var(--hairline); }
 .demo-goal > div:first-child { display: flex; align-items: center; justify-content: space-between; }
@@ -359,4 +359,124 @@ html[data-density='compact'] .panel { padding-top: 10px; padding-bottom: 10px; }
   .main-shell > main { overflow: auto; padding: 20px 22px 28px; }
   .topbar { min-height: 58px; padding: 0 22px; }
   .menu-btn,.mobile-close { display: none !important; }
+}
+
+/* Readability floor: shell and Home text measured below 12px is raised to 12px
+   (11px for avatar initials and count badges). Other pages are tracked by
+   src/readabilityFloor.test.ts so the number of sub-12px declarations cannot grow. */
+html .brand .brand-version,
+html .household-trigger small,
+html .nav-section .nav-caption,
+html .sync-status strong,
+html .sync-status small,
+html .topbar-context span,
+html .gemini-quick-actions button,
+html .scope-trigger,
+html .scope-trigger strong,
+html .period-stepper button,
+html .page-header > p,
+html .dashboard-controls .dashboard-control-label,
+html .dashboard-template-chips button,
+html .dashboard-controls .secondary-btn,
+html .page-actions .primary-btn,
+html .kpi-head span,
+html .kpi-head small,
+html .kpi-meta span,
+html .currency-value span,
+html .action-badges span,
+html .action-copy h3,
+html .action-meta time,
+html .action-meta b,
+html .action-copy summary,
+html .action-copy li,
+html .action-item button,
+html .panel-head p,
+html .panel-head .text-btn,
+html .chart-legend span,
+html .bar-month small,
+html .category-bars span,
+html .category-bars strong,
+html .transaction-main strong,
+html .transaction-main span,
+html .transaction-family-labels .calculation-badge,
+html .transaction-row .category-pill,
+html .transaction-row .account-label,
+html .transaction-row strong,
+html .settlement-title span,
+html .settlement-title b,
+html .settlement-values span,
+html .panel-head b.review,
+html .data-quality-grid span,
+html .data-quality-grid small,
+html .overview .data-footnote,
+html .workspace-content .scope-footnote { font-size: 12px; }
+html .household-picker .avatar,
+html .nav-item b { font-size: 11px; }
+html body .page-header > p,
+html body .gemini-quick-actions button,
+html body .action-badges span,
+html body .action-copy h3,
+html body .panel > span,
+html body .panel > button.secondary-btn,
+html body .household-trigger strong { font-size: 12px !important; } /* !important: these lose to later page-scoped rules */
+
+/* Home on phones: shorter KPI cards and template chips that scroll instead of breaking mid-label. */
+@media (max-width: 560px) {
+  html body .kpi-card { min-height: 0; padding: 12px 14px; }
+  html body .kpi-card > strong { margin: 8px 0 4px; }
+  html body .page-header { align-items: flex-start; flex-wrap: wrap; } /* column layout on phones: left-align the title instead of centring the block */
+  html body .page-actions { flex: 1 1 100%; justify-content: flex-start; max-width: 100%; min-width: 0; }
+  html body .dashboard-controls-shell { max-width: 100%; min-width: 0; width: 100%; }
+  html body .dashboard-controls { flex-wrap: wrap; justify-content: flex-start; min-width: 0; }
+  html body .dashboard-template-chips { display: flex; flex: 1 1 100%; flex-wrap: nowrap; min-width: 0; overflow-x: auto; padding-bottom: 4px; }
+  html body .dashboard-template-chips button { flex: 0 0 auto; white-space: nowrap; }
+}
+
+/* Tabular numerals keep money columns aligned without switching to the code font. */
+html body .kpi-card > strong,
+html body .currency-value strong,
+html body .transaction-row strong { font-variant-numeric: tabular-nums; }
+
+/* Touch devices get 44px targets; pointer devices keep the denser desktop sizing. */
+@media (pointer: coarse) {
+  html body .nav-item,
+  html body .mobile-close,
+  html body .topbar button,
+  html body .topbar select,
+  html body .page-actions button,
+  html body .dashboard-template-chips button,
+  html body .period-stepper button,
+  html body .action-item > button,
+  html body .panel-head .text-btn { min-height: 44px; min-width: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+.currency-strip .currency-note { color: var(--text2); font-size: 12px; grid-column: 1 / -1; margin: 0; }
+
+.envelope-panel { margin-top: 15px; }
+.envelope-panel .panel-head > strong { font-size: 13px; }
+.envelope-note { color: var(--text2); font-size: 12px; margin: 8px 0 12px; }
+.envelope-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.envelope-table th, .envelope-table td { border-bottom: 1px solid var(--hairline); font-variant-numeric: tabular-nums; padding: 8px 6px; text-align: right; }
+.envelope-table th:first-child { text-align: left; }
+.envelope-panel .is-negative { color: var(--err); }
+
+.transfer-pair-strip { margin-bottom: 15px; }
+.transfer-pair-strip .panel-head p { color: var(--text2); font-size: 12px; max-width: 70ch; }
+.transfer-pair-list { display: grid; gap: 8px; list-style: none; margin: 12px 0 0; padding: 0; }
+.transfer-pair-list > li { align-items: center; border: 1px solid var(--hairline); border-radius: 10px; display: grid; gap: 8px 12px; grid-template-columns: minmax(0, 1fr) auto auto; padding: 10px 12px; }
+.transfer-pair-legs { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.transfer-pair-legs small { color: var(--text2); font-size: 12px; }
+.transfer-pair-meta { color: var(--text2); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.transfer-pair-actions { display: flex; gap: 6px; }
+.transfer-pair-error { color: var(--err); font-size: 12px; margin: 8px 0 0; }
+.transfer-pair-note { color: var(--text2); font-size: 12px; margin: 10px 0 0; }
+.transfer-pair-history { margin-top: 12px; }
+.transfer-pair-history summary { cursor: pointer; font-size: 12px; font-weight: 700; }
+@media (max-width: 720px) {
+  .transfer-pair-list > li { grid-template-columns: 1fr; }
+  .transfer-pair-actions { flex-wrap: wrap; }
 }

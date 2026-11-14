@@ -90,7 +90,7 @@ import type { SourceImagePreviewDto } from './features/source-viewer/sourceImage
 import { PdfPasswordPrompt } from './features/source-viewer/PdfPasswordPrompt'
 import { createProtectedPdfPlatform } from './features/source-viewer/protectedPdfPlatform'
 import type { PdfPasswordStatus } from './features/source-viewer/protectedPdfPlatform'
-import type { AdapterId, AggregateAssetSnapshotCandidate, BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
+import type { AggregateAssetSnapshotCandidate, BrokerageEventCandidate, PortfolioSnapshotCandidate } from './ingestion'
 import { DEFAULT_FOLDER_SCAN_INTERVAL_MS } from './features/import/folderAutomation'
 import { attachFolderInboxIdentity, folderInboxFailureCode, folderInboxPreviewOutcome, recordClaimedFolderItems, retainActiveFolderPreviews, selectFolderInboxHydrationBatch } from './features/import/durableFolderInbox'
 import { attachGoogleDriveInboxIdentity, googleDriveInboxFileIsImmutable, googleDriveInboxStateLabel, isGoogleDriveInboxPreviewable, retainActiveGoogleDrivePreviews } from './features/import/googleDriveInbox'
@@ -121,12 +121,14 @@ import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomColumnRole, CustomDelimitedPreview } from './ingestion'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient, PlatformIpcError } from './platform'
-import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, LastClassificationApplicationDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, PreviewCandidateDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
+import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, LastClassificationApplicationDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
 import type { NavigationItem, PageId, Transaction } from './types'
 import { localize, useI18n } from './i18n'
 import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
 import { APP_VERSION } from './version'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
+import { EnvelopeCarryPanel } from './features/budgets/EnvelopeCarryPanel'
+import { TransferPairStrip } from './features/transactions/TransferPairStrip'
 import { AuditReadinessPage, GlobalLedgerSearch, MonthlyContextNotes, PlanningTools, SecondaryCurrencySummary } from './features/gemini/GeminiFeatureSuite'
 import { ConnectorControlCenter } from './features/connectors/LocalizedConnectorControlCenter'
 import { loadAllConnectorSummaries } from './features/connectors/connectorControlModel'
@@ -140,6 +142,9 @@ import {
 import type { ReviewInboxRows } from './features/connectors/connectorBindingModel'
 import type { ConnectorBindingDto, ConnectorRefreshBatchProgressDto, ConnectorSummaryDto, ConfigurationDestinationDto } from './platform/types'
 
+import { STANDARD_IMPORT_ACCOUNT_REQUIREMENTS, builtInAdapterVersion, dedicatedBrokerageImport, eligibleMoneyForwardAccounts, hasCompatibleStandardImportAccount, hasCompleteMoneyForwardMapping, importAccountDescriptionId, isBrokerageTransactionAdapter, moneyForwardInstitutions } from './features/import/importAccountRequirements'
+import { applyClassificationRuleToDecision, applyLocalCategorySuggestionToDecision, clearClassificationProvenance, decisionUsesCategory, eligibleClassificationDecision, initialPostingDraft, matchingClassificationRule } from './features/import/postingDecisions'
+import type { PostingDraft } from './features/import/postingDecisions'
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`
 const hasRakutenStatementMismatch = (item: Pick<ImportPreview, 'issues'>) => item.issues.some((issue) => issue.code === 'RAKUTEN_PDF_TOTAL_MISMATCH')
 const customColumnRoleLabels: Readonly<Record<CustomColumnRole, string>> = {
@@ -157,107 +162,6 @@ const protectedPdfPlatform = createProtectedPdfPlatform()
 const accountGroupExportPlatform = createAccountGroupExportPlatform()
 const financialCalendarPlatform = createFinancialCalendarPlatform()
 const forecastActionPlatform = createForecastActionPlatform()
-
-type StandardImportAccountRequirement = {
-  kind: 'ASSET' | 'LIABILITY'
-  subtype: 'BANK' | 'WALLET' | 'CREDIT_CARD'
-  kindLabel: '銀行口座' | 'ウォレット口座' | 'カード口座'
-  message: string
-}
-
-const STANDARD_IMPORT_ACCOUNT_REQUIREMENTS: Partial<Record<AdapterId, StandardImportAccountRequirement>> = {
-  'mizuho-business-web-statement-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: 'みずほビジネスWEB 入出金明細CSVの取込先銀行口座を選択してください。' },
-  'resona-web-meisai-plus-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: 'りそな銀行 Web入出金明細PLUS CSVの取込先銀行口座を選択してください。' },
-  'personal-japanese-bank-ledger-v2': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '銀行CSVの取込先銀行口座を選択してください。' },
-  'japanese-bank-ledger-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '銀行CSVの取込先銀行口座を選択してください。' },
-  'ofx-bank-statement-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: 'OFX/QFX明細の取込先銀行口座を選択してください。' },
-  'qif-bank-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: 'QIF明細の取込先銀行口座を選択してください。' },
-  'mufg-bizstation-all-details-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '三菱UFJ銀行 BizSTATION CSVの取込先銀行口座を選択してください。' },
-  'mufg-bizstation-deposit-withdrawal-v1': { kind: 'ASSET', subtype: 'BANK', kindLabel: '銀行口座', message: '三菱UFJ銀行 BizSTATION 入出金明細CSVの取込先銀行口座を選択してください。' },
-  'paypay-history-v2': { kind: 'ASSET', subtype: 'WALLET', kindLabel: 'ウォレット口座', message: 'PayPay履歴の取込先ウォレット口座を選択してください。' },
-  'paypay-history-v1': { kind: 'ASSET', subtype: 'WALLET', kindLabel: 'ウォレット口座', message: 'PayPay履歴の取込先ウォレット口座を選択してください。' },
-  'rakuten-enavi-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: '楽天カード明細の取込先カード口座を選択してください。' },
-  'amazon-mastercard-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: 'Amazon Mastercard明細の取込先カード口座を選択してください。' },
-  'jcb-myjcb-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: 'JCB明細の取込先カード口座を選択してください。' },
-  'smbc-vpass-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: '三井住友カード（Vpass）明細の取込先カード口座を選択してください。' },
-  'aeon-card-finalized-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: 'イオンカード確定明細の取込先カード口座を選択してください。' },
-  'paypay-card-finalized-statement-v1': { kind: 'LIABILITY', subtype: 'CREDIT_CARD', kindLabel: 'カード口座', message: 'PayPayカード確定明細の取込先カード口座を選択してください。' },
-}
-
-function builtInAdapterVersion(adapterId: AdapterId): string {
-  return adapterId === 'personal-japanese-bank-ledger-v2' || adapterId === 'paypay-history-v2' ? '2' : '1'
-}
-
-type DedicatedBrokerageImportConfig = {
-  readonly title: string
-  readonly description: string
-  readonly accountHint: string
-  readonly missingAccountMessage: string
-}
-
-const DEDICATED_BROKERAGE_IMPORTS: Readonly<Record<string, DedicatedBrokerageImportConfig>> = {
-  'sbi-securities-trade-history-v1': {
-    title: 'SBI証券 取引履歴CSV',
-    description: '取引履歴を保存する証券口座を原本ごとに明示します。家計簿の取引台帳へは自動反映しません。',
-    accountHint: 'SBI証券の口座を推測または自動作成しません。',
-    missingAccountMessage: 'SBI証券取引履歴の取込先証券口座を選択してください。',
-  },
-  'rakuten-securities-domestic-trade-history-v1': {
-    title: '楽天証券 国内株式 取引履歴CSV',
-    description: '国内株式の取引履歴を保存する証券口座を原本ごとに明示します。家計簿の取引台帳へは自動反映しません。',
-    accountHint: '楽天証券の口座を推測または自動作成しません。',
-    missingAccountMessage: '楽天証券取引履歴の取込先証券口座を選択してください。',
-  },
-  'monex-us-stock-trade-history-v1': {
-    title: 'マネックス証券 米国株 取引履歴CSV',
-    description: '米ドル決済の現物売買を保存する証券口座を原本ごとに明示します。家計簿の取引台帳へは自動反映しません。',
-    accountHint: 'マネックス証券の口座を推測または自動作成せず、円決済・信用取引も取り込みません。',
-    missingAccountMessage: 'マネックス証券取引履歴の取込先証券口座を選択してください。',
-  },
-}
-
-function dedicatedBrokerageImport(adapterId: AdapterId | undefined): DedicatedBrokerageImportConfig | undefined {
-  return adapterId ? DEDICATED_BROKERAGE_IMPORTS[adapterId] : undefined
-}
-
-function isBrokerageTransactionAdapter(adapterId: AdapterId | undefined): boolean {
-  return adapterId === 'japanese-brokerage-transactions-v1' || dedicatedBrokerageImport(adapterId) != null
-}
-
-function hasCompatibleStandardImportAccount(adapterId: AdapterId | undefined, accounts: readonly AccountDto[]): boolean {
-  if (!adapterId) return true
-  const requirement = STANDARD_IMPORT_ACCOUNT_REQUIREMENTS[adapterId]
-  return !requirement || accounts.some((account) => account.accountKind === requirement.kind && account.accountSubtype === requirement.subtype)
-}
-
-function moneyForwardInstitutions(item: ImportPreview): readonly string[] {
-  if (item.detectedAdapterId !== 'money-forward-me-household-ledger-v1' || !item.parsed) return []
-  const institutions = item.parsed.records.flatMap((record) => {
-    if (typeof record !== 'object' || record === null) return []
-    const candidate = record as { kind?: unknown; institution?: unknown }
-    return candidate.kind === 'money-forward-household-transaction' && typeof candidate.institution === 'string' && candidate.institution ? [candidate.institution] : []
-  })
-  return [...new Set(institutions)]
-}
-
-function eligibleMoneyForwardAccounts(accounts: readonly AccountDto[]): readonly AccountDto[] {
-  return accounts.filter((account) => account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY')
-}
-
-function importAccountDescriptionId(item: ImportPreview, accounts: readonly AccountDto[]): string | undefined {
-  if (!hasCompatibleStandardImportAccount(item.detectedAdapterId, accounts)) return `standard-account-empty-${item.id}`
-  if (item.detectedAdapterId === 'money-forward-me-household-ledger-v1' && eligibleMoneyForwardAccounts(accounts).length === 0) return `money-forward-account-empty-${item.id}`
-  return undefined
-}
-
-function hasCompleteMoneyForwardMapping(item: ImportPreview, mappings: Readonly<Record<string, string>> | undefined, accounts: readonly AccountDto[]): boolean {
-  const institutions = moneyForwardInstitutions(item)
-  if (institutions.length === 0 || !mappings || Object.keys(mappings).length !== institutions.length) return false
-  return institutions.every((institution) => {
-    const account = eligibleMoneyForwardAccounts(accounts).find((candidate) => candidate.id === mappings[institution])
-    return account?.accountKind === 'ASSET' || account?.accountKind === 'LIABILITY'
-  })
-}
 
 function currentTokyoPeriod(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).formatToParts(now)
@@ -1216,6 +1120,7 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
     {showManual && <div className="manual-transaction-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !manualBusy) setShowManual(false) }}><section className="panel manual-transaction-dialog" role="dialog" aria-modal="true" aria-labelledby="manual-transaction-title"><div className="panel-head"><div><h2 id="manual-transaction-title">{localize("手入力取引（複式）")}</h2><p>{localize("借方と貸方を明示し、貸借差額が ¥0 の取引だけを確定台帳へ転記します。")}</p></div><button className="icon-btn" aria-label={localize("手動取引を閉じる")} disabled={manualBusy} onClick={() => setShowManual(false)}><X size={18} /></button></div><div className="manual-transaction-grid"><label>{localize("日付")}<input aria-label={localize("取引日")} type="date" value={manualDate} onChange={(event) => setManualDate(event.target.value)} /></label><label>{localize("取引種別")}<select aria-label={localize("手動取引種別")} value={manualType} onChange={(event) => setManualType(event.target.value as ManualTransactionTypeDto)}>{['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT'].map((type) => <option key={type} value={type}>{transactionTypeLabel(type, text)}</option>)}</select></label><label>{localize("支払先")}<input aria-label={localize("手動取引の支払先")} value={manualPayee} onChange={(event) => setManualPayee(event.target.value)} placeholder={localize("店舗・支払先")} /></label><label>{localize("摘要")}<input aria-label={localize("手動取引のメモ")} value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} placeholder={localize("任意")} /></label><label className="manual-amount-field">{localize("金額 (JPY)")}<input aria-label={localize("手動取引の金額")} inputMode="numeric" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} placeholder="1500" /></label><fieldset className="compact-assignment"><legend>{localize("家族内の帰属")}</legend><select aria-label={localize("手動取引の家族内の帰属")} value={manualAttribution} onChange={(event) => setManualAttribution(event.target.value)}><option value="HOUSEHOLD">{localize("世帯共通")}</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select></fieldset><label className="manual-journal-side debit"><span>{localize("借方")}</span><select aria-label={localize("手動取引の借方口座")} value={manualDebit} onChange={(event) => setManualDebit(event.target.value)}><option value="">{localize("口座を選択")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><b>{manualAmountValue > 0 ? yen(manualAmountValue) : '—'}</b></label><label className="manual-journal-side credit"><span>{localize("貸方")}</span><select aria-label={localize("手動取引の貸方口座")} value={manualCredit} onChange={(event) => setManualCredit(event.target.value)}><option value="">{localize("口座を選択")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><b>{manualAmountValue > 0 ? yen(manualAmountValue) : '—'}</b></label><fieldset className="compact-assignment"><legend>{localize("表示区分")}</legend><select aria-label={localize("手動取引の表示区分")} value={manualAudience} onChange={(event) => setManualAudience(event.target.value)}><option value="SHARED">{localize("共有")}</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{localize("個人・")}{member.displayName}</option>)}</select></fieldset></div><p className="local-label-help">{localize("家族内帰属は分析対象、表示区分は端末内の整理ラベルです。「個人」も閲覧制限ではありません。")}</p><div className={`manual-balance-check${manualBalanced ? ' balanced' : ''}`}><span>{localize("貸借差額")}</span><strong>{manualBalanced ? '¥0 ✓' : localize("入力を確認")}</strong></div>{manualNotice && <p role="status">{manualNotice}</p>}<div className="manual-dialog-actions"><button className="secondary-btn" disabled={manualBusy} onClick={() => setShowManual(false)}>{localize("キャンセル")}</button><button className="primary-btn" disabled={manualBusy || !manualBalanced} onClick={() => void createManual()}>{manualBusy ? localize("転記中…") : localize("転記")}</button></div></section></div>}
     {!showManual && manualNotice && <div className="import-notice" role="status">{manualNotice}</div>}
     {detailNotice && <div className="import-notice" role="status">{detailNotice}</div>}
+    {desktop && <TransferPairStrip householdId={householdId} rows={liveRows} revision={revision} onChanged={onChanged} />}
     <section className="panel table-panel">
       <div className="table-toolbar"><div className="search table-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={text('店舗、カテゴリー、口座を検索')} /></div><div className="transaction-export-actions" aria-label={localize("取引を書き出す")}><button className="secondary-btn" disabled={exportBusy} onClick={() => void exportLedger('CSV')}>CSV</button><button className="secondary-btn" disabled={exportBusy} onClick={() => void exportLedger('XLSX')}>Excel</button><button className="secondary-btn" disabled={exportBusy} onClick={() => void exportLedger('PDF')}><Download size={15} /> PDF</button></div></div>
       <div className="transaction-filter-row"><div className="transaction-type-filters" aria-label={localize("取引種別フィルター")}>{([['ALL', localize("すべて")], ['INCOME', localize("収入")], ['EXPENSE', localize("支出")], ['TRANSFER_PAYMENT', localize("振替・カード支払")], ['REFUND', localize("返金")]] as const).map(([value, label]) => <button key={value} className={transactionTypeFilter === value ? 'active' : ''} aria-pressed={transactionTypeFilter === value} onClick={() => setTransactionTypeFilter(value)}>{localize(label)}</button>)}</div><button className="secondary-btn advanced-filter-trigger" aria-expanded={showAdvancedFilters} onClick={() => setShowAdvancedFilters((value) => !value)}><Layers size={15} />{localize("詳細フィルタ")}</button></div>
@@ -1232,112 +1137,6 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
   </>
 }
 
-function suggestedPosting(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDecisionDto {
-  const source = accounts.find((account) => account.id === candidate.accountId)
-  if (!source) throw new Error('Candidate source account is missing')
-  const expenseAccount = accounts.find((account) => account.id === `${householdId}-other-expense` && account.accountKind === 'EXPENSE')
-  const incomeAccount = accounts.find((account) => account.id === `${householdId}-income` && account.accountKind === 'INCOME')
-  const text = `${candidate.merchantRaw ?? ''} ${candidate.descriptionRaw ?? ''}`
-  const cardAccounts = accounts.filter((account) => account.accountKind === 'LIABILITY' && account.accountSubtype === 'CREDIT_CARD')
-  const cardAccount = /(?:楽天|RAKUTEN)/i.test(text)
-    ? cardAccounts.find((account) => /Rakuten/i.test(account.name))
-    : /(?:AMAZON|SMBC|三井住友)/i.test(text)
-      ? cardAccounts.find((account) => /Amazon/i.test(account.name))
-      : cardAccounts.find((account) => account.id.endsWith('-card')) ?? cardAccounts[0]
-  const looksLikeCardPayment = source.accountSubtype === 'BANK' && /(カード|CARD|JCB|AMEX|アメックス)/i.test(text)
-  const looksLikeRefund = /(返金|返品|REFUND|REVERSAL)/i.test(text)
-  let transactionType: string
-  let debitAccount: AccountDto | undefined
-  let creditAccount: AccountDto | undefined
-  if (candidate.suggestedTransactionType === 'TRANSFER') {
-    transactionType = 'TRANSFER'
-    const counterpart = accounts.find((account) => account.id !== source.id && (account.accountKind === 'ASSET' || account.accountKind === 'LIABILITY'))
-    if (candidate.direction === 'OUT') { debitAccount = counterpart; creditAccount = source }
-    else { debitAccount = source; creditAccount = counterpart }
-  } else if (looksLikeCardPayment && candidate.direction === 'OUT') {
-    transactionType = 'CARD_PAYMENT'; debitAccount = cardAccount; creditAccount = source
-  } else if (candidate.direction === 'OUT') {
-    transactionType = source.accountSubtype === 'CREDIT_CARD' ? 'CARD_PURCHASE' : 'EXPENSE'
-    debitAccount = expenseAccount; creditAccount = source
-  } else if (looksLikeRefund) {
-    transactionType = 'REFUND'; debitAccount = source; creditAccount = expenseAccount
-  } else {
-    transactionType = 'INCOME'; debitAccount = source; creditAccount = incomeAccount
-  }
-  if (!debitAccount || !creditAccount) throw new Error('Required ledger account is missing')
-  return {
-    candidateId: candidate.id,
-    transactionId: globalThis.crypto.randomUUID(),
-    transactionType,
-    payee: candidate.merchantRaw,
-    description: candidate.descriptionRaw,
-    calculationTarget: candidate.suggestedTransactionType === 'TRANSFER' ? false : candidate.calculationTarget,
-    attributionKind: candidate.attributionKind,
-    attributedMemberId: candidate.attributedMemberId,
-    audienceVisibility: candidate.audienceVisibility,
-    audienceMemberId: candidate.audienceMemberId,
-    duplicateResolution: candidate.duplicateMatch?.decision && candidate.duplicateMatch.decision !== 'UNRESOLVED' ? candidate.duplicateMatch.decision : undefined,
-    entries: [
-      { id: globalThis.crypto.randomUUID(), accountId: debitAccount.id, side: 'DEBIT', amountJpy: candidate.amountJpy },
-      { id: globalThis.crypto.randomUUID(), accountId: creditAccount.id, side: 'CREDIT', amountJpy: candidate.amountJpy },
-    ],
-  }
-}
-
-interface PostingDraft {
-  readonly approved: boolean
-  readonly decision: PostingDecisionDto
-  readonly error: string | null
-  readonly touched: boolean
-}
-
-function matchingClassificationRule(rules: readonly ClassificationRuleDto[], merchant: string | null, description: string | null): ClassificationRuleDto | null {
-  const contains = (value: string | null, needle: string | null) => needle === null || Boolean(value?.toLocaleLowerCase().includes(needle.toLocaleLowerCase()))
-  return [...rules]
-    .filter((rule) => rule.isEnabled && contains(merchant, rule.merchantContains) && contains(description, rule.descriptionContains))
-    .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id))[0] ?? null
-}
-
-function eligibleClassificationDecision(decision: PostingDecisionDto, accounts: readonly AccountDto[]): boolean {
-  if (!['EXPENSE', 'CARD_PURCHASE', 'REFUND'].includes(decision.transactionType)) return false
-  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-  const expectedSide = decision.transactionType === 'REFUND' ? 'CREDIT' : 'DEBIT'
-  return expenseEntries.length === 1 && expenseEntries[0].side === expectedSide
-}
-
-function applyClassificationRuleToDecision(decision: PostingDecisionDto, rule: ClassificationRuleDto, accounts: readonly AccountDto[]): PostingDecisionDto | null {
-  if (!eligibleClassificationDecision(decision, accounts) || !accounts.some((account) => account.id === rule.categoryAccountId && account.accountKind === 'EXPENSE')) return null
-  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-  if (expenseEntries.length !== 1) return null
-  return {
-    ...decision,
-    entries: decision.entries.map((entry) => entry.id === expenseEntries[0].id ? { ...entry, accountId: rule.categoryAccountId } : entry),
-    classificationRuleId: rule.id,
-    expectedClassificationRuleUpdatedAt: rule.updatedAt,
-  }
-}
-
-function applyLocalCategorySuggestionToDecision(decision: PostingDecisionDto, suggestion: LocalCategorySuggestion, accounts: readonly AccountDto[]): PostingDecisionDto | null {
-  if (!eligibleClassificationDecision(decision, accounts) || !accounts.some((account) => account.id === suggestion.categoryAccountId && account.accountKind === 'EXPENSE')) return null
-  const expenseEntries = decision.entries.filter((entry) => accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-  if (expenseEntries.length !== 1) return null
-  return clearClassificationProvenance({
-    ...decision,
-    entries: decision.entries.map((entry) => entry.id === expenseEntries[0].id ? { ...entry, accountId: suggestion.categoryAccountId } : entry),
-  })
-}
-
-function clearClassificationProvenance(decision: PostingDecisionDto): PostingDecisionDto {
-  const { classificationRuleId: _ruleId, expectedClassificationRuleUpdatedAt: _updatedAt, ...manualDecision } = decision
-  void _ruleId; void _updatedAt
-  return manualDecision
-}
-
-function decisionUsesCategory(decision: PostingDecisionDto, categoryAccountId: string, accounts: readonly AccountDto[]): boolean {
-  const expectedSide = decision.transactionType === 'REFUND' ? 'CREDIT' : 'DEBIT'
-  return decision.entries.some((entry) => entry.side === expectedSide && entry.accountId === categoryAccountId && accounts.find((account) => account.id === entry.accountId)?.accountKind === 'EXPENSE')
-}
-
 function LocalCategorySuggestionView({ suggestion, merchantLabel, selected, onApply }: { suggestion: LocalCategorySuggestion; merchantLabel: string; selected: boolean; onApply: () => void }) {
   const { locale, text } = useI18n()
   const confidence = Math.round(suggestion.confidenceBps / 100)
@@ -1346,35 +1145,6 @@ function LocalCategorySuggestionView({ suggestion, merchantLabel, selected, onAp
     ? locale === 'ja' ? `${suggestion.sampleCount}件の類似取引・${suggestion.historySharePercent ?? 0}%がこのカテゴリー${suggestion.amountConsistent === false ? '・金額差を考慮済み' : ''}` : locale === 'vi' ? `${suggestion.sampleCount} giao dịch tương tự; ${suggestion.historySharePercent ?? 0}% thuộc danh mục này${suggestion.amountConsistent === false ? '; đã giảm độ tin cậy do chênh lệch số tiền' : ''}` : `${suggestion.sampleCount} similar transactions; ${suggestion.historySharePercent ?? 0}% used this category${suggestion.amountConsistent === false ? '; confidence reduced for the amount difference' : ''}`
     : locale === 'ja' ? `キーワード「${suggestion.matchedKeyword ?? ''}」に一致` : locale === 'vi' ? `Khớp từ khóa “${suggestion.matchedKeyword ?? ''}”` : `Matched keyword “${suggestion.matchedKeyword ?? ''}”`
   return <div className="classification-rule-suggestion classification-local-suggestion"><span><strong>{source}</strong><small>{suggestion.categoryName} ・ {text("信頼度")} {confidence}%</small><small>{reason} ・ {text("端末内だけで判定")}</small></span><button type="button" className="mini-btn" aria-label={`${merchantLabel} — ${text("ローカルカテゴリー候補を適用")}`} disabled={selected} onClick={onApply}>{selected ? text("選択済み") : text("提案を適用")}</button></div>
-}
-
-function initialPostingDraft(candidate: PreviewCandidateDto, accounts: readonly AccountDto[], householdId: string): PostingDraft {
-  try {
-    return { approved: false, decision: suggestedPosting(candidate, accounts, householdId), error: null, touched: false }
-  } catch {
-    return {
-      approved: false,
-      touched: false,
-      error: localize("取込先または相手勘定が見つかりません。口座設定を確認するか、このインポートを取り消してください。"),
-      decision: {
-        candidateId: candidate.id,
-        transactionId: globalThis.crypto.randomUUID(),
-        transactionType: candidate.suggestedTransactionType ?? 'EXPENSE',
-        payee: candidate.merchantRaw,
-        description: candidate.descriptionRaw,
-        calculationTarget: candidate.calculationTarget,
-        attributionKind: candidate.attributionKind,
-        attributedMemberId: candidate.attributedMemberId,
-        audienceVisibility: candidate.audienceVisibility,
-        audienceMemberId: candidate.audienceMemberId,
-        duplicateResolution: candidate.duplicateMatch?.decision && candidate.duplicateMatch.decision !== 'UNRESOLVED' ? candidate.duplicateMatch.decision : undefined,
-        entries: [
-          { id: globalThis.crypto.randomUUID(), accountId: '', side: 'DEBIT', amountJpy: candidate.amountJpy },
-          { id: globalThis.crypto.randomUUID(), accountId: '', side: 'CREDIT', amountJpy: candidate.amountJpy },
-        ],
-      },
-    }
-  }
 }
 
 export function DuplicateReviewGate({ preview, onResolution }: { preview: ImportPreviewDto; onResolution: (candidateId: string, resolution: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE') => void | Promise<void> }) {
@@ -3122,7 +2892,8 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
     <PageHeader eyebrow={localize(`${month.replace('-', localize("年"))}月`)} title={localize("予算・貯蓄目標")} description={localize("確定済み台帳の支出と月間予算を比較します。")}><button className="primary-btn" onClick={() => setShowGoalForm((value) => !value)}><Goal size={17} /> {localize("目標を追加")}</button></PageHeader>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {showGoalForm && <section className="panel planning-form"><input aria-label={localize("目標名")} value={goalName} onChange={(event) => setGoalName(event.target.value)} placeholder={localize("家族旅行")} /><input aria-label={localize("目標額")} type="number" min="1" value={goalTarget} onChange={(event) => setGoalTarget(event.target.value)} placeholder="1000000" /><input aria-label={localize("目標日")} type="date" value={goalDate} onChange={(event) => setGoalDate(event.target.value)} /><button className="primary-btn" disabled={busy} onClick={() => void createGoal()}>{localize("保存")}</button></section>}
-    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => <div className="budget-row" key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong></div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div>)}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
+    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => { const used = budget.budgetJpy === 0 ? (budget.actualJpy > 0 ? Infinity : 0) : budget.actualJpy / budget.budgetJpy; const over = budget.remainingJpy < 0; return <div className={`budget-row${over ? ' budget-row-over' : used >= 0.9 ? ' budget-row-review' : ''}`} key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong>{over && Number.isFinite(used) && <small>{localize("⚠ 超過 ")}{Math.round((used - 1) * 100)}%</small>}</div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div> })}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
+    <EnvelopeCarryPanel householdId={householdId} month={month} revision={revision} />
     <PlanningTools />
   </>
 }

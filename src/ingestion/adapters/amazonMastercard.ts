@@ -15,12 +15,13 @@ export const amazonMastercardAdapter: ImportAdapter<CardStatementCandidate> = {
     const csv = tokenizeCsv(input.text); const issues: ParseIssue[] = [...csv.issues]
     const metadata = csv.rows[0]
     if (!metadata || !(metadata.fields[2] ?? '').normalize('NFKC').match(/Amazon\s*マスター|Amazon\s*Mastercard/i)) return { adapterId: this.id, records: [], issues: [{ code: 'AMAZON_METADATA_MISSING', message: 'Amazon Mastercard product metadata was not found in column 3 of the first row.', severity: 'error' }], metadata: {} }
-    const transactions: CardTransactionCandidate[] = []; let statementTotal: number | null = null
+    const transactions: CardTransactionCandidate[] = []; let statementTotal: number | null = null; let labelledTotal = false
     for (const row of csv.rows.slice(1)) {
       const date = parseJapaneseDate(row.fields[0]); const amounts = row.fields.map(parseJapaneseAmount)
       if (!date) {
         const likelyTotal = amounts.slice().reverse().find((amount) => amount != null) ?? null
-        if (/合計|請求/.test(row.fields.join(' ')) || row === csv.rows[csv.rows.length - 1]) statementTotal = likelyTotal
+        const labelled = /合計|請求/.test(row.fields.join(' '))
+        if (labelled || row === csv.rows[csv.rows.length - 1]) { statementTotal = likelyTotal; labelledTotal = labelled && likelyTotal != null }
         else issues.push({ code: 'AMAZON_ROW_SKIPPED', message: 'Non-detail row skipped.', severity: 'warning', row: row.sourceRow })
         continue
       }
@@ -29,7 +30,7 @@ export const amazonMastercardAdapter: ImportAdapter<CardStatementCandidate> = {
       transactions.push({ kind: 'card-transaction', lineage: row, usageDate: date, merchant: normalizeJapaneseText(row.fields[1] ?? ''), userName: '', paymentMethod: row.fields[3] ?? '', billingAmount, feeOrInterest: null, isRefund: (billingAmount ?? 0) < 0 || /返品|返金/.test(note), rawExtra: Object.fromEntries(row.fields.slice(2).map((value, index) => [`raw_col_${index + 3}`, value])) })
     }
     const sum = transactions.reduce((total, tx) => total + (tx.billingAmount ?? 0), 0)
-    if (statementTotal != null && sum !== statementTotal) issues.push({ code: 'AMAZON_TOTAL_MISMATCH', message: `Detail sum (${sum}) does not match statement total (${statementTotal}).`, severity: 'warning' })
-    return { adapterId: this.id, records: [{ kind: 'card-statement', issuer: 'AMAZON_MASTERCARD', holderName: metadata.fields[0], maskedCardNumber: metadata.fields[1], productName: metadata.fields[2], statementTotal, transactions }], issues, metadata: { detailCount: transactions.length } }
+    if (statementTotal != null && sum !== statementTotal) issues.push({ code: 'AMAZON_TOTAL_MISMATCH', message: `Detail sum (${sum}) does not match statement total (${statementTotal}).`, severity: labelledTotal ? 'error' : 'warning' })
+    return { adapterId: this.id, records: [{ kind: 'card-statement', issuer: 'AMAZON_MASTERCARD', holderName: metadata.fields[0], maskedCardNumber: metadata.fields[1], productName: metadata.fields[2], statementTotal, transactions }], issues, metadata: { detailCount: transactions.length, statementTotalSource: statementTotal == null ? 'MISSING' : labelledTotal ? 'LABELLED_TOTAL' : 'LAST_ROW_HEURISTIC' } }
   },
 }
