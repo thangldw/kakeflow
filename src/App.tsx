@@ -2816,8 +2816,10 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
   return <><PageHeader eyebrow={localize("家計レビュー")} title={localize("カレンダー・レポート")} description={localize("計算対象の確定台帳（集計対象外を除く）を日次、月次、年次、予測、定期支出・異常支出の視点で確認します。")}><ReportTabs view={view} onChange={setView} /></PageHeader><ReportSubTabs view={view} onChange={setView} />{reportBody}<MonthlyContextNotes householdId={householdId} month={month} /></>
 }
 
-function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number; onChanged: () => void }) {
+function BudgetsPage({ householdId, accounts, month, revision, onChanged, focusGoalsRequest = 0 }: { householdId: string | null; accounts: readonly AccountDto[]; month: string; revision: number; onChanged: () => void; focusGoalsRequest?: number }) {
   const desktop = platformClient.runtime === 'tauri'
+  const [loaded, setLoaded] = useState(false)
+  const handledFocusRequest = useRef(0)
   const [budgets, setBudgets] = useState<readonly MonthlyCategoryBudgetDto[]>([])
   const [goals, setGoals] = useState<readonly SavingsGoalDto[]>([])
   const [budgetAccountId, setBudgetAccountId] = useState('')
@@ -2839,7 +2841,15 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
     setBudgetAccountId((current) => current || expenseAccounts[0]?.id || '')
   }
 
-  useEffect(() => { void reload().catch(() => { setBudgets([]); setGoals([]); setNotice(localize("予算と目標を読み込めませんでした。")) }) }, [desktop, householdId, month, revision]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void reload().catch(() => { setBudgets([]); setGoals([]); setNotice(localize("予算と目標を読み込めませんでした。")) }).finally(() => setLoaded(true)) }, [desktop, householdId, month, revision]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Each new request scrolls to the goals once, after the first load, so rows that load later cannot push the panel away.
+  useEffect(() => {
+    if (focusGoalsRequest === 0 || handledFocusRequest.current === focusGoalsRequest || (desktop && !loaded)) return
+    handledFocusRequest.current = focusGoalsRequest
+    const goals = document.getElementById('goals')
+    if (goals && typeof goals.scrollIntoView === 'function') goals.scrollIntoView({ block: 'start' })
+  }, [desktop, focusGoalsRequest, loaded])
 
   const saveBudget = async () => {
     if (!householdId || !budgetAccountId || !/^\d+$/.test(budgetAmount)) { setNotice(localize("カテゴリーと0円以上の予算を入力してください。")); return }
@@ -3402,6 +3412,7 @@ function App() {
   const [uiModeChoice, setUiModeChoice] = useState<{ readonly householdId: string | null; readonly mode: UiMode } | null>(null)
   const uiMode = uiModeChoice && uiModeChoice.householdId === activeHouseholdId ? uiModeChoice.mode : storedUiMode
   const [savingsActive, setSavingsActive] = useState(false)
+  const [goalsFocusRequest, setGoalsFocusRequest] = useState(0)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const simple = uiMode === 'simple'
   // Simple mode always reads the whole household; the saved scope stays untouched and applies again in Full.
@@ -3416,6 +3427,8 @@ function App() {
   const folderRefreshBusyRef = useRef(false)
 
   useEffect(() => { if (page !== 'budgets') setSavingsActive(false) }, [page])
+  // More belongs to Simple mode; whichever path leaves it on screen in Full mode (household switch, mode change) goes Home.
+  useEffect(() => { if (!simple && page === 'more') setPage('overview') }, [page, simple])
 
   useEffect(() => {
     const workspaceScroller = document.querySelector<HTMLElement>('.main-shell > main')
@@ -3757,11 +3770,8 @@ function App() {
   const openSavings = () => {
     setPage('budgets')
     setSavingsActive(true)
-    // After the budgets page has rendered; jsdom and older engines may lack scrollIntoView.
-    globalThis.setTimeout(() => {
-      const goals = document.getElementById('goals')
-      if (goals && typeof goals.scrollIntoView === 'function') goals.scrollIntoView({ block: 'start' })
-    }, 0)
+    // BudgetsPage scrolls to its goals panel once its data has loaded.
+    setGoalsFocusRequest((value) => value + 1)
   }
   const selectSimpleTab = (tab: SimpleTab) => {
     if (tab === 'savings') { openSavings(); return }
@@ -3822,7 +3832,7 @@ function App() {
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => openImportPage()} />,
     reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={effectiveAccountGroupId} attributionScope={effectiveAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} initialView={reportsInitialView} openPage={navigateToPage} />,
-    budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} focusGoalsRequest={savingsActive ? goalsFocusRequest : 0} />,
     recurring: <RecurringPage householdId={activeHouseholdId} accountGroupId={effectiveAccountGroupId} attributionScope={effectiveAttributionScope} month={selectedMonth} revision={ledgerRevision} openTransactions={() => setPage('transactions')} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,

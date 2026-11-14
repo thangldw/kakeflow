@@ -252,6 +252,69 @@ describe('Simple mode in the app shell', () => {
     expect(JSON.parse(localStorage.getItem('kakeflow.uiMode') ?? '{}')).toEqual({ 'demo-tanaka-family': 'simple' })
   })
 
+  describe('Savings scroll on the desktop runtime', () => {
+    const scrolled: Element[] = []
+    beforeEach(() => {
+      scrolled.length = 0
+      Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value(this: Element) { scrolled.push(this) } })
+    })
+    afterEach(() => { delete (Element.prototype as Partial<Element>).scrollIntoView })
+    const GOAL = { id: 'goal-1', householdId: 'family', name: '旅行', targetJpy: 300_000, savedJpy: 100_000, targetDate: '2027-11-01', status: 'ACTIVE', createdAt: '2026-07-01', updatedAt: '2026-07-01' }
+
+    it('scrolls to the goals only after the budgets page has loaded its data', async () => {
+      await renderSimpleDesktop()
+      let releaseBudgets: () => void = () => undefined
+      let releaseGoals: () => void = () => undefined
+      const budgetsLoaded = new Promise<void>((resolve) => { releaseBudgets = resolve })
+      const goalsLoaded = new Promise<void>((resolve) => { releaseGoals = resolve })
+      const budgetsImpl = desktop.listBudgets.getMockImplementation()
+      desktop.listBudgets.mockImplementation(async (householdId: string, month: string) => { await budgetsLoaded; return budgetsImpl?.(householdId, month) })
+      desktop.listSavingsGoals.mockImplementation(async () => { await goalsLoaded; return [GOAL] })
+
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄' }))
+      expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
+      expect(scrolled).toEqual([])
+
+      releaseBudgets()
+      releaseGoals()
+      await waitFor(() => expect(scrolled).toHaveLength(1))
+      expect(scrolled[0]).toBe(document.getElementById('goals'))
+      expect(within(document.getElementById('goals') as HTMLElement).getByText('旅行')).toBeInTheDocument()
+    })
+
+    it('scrolls to the goals when Savings is tapped while the budgets page is already open', async () => {
+      await renderSimpleDesktop()
+      desktop.listSavingsGoals.mockResolvedValue([GOAL])
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '予算' }))
+      await screen.findByRole('heading', { name: '予算・貯蓄目標' })
+      await waitFor(() => expect(desktop.listSavingsGoals).toHaveBeenCalled())
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
+      expect(scrolled).toEqual([])
+      const loadsBefore = desktop.listBudgets.mock.calls.length
+
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄' }))
+      await waitFor(() => expect(scrolled).toHaveLength(1))
+      expect(scrolled[0]).toBe(document.getElementById('goals'))
+      expect(desktop.listBudgets.mock.calls.length).toBe(loadsBefore)
+    })
+  })
+
+  it('leaves More for the Full Home when the household switched to is in Full mode', async () => {
+    setUpDesktop()
+    desktop.listHouseholds.mockResolvedValue([FAMILY, OTHER])
+    storeMode({ family: 'simple' })
+    render(<App />)
+    await waitFor(() => expect(within(screen.getByRole('combobox', { name: '世帯を切り替える' })).getAllByRole('option')).toHaveLength(3))
+    await screen.findByRole('heading', { name: '今月あと使える金額' })
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'その他' }))
+    expect(screen.getByRole('group', { name: '表示モード' })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('combobox', { name: '世帯を切り替える' }), { target: { value: 'other' } })
+    expect(await screen.findByRole('button', { name: 'テンプレート: キャッシュフロー' })).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: '表示モード' })).not.toBeInTheDocument()
+  })
+
   it('re-reads the mode when the household changes', async () => {
     setUpDesktop()
     desktop.listHouseholds.mockResolvedValue([FAMILY, OTHER])
