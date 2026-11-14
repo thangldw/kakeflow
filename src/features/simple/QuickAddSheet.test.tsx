@@ -45,8 +45,8 @@ function renderSheet({ client = fakeClient(), ...overrides }: Partial<Omit<Param
   return props
 }
 
-const amountField = () => screen.getByLabelText('金額') as HTMLInputElement
-const saveButton = () => screen.getByRole('button', { name: '保存' })
+const amountField = () => screen.getByLabelText('記録する金額') as HTMLInputElement
+const saveButton = () => screen.getByRole('button', { name: '記録を保存' })
 const tapKeys = (keys: string) => { for (const key of keys) fireEvent.click(screen.getByRole('button', { name: key })) }
 
 afterEach(() => localStorage.clear())
@@ -125,7 +125,7 @@ describe('QuickAddSheet', () => {
 
   it('swaps the chips and the account label when switching to income', () => {
     renderSheet()
-    expect(screen.getByText('支払い方法')).toBeInTheDocument()
+    expect(screen.getByText('支払い元')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '食費' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '収入' }))
     expect(screen.getByRole('button', { name: '収入' })).toHaveAttribute('aria-pressed', 'true')
@@ -133,15 +133,15 @@ describe('QuickAddSheet', () => {
     expect(screen.getByRole('button', { name: '給与' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '食費' })).not.toBeInTheDocument()
     expect(screen.getByText('受取口座')).toBeInTheDocument()
-    expect(screen.queryByText('支払い方法')).not.toBeInTheDocument()
+    expect(screen.queryByText('支払い元')).not.toBeInTheDocument()
   })
 
   it('posts a card purchase when paid with a credit card', async () => {
     const props = renderSheet()
     tapKeys('3000')
     fireEvent.click(screen.getByRole('button', { name: '日用品' }))
-    fireEvent.click(screen.getByRole('button', { name: /支払い方法/ }))
-    fireEvent.change(screen.getByRole('combobox', { name: '支払い方法' }), { target: { value: 'card' } })
+    fireEvent.click(screen.getByRole('button', { name: /支払い元/ }))
+    fireEvent.change(screen.getByRole('combobox', { name: '支払い元' }), { target: { value: 'card' } })
     fireEvent.click(saveButton())
     await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
     expect(props.client.createManualTransaction.mock.calls[0][0]).toMatchObject({
@@ -177,7 +177,7 @@ describe('QuickAddSheet', () => {
     const onSetupAccounts = vi.fn()
     renderSheet({ accounts: accounts.filter((a) => a.accountKind !== 'EXPENSE'), onSetupAccounts })
     expect(screen.getByText('記録できる口座がありません')).toBeInTheDocument()
-    expect(screen.queryByLabelText('金額')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('記録する金額')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '口座を設定する' }))
     expect(onSetupAccounts).toHaveBeenCalledTimes(1)
   })
@@ -220,12 +220,12 @@ describe('QuickAddSheet', () => {
     renderSheet()
     tapKeys('500')
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
-    const date = screen.getByLabelText('日付')
+    const date = screen.getByLabelText('日にち')
     expect(date).toHaveValue('2026-11-14')
     expect(saveButton()).toBeEnabled()
     fireEvent.change(date, { target: { value: '' } })
     expect(saveButton()).toBeDisabled()
-    fireEvent.keyDown(screen.getByLabelText('金額'), { key: 'Enter' })
+    fireEvent.keyDown(screen.getByLabelText('記録する金額'), { key: 'Enter' })
     expect(screen.getByRole('dialog')).toBeInTheDocument()
     fireEvent.change(date, { target: { value: '2026-11-13' } })
     expect(saveButton()).toBeEnabled()

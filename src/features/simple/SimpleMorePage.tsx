@@ -14,12 +14,19 @@ interface MoreEntry {
 // Settings is reached from the sidebar foot in Full mode, so it is not part of `navigation`.
 const settingsEntry: MoreEntry = { id: 'settings', label: '設定', icon: Settings }
 
+// Plainer labels for More where the shared navigation label reads awkwardly in English ("Audit/Trail").
+const simpleLabels: Partial<Record<PageId, string>> = {
+  recurring: '定期的な支払いと固定費',
+  audit: '監査の記録',
+}
+
 function entries(pages: readonly PageId[]): MoreEntry[] {
   return pages.map((page) => {
     if (page === 'settings') return settingsEntry
     const item = navigation.find((entry) => entry.id === page)
     if (!item) throw new Error(`Unknown navigation page: ${page}`)
-    return item
+    const label = simpleLabels[page]
+    return label ? { ...item, label } : item
   })
 }
 

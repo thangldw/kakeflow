@@ -66,7 +66,7 @@ export function SimpleHome({ householdId, householdName, month, revision, onSetL
   }
 
   if (state.kind === 'loading' || state.key !== key) {
-    return <div className="simple-home" aria-busy="true" aria-label={localize("ホームを読み込み中")}>
+    return <div className="simple-home" aria-busy="true" aria-label={localize("ホームを準備中")}>
       <p className="simple-home-household">{householdName}</p>
       <div className="skeleton simple-skeleton-hero" />
       <div className="skeleton simple-skeleton-card" />
@@ -105,7 +105,7 @@ function RemainingCard({ remaining, month, onSetLimit, onGoToCurrentMonth }: { r
   // Exactly zero left is not over budget (ruling R8).
   const over = remaining.remainingJpy < 0
   const showPerDay = remaining.remainingJpy > 0 && remaining.perDayJpy !== null
-  const barLabel = `${localize("使った金額")} ${yen(remaining.spentJpy)} / ${localize("予算")} ${yen(remaining.totalBudgetJpy)}`
+  const barLabel = `${localize("使った金額")} ${yen(remaining.spentJpy)} / ${localize("予算の合計")} ${yen(remaining.totalBudgetJpy)}`
   return <section className={`simple-card simple-hero${over ? ' simple-hero-over' : ''}`} aria-labelledby={`${id}-title`}>
     <h2 id={`${id}-title`} className="simple-hero-label">{over ? localize("予算を超えています") : otherMonth ? localize("残り金額") : localize("今月あと使える金額")}</h2>
     {monthLine}
@@ -115,7 +115,7 @@ function RemainingCard({ remaining, month, onSetLimit, onGoToCurrentMonth }: { r
     </div>
     <dl className="simple-figures">
       <div><dt>{localize("使った金額")}</dt><dd>{yen(remaining.spentJpy)}</dd></div>
-      <div><dt>{localize("予算")}</dt><dd>{yen(remaining.totalBudgetJpy)}</dd></div>
+      <div><dt>{localize("予算の合計")}</dt><dd>{yen(remaining.totalBudgetJpy)}</dd></div>
       {showPerDay && <>
         <div><dt>{localize("1日あたりの目安")}</dt><dd>{yen(remaining.perDayJpy ?? 0)}</dd></div>
         <div><dt>{localize("残り日数")}</dt><dd>{daysLeftInMonth(tokyoDate())}</dd></div>
@@ -162,17 +162,18 @@ function GoalCard({ goal, client, onSaved }: { readonly goal: SavingsGoalDto; re
   }
 
   return <section className="simple-card simple-goal" aria-labelledby={`${id}-title`}>
-    <p className="simple-card-label">{localize("貯蓄目標")}</p>
+    <p className="simple-card-label">{localize("貯蓄の目標")}</p>
     <h2 id={`${id}-title`} className="simple-goal-name">{goal.name}</h2>
     <p className="simple-goal-amounts">{amounts}</p>
-    <div className="simple-bar simple-bar-goal" role="img" aria-label={`${localize("貯蓄目標")} ${goal.name} ${amounts}`}>
+    <div className="simple-bar simple-bar-goal" role="img" aria-label={`${localize("貯蓄の目標")} ${goal.name} ${amounts}`}>
       <span style={{ width: percent(ratio) }} />
     </div>
+    {/* Each figure is a label and a value, so no translated word is glued to a number. */}
     <p className="simple-goal-pace">{pace.remaining === 0
-      ? <b>{localize("目標達成")}</b>
+      ? <b>{localize("目標を達成しました")}</b>
       : pace.overdue
-        ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b>
-        : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p>
+        ? <><span>{localize("目標日を過ぎています")}</span><span>{localize("あと必要な金額")} <b>{yen(pace.remaining)}</b></span></>
+        : <><span>{localize("必要な月額")} <b>{yen(pace.monthly)}</b></span><span>{localize("残りの月数")} <b>{pace.months}</b></span></>}</p>
     <form className="simple-goal-update" onSubmit={(event) => { event.preventDefault(); void save() }}>
       <label>{localize("貯蓄済みの金額")}<YenInput value={draft} onChange={setDraft} onValidityChange={setDraftValid} /></label>
       <button type="submit" className="secondary-btn" disabled={busy || !draftValid}>{localize("貯蓄済みを更新")}</button>
@@ -184,7 +185,7 @@ function GoalCard({ goal, client, onSaved }: { readonly goal: SavingsGoalDto; re
 function NoGoalCard({ onOpenSavings }: { readonly onOpenSavings: () => void }) {
   const id = useId()
   return <section className="simple-card simple-goal" aria-labelledby={`${id}-title`}>
-    <h2 id={`${id}-title`} className="simple-card-label">{localize("貯蓄目標")}</h2>
+    <h2 id={`${id}-title`} className="simple-card-label">{localize("貯蓄の目標")}</h2>
     <button type="button" className="primary-btn" onClick={onOpenSavings}>{localize("目標を作る")}</button>
   </section>
 }

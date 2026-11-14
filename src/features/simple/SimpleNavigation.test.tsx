@@ -13,14 +13,14 @@ describe('SimpleTabBar', () => {
     const nav = screen.getByRole('navigation')
     expect(nav).toHaveAccessibleName()
     const buttons = within(nav).getAllByRole('button')
-    expect(buttons.map((button) => button.textContent)).toEqual(['今日', '取引', '予算', '貯蓄', 'その他'])
-    expect(buttons.filter((button) => button.getAttribute('aria-current') === 'page')).toEqual([screen.getByRole('button', { name: '予算' })])
+    expect(buttons.map((button) => button.textContent)).toEqual(['今日', '取引', '予算管理', '貯金', 'そのほか'])
+    expect(buttons.filter((button) => button.getAttribute('aria-current') === 'page')).toEqual([screen.getByRole('button', { name: '予算管理' })])
   })
 
   it('calls onSelect with the tab id', () => {
     const onSelect = vi.fn()
     render(<SimpleTabBar active="today" onSelect={onSelect} />)
-    fireEvent.click(screen.getByRole('button', { name: '貯蓄' }))
+    fireEvent.click(screen.getByRole('button', { name: '貯金' }))
     expect(onSelect).toHaveBeenCalledWith('savings')
   })
 })
@@ -32,7 +32,9 @@ describe('SimpleMorePage', () => {
     const listed = [...container.querySelectorAll<HTMLElement>('[data-page]')].map((element) => element.dataset.page).sort()
     expect(listed).toEqual(expected)
     for (const item of navigation.filter((entry) => !MAIN_TAB_PAGES.includes(entry.id))) {
-      expect(screen.getAllByRole('button', { name: item.label })).toHaveLength(1)
+      // More gives two pages plainer labels than the shared navigation.
+      const label = item.id === 'recurring' ? '定期的な支払いと固定費' : item.id === 'audit' ? '監査の記録' : item.label
+      expect(screen.getAllByRole('button', { name: label })).toHaveLength(1)
     }
     expect(screen.getAllByRole('button', { name: '設定' })).toHaveLength(1)
   })

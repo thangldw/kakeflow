@@ -89,7 +89,7 @@ describe('SimpleHome', () => {
     expect(within(hero).getByText('残り日数')).toBeInTheDocument()
     expect(within(hero).getByText('17')).toBeInTheDocument()
     const bar = within(hero).getByRole('img')
-    expect(bar).toHaveAccessibleName('使った金額 ¥112,400 / 予算 ¥155,000')
+    expect(bar).toHaveAccessibleName('使った金額 ¥112,400 / 予算の合計 ¥155,000')
     expect(screen.getByText('山田家')).toBeInTheDocument()
     expect(screen.queryByText('予算のないカテゴリーの支出')).not.toBeInTheDocument()
     expect(screen.queryByText('以前の月の予算を使っています')).not.toBeInTheDocument()
@@ -170,8 +170,8 @@ describe('SimpleHome', () => {
     const card = (await screen.findByText('家族旅行')).closest('section')!
     const pace = goalPace(travelGoal)
     expect(card).toHaveTextContent(`¥${pace.monthly.toLocaleString('ja-JP')}`)
-    expect(card).toHaveTextContent('必要ペース:')
-    expect(within(card).getByRole('img')).toHaveAccessibleName('貯蓄目標 家族旅行 ¥120,000 / ¥300,000')
+    expect(card).toHaveTextContent('必要な月額')
+    expect(within(card).getByRole('img')).toHaveAccessibleName('貯蓄の目標 家族旅行 ¥120,000 / ¥300,000')
     fireEvent.change(within(card).getByLabelText('貯蓄済みの金額'), { target: { value: '150000' } })
     fireEvent.click(within(card).getByRole('button', { name: '貯蓄済みを更新' }))
     await waitFor(() => expect(client.updateSavingsGoal).toHaveBeenCalledWith({
@@ -221,7 +221,7 @@ describe('SimpleHome', () => {
     expect(hero).not.toHaveClass('simple-hero-over')
     expect(screen.queryByText('予算を超えています')).not.toBeInTheDocument()
     expect(screen.queryByText('1日あたりの目安')).not.toBeInTheDocument()
-    expect(within(hero).getByRole('img')).toHaveAccessibleName('使った金額 ¥155,000 / 予算 ¥155,000')
+    expect(within(hero).getByRole('img')).toHaveAccessibleName('使った金額 ¥155,000 / 予算の合計 ¥155,000')
   })
 
   it('invites creating a goal when there is none', async () => {

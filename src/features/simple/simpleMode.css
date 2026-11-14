@@ -33,7 +33,7 @@
 
 .simple-goal-name { font-size: 18px; font-weight: 700; }
 .simple-goal-amounts { margin: 0; font-size: 15px; font-variant-numeric: tabular-nums; }
-.simple-goal-pace { margin: 0; color: var(--text2); font-size: 13px; }
+.simple-goal-pace { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; color: var(--text2); font-size: 13px; }
 .simple-goal-pace b { color: var(--text); }
 .simple-goal-update { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .simple-goal-update label { display: grid; gap: 4px; flex: 1 1 160px; min-width: 0; color: var(--text2); font-size: 13px; }
@@ -103,8 +103,6 @@
 
 /* Simple mode: navigation. The bottom tab bar shows below 721px; wider screens use the sidebar entries. */
 .simple-tab-label { display: block; }
-/* Some catalog entries are lower case (budget, savings); a tab label starts with a capital. */
-.simple-tab-label::first-letter { text-transform: uppercase; }
 
 .simple-tabbar { display: none; }
 @media (max-width: 720px) {

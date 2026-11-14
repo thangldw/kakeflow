@@ -138,17 +138,17 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
     else if (!event.shiftKey && (activeIndex === -1 || activeIndex === focusable.length - 1)) { event.preventDefault(); focusable[0].focus() }
   }
 
-  const payingLabel = kind === 'EXPENSE' ? localize("支払い方法") : localize("受取口座")
+  const payingLabel = kind === 'EXPENSE' ? localize("支払い元") : localize("受取口座")
   const chipIds = new Set(choices.chips.map((chip) => chip.id))
 
   return <div className="quick-add-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
     <section ref={dialogRef} className="quick-add-sheet" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={handleKeyDown}>
       <div className="quick-add-head">
         <h2 ref={headingRef} id={titleId} tabIndex={-1}>{kind === 'EXPENSE' ? localize("支出を記録") : localize("収入を記録")}</h2>
-        <button type="button" className="icon-btn quick-add-close" aria-label={localize("閉じる")} disabled={busy} onClick={onClose}><X size={20} /></button>
+        <button type="button" className="icon-btn quick-add-close" aria-label={localize("記録画面を閉じる")} disabled={busy} onClick={onClose}><X size={20} /></button>
       </div>
 
-      <div className="quick-add-kind" role="group" aria-label={localize("種類")}>
+      <div className="quick-add-kind" role="group" aria-label={localize("記録の種類")}>
         <button type="button" aria-pressed={kind === 'EXPENSE'} onClick={() => switchKind('EXPENSE')}>{localize("支出")}</button>
         <button type="button" aria-pressed={kind === 'INCOME'} onClick={() => switchKind('INCOME')}>{localize("収入")}</button>
       </div>
@@ -160,7 +160,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
         </div>
         : <>
           <div className="quick-add-amount">
-            <label htmlFor={amountId}>{localize("金額")}</label>
+            <label htmlFor={amountId}>{localize("記録する金額")}</label>
             <span className="quick-add-amount-field">
               <span aria-hidden="true">¥</span>
               <input
@@ -204,7 +204,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
                 <strong>{payingAccount.name}</strong>
               </button>}
             <label className="quick-add-field">
-              <span>{localize("日付")}</span>
+              <span>{localize("日にち")}</span>
               <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />
             </label>
             <label className="quick-add-field">
@@ -216,7 +216,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
           {failed && <p className="quick-add-error" role="alert">{localize("保存できませんでした。もう一度お試しください。")}</p>}
 
           <button type="button" className="primary-btn quick-add-save" disabled={!canSave} onClick={() => void save()}>
-            {busy ? localize("保存中…") : localize("保存")}
+            {busy ? localize("保存中…") : localize("記録を保存")}
           </button>
         </>}
     </section>

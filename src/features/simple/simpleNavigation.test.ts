@@ -7,9 +7,9 @@ describe('simple navigation model', () => {
     expect(SIMPLE_TABS.map((tab) => [tab.id, tab.page, tab.label])).toEqual([
       ['today', 'overview', '今日'],
       ['transactions', 'transactions', '取引'],
-      ['budget', 'budgets', '予算'],
-      ['savings', 'budgets', '貯蓄'],
-      ['more', 'more', 'その他'],
+      ['budget', 'budgets', '予算管理'],
+      ['savings', 'budgets', '貯金'],
+      ['more', 'more', 'そのほか'],
     ])
   })
 
