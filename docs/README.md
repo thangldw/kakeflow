@@ -12,7 +12,7 @@ This directory contains the current project documentation for the canonical repo
 | [v1.2.1 release notes](releases/v1.2.1.md) | Published desktop installation, release scope and verification evidence; separate from newer main/PWA changes. |
 | [v1.2.0 release notes](releases/v1.2.0.md) | Historical installation and updater boundary. |
 
-Project-wide policies remain at the repository root: [README](../README.md), [Contributing](../CONTRIBUTING.md), [Code of Conduct](../CODE_OF_CONDUCT.md), [Changelog](../CHANGELOG.md) and [MIT License](../LICENSE).
+Project-wide policies remain at the repository root: [README](../README.md), [Contributing](../CONTRIBUTING.md), [Code of Conduct](../CODE_OF_CONDUCT.md), [Changelog](../CHANGELOG.md) and [Apache License 2.0](../LICENSE).
 
 Documentation rules:
 
