@@ -30,9 +30,10 @@ export function GoalsPanel({ goals, onCreate, onUpdateSaved }: GoalsPanelProps) 
   return <div className="simple-goals-panel">
     <section className="simple-goals-list" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`} className="simple-panel-title">{localize("貯蓄の目標の一覧")}</h2>
+      {/* Keyed by id only: the reload after an update keeps the card, so keyboard focus stays on it. */}
       {goals.length === 0
         ? <p className="simple-note">{localize("まだ目標がありません")}</p>
-        : goals.map((goal) => <GoalItem key={`${goal.id}:${goal.savedJpy}`} goal={goal} onUpdateSaved={onUpdateSaved} />)}
+        : goals.map((goal) => <GoalItem key={goal.id} goal={goal} onUpdateSaved={onUpdateSaved} />)}
     </section>
     <NewGoalForm onCreate={onCreate} />
   </div>
@@ -57,6 +58,12 @@ function GoalItem({ goal, onUpdateSaved }: { readonly goal: SavingsGoalDto; read
   const [draftValid, setDraftValid] = useState(true)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  // A new stored amount from the parent replaces the field only while it still shows the old stored amount.
+  const [stored, setStored] = useState(goal.savedJpy)
+  if (stored !== goal.savedJpy) {
+    setStored(goal.savedJpy)
+    if (draft === stored && draftValid) setDraft(goal.savedJpy)
+  }
   const ratio = goal.targetJpy > 0 ? goal.savedJpy / goal.targetJpy : 1
   const amounts = `${yen(goal.savedJpy)} / ${yen(goal.targetJpy)}`
 
@@ -77,7 +84,8 @@ function GoalItem({ goal, onUpdateSaved }: { readonly goal: SavingsGoalDto; read
     <GoalPaceLine goal={goal} />
     <form className="simple-goal-update" onSubmit={(event) => { void save(event) }}>
       <label>{localize("貯蓄済みの金額")}<YenInput value={draft} onChange={(value) => { setDraft(value); setFailed(false) }} onValidityChange={setDraftValid} /></label>
-      <button type="submit" className="secondary-btn" aria-describedby={`${id}-title`} disabled={busy || !draftValid}>{localize("貯蓄済みを更新")}</button>
+      {/* Not disabled while busy (save() ignores a second tap): disabling the focused button would drop focus to the page. */}
+      <button type="submit" className="secondary-btn" aria-describedby={`${id}-title`} aria-busy={busy} disabled={!draftValid}>{localize("貯蓄済みを更新")}</button>
     </form>
     {failed && <p className="simple-error-text" role="alert">{localize("更新できませんでした")}</p>}
   </section>

@@ -77,6 +77,38 @@ describe('BudgetEditor', () => {
     expect(save).toBeDisabled()
   })
 
+  it('keeps the row, its focus and its Saved note when the parent reloads the saved amount', async () => {
+    const onSave = vi.fn(async () => undefined)
+    const view = renderEditor({ onSave })
+    const form = row('食費')
+    const input = within(form).getByLabelText('食費')
+    fireEvent.change(input, { target: { value: '60000' } })
+    input.focus()
+    fireEvent.submit(form)
+    await waitFor(() => expect(within(form).getByRole('status')).toHaveTextContent('Budget saved'))
+
+    view.rerender(<I18nProvider><BudgetEditor month="2026-11" categories={categories} budgets={[{ categoryAccountId: 'food', budgetJpy: 60_000 }]} onSave={onSave} /></I18nProvider>)
+    expect(row('食費')).toBe(form)
+    expect(document.activeElement).toBe(input)
+    expect(within(form).getByRole('status')).toHaveTextContent('Budget saved')
+    expect(within(form).getByRole('button', { name: 'Save budget' })).toBeDisabled()
+  })
+
+  it('takes a new stored amount into an untouched row and keeps a typed one', () => {
+    const view = renderEditor()
+    fireEvent.change(within(row('日用品')).getByLabelText('日用品'), { target: { value: '7000' } })
+    view.rerender(<I18nProvider><BudgetEditor month="2026-11" categories={categories} budgets={[{ categoryAccountId: 'food', budgetJpy: 55_000 }, { categoryAccountId: 'daily', budgetJpy: 8_000 }]} onSave={vi.fn(async () => undefined)} /></I18nProvider>)
+    expect(within(row('食費')).getByLabelText('食費')).toHaveValue('55,000')
+    expect(within(row('食費')).getByRole('button', { name: 'Save budget' })).toBeDisabled()
+    expect(within(row('日用品')).getByLabelText('日用品')).toHaveValue('7000')
+    expect(within(row('日用品')).getByRole('button', { name: 'Save budget' })).toBeEnabled()
+  })
+
+  it('labels budgets carried over from an earlier month', () => {
+    renderEditor({ carriedOverFrom: '2026-10' })
+    expect(screen.getByText('Budgets carried over from').parentElement).toHaveTextContent('Budgets carried over from October 2026')
+  })
+
   it('shows an alert and keeps the typed amount when saving fails', async () => {
     renderEditor({ onSave: vi.fn(async () => { throw new Error('offline') }) })
     const form = row('日用品')

@@ -120,6 +120,50 @@ describe('GoalsPanel saved amount', () => {
   })
 })
 
+describe('GoalsPanel after a successful update', () => {
+  it('keeps the card, its focus and the new amount when the parent reloads the goal', async () => {
+    const onUpdateSaved = vi.fn(async () => undefined)
+    const view = inLocale('en', <GoalsPanel goals={goals} onCreate={vi.fn(async () => undefined)} onUpdateSaved={onUpdateSaved} />)
+    const card = goalCard('家族旅行')
+    const input = within(card).getByLabelText('Saved so far')
+    const update = within(card).getByRole('button', { name: 'Update saved amount' })
+    fireEvent.change(input, { target: { value: '150000' } })
+    update.focus()
+    fireEvent.click(update)
+    await waitFor(() => expect(onUpdateSaved).toHaveBeenCalledWith('trip', 150_000))
+
+    view.rerender(<I18nProvider><GoalsPanel goals={[goal({ savedJpy: 150_000 }), ...goals.slice(1)]} onCreate={vi.fn(async () => undefined)} onUpdateSaved={onUpdateSaved} /></I18nProvider>)
+    expect(goalCard('家族旅行')).toBe(card)
+    expect(document.activeElement).toBe(update)
+    expect(update).toBeEnabled()
+    expect(within(card).getByText(`${yen(150_000)} / ${yen(300_000)}`)).toBeInTheDocument()
+    expect(input).toHaveValue('150000')
+  })
+
+  it('takes a new stored amount into an untouched field and keeps a typed one', () => {
+    const props = { onCreate: vi.fn(async () => undefined), onUpdateSaved: vi.fn(async () => undefined) }
+    const view = inLocale('en', <GoalsPanel goals={goals} {...props} />)
+    const trip = within(goalCard('家族旅行')).getByLabelText('Saved so far')
+    const late = within(goalCard('車検')).getByLabelText('Saved so far')
+    fireEvent.change(late, { target: { value: '45000' } })
+
+    view.rerender(<I18nProvider><GoalsPanel goals={[goal({ savedJpy: 130_000 }), goals[1], { ...goals[2], savedJpy: 50_000 }]} {...props} /></I18nProvider>)
+    expect(trip).toHaveValue('130,000')
+    expect(late).toHaveValue('45000')
+  })
+
+  it('keeps invalid text flagged when the stored amount changes', () => {
+    const props = { onCreate: vi.fn(async () => undefined), onUpdateSaved: vi.fn(async () => undefined) }
+    const view = inLocale('en', <GoalsPanel goals={goals} {...props} />)
+    const input = within(goalCard('家族旅行')).getByLabelText('Saved so far')
+    fireEvent.change(input, { target: { value: '12a' } })
+    view.rerender(<I18nProvider><GoalsPanel goals={[goal({ savedJpy: 130_000 }), ...goals.slice(1)]} {...props} /></I18nProvider>)
+    expect(input).toHaveValue('12a')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(within(goalCard('家族旅行')).getByRole('button', { name: 'Update saved amount' })).toBeDisabled()
+  })
+})
+
 describe('GoalsPanel new goal', () => {
   function fill(name: string, target: string, date: string) {
     const form = createForm()
