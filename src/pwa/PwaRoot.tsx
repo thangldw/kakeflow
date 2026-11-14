@@ -103,6 +103,14 @@ function randomId(prefix: string) {
   return `${prefix}-${token}`
 }
 
+/**
+ * The Simple/Full entry of one vault's household. Every PWA vault's household id is `household`, so the entry is
+ * prefixed with the vault's database name: vaults on one device keep their own mode.
+ */
+function uiModeKey(databaseName: string, householdId: string) {
+  return `${databaseName}:${householdId}`
+}
+
 /** The language a first run starts in: the browser's when it is Vietnamese or Japanese, English otherwise. */
 function browserLocale(): AppLocale {
   const language = (globalThis.navigator?.language ?? '').toLowerCase()
@@ -261,7 +269,7 @@ function PwaVaultRoot({
         client.listConnectorSummaries(active.id),
       ])
       if (generation !== vaultLoadGeneration.current) return false
-      setUiMode(readUiMode(active.id))
+      setUiMode(readUiMode(uiModeKey(databaseName, active.id)))
       setHousehold(active)
       setAccounts(nextAccounts)
       setSummary(nextSummary)
@@ -274,7 +282,7 @@ function PwaVaultRoot({
       if (generation !== vaultLoadGeneration.current) return false
       throw cause
     }
-  }, [])
+  }, [databaseName])
 
   const submitVault = async (create: boolean) => {
     setError(null)
@@ -322,7 +330,7 @@ function PwaVaultRoot({
         kind: 'EXPENSE',
       })
       // Vaults set up from here on start in Simple mode with the starter accounts, named in the current language.
-      writeUiMode(nextHousehold.id, 'simple')
+      writeUiMode(uiModeKey(databaseName, nextHousehold.id), 'simple')
       try {
         await addDefaultChart(session.client, nextHousehold.id, text)
       } catch {
@@ -473,7 +481,7 @@ function PwaVaultRoot({
 
   const switchUiMode = async (mode: UiMode) => {
     if (!household) return
-    writeUiMode(household.id, mode)
+    writeUiMode(uiModeKey(databaseName, household.id), mode)
     setError(null)
     setClassicVisit(false)
     setScreen('overview')
@@ -553,7 +561,8 @@ function PwaVaultRoot({
 
     {showSimple && session.client && household && <>
       {effectiveError && <p className="pwa-error pwa-simple-error" role="alert">{effectiveError}</p>}
-      <SimpleShell client={session.client} household={household} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }} />
+      <SimpleShell client={session.client} household={household} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }}
+        onActivity={() => setError(null)} />
     </>}
 
     {session.mode === 'unlocked' && household && !showSimple && <div className="pwa-workspace">

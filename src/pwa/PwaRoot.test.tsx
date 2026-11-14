@@ -512,12 +512,13 @@ describe('PWA Simple mode and language', () => {
 
   it('starts a new vault in Simple mode with the default chart', async () => {
     browserLanguage('en-US')
-    await createVault('pwa-simple-new-vault')
+    const database = 'pwa-simple-new-vault'
+    await createVault(database)
     await setUpHousehold()
 
     const tabs = await screen.findByRole('navigation', { name: 'Main pages' })
     expect(screen.queryByRole('navigation', { name: 'PWA workflow' })).not.toBeInTheDocument()
-    expect(readUiMode('household')).toBe('simple')
+    expect(readUiMode(`${database}:household`)).toBe('simple')
     expect(await screen.findByRole('button', { name: 'Set a monthly limit' })).toBeInTheDocument()
 
     fireEvent.click(within(tabs).getByRole('button', { name: 'Budget' }))
@@ -533,11 +534,12 @@ describe('PWA Simple mode and language', () => {
 
   it('keeps the classic screens for an existing vault with no stored mode, and switches to Simple and back', async () => {
     browserLanguage('en-US')
-    await createVault('pwa-simple-existing-vault')
+    const database = 'pwa-simple-existing-vault'
+    await createVault(database)
     await setUpHousehold()
     await screen.findByRole('navigation', { name: 'Main pages' })
     // A vault set up before Simple mode existed has no stored mode.
-    writeUiMode('household', 'full')
+    writeUiMode(`${database}:household`, 'full')
     fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
     unlock()
     expect(await screen.findByRole('heading', { name: 'Household overview' })).toBeInTheDocument()
@@ -545,7 +547,7 @@ describe('PWA Simple mode and language', () => {
 
     fireEvent.click(within(screen.getByRole('group', { name: 'Display mode' })).getByRole('button', { name: 'Simple' }))
     const tabs = await screen.findByRole('navigation', { name: 'Main pages' })
-    expect(readUiMode('household')).toBe('simple')
+    expect(readUiMode(`${database}:household`)).toBe('simple')
 
     // More opens the classic pages, and Back to Simple returns.
     fireEvent.click(within(tabs).getByRole('button', { name: 'More' }))
@@ -558,7 +560,45 @@ describe('PWA Simple mode and language', () => {
     fireEvent.click(within(screen.getByRole('navigation', { name: 'Main pages' })).getByRole('button', { name: 'More' }))
     fireEvent.click(screen.getByRole('button', { name: 'Full' }))
     expect(await screen.findByRole('heading', { name: 'Household overview' })).toBeInTheDocument()
-    expect(readUiMode('household')).toBe('full')
+    expect(readUiMode(`${database}:household`)).toBe('full')
+  })
+
+  it('keeps each vault on the device in its own mode', async () => {
+    browserLanguage('en-US')
+    // Vault A is classic (no stored mode).
+    await createVault('pwa-simple-vault-a')
+    await setUpHousehold()
+    fireEvent.click(within(await screen.findByRole('navigation', { name: 'Main pages' })).getByRole('button', { name: 'More' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full' }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+    expect(localStorage.getItem('kakeflow.uiMode')).toBeNull()
+    cleanup()
+
+    // Vault B is new, so it starts in Simple.
+    await createVault('pwa-simple-vault-b')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    expect(readUiMode('pwa-simple-vault-b:household')).toBe('simple')
+    cleanup()
+
+    render(<PwaRoot databaseName="pwa-simple-vault-a" />)
+    unlock()
+    expect(await screen.findByRole('heading', { name: 'Household overview' })).toBeInTheDocument()
+    expect(readUiMode('pwa-simple-vault-a:household')).toBe('full')
+  })
+
+  it('clears a starter-account alert once the user moves on in Simple', async () => {
+    browserLanguage('en-US')
+    const createAccount = PwaLedgerClient.prototype.createAccount
+    vi.spyOn(PwaLedgerClient.prototype, 'createAccount').mockImplementation(function (this: PwaLedgerClient, input) {
+      return input.id === 'liability-card' ? Promise.reject(new Error('disk full')) : createAccount.call(this, input)
+    })
+    await createVault('pwa-simple-setup-alert')
+    await setUpHousehold()
+    const tabs = await screen.findByRole('navigation', { name: 'Main pages' })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not add the starter accounts')
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Budget' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
   })
 
   it('picks Vietnamese from navigator.language and names the default chart in it', async () => {
