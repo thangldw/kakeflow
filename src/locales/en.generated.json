@@ -1267,6 +1267,8 @@
   "銀行": "bank",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Manage your banks, wallets, cards, income and spending categories.",
   "銀行CSVの取込先銀行口座を選択してください。": "Please select the bank account to import the bank CSV to.",
+  "保存できませんでした。もう一度お試しください。": "Could not save. Please try again.",
+  "1文字削除": "Delete last digit",
   "今月あと使える金額": "Left to spend this month",
   "1日あたりの目安": "Daily allowance",
   "残り日数": "Days left",

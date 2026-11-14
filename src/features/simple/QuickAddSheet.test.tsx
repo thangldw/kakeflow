@@ -1,0 +1,229 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AccountDto, CreateManualTransactionInputDto, TransactionRowDto } from '../../platform/types'
+import { QuickAddSheet } from './QuickAddSheet'
+import { readQuickAddUsage } from './uiMode'
+
+function account(id: string, name: string, accountKind: AccountDto['accountKind'], accountSubtype: AccountDto['accountSubtype'] = 'OTHER'): AccountDto {
+  return { id, name, accountKind, accountSubtype, currency: 'JPY', ownershipKind: 'HOUSEHOLD', ownerMemberId: null, ownerMemberName: null, visibility: 'SHARED' }
+}
+
+const cash = account('cash', '現金', 'ASSET', 'CASH')
+const card = account('card', '楽天カード', 'LIABILITY', 'CREDIT_CARD')
+const accounts: AccountDto[] = [
+  account('bank', '三井住友銀行', 'ASSET', 'BANK'),
+  cash,
+  card,
+  account('food', '食費', 'EXPENSE'),
+  account('daily', '日用品', 'EXPENSE'),
+  account('h1-other-expense', 'その他', 'EXPENSE'),
+  account('salary', '給与', 'INCOME'),
+]
+
+// 2026-11-14 23:30 in Tokyo is still 2026-11-14 there but 14:30 UTC.
+const now = () => new Date('2026-11-14T14:30:00Z')
+
+function fakeClient(options: { fail?: boolean } = {}) {
+  return {
+    createManualTransaction: vi.fn(async (input: CreateManualTransactionInputDto): Promise<TransactionRowDto> => {
+      if (options.fail) throw new Error('offline')
+      return { id: input.id } as TransactionRowDto
+    }),
+  }
+}
+
+function renderSheet(overrides: Partial<Parameters<typeof QuickAddSheet>[0]> = {}) {
+  const client = fakeClient()
+  const props = {
+    open: true, householdId: 'h1', accounts, onClose: vi.fn(), onSaved: vi.fn(), client, now, ...overrides,
+  }
+  render(<QuickAddSheet {...props} />)
+  return props
+}
+
+const amountField = () => screen.getByLabelText('金額') as HTMLInputElement
+const saveButton = () => screen.getByRole('button', { name: '保存' })
+const tapKeys = (keys: string) => { for (const key of keys) fireEvent.click(screen.getByRole('button', { name: key })) }
+
+afterEach(() => localStorage.clear())
+
+describe('QuickAddSheet', () => {
+  it('renders nothing when closed', () => {
+    const { container } = render(<QuickAddSheet open={false} householdId="h1" accounts={accounts} onClose={vi.fn()} onSaved={vi.fn()} client={fakeClient()} now={now} />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('is a modal dialog and focuses the amount field on open', () => {
+    renderSheet()
+    const dialog = screen.getByRole('dialog', { name: '支出を記録' })
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(amountField()).toHaveFocus()
+  })
+
+  it('updates the amount from the on-screen keypad', () => {
+    renderSheet()
+    tapKeys('1280')
+    expect(amountField()).toHaveValue('1280')
+    fireEvent.click(screen.getByRole('button', { name: '1文字削除' }))
+    expect(amountField()).toHaveValue('128')
+  })
+
+  it('keeps Save disabled for an empty amount, 0, and when no category is chosen', () => {
+    renderSheet()
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    expect(saveButton()).toBeDisabled()
+    tapKeys('0')
+    expect(saveButton()).toBeDisabled()
+    fireEvent.change(amountField(), { target: { value: '500' } })
+    expect(saveButton()).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    expect(screen.getByRole('button', { name: '食費' })).toHaveAttribute('aria-pressed', 'false')
+    expect(saveButton()).toBeDisabled()
+  })
+
+  it('accepts full-width digits and posts the half-width amount', async () => {
+    const props = renderSheet()
+    fireEvent.change(amountField(), { target: { value: '１２８０' } })
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    expect(saveButton()).toBeEnabled()
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
+    expect(props.client.createManualTransaction.mock.calls[0][0].entries.map((entry) => entry.amountJpy)).toEqual([1280, 1280])
+  })
+
+  it('rejects a 16-digit amount', () => {
+    renderSheet()
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    tapKeys('1234567890123456')
+    expect(amountField()).toHaveAttribute('aria-invalid', 'true')
+    expect(saveButton()).toBeDisabled()
+  })
+
+  it('saves the mapped journal once, from cash, dated Tokyo today, then reports and closes', async () => {
+    const props = renderSheet()
+    tapKeys('1280')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalledTimes(1))
+    expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1)
+    const input = props.client.createManualTransaction.mock.calls[0][0]
+    expect(input).toMatchObject({
+      householdId: 'h1', occurredOn: '2026-11-14', postedOn: null, transactionType: 'EXPENSE', description: null,
+      attributionKind: 'HOUSEHOLD', audienceVisibility: 'SHARED',
+      entries: [
+        { accountId: 'food', side: 'DEBIT', amountJpy: 1280 },
+        { accountId: 'cash', side: 'CREDIT', amountJpy: 1280 },
+      ],
+    })
+    expect(props.onSaved).toHaveBeenCalledWith({ transactionId: input.id, amountJpy: 1280, categoryName: '食費' })
+    expect(props.onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('swaps the chips and the account label when switching to income', () => {
+    renderSheet()
+    expect(screen.getByText('支払い方法')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '食費' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '収入' }))
+    expect(screen.getByRole('button', { name: '収入' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('dialog', { name: '収入を記録' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '給与' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '食費' })).not.toBeInTheDocument()
+    expect(screen.getByText('受取口座')).toBeInTheDocument()
+    expect(screen.queryByText('支払い方法')).not.toBeInTheDocument()
+  })
+
+  it('posts a card purchase when paid with a credit card', async () => {
+    const props = renderSheet()
+    tapKeys('3000')
+    fireEvent.click(screen.getByRole('button', { name: '日用品' }))
+    fireEvent.click(screen.getByRole('button', { name: /支払い方法/ }))
+    fireEvent.change(screen.getByRole('combobox', { name: '支払い方法' }), { target: { value: 'card' } })
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
+    expect(props.client.createManualTransaction.mock.calls[0][0]).toMatchObject({
+      transactionType: 'CARD_PURCHASE',
+      entries: [{ accountId: 'daily', side: 'DEBIT' }, { accountId: 'card', side: 'CREDIT' }],
+    })
+  })
+
+  it('remembers the used category and paying account after a successful save', async () => {
+    const props = renderSheet()
+    tapKeys('800')
+    fireEvent.click(screen.getByRole('button', { name: '日用品' }))
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalled())
+    expect(readQuickAddUsage('h1')).toEqual({ categoryCounts: { daily: 1 }, lastPayingAccountId: 'cash' })
+  })
+
+  it('keeps the sheet open and the amount when saving fails, and says so', async () => {
+    const client = fakeClient({ fail: true })
+    const props = renderSheet({ client })
+    tapKeys('1280')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    fireEvent.click(saveButton())
+    expect(await screen.findByRole('alert')).toHaveTextContent('保存できませんでした。もう一度お試しください。')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(amountField()).toHaveValue('1280')
+    expect(props.onSaved).not.toHaveBeenCalled()
+    expect(props.onClose).not.toHaveBeenCalled()
+    expect(readQuickAddUsage('h1').lastPayingAccountId).toBeNull()
+  })
+
+  it('shows the empty state when there is no expense category', () => {
+    const onSetupAccounts = vi.fn()
+    renderSheet({ accounts: accounts.filter((a) => a.accountKind !== 'EXPENSE'), onSetupAccounts })
+    expect(screen.getByText('記録できる口座がありません')).toBeInTheDocument()
+    expect(screen.queryByLabelText('金額')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '口座を設定する' }))
+    expect(onSetupAccounts).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows the empty state when there is no paying account', () => {
+    renderSheet({ accounts: accounts.filter((a) => a.accountKind === 'EXPENSE'), onSetupAccounts: vi.fn() })
+    expect(screen.getByText('記録できる口座がありません')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '口座を設定する' })).toBeInTheDocument()
+  })
+
+  it('closes on Escape and returns focus to the opener', () => {
+    function Harness() {
+      const [open, setOpen] = useState(false)
+      return <>
+        <button type="button" onClick={() => setOpen(true)}>open sheet</button>
+        <QuickAddSheet open={open} householdId="h1" accounts={accounts} onClose={() => setOpen(false)} onSaved={vi.fn()} client={fakeClient()} now={now} />
+      </>
+    }
+    render(<Harness />)
+    const opener = screen.getByRole('button', { name: 'open sheet' })
+    opener.focus()
+    fireEvent.click(opener)
+    expect(amountField()).toHaveFocus()
+    fireEvent.keyDown(amountField(), { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(opener).toHaveFocus()
+  })
+
+  it('saves on Enter when valid and not before', async () => {
+    const props = renderSheet()
+    fireEvent.change(amountField(), { target: { value: '450' } })
+    fireEvent.keyDown(amountField(), { key: 'Enter' })
+    expect(props.client.createManualTransaction).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    fireEvent.keyDown(amountField(), { key: 'Enter' })
+    await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
+  })
+
+  it('offers the categories beyond the chips through More…', async () => {
+    const extra = ['交通費', '娯楽', '医療', '住居', '教育'].map((name, index) => account(`extra-${index}`, name, 'EXPENSE'))
+    const props = renderSheet({ accounts: [...accounts, ...extra] })
+    expect(screen.queryByRole('button', { name: '教育' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'もっと見る' }))
+    const select = screen.getByRole('combobox', { name: 'カテゴリー' })
+    expect(within(select).getAllByRole('option').map((option) => option.textContent)).toEqual(expect.arrayContaining(['食費', '日用品', 'その他', '教育']))
+    fireEvent.change(select, { target: { value: 'extra-4' } })
+    expect(screen.getByRole('button', { name: 'もっと見る' })).toHaveAttribute('aria-pressed', 'true')
+    tapKeys('900')
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalledWith(expect.objectContaining({ amountJpy: 900, categoryName: '教育' })))
+  })
+})
