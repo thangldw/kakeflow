@@ -31,7 +31,6 @@ import {
   Plus,
   Search,
   Settings,
-  ShieldCheck,
   Sparkles,
   Repeat2,
   TrainFront,
@@ -39,7 +38,6 @@ import {
   ChevronDown,
   ChevronUp,
   Utensils,
-  Users,
   WalletCards,
   X,
   Zap,
@@ -123,7 +121,9 @@ import { goalPace } from './domain/goalPace'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient, PlatformIpcError } from './platform'
 import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, LastClassificationApplicationDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
-import type { NavigationItem, PageId, Transaction } from './types'
+import type { PageId, Transaction } from './types'
+import { navigation, navigationSections } from './navigation'
+import { SIMPLE_TAB_ICONS, SIMPLE_TABS, tabForPage, type SimpleTab } from './features/simple/simpleNavigation'
 import { localize, useI18n } from './i18n'
 import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
 import { APP_VERSION } from './version'
@@ -228,29 +228,6 @@ function writeSavedAttributionScope(householdId: string, scope: AttributionScope
   else globalThis.localStorage?.setItem(ATTRIBUTION_SCOPE_STORAGE_KEY, JSON.stringify(scopes))
 }
 
-const navigation: NavigationItem[] = [
-  { id: 'overview', label: 'ホーム', icon: Home },
-  { id: 'transactions', label: '取引', icon: WalletCards },
-  { id: 'import', label: 'インポート', icon: Import },
-  { id: 'capture', label: '撮影 Inbox', icon: Camera },
-  { id: 'cards', label: 'カード照合', icon: CreditCard },
-  { id: 'investments', label: '資産・投資', icon: TrendingUp },
-  { id: 'reports', label: 'カレンダー・レポート', icon: CalendarDays },
-  { id: 'budgets', label: '予算・目標', icon: Goal },
-  { id: 'recurring', label: '定期取引・固定費', icon: Clock3 },
-  { id: 'rules', label: '分類ルール', icon: Sparkles },
-  { id: 'family', label: '家族スペース', icon: Users },
-  { id: 'audit', label: '監査・証跡', icon: ShieldCheck },
-]
-
-const navigationSections: readonly { label: string; pages: readonly PageId[] }[] = [
-  { label: 'メイン', pages: ['overview', 'transactions'] },
-  { label: '取り込み', pages: ['import', 'capture'] },
-  { label: '照合・資産', pages: ['cards', 'investments'] },
-  { label: '計画・分析', pages: ['reports', 'budgets', 'recurring', 'rules'] },
-  { label: '世帯', pages: ['family', 'audit'] },
-]
-
 const pageMeta: Readonly<Record<PageId, { title: string; description: string }>> = {
   overview: { title: 'ホーム', description: '世帯の状況・重要アクション・データ品質' },
   transactions: { title: '取引', description: '確定済み元帳 — 検索・証跡・ドリルダウン' },
@@ -265,11 +242,12 @@ const pageMeta: Readonly<Record<PageId, { title: string; description: string }>>
   family: { title: '家族スペース', description: '世帯メンバー・帰属・共有レビュー' },
   audit: { title: '監査・証跡', description: '原本、レビュー、確定台帳の来歴' },
   settings: { title: '設定', description: '口座・ローカルデータ・バックアップ' },
+  more: { title: 'その他', description: 'すべての機能と表示モード' },
 }
 
 function householdInitials(name: string): string { return name.trim().slice(0, 2) || localize("家計") }
 
-function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, bootstrap, households, activeHouseholdId, selectHousehold, createHousehold, importActionableCount, capturePendingCount }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; collapsed: boolean; toggleCollapsed: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; createHousehold: () => void; importActionableCount: number; capturePendingCount: number }) {
+function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, bootstrap, households, activeHouseholdId, selectHousehold, createHousehold, importActionableCount, capturePendingCount, simple = false, savingsActive = false, onSelectTab }: { page: PageId; setPage: (page: PageId) => void; open: boolean; close: () => void; collapsed: boolean; toggleCollapsed: () => void; bootstrap: AppBootstrapDto | null; households: readonly HouseholdDto[]; activeHouseholdId: string | null; selectHousehold: (id: string) => void; createHousehold: () => void; importActionableCount: number; capturePendingCount: number; simple?: boolean; savingsActive?: boolean; onSelectTab?: (tab: SimpleTab) => void }) {
   const { locale, text } = useI18n()
   const [householdOpen, setHouseholdOpen] = useState(false)
   const householdRef = useRef<HTMLDivElement>(null)
@@ -301,7 +279,11 @@ function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, boots
         </div>
 
         <nav>
-          {navigationSections.map((section) => <div className="nav-section" key={section.label}>
+          {simple ? <div className="nav-section simple-nav-section">{SIMPLE_TABS.map((tab) => {
+            const TabIcon = SIMPLE_TAB_ICONS[tab.id]
+            const current = tabForPage(page, savingsActive) === tab.id
+            return <button key={tab.id} className={`nav-item ${current ? 'active' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => { if (onSelectTab) onSelectTab(tab.id); else setPage(tab.page); close() }}><TabIcon size={19} /><span className="simple-tab-label">{text(tab.label)}</span></button>
+          })}</div> : navigationSections.map((section) => <div className="nav-section" key={section.label}>
           <p className="nav-caption">{text(section.label)}</p>
           {navigation.filter((item) => section.pages.includes(item.id)).map((item) => (
             <button
@@ -3777,6 +3759,8 @@ function App() {
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     audit: <AuditReadinessPage counts={importCounts} onOpenImport={() => openImportPage()} onOpenTransactions={() => setPage('transactions')} />,
     settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SettingsConnectorControl householdId={activeHouseholdId} onConfigure={openConnectorConfiguration} /><AppUpdatePanel enabled={platformClient.runtime === 'tauri'} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
+    // Placeholder: the app shell renders the Simple-mode More page here once ui mode is wired in.
+    more: <></>,
   }[page]
   const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))
   const completeHouseholdCreation = (household: HouseholdDto) => {

@@ -97,3 +97,36 @@
   .quick-add-sheet { animation: quick-add-rise 180ms ease-out; }
 }
 @keyframes quick-add-rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Simple mode: navigation. The bottom tab bar shows below 721px; wider screens use the sidebar entries. */
+.simple-tab-label { display: block; }
+/* Some catalog entries are lower case (budget, savings); a tab label starts with a capital. */
+.simple-tab-label::first-letter { text-transform: uppercase; }
+
+.simple-tabbar { display: none; }
+@media (max-width: 720px) {
+  .simple-tabbar { position: fixed; inset: auto 0 0 0; z-index: 30; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px 4px env(safe-area-inset-bottom, 0px); border-top: 1px solid var(--hairline); background: var(--surface); }
+}
+.simple-tabbar-item { display: grid; justify-items: center; align-content: center; gap: 2px; min-width: 0; min-height: 56px; padding: 6px 2px; border: 0; border-radius: 10px; color: var(--text2); background: transparent; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+.simple-tabbar-item .simple-tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.simple-tabbar-item[aria-current='page'] { color: var(--primary); }
+.simple-tabbar-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* Simple mode: More page. */
+.simple-more { display: grid; gap: 16px; width: 100%; max-width: 640px; margin: 0 auto; padding: 0 16px 24px; box-sizing: border-box; color: var(--text); }
+.simple-more-group { display: grid; gap: 8px; }
+.simple-more-heading { margin: 0; color: var(--text2); font-size: 13px; font-weight: 600; }
+.simple-more-list { display: grid; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface); list-style: none; }
+.simple-more-list > li + li { border-top: 1px solid var(--hairline); }
+.simple-more-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 0 16px; border: 0; color: var(--text); background: transparent; font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.simple-more-item > span { overflow-wrap: anywhere; }
+.simple-more-item:hover { background: var(--surface2); }
+.simple-more-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.simple-more-chevron { color: var(--text2); }
+
+/* Simple/Full switch, shared with Settings. */
+.simple-mode-switch { display: grid; gap: 8px; }
+.simple-mode-switch-label { color: var(--text2); font-size: 13px; font-weight: 600; }
+.simple-mode-switch-options { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 12px; background: var(--surface2); }
+.simple-mode-switch-options button { min-height: 44px; border: 0; border-radius: 9px; color: var(--text2); background: transparent; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.simple-mode-switch-options button[aria-pressed='true'] { color: var(--text); background: var(--surface); box-shadow: 0 0 0 1px var(--hairline); }
