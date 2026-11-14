@@ -4128,12 +4128,44 @@ describe('KakeFlow desktop read models', () => {
 
       enterBudget(t, 'family-other-expense', '25000')
       const save = screen.getByRole('button', { name: t('予算を保存') })
-      fireEvent.click(save)
-      fireEvent.click(save)
-      fireEvent.keyDown(save, { key: 'Enter' })
+      // Both clicks reach the handler before React re-renders the button as disabled, as a fast double click can.
+      act(() => { save.click(); save.click() })
       await act(async () => { release() })
       expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
       expect(writes()).toEqual([['2026-07', 'family-food-expense', 60000], ['2026-07', 'family-other-expense', 20000], ['2026-07', 'family-other-expense', 25000]])
+    })
+
+    it('shows no note and writes only the edit when no earlier budget belongs to a current expense category', async () => {
+      seed('2026-05', 'family-retired-expense', 9000)
+      const { t } = await openBudgets()
+      expect(await screen.findByText(t('カテゴリー予算はまだありません。'))).toBeInTheDocument()
+      expect(screen.queryByText(t('予算の引き継ぎ元'))).not.toBeInTheDocument()
+
+      enterBudget(t, 'family-other-expense', '25000')
+      fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
+      expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
+      expect(writes()).toEqual([['2026-07', 'family-other-expense', 25000]])
+    })
+
+    it('does not copy again after the edit was written even when the reload fails', async () => {
+      seed('2026-05', 'family-food-expense', 60000)
+      seed('2026-05', 'family-other-expense', 20000)
+      const { t } = await openBudgets()
+      await screen.findByText(t('予算の引き継ぎ元'))
+      const list = desktop.listBudgets.getMockImplementation()!
+      desktop.listBudgets.mockImplementationOnce(async () => { throw new Error('read failed') })
+
+      enterBudget(t, 'family-other-expense', '25000')
+      fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
+      expect(await screen.findByText(t('月間予算を保存できませんでした。'))).toBeInTheDocument()
+      expect(writes()).toHaveLength(3)
+      desktop.listBudgets.mockImplementation(list)
+
+      enterBudget(t, 'family-food-expense', '55000')
+      fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
+      expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
+      expect(writes().slice(3)).toEqual([['2026-07', 'family-food-expense', 55000]])
+      expect(rowsOf('2026-07').map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([['family-food-expense', 55000], ['family-other-expense', 25000]])
     })
 
     it('skips an earlier budget whose category is no longer an expense category', async () => {
