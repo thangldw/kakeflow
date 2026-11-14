@@ -336,4 +336,37 @@ describe('QuickAddSheet', () => {
     fireEvent.click(saveButton())
     await waitFor(() => expect(props.onSaved).toHaveBeenCalledWith(expect.objectContaining({ amountJpy: 900, categoryName: '教育' })))
   })
+
+  it('puts Save and the error in a footer outside the scrolling body, with the same enabled rules', async () => {
+    const props = renderSheet({ client: fakeClient({ fail: true }) })
+    const dialog = screen.getByRole('dialog')
+    const footer = dialog.querySelector('.quick-add-footer')
+    const body = dialog.querySelector('.quick-add-body')
+    expect(footer).not.toBeNull()
+    expect(body).not.toBeNull()
+    // The footer is the dialog's last part and a sibling of the body, so it never scrolls with the content.
+    expect(dialog.lastElementChild).toBe(footer)
+    expect(footer?.parentElement).toBe(dialog)
+    expect(body?.contains(footer as Node)).toBe(false)
+    expect(footer).toContainElement(saveButton())
+    expect(body).toContainElement(amountField())
+    expect(body).toContainElement(screen.getByLabelText('メモ（任意）'))
+
+    expect(saveButton()).toBeDisabled()
+    tapKeys('450')
+    expect(saveButton()).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    expect(saveButton()).toBeEnabled()
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
+    const alert = await screen.findByRole('alert')
+    expect(footer).toContainElement(alert)
+    expect(saveButton()).toBeEnabled()
+  })
+
+  it('has no footer in the empty state', () => {
+    renderSheet({ accounts: accounts.filter((entry) => entry.accountKind !== 'EXPENSE') })
+    expect(screen.getByRole('dialog').querySelector('.quick-add-footer')).toBeNull()
+    expect(screen.queryByRole('button', { name: '記録を保存' })).not.toBeInTheDocument()
+  })
 })

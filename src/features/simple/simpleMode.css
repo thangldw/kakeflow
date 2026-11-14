@@ -67,9 +67,14 @@
    so a deeper black veil is used there to still dim what is behind the sheet. */
 .quick-add-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 24px; background: rgba(28,35,30,.38); }
 html[data-theme='dark'] .quick-add-backdrop { background: rgb(0 0 0 / 55%); }
-.quick-add-sheet { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; width: min(440px, 100%); max-width: 100%; max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); overflow-y: auto; padding: 18px 20px 20px; box-sizing: border-box; border: 1px solid var(--hairline); border-radius: 16px; color: var(--text); background: var(--surface); }
-.quick-add-sheet > * { min-width: 0; }
-.quick-add-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+/* A flex column of three parts: the head (title, close) and the footer (error, Save) never scroll; only the body
+   between them does. So Save is on screen as soon as the sheet opens, however short the viewport. */
+.quick-add-sheet { display: flex; flex-direction: column; width: min(440px, 100%); max-width: 100%; max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px); min-height: 0; overflow: hidden; box-sizing: border-box; border: 1px solid var(--hairline); border-radius: 16px; color: var(--text); background: var(--surface); }
+.quick-add-sheet > * { min-width: 0; box-sizing: border-box; }
+.quick-add-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px 10px; }
+.quick-add-body { display: grid; flex: 1 1 auto; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 14px; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 4px 20px 16px; }
+.quick-add-body > * { min-width: 0; }
+.quick-add-footer { display: grid; flex: none; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--hairline); background: var(--surface); }
 .quick-add-head h2 { min-width: 0; margin: 0; font-size: 18px; overflow-wrap: anywhere; }
 .quick-add-head h2:focus { outline: none; }
 .quick-add-close { flex: none; width: 44px; height: 44px; color: var(--text2); }
@@ -108,7 +113,8 @@ html[data-theme='dark'] .quick-add-backdrop { background: rgb(0 0 0 / 55%); }
 .quick-add-paying select, .quick-add-field input { width: 100%; min-height: 44px; box-sizing: border-box; color: var(--text); font-size: 15px; font-weight: 400; }
 
 .quick-add-error { margin: 0; padding: 10px 12px; border-radius: 10px; color: var(--err); background: var(--err-bg); font-size: 14px; font-weight: 600; }
-.quick-add-save { min-height: 52px; font-size: 16px; font-weight: 700; }
+/* The PWA's button reset (src/pwa/simple-tokens.css) restates this height at its own, higher specificity. */
+.quick-add-save { width: 100%; min-height: 52px; font-size: 16px; font-weight: 700; }
 .quick-add-save:disabled { cursor: not-allowed; opacity: .5; }
 
 .quick-add-empty { display: grid; gap: 12px; justify-items: start; padding: 16px; border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface2); }
@@ -117,7 +123,13 @@ html[data-theme='dark'] .quick-add-backdrop { background: rgb(0 0 0 / 55%); }
 
 @media (max-width: 720px) {
   .quick-add-backdrop { place-items: end stretch; padding: 0; }
-  .quick-add-sheet { width: 100%; max-height: 92vh; max-height: 92dvh; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 18px 18px 0 0; }
+  /* As tall as the visible viewport (dvh follows the browser's toolbars) less a small top margin. */
+  .quick-add-sheet { width: 100%; max-height: calc(100vh - 12px); max-height: calc(100dvh - 12px); border-width: 1px 0 0; border-radius: 18px 18px 0 0; }
+  .quick-add-head { padding: 12px 16px 8px; }
+  .quick-add-body { padding: 4px 16px 14px; }
+  .quick-add-footer { padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px)); }
+  /* Without a footer (no accounts yet) the body is the last part and keeps clear of the home indicator. */
+  .quick-add-body:last-child { padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (prefers-reduced-motion: no-preference) and (max-width: 720px) {
   .quick-add-sheet { animation: quick-add-rise 180ms ease-out; }

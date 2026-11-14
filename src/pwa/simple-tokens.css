@@ -65,6 +65,9 @@ html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .primary-btn:
 html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .secondary-btn { color: var(--text); background: var(--surface); }
 html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .secondary-btn:hover { background: var(--surface2); }
 html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) :is(.primary-btn, .secondary-btn):disabled { opacity: .5; cursor: not-allowed; }
+/* The reset above sets every button to 44px; the quick-add Save is the sheet's main action and keeps its 52px
+   (simpleMode.css), so it is restated here at the reset's own specificity. */
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .quick-add-save { min-height: 52px; font-size: 16px; }
 html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .icon-btn { display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; color: var(--text2); background: transparent; cursor: pointer; }
 html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .icon-btn:hover { background: var(--surface2); }
 /* The tab bar items and More rows keep their inward outline from simpleMode.css (an outward one is cut at the fixed
