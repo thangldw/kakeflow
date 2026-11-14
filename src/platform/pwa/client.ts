@@ -450,6 +450,8 @@ export class PwaLedgerClient {
     await this.requireHousehold(householdId)
     const prefix = budgetProjectionId(householdId, month, '')
     const ids = (await this.database.listProjectionIds('BUDGET')).filter((id) => id.startsWith(prefix))
+    // Callers look back month by month for budgets, so an empty month must not pay for a full ledger scan.
+    if (ids.length === 0) return []
     const budgets = await Promise.all(ids.map((id) => this.model<Budget>('BUDGET', id)))
     const totals = await this.monthTotals(householdId, month)
     return budgets

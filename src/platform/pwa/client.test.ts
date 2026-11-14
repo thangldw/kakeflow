@@ -16,6 +16,7 @@ const argonMock = vi.hoisted(() => ({
 vi.mock('./argonWorker', () => ({ deriveArgon2idInWorker: argonMock.derive }))
 
 import { PwaLedgerClient } from './client'
+import { PwaVaultDatabase } from './database'
 import type { PostingEntry, TransactionType } from './types'
 
 const passphrase = 'correct horse battery staple'
@@ -406,6 +407,23 @@ describe('authoritative PWA ledger client', () => {
         remainingJpy: 3_800,
       }])
       await expect(client.listBudgets('household-1', '2026-10')).resolves.toEqual([])
+    })
+
+    it('returns no rows for a month without budgets without reading any transaction or account', async () => {
+      const client = await simpleClient('client-budget-empty-month')
+      await post(client, 't-1', '2026-11-03', 'EXPENSE', 1_200, 'groceries', 'cash')
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-11', categoryAccountId: 'groceries', budgetJpy: 5_000 })
+      const listIds = vi.spyOn(PwaVaultDatabase.prototype, 'listProjectionIds')
+      const read = vi.spyOn(PwaVaultDatabase.prototype, 'readProjection')
+      try {
+        await expect(client.listBudgets('household-1', '2026-10')).resolves.toEqual([])
+        const types = [...listIds.mock.calls, ...read.mock.calls].map(([projectionType]) => projectionType)
+        expect(types).not.toContain('TRANSACTION')
+        expect(types).not.toContain('ACCOUNT')
+      } finally {
+        listIds.mockRestore()
+        read.mockRestore()
+      }
     })
 
     it('overwrites on a second upsert, accepts zero and orders rows by category name', async () => {
