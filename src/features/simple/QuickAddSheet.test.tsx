@@ -34,10 +34,12 @@ function fakeClient(options: { fail?: boolean } = {}) {
   }
 }
 
-function renderSheet(overrides: Partial<Parameters<typeof QuickAddSheet>[0]> = {}) {
-  const client = fakeClient()
+type FakeClient = ReturnType<typeof fakeClient>
+
+// The client is kept as the fake's own type so tests can read its mock calls.
+function renderSheet({ client = fakeClient(), ...overrides }: Partial<Omit<Parameters<typeof QuickAddSheet>[0], 'client'>> & { client?: FakeClient } = {}) {
   const props = {
-    open: true, householdId: 'h1', accounts, onClose: vi.fn(), onSaved: vi.fn(), client, now, ...overrides,
+    open: true, householdId: 'h1', accounts, onClose: vi.fn(), onSaved: vi.fn(), now, ...overrides, client,
   }
   render(<QuickAddSheet {...props} />)
   return props
