@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react'
 import { goalPace } from '../../domain/goalPace'
-import { localize } from '../../i18n'
-import { platformClient } from '../../platform'
+import { localize, useI18n } from '../../i18n'
+import { formatMonthLabel } from '../../monthLabel'
 import type { SavingsGoalDto } from '../../platform/types'
 import { YenInput } from '../../ui/YenInput'
 import { loadSimpleHome, type HomeClient, type SimpleHomeData } from './homeLoader'
@@ -22,7 +22,8 @@ interface SimpleHomeProps {
   readonly onOpenSavings: () => void
   /** Switches the shown month back to the current Tokyo month; offered when another month is shown. */
   readonly onGoToCurrentMonth?: () => void
-  readonly client?: HomeClient
+  /** The ledger client: the desktop app passes its platform client, the PWA its own adapter. */
+  readonly client: HomeClient
 }
 
 type LoadState =
@@ -35,7 +36,7 @@ type LoadState =
  * goal and at most one category that needs attention. Always reads the whole
  * household on the accrual basis.
  */
-export function SimpleHome({ householdId, householdName, month, revision, onSetLimit, onOpenBudgets, onOpenSavings, onGoToCurrentMonth, client = platformClient }: SimpleHomeProps) {
+export function SimpleHome({ householdId, householdName, month, revision, onSetLimit, onOpenBudgets, onOpenSavings, onGoToCurrentMonth, client }: SimpleHomeProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [reloadKey, setReloadKey] = useState(0)
   const key = `${householdId ?? ''}|${month}`
@@ -86,9 +87,11 @@ export function SimpleHome({ householdId, householdName, month, revision, onSetL
 
 function RemainingCard({ remaining, month, onSetLimit, onGoToCurrentMonth }: { readonly remaining: RemainingToSpend; readonly month: string; readonly onSetLimit: () => void; readonly onGoToCurrentMonth?: () => void }) {
   const id = useId()
+  const { localeCode } = useI18n()
   // The month comes from the saved month selection, so it can be an earlier (or later) month than today's.
+  // It is written the way the top bar writes it ("September 2026"), never as the raw "2026-09".
   const otherMonth = month !== tokyoDate().slice(0, 7)
-  const monthLine = otherMonth && <p className="simple-hero-month">{month}</p>
+  const monthLine = otherMonth && <p className="simple-hero-month">{formatMonthLabel(month, localeCode)}</p>
   const backToThisMonth = otherMonth && onGoToCurrentMonth
     && <button type="button" className="secondary-btn simple-hero-action" onClick={onGoToCurrentMonth}>{localize("今月に戻る")}</button>
 
@@ -122,7 +125,7 @@ function RemainingCard({ remaining, month, onSetLimit, onGoToCurrentMonth }: { r
       </>}
     </dl>
     {remaining.unbudgetedSpentJpy > 0 && <p className="simple-note"><span>{localize("予算のないカテゴリーの支出")}</span> <strong>{yen(remaining.unbudgetedSpentJpy)}</strong></p>}
-    {remaining.budgetMonth !== null && remaining.budgetMonth !== month && <p className="simple-note"><span>{localize("以前の月の予算を使っています")}</span> <strong>{remaining.budgetMonth}</strong></p>}
+    {remaining.budgetMonth !== null && remaining.budgetMonth !== month && <p className="simple-note"><span>{localize("以前の月の予算を使っています")}</span> <strong>{formatMonthLabel(remaining.budgetMonth, localeCode)}</strong></p>}
     {backToThisMonth}
   </section>
 }

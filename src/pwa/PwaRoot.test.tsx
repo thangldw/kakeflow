@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,6 +26,8 @@ vi.mock('./serviceWorker', () => ({
   usePwaServiceWorker: () => ({ ...updateMock, offlineReady: true }),
 }))
 
+import { I18nProvider } from '../i18n'
+import { readUiMode, writeUiMode } from '../features/simple/uiMode'
 import { PwaLedgerClient } from '../platform/pwa/client'
 import type { Household } from '../platform/pwa/types'
 import type { PwaOcrDocument } from './PwaRoot'
@@ -91,6 +93,9 @@ async function createConfiguredVault(databaseName: string, ocrDocument: PwaOcrDo
   fireEvent.change(screen.getByLabelText('Money account'), { target: { value: 'Cash' } })
   fireEvent.change(screen.getByLabelText('Expense account'), { target: { value: 'Food' } })
   fireEvent.click(screen.getByRole('button', { name: 'Save local setup' }))
+  // A new vault starts in Simple mode; the receipt journeys below run on the classic screens, reached from More.
+  fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Full' }))
   await screen.findByRole('heading', { name: 'Household overview' })
 }
 
@@ -183,12 +188,13 @@ describe('PWA receipt-to-provenance journey', () => {
     expect(document.body.textContent).not.toContain('Tanaka')
   })
 
-  it('renders English without overwriting the shared saved locale', () => {
+  it('follows the shared saved locale without overwriting it', () => {
+    // Phase 2 deliberately changed this: the PWA used to ignore the saved locale and always render English.
     localStorage.setItem('kakeflow.locale', 'vi')
 
     render(<PwaRoot databaseName="pwa-ui-locale-boundary" />)
 
-    expect(screen.getByRole('heading', { name: 'Own your financial record' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Tự giữ sổ sách tài chính của bạn' })).toBeInTheDocument()
     expect(localStorage.getItem('kakeflow.locale')).toBe('vi')
   })
 
@@ -437,5 +443,259 @@ describe('PWA receipt-to-provenance journey', () => {
     await waitFor(() => expect(onRestore).toHaveBeenCalledOnce())
     expect([...onRestore.mock.calls[0][0]]).toEqual([1, 2, 3, 4])
     expect(onRestore.mock.calls[0][1]).toBe(passphrase)
+  })
+})
+
+describe('PWA Simple mode and language', () => {
+  const originalLanguage = Object.getOwnPropertyDescriptor(navigator, 'language')
+
+  beforeEach(() => {
+    let queue = Promise.resolve()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+      request: (_name: string, callback: () => unknown) => {
+        const result = queue.then(callback)
+        queue = result.then(() => undefined, () => undefined)
+        return result
+      },
+    } })
+  })
+
+  beforeAll(() => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('kakeflow_core_bg.wasm')) {
+        const bytes = await readFile(resolve('src/platform/pwa/core-wasm/kakeflow_core_bg.wasm'))
+        return new Response(bytes, { headers: { 'Content-Type': 'application/wasm' } })
+      }
+      return originalFetch(input)
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks)
+    else Reflect.deleteProperty(navigator, 'locks')
+    if (originalLanguage) Object.defineProperty(navigator, 'language', originalLanguage)
+    else Reflect.deleteProperty(navigator, 'language')
+    localStorage.clear()
+    vi.restoreAllMocks()
+    // The active locale is module state; render once in Japanese so later files start from the default.
+    render(<I18nProvider>{null}</I18nProvider>)
+    cleanup()
+  })
+
+  afterAll(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function browserLanguage(language: string) {
+    Object.defineProperty(navigator, 'language', { configurable: true, get: () => language })
+  }
+
+  async function createVault(databaseName: string) {
+    render(<PwaRoot databaseName={databaseName} ocrDocument={vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt)} />)
+    // The create and unlock cards follow the language, so the helpers accept the English or the Vietnamese label.
+    fireEvent.change(screen.getByLabelText(/^(?:Vault passphrase|Cụm mật khẩu của kho dữ liệu)$/), { target: { value: passphrase } })
+    fireEvent.change(screen.getByLabelText(/^(?:Confirm passphrase|Xác nhận cụm mật khẩu)$/), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: /^(?:Create encrypted vault|Tạo kho dữ liệu mã hóa)$/ }))
+  }
+
+  async function setUpHousehold(labels = { title: 'Set up your household', household: 'Household name', money: 'Money account', expense: 'Expense account', save: 'Save local setup' }) {
+    await screen.findByRole('heading', { name: labels.title })
+    fireEvent.change(screen.getByLabelText(labels.household), { target: { value: 'Home' } })
+    fireEvent.change(screen.getByLabelText(labels.money), { target: { value: 'Cash' } })
+    fireEvent.change(screen.getByLabelText(labels.expense), { target: { value: 'Food' } })
+    fireEvent.click(screen.getByRole('button', { name: labels.save }))
+  }
+
+  function unlock() {
+    fireEvent.change(screen.getByLabelText(/^(?:Vault passphrase|Cụm mật khẩu của kho dữ liệu)$/), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: /^(?:Unlock vault|Mở khóa kho dữ liệu)$/ }))
+  }
+
+  it('starts a new vault in Simple mode with the default chart', async () => {
+    browserLanguage('en-US')
+    const database = 'pwa-simple-new-vault'
+    await createVault(database)
+    await setUpHousehold()
+
+    const tabs = await screen.findByRole('navigation', { name: 'Main pages' })
+    expect(screen.queryByRole('navigation', { name: 'PWA workflow' })).not.toBeInTheDocument()
+    expect(readUiMode(`${database}:household`)).toBe('simple')
+    expect(await screen.findByRole('button', { name: 'Set a monthly limit' })).toBeInTheDocument()
+
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Budget' }))
+    for (const name of ['Food', 'Groceries', 'Utilities', 'Transport', 'Entertainment', 'Other']) {
+      expect(await screen.findByRole('form', { name })).toBeInTheDocument()
+    }
+    fireEvent.click(screen.getByRole('button', { name: '+ Add spending' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Add spending' })
+    // The setup form's "Cash" stands in for the starter cash account, so it is not listed twice.
+    fireEvent.click(within(sheet).getByRole('button', { name: /^Paid with/u }))
+    expect(within(sheet).getAllByRole('option').map((option) => option.textContent)).toEqual(['Cash', 'Credit card'])
+  })
+
+  it('keeps the classic screens for an existing vault with no stored mode, and switches to Simple and back', async () => {
+    browserLanguage('en-US')
+    const database = 'pwa-simple-existing-vault'
+    await createVault(database)
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    // A vault set up before Simple mode existed has no stored mode.
+    writeUiMode(`${database}:household`, 'full')
+    fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+    unlock()
+    expect(await screen.findByRole('heading', { name: 'Household overview' })).toBeInTheDocument()
+    expect(screen.queryByRole('navigation', { name: 'Main pages' })).not.toBeInTheDocument()
+
+    fireEvent.click(within(screen.getByRole('group', { name: 'Display mode' })).getByRole('button', { name: 'Simple' }))
+    const tabs = await screen.findByRole('navigation', { name: 'Main pages' })
+    expect(readUiMode(`${database}:household`)).toBe('simple')
+
+    // More opens the classic pages, and Back to Simple returns.
+    fireEvent.click(within(tabs).getByRole('button', { name: 'More' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Import a receipt' }))
+    expect(await screen.findByRole('heading', { name: 'Import a receipt' })).toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'PWA workflow' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Simple' }))
+    expect(await screen.findByRole('navigation', { name: 'Main pages' })).toBeInTheDocument()
+
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Main pages' })).getByRole('button', { name: 'More' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full' }))
+    expect(await screen.findByRole('heading', { name: 'Household overview' })).toBeInTheDocument()
+    expect(readUiMode(`${database}:household`)).toBe('full')
+  })
+
+  it('keeps each vault on the device in its own mode', async () => {
+    browserLanguage('en-US')
+    // Vault A is classic (no stored mode).
+    await createVault('pwa-simple-vault-a')
+    await setUpHousehold()
+    fireEvent.click(within(await screen.findByRole('navigation', { name: 'Main pages' })).getByRole('button', { name: 'More' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full' }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+    expect(localStorage.getItem('kakeflow.uiMode')).toBeNull()
+    cleanup()
+
+    // Vault B is new, so it starts in Simple.
+    await createVault('pwa-simple-vault-b')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    expect(readUiMode('pwa-simple-vault-b:household')).toBe('simple')
+    cleanup()
+
+    render(<PwaRoot databaseName="pwa-simple-vault-a" />)
+    unlock()
+    expect(await screen.findByRole('heading', { name: 'Household overview' })).toBeInTheDocument()
+    expect(readUiMode('pwa-simple-vault-a:household')).toBe('full')
+  })
+
+  it('keeps the quick-add usage history of each vault separate', async () => {
+    browserLanguage('en-US')
+    async function quickAdd(category: string) {
+      fireEvent.click(await screen.findByRole('button', { name: '+ Add spending' }))
+      const sheet = await screen.findByRole('dialog', { name: 'Add spending' })
+      fireEvent.change(within(sheet).getByLabelText('Amount'), { target: { value: '1200' } })
+      fireEvent.click(within(sheet).getByRole('button', { name: category }))
+      fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    }
+    const usage = (key: string) => JSON.parse(localStorage.getItem(`kakeflow.simpleUsage.${key}`) ?? 'null') as { categoryCounts: Record<string, number> } | null
+
+    await createVault('pwa-simple-usage-a')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    await quickAdd('Groceries')
+    cleanup()
+
+    await createVault('pwa-simple-usage-b')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    await quickAdd('Transport')
+
+    expect(usage('pwa-simple-usage-a:household')?.categoryCounts).toEqual({ 'expense-groceries': 1 })
+    expect(usage('pwa-simple-usage-b:household')?.categoryCounts).toEqual({ 'expense-transport': 1 })
+    // The bare household id would be shared by every vault on the device.
+    expect(localStorage.getItem('kakeflow.simpleUsage.household')).toBeNull()
+  })
+
+  it('clears a starter-account alert once the user moves on in Simple', async () => {
+    browserLanguage('en-US')
+    const createAccount = PwaLedgerClient.prototype.createAccount
+    vi.spyOn(PwaLedgerClient.prototype, 'createAccount').mockImplementation(function (this: PwaLedgerClient, input) {
+      return input.id === 'liability-card' ? Promise.reject(new Error('disk full')) : createAccount.call(this, input)
+    })
+    await createVault('pwa-simple-setup-alert')
+    await setUpHousehold()
+    const tabs = await screen.findByRole('navigation', { name: 'Main pages' })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not add the starter accounts')
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Budget' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+  })
+
+  it('picks Vietnamese from navigator.language and names the default chart in it', async () => {
+    browserLanguage('vi-VN')
+    await createVault('pwa-simple-vietnamese')
+    await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+    const tabs = await screen.findByRole('navigation', { name: 'Trang chính' })
+    expect(within(tabs).getByRole('button', { name: 'Hôm nay' })).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Ngân sách' }))
+    expect(await screen.findByRole('form', { name: 'Thực phẩm' })).toBeInTheDocument()
+    // Detection does not store a choice.
+    expect(localStorage.getItem('kakeflow.locale')).toBeNull()
+  })
+
+  it('remembers the language chosen on the setup screen', async () => {
+    browserLanguage('en-US')
+    await createVault('pwa-simple-language-switch')
+    await screen.findByRole('heading', { name: 'Set up your household' })
+    fireEvent.click(within(screen.getByRole('group', { name: 'Language' })).getByRole('button', { name: 'Tiếng Việt' }))
+    expect(await screen.findByRole('heading', { name: 'Thiết lập hộ gia đình' })).toBeInTheDocument()
+    expect(localStorage.getItem('kakeflow.locale')).toBe('vi')
+
+    cleanup()
+    render(<PwaRoot databaseName="pwa-simple-language-switch" />)
+    unlock()
+    expect(await screen.findByRole('heading', { name: 'Thiết lập hộ gia đình' })).toBeInTheDocument()
+    expect(within(screen.getByRole('group', { name: 'Ngôn ngữ' })).getByRole('button', { name: 'Tiếng Việt' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('shows the vault status pills and Lock vault in Vietnamese', async () => {
+    browserLanguage('vi-VN')
+    await createVault('pwa-simple-vietnamese-chrome')
+    expect(screen.getByText('ĐÃ KHÓA')).toBeInTheDocument()
+    await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+    await screen.findByRole('navigation', { name: 'Trang chính' })
+    expect([...screen.getByLabelText('Trạng thái kho dữ liệu').children].map((pill) => pill.textContent)).toEqual(['CỤC BỘ', 'ĐÃ MỞ KHÓA', 'DÙNG NGOẠI TUYẾN'])
+    fireEvent.click(screen.getByRole('button', { name: 'Khóa kho dữ liệu' }))
+    expect(await screen.findByText('ĐÃ KHÓA')).toBeInTheDocument()
+    expect(screen.queryByText('LOCKED')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Lock vault' })).not.toBeInTheDocument()
+  })
+
+  it('sets the page language from the locale and marks the English classic screens as English', async () => {
+    browserLanguage('vi-VN')
+    const database = 'pwa-simple-html-lang'
+    await createVault(database)
+    await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+    const tabs = await screen.findByRole('navigation', { name: 'Trang chính' })
+    expect(document.documentElement.lang).toBe('vi')
+
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Thêm' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sổ cái và chứng từ' }))
+    expect(await screen.findByRole('navigation', { name: 'PWA workflow' })).toBeInTheDocument()
+    const workspace = document.querySelector('.pwa-workspace')
+    expect(workspace).toHaveAttribute('lang', 'en')
+    // The localized way back keeps the page language.
+    expect(screen.getByRole('button', { name: /Về chế độ Đơn giản/u })).toHaveAttribute('lang', 'vi')
+    expect(document.documentElement.lang).toBe('vi')
+  })
+
+  it('keeps the English vault status pills and Lock vault text', async () => {
+    browserLanguage('en-US')
+    await createVault('pwa-simple-english-chrome')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    expect([...screen.getByLabelText('Runtime state').children].map((pill) => pill.textContent)).toEqual(['LOCAL', 'UNLOCKED', 'OFFLINE READY'])
+    expect(screen.getByRole('button', { name: 'Lock vault' })).toBeInTheDocument()
   })
 })

@@ -232,4 +232,66 @@ describe('encrypted PWA archive and staged restore', () => {
     expect(restoredTransaction.id).toBe('transaction-1')
     expect([...(await restored.sourceEvidence('transaction-1')).bytes]).toEqual([...evidenceBytes])
   })
+  it('round-trips budgets and savings goals through export and restore', async () => {
+    const { client } = await sourceClient('archive-simple-source')
+    await client.upsertBudget({
+      householdId: 'household',
+      month: '2026-08',
+      categoryAccountId: 'food',
+      budgetJpy: 30_000,
+    })
+    await client.createSavingsGoal({
+      id: 'goal-1',
+      householdId: 'household',
+      name: 'Emergency fund',
+      targetJpy: 300_000,
+      savedJpy: 12_000,
+      targetDate: '2027-08-01',
+    })
+    const budgets = await client.listBudgets('household', '2026-08')
+    const goals = await client.listSavingsGoals('household')
+    expect(budgets).toHaveLength(1)
+    expect(budgets[0]).toMatchObject({ actualJpy: 1_234 })
+    const archive = await client.exportVault()
+
+    const restored = await PwaLedgerClient.restoreVault(
+      'archive-simple-destination',
+      archive,
+      sourcePassphrase,
+      { vaultId: 'restored-vault', evidence: { getDirectory: undefined } },
+    )
+
+    await expect(restored.listBudgets('household', '2026-08')).resolves.toEqual(budgets)
+    await expect(restored.listSavingsGoals('household')).resolves.toEqual(goals)
+  })
+
+  it('restores an archive made before budgets and goals existed and accepts them afterwards', async () => {
+    const { client } = await sourceClient('archive-legacy-source')
+    const archive = await client.exportVault()
+    const manifest = await inspectPwaArchive(archive, sourcePassphrase)
+    expect(manifest.files.length).toBeGreaterThan(0)
+
+    const restored = await PwaLedgerClient.restoreVault(
+      'archive-legacy-destination',
+      archive,
+      sourcePassphrase,
+      { vaultId: 'restored-vault', evidence: { getDirectory: undefined } },
+    )
+
+    await expect(restored.listBudgets('household', '2026-08')).resolves.toEqual([])
+    await expect(restored.listSavingsGoals('household')).resolves.toEqual([])
+    await expect(restored.monthlyDashboard('household', '2026-08')).resolves.toMatchObject({
+      expenseJpy: 1_234,
+      expenseCategories: [{ accountId: 'food', name: 'Food', amountJpy: 1_234 }],
+    })
+    await restored.upsertBudget({
+      householdId: 'household',
+      month: '2026-08',
+      categoryAccountId: 'food',
+      budgetJpy: 1_000,
+    })
+    await expect(restored.listBudgets('household', '2026-08')).resolves.toEqual([
+      expect.objectContaining({ budgetJpy: 1_000, actualJpy: 1_234, remainingJpy: -234 }),
+    ])
+  })
 })

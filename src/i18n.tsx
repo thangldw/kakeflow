@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 import enGenerated from './locales/en.generated.json'
 import viGenerated from './locales/vi.generated.json'
+// Provider names that stay untranslated. A separate file so the PWA build can leave them out (see vite.config.ts).
+import providerNames from './locales/provider-names.json'
 
 export type AppLocale = 'ja' | 'en' | 'vi'
 
@@ -67,7 +69,7 @@ const en: Record<string, string> = {
   '未収金': 'Receivable', '振替': 'Transfer', 'カード利用': 'Card purchase',
   'カード支払': 'Card payment', '返金': 'Refund', '手数料': 'Fee', '利息': 'Interest', '調整': 'Adjustment', '口座を選択': 'Select an account',
   '楽天カード': 'Rakuten Card', 'Amazon Mastercard': 'Amazon Mastercard',
-  'ローカルフォルダー': 'Local folder', 'iCloud Drive': 'iCloud Drive', 'Google Drive': 'Google Drive', 'Gmail': 'Gmail',
+  'ローカルフォルダー': 'Local folder', 'iCloud Drive': 'iCloud Drive', ...providerNames,
   '手動アップロード': 'Manual upload', 'カメラ撮影': 'Camera capture', '主要証跡': 'Primary evidence',
   '資金側証跡': 'Funding evidence', 'ポイント側証跡': 'Reward evidence', '継続行': 'Continuation row', '補助証跡': 'Supporting evidence',
   '買付': 'Buy', '売却': 'Sell', '配当': 'Dividend', '税金': 'Tax', '株式分割': 'Stock split', '株式併合': 'Reverse split',
@@ -177,7 +179,7 @@ const vi: Record<string, string> = {
   '未収金': 'Khoản phải thu', '振替': 'Chuyển khoản', 'カード利用': 'Chi tiêu thẻ',
   'カード支払': 'Thanh toán thẻ', '返金': 'Hoàn tiền', '手数料': 'Phí', '利息': 'Lãi', '調整': 'Điều chỉnh', '口座を選択': 'Chọn tài khoản',
   '楽天カード': 'Thẻ Rakuten', 'Amazon Mastercard': 'Amazon Mastercard',
-  'ローカルフォルダー': 'Thư mục cục bộ', 'iCloud Drive': 'iCloud Drive', 'Google Drive': 'Google Drive', 'Gmail': 'Gmail',
+  'ローカルフォルダー': 'Thư mục cục bộ', 'iCloud Drive': 'iCloud Drive', ...providerNames,
   '手動アップロード': 'Tải lên thủ công', 'カメラ撮影': 'Chụp bằng camera', '主要証跡': 'Chứng từ chính',
   '資金側証跡': 'Chứng từ nguồn tiền', 'ポイント側証跡': 'Chứng từ điểm thưởng', '継続行': 'Dòng tiếp theo', '補助証跡': 'Chứng từ bổ trợ',
   '買付': 'Mua', '売却': 'Bán', '配当': 'Cổ tức', '税金': 'Thuế', '株式分割': 'Chia tách cổ phiếu', '株式併合': 'Gộp cổ phiếu',
@@ -264,13 +266,14 @@ export function localize(source: string): string {
   return translateText(activeLocale, source)
 }
 
-function savedLocale(): AppLocale {
+function savedLocale(fallback: AppLocale): AppLocale {
   const value = globalThis.localStorage?.getItem(STORAGE_KEY)
-  return value === 'en' || value === 'vi' ? value : 'ja'
+  return value === 'ja' || value === 'en' || value === 'vi' ? value : fallback
 }
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<AppLocale>(savedLocale)
+/** `fallbackLocale` is used only while no language is stored; it is not stored itself. */
+export function I18nProvider({ children, fallbackLocale = 'ja' }: { children: ReactNode; fallbackLocale?: AppLocale }) {
+  const [locale, setLocaleState] = useState<AppLocale>(() => savedLocale(fallbackLocale))
   activeLocale = locale
   const setLocale = useCallback((next: AppLocale) => {
     globalThis.localStorage?.setItem(STORAGE_KEY, next)

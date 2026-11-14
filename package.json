@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "i18n:codemod": "node scripts/localize-tsx.mjs",
     "i18n:generate": "node scripts/generate-ui-translations.mjs",
+    "build:pwa-catalog": "node scripts/build-pwa-catalog.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",

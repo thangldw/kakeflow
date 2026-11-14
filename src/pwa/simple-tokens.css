@@ -1,0 +1,109 @@
+/* The theme tokens and button styles the Simple components (src/features/simple) read, mapped onto the PWA's own
+   palette. The desktop defines them in src/theme.css and src/styles.css; the PWA does not rely on those (they carry
+   desktop shell rules and a dark theme keyed on html[data-theme], which the PWA never sets).
+   Scoped to the Simple shell and the two classic-screen spots that host Simple controls (the setup card's language
+   switch and the overview's mode switch), so the classic screens keep their look. Light by default; dark only in the
+   Simple shell (the classic PWA screens are light-only). */
+:is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) {
+  --bg: #f4f1e9;
+  --surface: #fffffc;
+  --surface2: #f0f3ed;
+  --text: #10221b;
+  --text2: #53645a;
+  --hairline: #cbd3ca;
+  --brand: #165c3a;
+  --primary: #165c3a;
+  --primary-strong: #0f4a2e;
+  --primary-fg: #fff;
+  --err: #a33e32;
+  --err-bg: #fff0eb;
+  --chip: #e9efe8;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pwa-shell--simple {
+    color-scheme: dark;
+    --bg: #0e1612;
+    --surface: #16211b;
+    --surface2: #1d2a23;
+    --text: #e4ece6;
+    --text2: #a3b1a8;
+    --hairline: #33433a;
+    --brand: #6cc192;
+    --primary: #6cc192;
+    --primary-strong: #85d0a6;
+    --primary-fg: #0b1a12;
+    --err: #f29384;
+    --err-bg: #3a1e1c;
+    --chip: #22302a;
+  }
+  .pwa-shell--simple .quick-add-backdrop { background: rgb(0 0 0 / 55%); }
+}
+
+/* The shared entry (src/main.tsx) also loads the desktop stylesheets, whose light-theme rules are written as
+   html:not([data-theme='dark']) .primary-btn, ... :is(input, select), ... main. Starting a selector with `html body`
+   keeps the rules below above them. */
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .primary-btn,
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .secondary-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: auto;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  box-shadow: none;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .primary-btn { color: var(--primary-fg); background: var(--primary); border-color: var(--primary); }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .primary-btn:hover { background: var(--primary-strong); filter: none; }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .secondary-btn { color: var(--text); background: var(--surface); }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .secondary-btn:hover { background: var(--surface2); }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) :is(.primary-btn, .secondary-btn):disabled { opacity: .5; cursor: not-allowed; }
+/* The reset above sets every button to 44px; the quick-add Save is the sheet's main action and keeps its 52px
+   (simpleMode.css), so it is restated here at the reset's own specificity. */
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .quick-add-save { min-height: 52px; font-size: 16px; }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .icon-btn { display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; color: var(--text2); background: transparent; cursor: pointer; }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .icon-btn:hover { background: var(--surface2); }
+/* The tab bar items and More rows keep their inward outline from simpleMode.css (an outward one is cut at the fixed
+   bar's edge). */
+:is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) :is(.primary-btn, .secondary-btn, .icon-btn, .quick-add-chip, .quick-add-keypad button, .simple-mode-switch-options button):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Fields inside the Simple components. */
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) :where(.simple-field, .simple-goal-update, .quick-add-field, .quick-add-paying, .quick-add-categories, .simple-add-form) :is(input, select) {
+  height: auto;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: none;
+  font: inherit;
+  font-size: 15px;
+  line-height: normal;
+}
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) :where(.simple-field, .simple-goal-update, .quick-add-field, .quick-add-paying, .quick-add-categories, .simple-add-form) :is(input, select):focus {
+  border-color: var(--primary);
+  outline: 2px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  outline-offset: 0;
+}
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .quick-add-amount-field input,
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .quick-add-amount-field input:focus { border: 0; outline: none; color: inherit; background: transparent; box-shadow: none; font: inherit; }
+/* The desktop paints every <main> with its own canvas color. */
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .pwa-simple-main { background: transparent; }
+html body .pwa-shell--simple .yen-field { display: block; position: relative; }
+html body .pwa-shell--simple .yen-field input { box-sizing: border-box; width: 100%; text-align: right; font-variant-numeric: tabular-nums; }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .yen-field--suffix input { padding-right: 30px; }
+html body .pwa-shell--simple .yen-field--suffix::after { content: '円'; position: absolute; top: 50%; right: 12px; transform: translateY(-50%); color: var(--text2); font-size: 13px; pointer-events: none; }
+html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .yen-field input[aria-invalid='true'], html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .simple-field input[aria-invalid='true'] { border-color: var(--err); }
+
+.pwa-shell--simple .skeleton { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface2); }

@@ -59,8 +59,14 @@ body {
 
 .pwa-state {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-left: auto;
+}
+
+/* A pill wraps to the next row as a whole; its words never split (the Vietnamese labels are longer). */
+.pwa-state span {
+  white-space: nowrap;
 }
 
 .pwa-state span,
@@ -496,3 +502,119 @@ body {
 @media (pointer: coarse) {
   .pwa-navigation button, .pwa-brand { min-height: 44px; }
 }
+
+/* Simple mode shell. Colors come from the tokens in simple-tokens.css. */
+.pwa-shell--simple {
+  --simple-tabbar-height: 67px;
+  --simple-fab-space: 72px;
+  --simple-fab-height: 48px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.pwa-shell--simple .pwa-header {
+  border-color: var(--hairline);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.pwa-shell--simple .pwa-brand small { color: var(--text2); }
+.pwa-shell--simple .pwa-mark { color: var(--primary-fg); background: var(--primary); }
+
+.pwa-shell--simple .pwa-state span {
+  border-color: var(--hairline);
+  color: var(--text2);
+  background: var(--surface2);
+}
+
+.pwa-shell--simple .pwa-quiet { color: var(--text); background: var(--surface2); }
+
+.pwa-simple-error { margin: 16px auto 0; max-width: 608px; }
+
+/* Clear of the fixed tab bar and the floating button. */
+.pwa-simple-main {
+  max-width: none;
+  margin: 0;
+  padding: 16px 0 calc(var(--simple-tabbar-height) + var(--simple-fab-space) + env(safe-area-inset-bottom, 0px));
+}
+
+.pwa-simple-page {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 0 16px 24px;
+  box-sizing: border-box;
+}
+
+.pwa-simple-history .pwa-panel { padding: 4px 16px; }
+.pwa-simple-history .pwa-panel > p { margin: 12px 0; color: var(--text2); }
+.pwa-simple .pwa-panel { border-color: var(--hairline); color: var(--text); background: var(--surface); }
+.pwa-simple .pwa-ledger-row { flex-wrap: wrap; border-color: var(--hairline); }
+.pwa-simple .pwa-ledger-row:first-child { border-top: 0; }
+.pwa-simple .pwa-ledger-row > div { min-width: 0; }
+.pwa-simple .pwa-ledger-row h2 { margin: 2px 0; font-size: 16px; overflow-wrap: anywhere; }
+.pwa-simple .pwa-ledger-row :is(time, small) { color: var(--text2); font-size: 13px; }
+.pwa-simple .pwa-ledger-row small { overflow-wrap: anywhere; }
+.pwa-simple .pwa-ledger-row strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+
+/* The desktop hides the Simple tab bar above 720px (a sidebar takes over); the PWA has no sidebar, so the bar shows at
+   every width. Height: 1px border + 4px padding + 62px item = --simple-tabbar-height. */
+.pwa-simple .simple-tabbar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 4px 4px env(safe-area-inset-bottom, 0px);
+  border-top: 1px solid var(--hairline);
+  background: var(--surface);
+}
+
+@media (min-width: 721px) {
+  .pwa-simple .simple-tabbar { grid-template-columns: repeat(5, minmax(0, 128px)); justify-content: center; }
+}
+
+.pwa-simple .simple-add-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--simple-tabbar-height) + 12px + env(safe-area-inset-bottom, 0px));
+  z-index: 31;
+  display: inline-flex;
+  min-height: var(--simple-fab-height);
+  padding: 0 20px;
+  border-radius: 999px;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 22%);
+  touch-action: manipulation;
+}
+
+/* "Saved ¥1,500 · Groceries" sits above the floating button. Empty, it keeps no box but stays in the page, so screen
+   readers announce the text when it appears. */
+.pwa-simple-saved {
+  position: fixed;
+  right: 16px;
+  bottom: calc(var(--simple-tabbar-height) + 12px + var(--simple-fab-height) + 8px + env(safe-area-inset-bottom, 0px));
+  left: 16px;
+  z-index: 32;
+  max-width: 420px;
+  margin: 0 0 0 auto;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pwa-simple-saved:empty { padding: 0; border: 0; box-shadow: none; background: transparent; }
+
+.pwa-language-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pwa-language-options button { padding: 0 4px; }
+.pwa-setup-language { margin-top: 18px; }
+
+.pwa-back-to-simple { margin-bottom: 18px; }
+.pwa-mode-panel { margin-top: 16px; max-width: 420px; }

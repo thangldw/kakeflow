@@ -10,6 +10,8 @@ export type TransactionType =
   | 'INTEREST'
   | 'ADJUSTMENT'
 export type EntrySide = 'DEBIT' | 'CREDIT'
+export type AccountSubtype = 'BANK' | 'CASH' | 'WALLET' | 'CREDIT_CARD' | 'OTHER'
+export type SavingsGoalStatus = 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
 
 export interface Household {
   readonly id: string
@@ -23,6 +25,7 @@ export interface Account {
   readonly name: string
   readonly kind: AccountKind
   readonly currency: 'JPY'
+  readonly subtype?: AccountSubtype
 }
 
 export interface PostingEntry {
@@ -107,6 +110,7 @@ export interface CreateAccountInput {
   readonly householdId: string
   readonly name: string
   readonly kind: AccountKind
+  readonly subtype?: AccountSubtype
 }
 
 export interface ManualTransactionInput {
@@ -138,4 +142,58 @@ export interface ApproveCandidateInput {
   readonly transactionId: string
   readonly transactionType: TransactionType
   readonly entries: readonly PostingEntry[]
+}
+
+export interface Budget {
+  readonly householdId: string
+  /** Calendar month `YYYY-MM`. */
+  readonly month: string
+  readonly categoryAccountId: string
+  readonly budgetJpy: number
+}
+
+export type UpsertBudgetInput = Budget
+
+export interface MonthlyBudgetRow extends Budget {
+  readonly categoryName: string
+  readonly actualJpy: number
+  /** `budgetJpy - actualJpy`; negative when the month is over budget. */
+  readonly remainingJpy: number
+}
+
+export interface SavingsGoal {
+  readonly id: string
+  readonly householdId: string
+  readonly name: string
+  readonly targetJpy: number
+  readonly savedJpy: number
+  /** Calendar date `YYYY-MM-DD`. */
+  readonly targetDate: string
+  readonly status: SavingsGoalStatus
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface SaveSavingsGoalInput {
+  readonly id: string
+  readonly householdId: string
+  readonly name: string
+  readonly targetJpy: number
+  readonly savedJpy: number
+  readonly targetDate: string
+  readonly status?: SavingsGoal['status']
+}
+
+export interface MonthlyExpenseCategory {
+  readonly accountId: string
+  readonly name: string
+  readonly amountJpy: number
+}
+
+export interface MonthlyDashboard {
+  readonly householdId: string
+  readonly month: string
+  readonly incomeJpy: number
+  readonly expenseJpy: number
+  readonly expenseCategories: readonly MonthlyExpenseCategory[]
 }
