@@ -105,6 +105,7 @@ export type {
   CardSettlementDto,
   UpdateCardStatementDueDateInputDto,
   CardSettlementBankMappingDto,
+  MoveMonthlyBudgetInputDto,
   TransferPairActionDto,
   TransferPairDecisionDto,
   TransferPairDecisionInputDto,

@@ -20,13 +20,15 @@ Status: implemented on this branch with the default decision (decisions are **no
 
 **Still open.** Replicating rejections (Stage 2 sync); proposals beyond the loaded page; an explicit "merge into one journal" option.
 
-## 2. Envelope assignment and credit-card payment envelopes
+## 2. Envelope assignment and credit-card payment envelopes (partly implemented)
 
-**Done.** Read-only carry-over and unassigned pool (`features/budgets/`).
+**Done.** Read-only carry-over and unassigned pool (`features/budgets/`), and covering an overspent envelope: Rust `move_monthly_budget` (command `budget_move`) moves assigned budget between two expense categories of one month in one SQLite transaction; the source can give up at most `min(budget, max(0, budget - actual))`, so a move never creates a new overspend; the target row is created when missing. The panel offers "不足を補う" with the source defaulting to the category with the most left. Budgets already replicate through the existing `monthly_category_budgets` capture, so no new table or audit log was added.
 
-**Next.** Let the user move money between envelopes and cover overspend. Needs a stored assignment per category and month. The existing `monthly_category_budgets` row already is "assigned", so the cheapest design reuses it and adds a transfer-between-envelopes operation as two budget upserts in one transaction, with an audit row. Credit-card payment envelopes need a per-card pseudo-category funded when card spending is posted; this overlaps card settlement reconciliation and should be specified together with it.
+**Decision taken (default).** Overspend stays a red signed carry (ohmzi fork behaviour), not reset to zero.
 
-**Decision needed.** Should overspend carry as a red balance (current behaviour) or reset to zero and reduce the pool (YNAB)? Default: keep the signed red carry, matching the ohmzi fork.
+**Known limits.** The source cap ignores carry-over from earlier months (it is the month-level remainder), so a category whose positive balance is mostly carry-in cannot lend it. Moves are within one month only. Assigning from the unassigned pool is still done with the existing budget field. The cover form was rendered in a standalone Playwright preview, not in the Tauri window.
+
+**Not done.** Credit-card payment envelopes (a per-card pseudo-category funded when card spending is posted). They overlap card settlement reconciliation and should be specified together with it.
 
 ## 3. AI assistant (read-only)
 

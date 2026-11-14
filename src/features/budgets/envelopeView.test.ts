@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MonthlyCategoryBudgetDto } from '../../platform/types'
-import { buildEnvelopeView } from './envelopeView'
+import { buildEnvelopeView, movableJpy } from './envelopeView'
 
 const budget = (categoryAccountId: string, categoryName: string, month: string, budgetJpy: number, actualJpy: number): MonthlyCategoryBudgetDto =>
   ({ householdId: 'h', month, categoryAccountId, categoryName, budgetJpy, actualJpy, remainingJpy: budgetJpy - actualJpy })
@@ -31,5 +31,14 @@ describe('envelope carry-over view', () => {
     expect(buildEnvelopeView([{ month: '2026-08', incomeJpy: 1, budgets: [] }], '2026-08')).toBeNull()
     expect(buildEnvelopeView([{ month: '2026-09', incomeJpy: 1, budgets: [budget('a', 'A', '2026-09', 1, 0)] }], '2026-08')).toBeNull()
     expect(buildEnvelopeView([], '2026-08')).toBeNull()
+  })
+})
+
+describe('movable budget', () => {
+  it('is what is left this month, capped by the assigned amount, and never negative', () => {
+    expect(movableJpy({ assignedJpy: 5_000, activityJpy: 1_000 })).toBe(4_000)
+    expect(movableJpy({ assignedJpy: 5_000, activityJpy: 9_000 })).toBe(0)
+    expect(movableJpy({ assignedJpy: 5_000, activityJpy: -300 })).toBe(5_000)
+    expect(movableJpy({ assignedJpy: 0, activityJpy: 0 })).toBe(0)
   })
 })

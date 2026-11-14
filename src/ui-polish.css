@@ -486,3 +486,10 @@ html body .transaction-row strong { font-variant-numeric: tabular-nums; }
 .yen-field--suffix input { padding-right: 28px; }
 .yen-field--suffix::after { color: var(--text2); content: '円'; font-size: 12px; pointer-events: none; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); }
 .yen-field input[aria-invalid="true"] { border-color: var(--err); }
+
+.envelope-cover { align-items: end; border-top: 1px solid var(--hairline); display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding-top: 12px; }
+.envelope-cover label { display: grid; font-size: 12px; font-weight: 650; gap: 4px; min-width: 180px; }
+.envelope-cover .yen-field input { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; min-height: 40px; padding-block: 6px; }
+.envelope-cover select { border: 1px solid var(--border); border-radius: 8px; font: inherit; min-height: 40px; padding: 6px 10px; }
+.envelope-cover-actions { display: flex; gap: 6px; }
+.envelope-cover .envelope-note, .envelope-cover .transfer-pair-error { flex-basis: 100%; margin: 0; }

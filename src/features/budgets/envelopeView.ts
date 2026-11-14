@@ -52,3 +52,11 @@ export function buildEnvelopeView(months: readonly EnvelopeMonthData[], selected
     })),
   }
 }
+
+/**
+ * What a category can hand to another one this month without becoming overspent
+ * itself. Must match `move_monthly_budget` in the Rust read model.
+ */
+export function movableJpy(row: Pick<EnvelopeViewRow, 'assignedJpy' | 'activityJpy'>): number {
+  return Math.min(row.assignedJpy, Math.max(0, row.assignedJpy - row.activityJpy))
+}

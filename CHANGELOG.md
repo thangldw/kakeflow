@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add "cover shortfall" to the envelope panel: move this month's budget between expense categories atomically (`budget_move`); the source can never be pushed into overspend.
 - Add a shared whole-yen input (thousands separators, 円 mark, invalid text flagged) to the budgets simulators.
 - Add own-account transfer review on the desktop Transactions page: possible pairs can be confirmed (both legs become calculation-excluded transfers, journals unchanged) or dismissed, with undo. Decisions are stored in a new append-only, device-local table (migration 0073).
 - Add a read-only carry-over and unassigned-pool panel to the desktop Budgets page, rolling budgets and accrual income forward from the first budgeted month.

@@ -1447,3 +1447,20 @@ describe('transfer pair decision commands', () => {
     await expect(demo.decideTransferPair({ householdId: 'family', outTransactionId: 'a', inTransactionId: 'b', action: 'REJECT' })).rejects.toMatchObject({ command: 'transfer_pair_decide' })
   })
 })
+
+describe('budget move command', () => {
+  const row = { householdId: 'family', month: '2026-07', categoryAccountId: 'food', categoryName: '食費', budgetJpy: 1200, actualJpy: 1200, remainingJpy: 0 }
+
+  it('sends the Rust argument shape and validates the returned month', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return [row] as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    const input = { householdId: 'family', month: '2026-07', fromCategoryAccountId: 'util', toCategoryAccountId: 'food', amountJpy: 200 }
+    await expect(client.moveBudget(input)).resolves.toEqual([row])
+    expect(calls).toEqual([['budget_move', { input }]])
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...row, budgetJpy: 1.5 }] as T })
+    await expect(bad.moveBudget(input)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'budget_move' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.moveBudget(input)).rejects.toMatchObject({ command: 'budget_move' })
+  })
+})

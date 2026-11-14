@@ -3986,6 +3986,16 @@ fn card_payment_link_unlink(
 }
 
 #[tauri::command]
+fn budget_move(
+    state: tauri::State<'_, AppState>,
+    input: read_model::MoveMonthlyBudgetInput,
+) -> Result<Vec<read_model::MonthlyCategoryBudgetDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::move_monthly_budget(connection, &input)
+    })
+}
+
+#[tauri::command]
 fn transfer_pair_decisions_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -5102,6 +5112,7 @@ pub fn run() {
             card_match_confirm,
             card_payment_link_confirm,
             card_payment_link_unlink,
+            budget_move,
             transfer_pair_decisions_list,
             transfer_pair_decide,
             card_statement_due_date_update,

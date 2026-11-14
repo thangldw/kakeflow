@@ -895,6 +895,7 @@ export interface ImportRunCountsDto {
 
 export interface MonthlyCategoryBudgetDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly categoryName: string; readonly budgetJpy: number; readonly actualJpy: number; readonly remainingJpy: number }
 export interface UpsertMonthlyCategoryBudgetInputDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly budgetJpy: number }
+export interface MoveMonthlyBudgetInputDto { readonly householdId: string; readonly month: string; readonly fromCategoryAccountId: string; readonly toCategoryAccountId: string; readonly amountJpy: number }
 export interface MonthlyReviewMemoDto { readonly householdId: string; readonly month: string; readonly memo: string; readonly updatedAt: string }
 export interface UpsertMonthlyReviewMemoInputDto { readonly householdId: string; readonly month: string; readonly memo: string }
 export type SavingsGoalStatusDto = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'CANCELLED'
@@ -1208,6 +1209,7 @@ export type AppCommand =
   | 'card_match_confirm'
   | 'card_payment_link_confirm'
   | 'card_payment_link_unlink'
+  | 'budget_move'
   | 'transfer_pair_decisions_list'
   | 'transfer_pair_decide'
   | 'card_statement_due_date_update'
@@ -1367,6 +1369,7 @@ export interface PlatformClient {
   upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
+  moveBudget(input: MoveMonthlyBudgetInputDto): Promise<readonly MonthlyCategoryBudgetDto[]>
   getMonthlyReviewMemo(householdId: string, month: string): Promise<MonthlyReviewMemoDto | null>
   upsertMonthlyReviewMemo(input: UpsertMonthlyReviewMemoInputDto): Promise<MonthlyReviewMemoDto | null>
   listSavingsGoals(householdId: string): Promise<readonly SavingsGoalDto[]>
