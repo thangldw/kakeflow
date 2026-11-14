@@ -282,7 +282,7 @@ function Sidebar({ page, setPage, open, close, collapsed, toggleCollapsed, boots
           {simple ? <div className="nav-section simple-nav-section">{SIMPLE_TABS.map((tab) => {
             const TabIcon = SIMPLE_TAB_ICONS[tab.id]
             const current = tabForPage(page, savingsActive) === tab.id
-            return <button key={tab.id} className={`nav-item ${current ? 'active' : ''}`} aria-current={current ? 'page' : undefined} onClick={() => { if (onSelectTab) onSelectTab(tab.id); else setPage(tab.page); close() }}><TabIcon size={19} /><span className="simple-tab-label">{text(tab.label)}</span></button>
+            return <button key={tab.id} type="button" className={`nav-item ${current ? 'active' : ''}`} aria-label={text(tab.label)} title={text(tab.label)} aria-current={current ? 'page' : undefined} onClick={() => { if (onSelectTab) onSelectTab(tab.id); else setPage(tab.page); close() }}><TabIcon size={19} /><span className="simple-tab-label">{text(tab.label)}</span></button>
           })}</div> : navigationSections.map((section) => <div className="nav-section" key={section.label}>
           <p className="nav-caption">{text(section.label)}</p>
           {navigation.filter((item) => section.pages.includes(item.id)).map((item) => (
