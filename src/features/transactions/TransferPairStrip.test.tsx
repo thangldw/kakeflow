@@ -13,7 +13,7 @@ const rows = [
   row('e1', 'EXPENSE', '2026-07-01', '銀行振込 A', { debit: ['food', '食費'], credit: ['bank-a', '三井住友'] }),
   row('i1', 'INCOME', '2026-07-02', '入金 B', { debit: ['bank-b', 'ゆうちょ'], credit: ['salary', '給与'] }),
 ]
-const decision = (state: 'LINKED' | 'REJECTED'): TransferPairDecisionDto => ({ pairKey: 'e1|i1', outTransactionId: 'e1', inTransactionId: 'i1', state, decidedAt: '2026-07-03T00:00:00.000Z' })
+const decision = (state: 'LINKED' | 'REJECTED' | 'MERGED'): TransferPairDecisionDto => ({ pairKey: 'e1|i1', outTransactionId: 'e1', inTransactionId: 'i1', state, decidedAt: '2026-07-03T00:00:00.000Z' })
 
 function fakeClient(initial: readonly TransferPairDecisionDto[] = [], next?: (input: { action: string }) => readonly TransferPairDecisionDto[]) {
   return {
@@ -73,5 +73,20 @@ describe('TransferPairStrip', () => {
     expect(empty.container).toBeEmptyDOMElement()
     const none = render(<TransferPairStrip householdId={null} rows={rows} revision={0} onChanged={vi.fn()} client={fakeClient()} />)
     expect(none.container).toBeEmptyDOMElement()
+  })
+
+  it('merges a pair into one entry, shows it as merged and offers undo', async () => {
+    const client = fakeClient([], (input) => input.action === 'MERGE' ? [decision('MERGED')] : [])
+    const onChanged = vi.fn()
+    render(<TransferPairStrip householdId="family" rows={rows} revision={0} onChanged={onChanged} client={client} />)
+    fireEvent.click(await screen.findByRole('button', { name: '一つの仕訳に統合' }))
+    await waitFor(() => expect(client.decideTransferPair).toHaveBeenCalledWith({ householdId: 'family', outTransactionId: 'e1', inTransactionId: 'i1', action: 'MERGE' }))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('button', { name: '一つの仕訳に統合' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText(/確定・却下の履歴/))
+    expect(screen.getByText('統合済み')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '元に戻す' }))
+    await waitFor(() => expect(client.decideTransferPair).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'CLEAR' })))
+    expect(onChanged).toHaveBeenCalledTimes(2)
   })
 })

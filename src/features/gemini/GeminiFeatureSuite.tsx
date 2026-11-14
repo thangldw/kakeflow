@@ -1,3 +1,4 @@
+import { YenInput } from '../../ui/YenInput'
 import { useEffect, useMemo, useState } from 'react'
 import {
   Calculator,
@@ -42,16 +43,16 @@ export function PlanningTools() {
     <article className="panel gemini-tool">
       <header><span><Calculator size={18} /></span><div><h2>{localize('負債返済シミュレーター')}</h2><p>{localize('残高、金利、毎月返済額から完済時期を試算します。')}</p></div></header>
       <div className="gemini-form-grid">
-        <label>{localize('現在の残高')}<input type="number" min="0" value={debt} onChange={(event) => setDebt(Number(event.target.value))} /></label>
+        <label>{localize('現在の残高')}<YenInput value={debt} onChange={setDebt} /></label>
         <label>{localize('年利（%）')}<input type="number" min="0" step="0.1" value={rate} onChange={(event) => setRate(Number(event.target.value))} /></label>
-        <label>{localize('毎月返済額')}<input type="number" min="0" value={payment} onChange={(event) => setPayment(Number(event.target.value))} /></label>
+        <label>{localize('毎月返済額')}<YenInput value={payment} onChange={setPayment} /></label>
       </div>
       <div className="gemini-result">{payoffMonths === null ? <><strong>{localize('返済額を増やしてください')}</strong><span>{localize('毎月の利息を上回る返済額が必要です。')}</span></> : <><strong>{payoffMonths}{localize('か月で完済')}</strong><span>{localize('推定利息')} {yen(payoffInterest ?? 0)} · {localize('総返済額')} {yen(debt + (payoffInterest ?? 0))}</span></>}</div>
     </article>
     <article className="panel gemini-tool">
       <header><span><TrendingUp size={18} /></span><div><h2>{localize('将来支出シミュレーター')}</h2><p>{localize('現在の支出ペースを増減させ、年間インパクトを確認します。')}</p></div></header>
       <div className="gemini-form-grid">
-        <label>{localize('現在の月間支出')}<input type="number" min="0" value={monthlySpend} onChange={(event) => setMonthlySpend(Number(event.target.value))} /></label>
+        <label>{localize('現在の月間支出')}<YenInput value={monthlySpend} onChange={setMonthlySpend} /></label>
         <label>{localize('支出変化（%）')}<input type="number" min="-100" max="300" value={change} onChange={(event) => setChange(Number(event.target.value))} /></label>
       </div>
       <div className="gemini-result"><strong>{yen(projectedSpend)} / {localize('月')}</strong><span>{localize('年間')} {yen(projectedSpend * 12)} · {localize('現在比')} {change >= 0 ? '+' : ''}{change}%</span></div>

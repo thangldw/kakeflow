@@ -48,7 +48,7 @@ export function TransferPairStrip({ householdId, rows, revision, onChanged, clie
   }
 
   return <section className="panel transfer-pair-strip" aria-labelledby={`${id}-title`}>
-    <div className="panel-head"><div><h2 id={`${id}-title`}>{localize("振替の候補")}</h2><p>{localize("金額が同じで、別々の口座・近い日付の入出金です。確定すると両方が振替になり、収支の集計から外れます（仕訳と口座残高は変わりません）。")}</p></div></div>
+    <div className="panel-head"><div><h2 id={`${id}-title`}>{localize("振替の候補")}</h2><p>{localize("金額が同じで、別々の口座・近い日付の入出金です。確定すると両方が振替になり、収支の集計から外れます（仕訳と口座残高は変わりません）。")}</p><p>{localize("「一つの仕訳に統合」は支払側の取引に振替の仕訳（受取口座の借方・支払口座の貸方）を作り、受取側の取引は無効（VOID）になります。原本の紐づけは保持され、履歴から元に戻せます。")}</p></div></div>
     {failed && <p className="transfer-pair-error" role="alert">{localize("振替の操作に失敗しました。もう一度お試しください。")}</p>}
     {result.proposals.length > 0 && <ul className="transfer-pair-list">{result.proposals.map((proposal) => {
       const out = byId.get(proposal.outId); const inn = byId.get(proposal.inId); const rowId = `${id}-${proposal.outId}-${proposal.inId}`
@@ -57,6 +57,7 @@ export function TransferPairStrip({ householdId, rows, revision, onChanged, clie
         <span className="transfer-pair-meta">{yen(proposal.amountJpy)} · {proposal.dayGap === 0 ? localize("同日") : <>{proposal.dayGap}{localize("日差")}</>}</span>
         <span className="transfer-pair-actions">
           <button type="button" className="primary-btn" disabled={busy} aria-describedby={rowId} onClick={() => void decide('LINK', proposal.outId, proposal.inId)}>{localize("振替として確定")}</button>
+          <button type="button" className="secondary-btn" disabled={busy} aria-describedby={rowId} onClick={() => void decide('MERGE', proposal.outId, proposal.inId)}>{localize("一つの仕訳に統合")}</button>
           <button type="button" className="secondary-btn" disabled={busy} aria-describedby={rowId} onClick={() => void decide('REJECT', proposal.outId, proposal.inId)}>{localize("振替ではない")}</button>
         </span>
       </li>
@@ -65,7 +66,7 @@ export function TransferPairStrip({ householdId, rows, revision, onChanged, clie
     {decisions.length > 0 && <details className="transfer-pair-history"><summary>{localize("確定・却下の履歴")} ({decisions.length})</summary>
       <ul className="transfer-pair-list">{decisions.map((decision) => <li key={decision.pairKey}>
         <span className="transfer-pair-legs"><strong>{label(byId.get(decision.outTransactionId), decision.outTransactionId)}</strong> → <strong>{label(byId.get(decision.inTransactionId), decision.inTransactionId)}</strong></span>
-        <span className="transfer-pair-meta">{decision.state === 'LINKED' ? localize("確定済み") : localize("却下済み")}</span>
+        <span className="transfer-pair-meta">{decision.state === 'MERGED' ? localize("統合済み") : decision.state === 'LINKED' ? localize("確定済み") : localize("却下済み")}</span>
         <span className="transfer-pair-actions"><button type="button" className="secondary-btn" disabled={busy} onClick={() => void decide('CLEAR', decision.outTransactionId, decision.inTransactionId)}>{localize("元に戻す")}</button></span>
       </li>)}</ul></details>}
   </section>
