@@ -1,6 +1,6 @@
 # PWA Simple mode (phase 2): design
 
-Date: 2026-11-14. Status: approved by the owner's standing instruction ("continue automatically until the spec is done"); decisions the owner did not make are listed under "My calls". Parent spec: `2026-11-14-simple-mode-redesign-design.md` (phase 2 and out-of-scope sections).
+Date: 2026-11-14. Status: implemented (phase 2 of the Simple mode redesign; passkey unlock remains a separate design); approved by the owner's standing instruction ("continue automatically until the spec is done"); decisions the owner did not make are listed under "My calls". Parent spec: `2026-11-14-simple-mode-redesign-design.md` (phase 2 and out-of-scope sections).
 
 ## Intent and why
 

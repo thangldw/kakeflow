@@ -1,6 +1,6 @@
 # Simple mode redesign: design
 
-Date: 2026-11-14. Status: implemented in phase 1 on desktop and the web preview; PWA and passkey remain follow-ups. Mockups: https://claude.ai/artifact/B2Xq79KYdpcE5jS2kV2p8h (private; option A and the quick-add sheet were chosen).
+Date: 2026-11-14. Status: implemented in phase 1 on desktop and the web preview, and in phase 2 in the PWA (see `2026-11-14-pwa-simple-mode-design.md`); passkey unlock remains a separate design. Mockups: https://claude.ai/artifact/B2Xq79KYdpcE5jS2kV2p8h (private; option A and the quick-add sheet were chosen).
 
 ## Intent and why
 
