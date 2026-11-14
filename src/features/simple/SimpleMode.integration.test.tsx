@@ -252,6 +252,27 @@ describe('Simple mode in the app shell', () => {
     expect(JSON.parse(localStorage.getItem('kakeflow.uiMode') ?? '{}')).toEqual({ 'demo-tanaka-family': 'simple' })
   })
 
+  it('keeps the goals scroll after the shell resets the page scroll on the web runtime', async () => {
+    storeMode({ 'demo-tanaka-family': 'simple' })
+    const requests: string[] = []
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, writable: true, value(this: Element) { requests.push(this.id === 'goals' ? 'goals' : 'other') } })
+    Object.defineProperty(Element.prototype, 'scrollTo', { configurable: true, writable: true, value(this: Element) { if (this.matches('.main-shell > main')) requests.push('top') } })
+    try {
+      render(<App />)
+      await waitFor(() => expect(simpleHome()).not.toBeNull())
+      requests.length = 0
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄' }))
+      await waitFor(() => expect(requests).toContain('goals'))
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
+      expect(requests).toContain('top')
+      expect(requests.at(-1)).toBe('goals')
+      expect(requests.filter((request) => request === 'goals')).toHaveLength(1)
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView
+      delete (Element.prototype as Partial<Element>).scrollTo
+    }
+  })
+
   describe('Savings scroll on the desktop runtime', () => {
     const scrolled: Element[] = []
     beforeEach(() => {
@@ -311,6 +332,10 @@ describe('Simple mode in the app shell', () => {
     expect(screen.getByRole('group', { name: '表示モード' })).toBeInTheDocument()
 
     fireEvent.change(screen.getByRole('combobox', { name: '世帯を切り替える' }), { target: { value: 'other' } })
+    // Checked right after the change: the Simple-only list must not render even for one frame in Full mode.
+    expect(document.querySelector('.simple-more')).toBeNull()
+    expect(screen.queryByRole('group', { name: '表示モード' })).not.toBeInTheDocument()
+    expect(within(sidebar()).getByRole('button', { name: 'ホーム' })).toHaveClass('active')
     expect(await screen.findByRole('button', { name: 'テンプレート: キャッシュフロー' })).toBeInTheDocument()
     expect(screen.queryByRole('group', { name: '表示モード' })).not.toBeInTheDocument()
   })

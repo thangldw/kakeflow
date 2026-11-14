@@ -2846,9 +2846,14 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged, focusG
   // Each new request scrolls to the goals once, after the first load, so rows that load later cannot push the panel away.
   useEffect(() => {
     if (focusGoalsRequest === 0 || handledFocusRequest.current === focusGoalsRequest || (desktop && !loaded)) return
-    handledFocusRequest.current = focusGoalsRequest
-    const goals = document.getElementById('goals')
-    if (goals && typeof goals.scrollIntoView === 'function') goals.scrollIntoView({ block: 'start' })
+    // Deferred past the shell's scroll-to-top on navigation, which runs after this child effect in the same commit.
+    // The request counts as handled only when the timer fires, so a re-run that clears it schedules it again.
+    const timer = globalThis.setTimeout(() => {
+      handledFocusRequest.current = focusGoalsRequest
+      const goals = document.getElementById('goals')
+      if (goals && typeof goals.scrollIntoView === 'function') goals.scrollIntoView({ block: 'start' })
+    }, 0)
+    return () => globalThis.clearTimeout(timer)
   }, [desktop, focusGoalsRequest, loaded])
 
   const saveBudget = async () => {
@@ -3376,7 +3381,7 @@ function IcloudDriveInboxSettingsPanel({ householdId }: { readonly householdId: 
 
 function App() {
   useI18n()
-  const [page, setPage] = useState<PageId>('overview')
+  const [requestedPage, setPage] = useState<PageId>('overview')
   const [reportsInitialView, setReportsInitialView] = useState<ReportView>('CALENDAR')
   const [importInitialView, setImportInitialView] = useState<'LOCAL' | 'CONNECTORS'>('LOCAL')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -3415,6 +3420,8 @@ function App() {
   const [goalsFocusRequest, setGoalsFocusRequest] = useState(0)
   const [quickAddOpen, setQuickAddOpen] = useState(false)
   const simple = uiMode === 'simple'
+  // More belongs to Simple mode; in Full mode it renders as the Home, so the More list never shows there, even for one frame.
+  const page: PageId = requestedPage === 'more' && !simple ? 'overview' : requestedPage
   // Simple mode always reads the whole household; the saved scope stays untouched and applies again in Full.
   const effectiveAccountGroupId = simple ? null : activeAccountGroupId
   const effectiveAttributionScope = simple ? ALL_ATTRIBUTION_SCOPE : activeAttributionScope
@@ -3427,8 +3434,8 @@ function App() {
   const folderRefreshBusyRef = useRef(false)
 
   useEffect(() => { if (page !== 'budgets') setSavingsActive(false) }, [page])
-  // More belongs to Simple mode; whichever path leaves it on screen in Full mode (household switch, mode change) goes Home.
-  useEffect(() => { if (!simple && page === 'more') setPage('overview') }, [page, simple])
+  // Let the stored page follow what is shown, whichever path left More requested in Full mode (household switch, mode change).
+  useEffect(() => { if (!simple && requestedPage === 'more') setPage('overview') }, [requestedPage, simple])
 
   useEffect(() => {
     const workspaceScroller = document.querySelector<HTMLElement>('.main-shell > main')
