@@ -196,8 +196,13 @@ describe('Simple mode in the app shell', () => {
     fireEvent.click(within(toast).getByRole('button', { name: '修正' }))
     const savedId = (desktop.createManualTransaction.mock.calls[0][0] as { id: string }).id
     await waitFor(() => expect(desktop.getTransactionDetail).toHaveBeenCalledWith('family', savedId))
-    expect(await screen.findByRole('dialog', { name: 'お弁当' })).toBeInTheDocument()
+    const detail = await screen.findByRole('dialog', { name: 'お弁当' })
     expect(within(sidebar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
+
+    // There is no row that opened the panel, so closing it returns focus to the Transactions heading, not to body.
+    fireEvent.click(within(detail).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'お弁当' })).not.toBeInTheDocument())
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'すべての取引' }))
   })
 
   it('labels a saved earlier month neutrally and goes back to this month from the Home', async () => {

@@ -130,7 +130,8 @@ import { SimpleMorePage, UiModeSwitch } from './features/simple/SimpleMorePage'
 import { SimpleTabBar } from './features/simple/SimpleTabBar'
 import { readUiMode, writeUiMode, type UiMode } from './features/simple/uiMode'
 import { localize, useI18n } from './i18n'
-import { KAKEFLOW_TOAST_EVENT, showToast, type ToastAction, type ToastTone } from './toast'
+import { showToast } from './toast'
+import { GlobalToast } from './ui/GlobalToast'
 import { APP_VERSION } from './version'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
 import { EnvelopeCarryPanel } from './features/budgets/EnvelopeCarryPanel'
@@ -389,24 +390,10 @@ function PageHeader({ eyebrow, title, description, headingId, children }: { eyeb
   )
 }
 
+const TRANSACTIONS_HEADING_ID = 'transactions-page-heading'
+
 function ToastCenter() {
-  const [toast, setToast] = useState<{ readonly message: string; readonly tone: ToastTone; readonly action?: ToastAction } | null>(null)
-  useEffect(() => {
-    let timer: ReturnType<typeof globalThis.setTimeout> | undefined
-    const receive = (event: Event) => {
-      const detail = (event as CustomEvent<{ message?: unknown; tone?: unknown; action?: Partial<ToastAction> }>).detail
-      if (typeof detail?.message !== 'string' || !detail.message.trim()) return
-      const tone: ToastTone = detail.tone === 'error' || detail.tone === 'info' ? detail.tone : 'success'
-      const action = typeof detail.action?.label === 'string' && typeof detail.action.onAction === 'function' ? { label: detail.action.label, onAction: detail.action.onAction } : undefined
-      setToast({ message: detail.message, tone, action })
-      if (timer) globalThis.clearTimeout(timer)
-      // A toast with an action stays longer so there is time to reach the button.
-      timer = globalThis.setTimeout(() => setToast(null), action ? 8000 : 2600)
-    }
-    globalThis.addEventListener(KAKEFLOW_TOAST_EVENT, receive)
-    return () => { globalThis.removeEventListener(KAKEFLOW_TOAST_EVENT, receive); if (timer) globalThis.clearTimeout(timer) }
-  }, [])
-  return <><AppUpdateMonitor enabled={platformClient.runtime === 'tauri'} />{toast && <div className={`global-toast global-toast-${toast.tone}${toast.action ? ' global-toast--action' : ''}`} role={toast.tone === 'error' ? 'alert' : 'status'}><span>{toast.tone === 'error' ? <X size={15} /> : <Check size={15} />}</span><p>{toast.message}</p>{toast.action && <button type="button" className="text-btn global-toast-action" onClick={() => { const { onAction } = toast.action ?? {}; setToast(null); onAction?.() }}>{toast.action.label}</button>}<button className="icon-btn" aria-label={localize("通知を閉じる")} onClick={() => setToast(null)}><X size={14} /></button></div>}</>
+  return <><AppUpdateMonitor enabled={platformClient.runtime === 'tauri'} /><GlobalToast /></>
 }
 
 function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: string; value: string; meta: string; trend?: string; icon: typeof TrendingUp; accent: string }) {
@@ -1007,7 +994,8 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
   useEffect(() => {
     const receiveOpenTransaction = (event: Event) => {
       const transactionId = (event as CustomEvent<{ transactionId?: unknown }>).detail?.transactionId
-      if (typeof transactionId === 'string' && transactionId) void openDetailRef.current(transactionId, null)
+      // Opened from outside the page, so there is no row to go back to: closing the panel focuses the page heading.
+      if (typeof transactionId === 'string' && transactionId) void openDetailRef.current(transactionId, document.getElementById(TRANSACTIONS_HEADING_ID))
     }
     globalThis.addEventListener('kakeflow:open-transaction', receiveOpenTransaction)
     return () => globalThis.removeEventListener('kakeflow:open-transaction', receiveOpenTransaction)
@@ -1122,7 +1110,7 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
   const manualBalanced = /^\d+$/.test(manualAmount) && Number.isSafeInteger(manualAmountValue) && manualAmountValue > 0 && Boolean(manualDebit) && Boolean(manualCredit) && manualDebit !== manualCredit
 
   return <>
-    <PageHeader eyebrow={localize("取引台帳")} title={localize("すべての取引")} description={localize("確定した取引と元データを一か所で管理します。")}>
+    <PageHeader eyebrow={localize("取引台帳")} title={localize("すべての取引")} description={localize("確定した取引と元データを一か所で管理します。")} headingId={TRANSACTIONS_HEADING_ID}>
       {desktop && <button className="primary-btn" onClick={() => setShowManual((value) => !value)}>{showManual ? localize("入力を閉じる") : localize("＋ 手入力取引")}</button>}
     </PageHeader>
     {showManual && <div className="manual-transaction-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !manualBusy) setShowManual(false) }}><section className="panel manual-transaction-dialog" role="dialog" aria-modal="true" aria-labelledby="manual-transaction-title"><div className="panel-head"><div><h2 id="manual-transaction-title">{localize("手入力取引（複式）")}</h2><p>{localize("借方と貸方を明示し、貸借差額が ¥0 の取引だけを確定台帳へ転記します。")}</p></div><button className="icon-btn" aria-label={localize("手動取引を閉じる")} disabled={manualBusy} onClick={() => setShowManual(false)}><X size={18} /></button></div><div className="manual-transaction-grid"><label>{localize("日付")}<input aria-label={localize("取引日")} type="date" value={manualDate} onChange={(event) => setManualDate(event.target.value)} /></label><label>{localize("取引種別")}<select aria-label={localize("手動取引種別")} value={manualType} onChange={(event) => setManualType(event.target.value as ManualTransactionTypeDto)}>{['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT'].map((type) => <option key={type} value={type}>{transactionTypeLabel(type, text)}</option>)}</select></label><label>{localize("支払先")}<input aria-label={localize("手動取引の支払先")} value={manualPayee} onChange={(event) => setManualPayee(event.target.value)} placeholder={localize("店舗・支払先")} /></label><label>{localize("摘要")}<input aria-label={localize("手動取引のメモ")} value={manualDescription} onChange={(event) => setManualDescription(event.target.value)} placeholder={localize("任意")} /></label><label className="manual-amount-field">{localize("金額 (JPY)")}<input aria-label={localize("手動取引の金額")} inputMode="numeric" value={manualAmount} onChange={(event) => setManualAmount(event.target.value)} placeholder="1500" /></label><fieldset className="compact-assignment"><legend>{localize("家族内の帰属")}</legend><select aria-label={localize("手動取引の家族内の帰属")} value={manualAttribution} onChange={(event) => setManualAttribution(event.target.value)}><option value="HOUSEHOLD">{localize("世帯共通")}</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select></fieldset><label className="manual-journal-side debit"><span>{localize("借方")}</span><select aria-label={localize("手動取引の借方口座")} value={manualDebit} onChange={(event) => setManualDebit(event.target.value)}><option value="">{localize("口座を選択")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><b>{manualAmountValue > 0 ? yen(manualAmountValue) : '—'}</b></label><label className="manual-journal-side credit"><span>{localize("貸方")}</span><select aria-label={localize("手動取引の貸方口座")} value={manualCredit} onChange={(event) => setManualCredit(event.target.value)}><option value="">{localize("口座を選択")}</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><b>{manualAmountValue > 0 ? yen(manualAmountValue) : '—'}</b></label><fieldset className="compact-assignment"><legend>{localize("表示区分")}</legend><select aria-label={localize("手動取引の表示区分")} value={manualAudience} onChange={(event) => setManualAudience(event.target.value)}><option value="SHARED">{localize("共有")}</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{localize("個人・")}{member.displayName}</option>)}</select></fieldset></div><p className="local-label-help">{localize("家族内帰属は分析対象、表示区分は端末内の整理ラベルです。「個人」も閲覧制限ではありません。")}</p><div className={`manual-balance-check${manualBalanced ? ' balanced' : ''}`}><span>{localize("貸借差額")}</span><strong>{manualBalanced ? '¥0 ✓' : localize("入力を確認")}</strong></div>{manualNotice && <p role="status">{manualNotice}</p>}<div className="manual-dialog-actions"><button className="secondary-btn" disabled={manualBusy} onClick={() => setShowManual(false)}>{localize("キャンセル")}</button><button className="primary-btn" disabled={manualBusy || !manualBalanced} onClick={() => void createManual()}>{manualBusy ? localize("転記中…") : localize("転記")}</button></div></section></div>}
