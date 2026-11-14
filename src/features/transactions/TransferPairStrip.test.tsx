@@ -89,4 +89,13 @@ describe('TransferPairStrip', () => {
     await waitFor(() => expect(client.decideTransferPair).toHaveBeenLastCalledWith(expect.objectContaining({ action: 'CLEAR' })))
     expect(onChanged).toHaveBeenCalledTimes(2)
   })
+
+  it('never shows an internal id for a history leg that is not among the loaded rows', async () => {
+    const client = fakeClient([decision('MERGED')])
+    render(<TransferPairStrip householdId="family" rows={[]} revision={0} onChanged={vi.fn()} client={client} />)
+    fireEvent.click(await screen.findByText(/確定・却下の履歴/))
+    expect(screen.getAllByText('表示範囲外または無効化済みの取引')).toHaveLength(2)
+    expect(screen.queryByText('e1')).not.toBeInTheDocument()
+    expect(screen.queryByText('i1')).not.toBeInTheDocument()
+  })
 })

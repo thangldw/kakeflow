@@ -60,4 +60,14 @@ describe('YenInput', () => {
     fireEvent.click(screen.getByRole('button', { name: '外部変更' }))
     expect((screen.getByLabelText('残高') as HTMLInputElement).value).toBe('777')
   })
+
+  it('reports whether the typed text is valid when asked', () => {
+    const onValidityChange = vi.fn()
+    render(<label>金額<YenInput value={0} onChange={() => {}} onValidityChange={onValidityChange} /></label>)
+    const field = screen.getByLabelText('金額')
+    fireEvent.change(field, { target: { value: '12a' } })
+    expect(onValidityChange).toHaveBeenLastCalledWith(false)
+    fireEvent.change(field, { target: { value: '12' } })
+    expect(onValidityChange).toHaveBeenLastCalledWith(true)
+  })
 })

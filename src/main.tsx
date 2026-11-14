@@ -4,6 +4,7 @@ import './styles.css'
 import './theme.css'
 import './features/import/importReview.css'
 import './ui-polish.css'
+import './features/simple/simpleMode.css'
 
 const runtimeOverride = import.meta.env.VITE_KAKEFLOW_RUNTIME
 const isPwaBuild = runtimeOverride === 'pwa'
