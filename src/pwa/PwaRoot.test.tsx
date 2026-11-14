@@ -672,6 +672,24 @@ describe('PWA Simple mode and language', () => {
     expect(screen.queryByRole('button', { name: 'Lock vault' })).not.toBeInTheDocument()
   })
 
+  it('sets the page language from the locale and marks the English classic screens as English', async () => {
+    browserLanguage('vi-VN')
+    const database = 'pwa-simple-html-lang'
+    await createVault(database)
+    await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+    const tabs = await screen.findByRole('navigation', { name: 'Trang chính' })
+    expect(document.documentElement.lang).toBe('vi')
+
+    fireEvent.click(within(tabs).getByRole('button', { name: 'Thêm' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sổ cái và chứng từ' }))
+    expect(await screen.findByRole('navigation', { name: 'PWA workflow' })).toBeInTheDocument()
+    const workspace = document.querySelector('.pwa-workspace')
+    expect(workspace).toHaveAttribute('lang', 'en')
+    // The localized way back keeps the page language.
+    expect(screen.getByRole('button', { name: /Về chế độ Đơn giản/u })).toHaveAttribute('lang', 'vi')
+    expect(document.documentElement.lang).toBe('vi')
+  })
+
   it('keeps the English vault status pills and Lock vault text', async () => {
     browserLanguage('en-US')
     await createVault('pwa-simple-english-chrome')

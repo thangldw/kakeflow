@@ -107,6 +107,11 @@ function randomId(prefix: string) {
  * The Simple/Full entry of one vault's household. Every PWA vault's household id is `household`, so the entry is
  * prefixed with the vault's database name: vaults on one device keep their own mode.
  */
+/** The `lang` value for a locale, as I18nProvider sets it on the root element. */
+function htmlLang(locale: string) {
+  return locale === 'ja' ? 'ja' : locale === 'vi' ? 'vi' : 'en'
+}
+
 function uiModeKey(databaseName: string, householdId: string) {
   return `${databaseName}:${householdId}`
 }
@@ -223,7 +228,9 @@ function PwaVaultRoot({
 }) {
   const session = usePwaClient(databaseName)
   // Subscribes to the language, so the setup form and the Simple shell follow a change at once.
-  const { text } = useI18n()
+  const { text, locale } = useI18n()
+  // The classic receipt, ledger, evidence and backup screens are English only; their few localized controls keep the page language.
+  const pageLang = htmlLang(locale)
   // Per device and household (every PWA vault's household id is `household`); absent means the classic screens.
   const [uiMode, setUiMode] = useState<UiMode>('full')
   // In Simple mode, a classic page opened from More is shown with the classic navigation and a way back.
@@ -517,7 +524,7 @@ function PwaVaultRoot({
       </div>
       {session.mode === 'unlocked' && <button className="pwa-quiet" type="button" onClick={lockVault}>{localize("保管庫に鍵をかける")}</button>}
     </header>
-    {serviceWorker.updateAvailable && <aside className="pwa-update" role="status">
+    {serviceWorker.updateAvailable && <aside className="pwa-update" role="status" lang="en">
       <span><strong>Update ready</strong> The new app shell will activate only at a safe boundary.</span>
       <button className="pwa-primary" type="button" disabled={!canActivateUpdate || serviceWorker.activating} onClick={serviceWorker.activateUpdate}>{serviceWorker.activating ? 'Activating…' : 'Apply update'}</button>
       <button className="pwa-quiet" type="button" onClick={serviceWorker.dismissUpdate}>Later</button>
@@ -567,17 +574,17 @@ function PwaVaultRoot({
         onActivity={() => setError(null)} />
     </>}
 
-    {session.mode === 'unlocked' && household && !showSimple && <div className="pwa-workspace">
+    {session.mode === 'unlocked' && household && !showSimple && <div className="pwa-workspace" lang="en">
       <nav className="pwa-navigation" aria-label="PWA workflow">
         {navigation.map((item) => <button key={item.id} type="button" aria-current={screen === item.id ? 'page' : undefined} onClick={() => setScreen(item.id)}>
           <span aria-hidden="true">{item.step}</span>{item.label}
         </button>)}
       </nav>
       <main className="pwa-content">
-        {classicVisit && <button className="pwa-quiet pwa-back-to-simple" type="button" onClick={() => setClassicVisit(false)}><span aria-hidden="true">← </span>{localize("かんたん表示に戻る")}</button>}
+        {classicVisit && <button className="pwa-quiet pwa-back-to-simple" type="button" lang={pageLang} onClick={() => setClassicVisit(false)}><span aria-hidden="true">← </span>{localize("かんたん表示に戻る")}</button>}
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
         {screen === 'overview' && <Overview household={household} summary={summary} transactions={transactions} onImport={() => setScreen('import')}
-          uiMode={uiMode} onUiModeChange={(mode) => { void switchUiMode(mode) }} />}
+          uiMode={uiMode} onUiModeChange={(mode) => { void switchUiMode(mode) }} pageLang={pageLang} />}
         {screen === 'sources' && connectorSummaries[0] && <div className="pwa-sources"><ManualConnectorControlCenter
           summary={connectorSummaries[0]}
           copy={pwaConnectorCopy}
@@ -609,13 +616,15 @@ function PwaVaultRoot({
   </div>
 }
 
-function Overview({ household, summary, transactions, onImport, uiMode, onUiModeChange }: {
+function Overview({ household, summary, transactions, onImport, uiMode, onUiModeChange, pageLang }: {
   readonly household: Household
   readonly summary: DashboardSummary | null
   readonly transactions: readonly Transaction[]
   readonly onImport: () => void
   readonly uiMode: UiMode
   readonly onUiModeChange: (mode: UiMode) => void
+  /** The page language, for the localized mode switch inside this English screen. */
+  readonly pageLang: string
 }) {
   return <section>
     <div className="pwa-page-head"><div><p className="pwa-eyebrow">{household.name} · JPY</p><h1>Household overview</h1></div><button className="pwa-primary" type="button" onClick={onImport}>Import receipt</button></div>
@@ -625,7 +634,7 @@ function Overview({ household, summary, transactions, onImport, uiMode, onUiMode
       <article><span>Ledger entries</span><strong>{summary?.transactionCount ?? 0}</strong></article>
     </div>
     <section className="pwa-panel"><h2>Recent postings</h2>{transactions.length === 0 ? <p>No postings yet. Import a receipt to start.</p> : transactions.slice(-4).reverse().map((transaction) => <div className="pwa-row" key={transaction.id}><span>{transaction.occurredOn} · {transaction.payee}</span><strong>{formatJpy(transaction.amountJpy)}</strong></div>)}</section>
-    <section className="pwa-panel pwa-mode-panel"><UiModeSwitch mode={uiMode} onChange={onUiModeChange} /></section>
+    <section className="pwa-panel pwa-mode-panel" lang={pageLang}><UiModeSwitch mode={uiMode} onChange={onUiModeChange} /></section>
   </section>
 }
 
