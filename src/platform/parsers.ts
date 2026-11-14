@@ -2320,7 +2320,7 @@ export function parseTransferPairDecisions(value: unknown): readonly TransferPai
   return value.map((item) => {
     const record = asRecord(item)
     if (typeof record.pairKey !== 'string' || typeof record.outTransactionId !== 'string' || typeof record.inTransactionId !== 'string'
-      || (record.state !== 'REJECTED' && record.state !== 'LINKED') || typeof record.decidedAt !== 'string') {
+      || (record.state !== 'REJECTED' && record.state !== 'LINKED' && record.state !== 'MERGED') || typeof record.decidedAt !== 'string') {
       throw new TypeError('transfer pair decision')
     }
     return { pairKey: record.pairKey, outTransactionId: record.outTransactionId, inTransactionId: record.inTransactionId, state: record.state, decidedAt: record.decidedAt }

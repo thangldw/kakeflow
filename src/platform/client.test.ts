@@ -1440,6 +1440,8 @@ describe('transfer pair decision commands', () => {
   })
 
   it('rejects malformed responses and is unavailable outside Tauri', async () => {
+    const merged = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...decision, state: 'MERGED' }] as T })
+    await expect(merged.listTransferPairDecisions('family')).resolves.toEqual([{ ...decision, state: 'MERGED' }])
     const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...decision, state: 'CLEARED' }] as T })
     await expect(bad.listTransferPairDecisions('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'transfer_pair_decisions_list' })
     const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })

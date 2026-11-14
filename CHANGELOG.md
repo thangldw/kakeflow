@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add "merge into one entry" for transfer pairs: one transfer journal on the paying transaction, the receiving transaction voided with its evidence kept and copied, and an exact undo that refuses if either side was edited afterwards (migration 0074).
 - Add "cover shortfall" to the envelope panel: move this month's budget between expense categories atomically (`budget_move`); the source can never be pushed into overspend.
 - Add a shared whole-yen input (thousands separators, 円 mark, invalid text flagged) to the budgets simulators.
 - Add own-account transfer review on the desktop Transactions page: possible pairs can be confirmed (both legs become calculation-excluded transfers, journals unchanged) or dismissed, with undo. Decisions are stored in a new append-only, device-local table (migration 0073).

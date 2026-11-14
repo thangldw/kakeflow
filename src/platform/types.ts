@@ -720,8 +720,8 @@ export interface TransactionDetailDto {
 }
 export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string; readonly calculationTarget: boolean }
 
-export type TransferPairStateDto = 'REJECTED' | 'LINKED'
-export type TransferPairActionDto = 'REJECT' | 'LINK' | 'CLEAR'
+export type TransferPairStateDto = 'REJECTED' | 'LINKED' | 'MERGED'
+export type TransferPairActionDto = 'REJECT' | 'LINK' | 'MERGE' | 'CLEAR'
 export interface TransferPairDecisionDto { readonly pairKey: string; readonly outTransactionId: string; readonly inTransactionId: string; readonly state: TransferPairStateDto; readonly decidedAt: string }
 export interface TransferPairDecisionInputDto { readonly householdId: string; readonly outTransactionId: string; readonly inTransactionId: string; readonly action: TransferPairActionDto }
 export interface SourceDocumentViewDto {

@@ -14,11 +14,15 @@ Status: implemented on this branch with the default decision (decisions are **no
 
 **Correction to the earlier draft of this section.** The draft proposed accepting a pair by calling the existing transaction update path on each leg. Reading `update_posted_transaction` showed two problems: two separate updates are not atomic, and a card-linked leg refuses a type change. Hence the dedicated atomic command above.
 
-**Accounting semantics to be aware of.** A confirmed pair is two transactions typed `TRANSFER` and excluded from calculations (the existing "calculation target" mechanism), not one merged transfer journal. The legs keep their original journals, so the earlier expense/income account postings still exist and are only excluded from household totals. Merging a pair into a single journal would delete a posted transaction and its evidence lineage, and was deliberately not done.
+**Accounting semantics to be aware of.** A *linked* pair is two transactions typed `TRANSFER` and excluded from calculations (the existing "calculation target" mechanism). The legs keep their original journals, so the earlier expense/income account postings still exist and are only excluded from household totals. A *merged* pair replaces them with one transfer journal (see below).
 
 **Known limits.** Proposals are computed from the rows currently loaded on the Transactions page, so a pair split across pages is not proposed. The strip was checked in a standalone Playwright render in light mode at 1100 px and 375 px; dark mode and the real Tauri window were not viewed. Because decisions are device-local, a pair rejected on one device can be proposed again on another; confirmed links replicate because they are ordinary ledger edits.
 
-**Still open.** Replicating rejections (Stage 2 sync); proposals beyond the loaded page; an explicit "merge into one journal" option.
+**Merge into one journal (implemented, owner request 2026-11-14).** `MERGE` makes the paying leg the single transfer journal (debit the receiving account, credit the paying account, calculation-excluded `TRANSFER`), voids the receiving leg instead of deleting it (its journal and evidence stay), copies the receiving leg's `transaction_sources` links to the surviving transaction, and stores a snapshot in the decision log (migration 0074 rebuilds the log to allow `MERGED` and a `snapshot_json` column; history and order are preserved). `CLEAR` is an exact undo and refuses, changing nothing, if the merged entries (compared by id, account, side and amount) or the voided leg were touched afterwards. Merge is refused for legs that are not simple two-account transactions (more than one money-account entry, wrong direction), and for everything `LINK` refuses.
+- **Why voiding is safe.** All 27 queries over `journal_entries` that aggregate or report filter on `transactions.status`; the other 37 are single-transaction lookups, integrity checks or tests, and there is no balance view. `calculation_target` is also set to 0 on the voided leg.
+- **Not verified.** How a second device applies the replicated change (a `VOID` status and rewritten journal arrive as ordinary ledger edits through the existing capture triggers; no cross-device test exists here). The transfer takes the paying leg's date; the receiving leg's date is preserved only on the voided row.
+
+**Still open.** Replicating rejections (Stage 2 sync); proposals beyond the loaded page.
 
 ## 2. Envelope assignment and credit-card payment envelopes (partly implemented)
 
