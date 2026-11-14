@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a Simple mode, switchable per household on the new More page or in Settings; existing households stay on Full and households created through onboarding start on Simple. It has a Home with the amount left to spend this month (budgets minus accrual spending, or income minus spending when no budget is set), the most over-budget category and the nearest savings goal with its monthly pace; a three-tap quick-add sheet (amount keypad, frequent category chips, Save) with an Edit action on the saved toast; five-entry navigation (Today, Transactions, Budget, Savings, More) as a bottom tab bar on narrow screens and in the sidebar on wide ones. Nothing in the ledger changes when switching modes.
 - Add credit-card payment envelopes to the envelope panel: per card, the cash set aside from budgeted card spending (reduced by card payments), the balance owed and the part not set aside. Read-only planning estimate backed by a new `envelope_card_activity_query` command.
 - Add "merge into one entry" for transfer pairs: one transfer journal on the paying transaction, the receiving transaction voided with its evidence kept and copied, and an exact undo that refuses if either side was edited afterwards (migration 0074).
 - Add "cover shortfall" to the envelope panel: move this month's budget between expense categories atomically (`budget_move`); the source can never be pushed into overspend.

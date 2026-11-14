@@ -8,6 +8,8 @@ interface YenInputProps {
   /** Show the 円 mark after the field (drawn with CSS so it is not part of the label text). */
   readonly suffix?: boolean
   readonly 'aria-label'?: string
+  /** Called on each keystroke with whether the typed text is a valid amount (invalid text never reaches onChange). */
+  readonly onValidityChange?: (valid: boolean) => void
 }
 
 /**
@@ -15,7 +17,7 @@ interface YenInputProps {
  * invalid text is flagged and never reaches the parent. Put it inside a label
  * as usual; the unit is a CSS pseudo-element so label-based queries still match.
  */
-export function YenInput({ value, onChange, allowNegative = false, suffix = true, 'aria-label': ariaLabel }: YenInputProps) {
+export function YenInput({ value, onChange, allowNegative = false, suffix = true, 'aria-label': ariaLabel, onValidityChange }: YenInputProps) {
   const [text, setText] = useState(() => formatYenText(value))
   const [focused, setFocused] = useState(false)
   const parsed = parseYenText(text, allowNegative)
@@ -39,6 +41,7 @@ export function YenInput({ value, onChange, allowNegative = false, suffix = true
         setText(event.target.value)
         const next = parseYenText(event.target.value, allowNegative)
         if (next != null) { reported.current = next; onChange(next) }
+        onValidityChange?.(next != null)
       }}
       onBlur={() => { setFocused(false); setText((current) => { const n = parseYenText(current, allowNegative); return n == null ? current : formatYenText(n) }) }}
     />
