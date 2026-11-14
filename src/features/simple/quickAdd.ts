@@ -34,11 +34,16 @@ function usageCount(usage: QuickAddUsage, categoryId: string): number {
   return Number.isFinite(count) && count > 0 ? count : 0
 }
 
+/** The catch-all expense category: `<household>-other-expense` in the desktop chart, `expense-other` in the PWA's. */
+function isOtherExpenseId(id: string): boolean {
+  return /(?:^|-)other-expense$/.test(id) || id === 'expense-other'
+}
+
 export function quickAddChoices(accounts: readonly AccountDto[], kind: QuickAddKind, usage: QuickAddUsage): QuickAddChoices {
   const allCategories = categoriesFor(accounts, kind)
   const payingAccounts = payingAccountsFor(accounts, kind)
 
-  const otherAccount = kind === 'EXPENSE' ? allCategories.find((account) => account.id.endsWith('-other-expense')) : undefined
+  const otherAccount = kind === 'EXPENSE' ? allCategories.find((account) => isOtherExpenseId(account.id)) : undefined
   // Array#sort is stable, so ties keep account order. Counts for ids that are not categories are never read.
   const mostUsed = allCategories
     .filter((account) => account !== otherAccount)

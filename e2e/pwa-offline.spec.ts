@@ -56,6 +56,9 @@ test('posts a synthetic receipt, reloads offline, and restores an encrypted arch
   await page.getByLabel('Money account').fill('Synthetic Cash')
   await page.getByLabel('Expense account').fill('Synthetic Groceries')
   await page.getByRole('button', { name: 'Save local setup' }).click()
+  // A new vault starts in Simple mode; this journey runs on the classic screens, reached from More.
+  await page.getByRole('navigation', { name: 'Main pages' }).getByRole('button', { name: 'More' }).click()
+  await page.getByRole('button', { name: 'Full' }).click()
   await expect(page.getByRole('heading', { name: 'Household overview' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Lock vault' }).click()

@@ -39,6 +39,7 @@ vi.mock('../../platform', async () => {
 })
 
 import App from '../../App'
+import { platformClient } from '../../platform'
 
 const FAMILY = { id: 'family', name: '田中家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }
 const OTHER = { id: 'other', name: '実家', baseCurrency: 'JPY', createdAt: '2026-07-01T00:00:00Z' }
@@ -136,7 +137,7 @@ describe('Simple mode in the app shell', () => {
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
     expect(screen.queryByRole('button', { name: 'テンプレート: キャッシュフロー' })).not.toBeInTheDocument()
-    expect(within(tabBar()).getAllByRole('button').map((button) => button.textContent)).toEqual(['今日', '取引', '予算管理', '貯金', 'そのほか'])
+    expect(within(tabBar()).getAllByRole('button').map((button) => button.textContent)).toEqual(['今日', '取引一覧', '予算管理', '貯蓄管理', 'そのほか'])
     expect(screen.queryByRole('group', { name: '計上基準' })).not.toBeInTheDocument()
     expect(screen.queryByText('範囲:')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '前月' })).toBeInTheDocument()
@@ -152,18 +153,18 @@ describe('Simple mode in the app shell', () => {
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
     const entries = within(sidebar()).getAllByRole('button').filter((button) => button.classList.contains('nav-item') && button.closest('nav'))
-    expect(entries.map((button) => button.getAttribute('aria-label'))).toEqual(['今日', '取引', '予算管理', '貯金', 'そのほか'])
+    expect(entries.map((button) => button.getAttribute('aria-label'))).toEqual(['今日', '取引一覧', '予算管理', '貯蓄管理', 'そのほか'])
     expect(within(sidebar()).getByRole('button', { name: '今日' })).toHaveAttribute('aria-current', 'page')
     expect(within(sidebar()).queryByRole('button', { name: 'インポート' })).not.toBeInTheDocument()
 
-    fireEvent.click(within(sidebar()).getByRole('button', { name: '取引' }))
-    expect(within(sidebar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(within(sidebar()).getByRole('button', { name: '取引一覧' }))
+    expect(within(sidebar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
     expect(within(sidebar()).getByRole('button', { name: '今日' })).not.toHaveAttribute('aria-current')
-    expect(within(tabBar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
+    expect(within(tabBar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
 
     fireEvent.click(within(sidebar()).getByRole('button', { name: 'サイドバーを折りたたむ' }))
     expect(sidebar()).toHaveClass('sidebar--collapsed')
-    for (const name of ['今日', '取引', '予算管理', '貯金', 'そのほか']) expect(within(sidebar()).getByRole('button', { name })).toBeInTheDocument()
+    for (const name of ['今日', '取引一覧', '予算管理', '貯蓄管理', 'そのほか']) expect(within(sidebar()).getByRole('button', { name })).toBeInTheDocument()
   })
 
   it('opens the quick-add sheet from the top bar instead of navigating', async () => {
@@ -195,8 +196,13 @@ describe('Simple mode in the app shell', () => {
     fireEvent.click(within(toast).getByRole('button', { name: '修正' }))
     const savedId = (desktop.createManualTransaction.mock.calls[0][0] as { id: string }).id
     await waitFor(() => expect(desktop.getTransactionDetail).toHaveBeenCalledWith('family', savedId))
-    expect(await screen.findByRole('dialog', { name: 'お弁当' })).toBeInTheDocument()
-    expect(within(sidebar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
+    const detail = await screen.findByRole('dialog', { name: 'お弁当' })
+    expect(within(sidebar()).getByRole('button', { name: '取引一覧' })).toHaveAttribute('aria-current', 'page')
+
+    // There is no row that opened the panel, so closing it returns focus to the Transactions heading, not to body.
+    fireEvent.click(within(detail).getByRole('button', { name: 'キャンセル' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'お弁当' })).not.toBeInTheDocument())
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'すべての取引' }))
   })
 
   it('labels a saved earlier month neutrally and goes back to this month from the Home', async () => {
@@ -205,10 +211,15 @@ describe('Simple mode in the app shell', () => {
     localStorage.setItem('kakeflow.selectedMonth', '2020-01')
     render(<App />)
     const label = await screen.findByRole('heading', { name: '残り金額' })
-    expect(label.closest('section')).toHaveTextContent('2020-01')
+    // The Home names the month exactly as the top bar's month button does.
+    const topBarMonth = () => document.querySelector<HTMLButtonElement>('.period-stepper button[aria-haspopup="dialog"]')!.textContent
+    expect(topBarMonth()).toBe('2020年1月')
+    expect(label.closest('section')!.querySelector('.simple-hero-month')).toHaveTextContent(/^2020年1月$/)
     fireEvent.click(screen.getByRole('button', { name: '今月に戻る' }))
     expect(await screen.findByRole('heading', { name: '今月あと使える金額' })).toBeInTheDocument()
-    expect(localStorage.getItem('kakeflow.selectedMonth')).not.toBe('2020-01')
+    const tokyoMonth = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).format(new Date())
+    expect(localStorage.getItem('kakeflow.selectedMonth')).toBe(tokyoMonth)
+    expect(topBarMonth()).toBe(new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long' }).format(new Date(`${tokyoMonth}-01T12:00:00`)))
     expect(screen.queryByRole('button', { name: '今月に戻る' })).not.toBeInTheDocument()
   })
 
@@ -256,11 +267,11 @@ describe('Simple mode in the app shell', () => {
       expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
       expect(within(tabBar()).getByRole('button', { name: '予算管理' })).toHaveAttribute('aria-current', 'page')
 
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
       expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.getElementById('goals'))
-      expect(within(tabBar()).getByRole('button', { name: '貯金' })).toHaveAttribute('aria-current', 'page')
-      expect(within(sidebar()).getByRole('button', { name: '貯金' })).toHaveAttribute('aria-current', 'page')
+      expect(within(tabBar()).getByRole('button', { name: '貯蓄管理' })).toHaveAttribute('aria-current', 'page')
+      expect(within(sidebar()).getByRole('button', { name: '貯蓄管理' })).toHaveAttribute('aria-current', 'page')
 
       fireEvent.click(within(tabBar()).getByRole('button', { name: '予算管理' }))
       expect(within(tabBar()).getByRole('button', { name: '予算管理' })).toHaveAttribute('aria-current', 'page')
@@ -273,7 +284,7 @@ describe('Simple mode in the app shell', () => {
     storeMode({ 'demo-tanaka-family': 'simple' })
     render(<App />)
     await waitFor(() => expect(simpleHome()).not.toBeNull())
-    fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+    fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
     expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
   })
 
@@ -308,7 +319,7 @@ describe('Simple mode in the app shell', () => {
       render(<App />)
       await waitFor(() => expect(simpleHome()).not.toBeNull())
       requests.length = 0
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(requests).toContain('goals'))
       await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
       expect(requests).toContain('top')
@@ -328,7 +339,7 @@ describe('Simple mode in the app shell', () => {
     try {
       render(<App />)
       await waitFor(() => expect(simpleHome()).not.toBeNull())
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(requests.at(-1)).toBe('goals'))
       requests.length = 0
 
@@ -338,7 +349,7 @@ describe('Simple mode in the app shell', () => {
       expect(within(tabBar()).getByRole('button', { name: '予算管理' })).toHaveAttribute('aria-current', 'page')
 
       // Savings still scrolls to the goals for every new tap.
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(requests.at(-1)).toBe('goals'))
     } finally {
       delete (Element.prototype as Partial<Element>).scrollIntoView
@@ -365,7 +376,7 @@ describe('Simple mode in the app shell', () => {
       desktop.listBudgets.mockImplementation(async (householdId: string, month: string) => { await budgetsLoaded; return budgetsImpl?.(householdId, month) })
       desktop.listSavingsGoals.mockImplementation(async () => { await goalsLoaded; return [GOAL] })
 
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       expect(await screen.findByRole('heading', { name: '予算・貯蓄目標' })).toBeInTheDocument()
       await new Promise((resolve) => globalThis.setTimeout(resolve, 30))
       expect(scrolled).toEqual([])
@@ -387,7 +398,7 @@ describe('Simple mode in the app shell', () => {
       expect(scrolled).toEqual([])
       const loadsBefore = desktop.listBudgets.mock.calls.length
 
-      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯金' }))
+      fireEvent.click(within(tabBar()).getByRole('button', { name: '貯蓄管理' }))
       await waitFor(() => expect(scrolled).toHaveLength(1))
       expect(scrolled[0]).toBe(document.getElementById('goals'))
       expect(desktop.listBudgets.mock.calls.length).toBe(loadsBefore)
@@ -452,6 +463,40 @@ describe('Simple mode in the app shell', () => {
     fireEvent.click(within(screen.getByRole('group', { name: '表示モード' })).getByRole('button', { name: '詳細' }))
     await waitFor(() => expect(desktop.queryDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ accountGroupId: 'g1', attributionScope: { kind: 'MEMBER', memberId: 'taro' } })))
     expect(document.querySelector('.attribution-scope-disclosure')).not.toBeNull()
+  })
+
+  it('skips the Full dashboard reads in Simple mode, keeps the shared ones and runs all of them again in Full', async () => {
+    setUpDesktop()
+    // Not part of the desktop overrides, so they reach the preview client; spy on them through the mocked module.
+    const importSummary = vi.spyOn(platformClient, 'importSummary')
+    const listCardSettlements = vi.spyOn(platformClient, 'listCardSettlements')
+    storeMode({ family: 'simple' })
+    render(<App />)
+    await screen.findByRole('heading', { name: '今月あと使える金額' })
+    await waitFor(() => expect(importSummary).toHaveBeenCalledWith('family'))
+    await waitFor(() => expect(listCardSettlements).toHaveBeenCalledWith('family'))
+
+    // The shell's four recent rows are never read; every dashboard read comes from the Simple Home's own loader,
+    // which reads the budgets of the shown month once per load.
+    const shownMonth = (desktop.queryDashboard.mock.calls[0][0] as { month: string }).month
+    const homeLoads = () => desktop.listBudgets.mock.calls.filter(([, month]) => month === shownMonth).length
+    expect(desktop.queryTransactions).not.toHaveBeenCalled()
+    expect(desktop.queryDashboard.mock.calls.length).toBe(homeLoads())
+
+    // A change of month reruns the shell batch: still without the Full reads.
+    const summaryCalls = importSummary.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: '前月' }))
+    await screen.findByRole('heading', { name: '残り金額' })
+    await waitFor(() => expect(importSummary.mock.calls.length).toBeGreaterThan(summaryCalls))
+    expect(desktop.queryTransactions).not.toHaveBeenCalled()
+
+    fireEvent.click(within(tabBar()).getByRole('button', { name: 'そのほか' }))
+    fireEvent.click(within(screen.getByRole('group', { name: '表示モード' })).getByRole('button', { name: '詳細' }))
+    await waitFor(() => expect(desktop.queryTransactions).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', page: 1, pageSize: 4 })))
+    await waitFor(() => expect(desktop.queryDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ householdId: 'family', accountingBasis: 'ACCRUAL' })))
+    // The Full Home leaves its loading state with the dashboard figures.
+    expect(await screen.findByRole('button', { name: 'テンプレート: キャッシュフロー' })).toBeInTheDocument()
+    expect(document.querySelector('.dashboard-loading')).toBeNull()
   })
 
   it('stores simple for a household created through onboarding', async () => {

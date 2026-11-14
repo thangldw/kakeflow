@@ -1,14 +1,44 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const isPwaBuild = process.env.VITE_KAKEFLOW_RUNTIME === 'pwa'
 
+const sourcePath = (path: string) => fileURLToPath(new URL(path, import.meta.url)).replaceAll('\\', '/')
+
+// The full desktop catalogs and the provider-name table hold connector and provider words that the production PWA
+// contract (scripts/pwa-contract.test.ts) forbids. In the PWA build, every import of them resolves to the subsets
+// that `npm run build:pwa-catalog` writes, or to an empty catalog, so src/i18n.tsx needs no PWA branch. The desktop
+// build never uses this plugin.
+const emptyCatalogId = '\0kakeflow-pwa-empty-catalog'
+const pwaCatalogReplacements = new Map([
+  [sourcePath('./src/locales/en.generated.json'), sourcePath('./src/pwa/locales/en.subset.json')],
+  [sourcePath('./src/locales/vi.generated.json'), sourcePath('./src/pwa/locales/vi.subset.json')],
+  [sourcePath('./src/locales/provider-names.json'), emptyCatalogId],
+])
+
+function pwaCatalogSubset(): Plugin {
+  return {
+    name: 'kakeflow-pwa-catalog-subset',
+    enforce: 'pre',
+    async resolveId(source, importer, options) {
+      if (!source.endsWith('.json')) return null
+      const resolved = await this.resolve(source, importer, { ...options, skipSelf: true })
+      if (!resolved) return null
+      return pwaCatalogReplacements.get(resolved.id.replaceAll('\\', '/')) ?? null
+    },
+    load(id) {
+      return id === emptyCatalogId ? 'export default {}' : null
+    },
+  }
+}
+
 export default defineConfig({
   base: isPwaBuild ? '/kakeflow/app/' : '/',
   plugins: [
     react(),
+    ...(isPwaBuild ? [pwaCatalogSubset()] : []),
     ...(isPwaBuild ? [VitePWA({
       registerType: 'prompt',
       injectRegister: false,

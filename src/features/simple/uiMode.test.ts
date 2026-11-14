@@ -57,6 +57,40 @@ describe('ui mode storage', () => {
   })
 })
 
+describe('ui mode storage with prototype-like household ids', () => {
+  it('round-trips __proto__ and constructor as plain households without polluting Object.prototype', () => {
+    writeUiMode('a', 'simple')
+    writeUiMode('__proto__', 'simple')
+    writeUiMode('constructor', 'simple')
+    expect(readUiMode('__proto__')).toBe('simple')
+    expect(readUiMode('constructor')).toBe('simple')
+    expect(readUiMode('a')).toBe('simple')
+    expect(readUiMode('toString')).toBe('full')
+    expect(Object.keys(JSON.parse(localStorage.getItem(MODE_KEY) ?? '{}')).sort()).toEqual(['__proto__', 'a', 'constructor'])
+    expect(({} as Record<string, unknown>).simple).toBeUndefined()
+    expect(Object.prototype).not.toHaveProperty('a')
+    expect(typeof ({}).constructor).toBe('function')
+
+    writeUiMode('__proto__', 'full')
+    expect(readUiMode('__proto__')).toBe('full')
+    expect(readUiMode('constructor')).toBe('simple')
+    expect(readUiMode('a')).toBe('simple')
+  })
+
+  it('reads a stored "__proto__" key as data, not as the prototype', () => {
+    localStorage.setItem(MODE_KEY, '{"__proto__":"simple","b":"simple"}')
+    expect(readUiMode('__proto__')).toBe('simple')
+    expect(readUiMode('b')).toBe('simple')
+    expect(readUiMode('c')).toBe('full')
+    expect(Object.prototype).not.toHaveProperty('b')
+  })
+
+  it('does not report simple for a household without an entry just because the name exists on Object.prototype', () => {
+    writeUiMode('a', 'simple')
+    for (const id of ['__proto__', 'constructor', 'hasOwnProperty', 'toString']) expect(readUiMode(id)).toBe('full')
+  })
+})
+
 describe('quick-add usage storage', () => {
   it('starts empty', () => {
     expect(readQuickAddUsage('a')).toEqual({ categoryCounts: {}, lastPayingAccountId: null })
@@ -91,6 +125,32 @@ describe('quick-add usage storage', () => {
     // 1e999 parses to Infinity, which must be rejected as non-finite.
     localStorage.setItem(usageKey('a'), '{"categoryCounts":{"ok":3,"neg":-1,"frac":1.5,"str":"2","nan":null,"inf":1e999},"lastPayingAccountId":"cash"}')
     expect(readQuickAddUsage('a')).toEqual({ categoryCounts: { ok: 3 }, lastPayingAccountId: 'cash' })
+  })
+
+  it('counts __proto__ and constructor category ids as plain data and keeps other households', () => {
+    recordQuickAddUse('a', 'food', 'cash')
+    recordQuickAddUse('__proto__', '__proto__', 'cash')
+    recordQuickAddUse('__proto__', '__proto__', 'card')
+    recordQuickAddUse('__proto__', 'constructor', 'card')
+    recordQuickAddUse('constructor', 'constructor', 'bank')
+    const usage = readQuickAddUsage('__proto__')
+    expect(Object.getPrototypeOf(usage.categoryCounts)).toBe(Object.prototype)
+    expect(Object.entries(usage.categoryCounts).sort()).toEqual([['__proto__', 2], ['constructor', 1]])
+    expect(usage.lastPayingAccountId).toBe('card')
+    expect(readQuickAddUsage('constructor')).toEqual({ categoryCounts: { constructor: 1 }, lastPayingAccountId: 'bank' })
+    expect(readQuickAddUsage('a')).toEqual({ categoryCounts: { food: 1 }, lastPayingAccountId: 'cash' })
+    expect(localStorage.getItem(usageKey('__proto__'))).not.toBeNull()
+    expect(({} as Record<string, unknown>).food).toBeUndefined()
+    expect(typeof ({}).constructor).toBe('function')
+  })
+
+  it('reads a stored "__proto__" category count without changing the prototype', () => {
+    localStorage.setItem(usageKey('a'), '{"categoryCounts":{"__proto__":4,"food":1},"lastPayingAccountId":"cash"}')
+    const usage = readQuickAddUsage('a')
+    expect(Object.hasOwn(usage.categoryCounts, '__proto__')).toBe(true)
+    expect(usage.categoryCounts['__proto__']).toBe(4)
+    expect(usage.categoryCounts.food).toBe(1)
+    expect(Object.getPrototypeOf(usage.categoryCounts)).toBe(Object.prototype)
   })
 
   it('never throws when storage throws', () => {
