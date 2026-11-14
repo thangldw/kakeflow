@@ -49,6 +49,18 @@ describe('createToastDismissTimer', () => {
     expect(expire).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps the time that was left after a brief pause, so a quick pass never shortens the toast', () => {
+    const expire = vi.fn()
+    const timer = createToastDismissTimer(expire)
+    timer.start(8000)
+    timer.pause('hover')
+    timer.resume('hover')
+    vi.advanceTimersByTime(7900)
+    expect(expire).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(100)
+    expect(expire).toHaveBeenCalledTimes(1)
+  })
+
   it('stays paused until both hover and focus have ended', () => {
     const expire = vi.fn()
     const timer = createToastDismissTimer(expire, 1000)
