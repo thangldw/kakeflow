@@ -73,7 +73,7 @@ Top to bottom:
    - `remaining <= 0` renders as "Over by ¥X" with the danger tone, not as a negative hero number.
    - Progress bar: `monthlyExpense / totalBudget`, clamped to 100% visually.
    - **No budgets set:** show `income - expense` for the month labelled as such, and a prominent "Set a monthly limit" action that opens the existing budgets page. The label must make clear this is not a budget.
-2. **Savings goal.** The goal with the nearest `targetDate` among `status` active goals: name, `savedJpy / targetJpy` bar, and "need ¥X per month to finish on time" computed as `ceil((targetJpy - savedJpy) / monthsUntilTargetDate)` (at least 1 month). No goals: a single prompt to create one (existing `createSavingsGoal`).
+2. **Savings goal.** The goal with the nearest `targetDate` among `status` active goals: name, `savedJpy / targetJpy` bar, and "need ¥X per month to finish on time" taken from the existing `goalPace` helper, so it matches the Budget page. No goals: a single prompt to create one (existing `createSavingsGoal`).
 3. **Needs attention.** At most one row: the most overspent category ("Entertainment is ¥4,500 over"), linking to the budgets page. Absent when nothing is over.
 4. **Add button.** A persistent "+ Add spending" button (floating on narrow screens), available on every page in Simple mode.
 
@@ -109,6 +109,19 @@ In Simple mode the top bar hides the accounting-basis toggle and the account-sco
 - Layouts work at 360px width; side gutter at least 16px; touch targets at least 44px (coarse pointer); text at least 12px; contrast per existing tokens.
 - Progress bars expose a text alternative; the over-budget state is not conveyed by color alone.
 - Reduced-motion respected.
+
+## Details settled during review
+
+These close the questions an independent read of this document raised. Items marked (call) are my decisions, to be checked.
+
+- **Unbudgeted spending (call).** The hero follows the product owner's rule: budget total minus the month's actual spending (all expense categories). When part of the spending is in categories without a budget, the sub-line adds "of which ¥X has no budget", so the figure reconciles with the Budget page, which sums only budgeted rows (`totalActual / totalBudget`).
+- **Budgets are per month and are not copied forward (verified in code).** A new month would otherwise start in the "no budget" state. (call) When the selected month has no budgets, Simple Home reads the most recent earlier month that has budgets (up to 12 months back), shows "using last month's budget" and does not write anything. The fallback to "income minus expense" applies only when no month has budgets. Envelope carry-over (前月繰越) is not part of the hero; it stays in Full mode.
+- **Savings goals (call).** `savedJpy` is a manually entered figure today, not derived from the ledger. The Home goal card reuses the existing `goalPace` helper (same wording and numbers as the Budget page) and offers an inline "update saved amount" field using the existing `updateSavingsGoal`. Linking goals to transactions or accounts is out of scope. Quick-add stays Expense/Income only.
+- **`uiMode` default (call).** An absent key means `full`. `simple` is written only when a household is created through the onboarding flow and when the user switches. A second device, a restored backup or a cleared browser therefore starts on Full; the switch is one tap away in Settings and under More.
+- **Accounts in quick-add (call).** Categories: active accounts with `accountKind === 'EXPENSE'` (the same list the Budget page uses for its category picker). "Other" maps to the household's `-other-expense` default account if present, else the last category in the list. Paying accounts: `ASSET` accounts with subtype `BANK`, `CASH` or `WALLET`, plus `LIABILITY` accounts with subtype `CREDIT_CARD`; only `CREDIT_CARD` produces `CARD_PURCHASE`. Income: Dr the chosen asset account, Cr an `INCOME` account (chips, same rules). If a household has no expense or no payable account the sheet shows an empty state with a link to account settings and does not create accounts.
+- **Runtimes (call).** Simple mode is part of `App.tsx` and therefore also renders in the web preview runtime with sample data, which is what component tests and the 360px screenshots use. Local usage counts and the last paying account are stored in `localStorage` per household (`kakeflow.simpleUsage.<householdId>`), read defensively, never synced.
+- **Month selector.** It stays in the top bar in Simple mode, so past-month views stay reachable.
+- **Scope filters.** Simple mode always reads the whole household (attribution scope ALL, no account group) and says so by showing the household name only. Saved scopes are not changed and apply again when the user switches back to Full.
 
 ## Verification
 
