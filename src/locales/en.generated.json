@@ -1267,6 +1267,8 @@
   "銀行": "bank",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Manage your banks, wallets, cards, income and spending categories.",
   "銀行CSVの取込先銀行口座を選択してください。": "Please select the bank account to import the bank CSV to.",
+  "給与収入": "Salary",
+  "食料品の買い物": "Groceries",
   "カテゴリーごとの月予算": "Monthly budget by category",
   "支出カテゴリーがまだありません": "No spending categories yet",
   "予算を保存する": "Save budget",
