@@ -40,4 +40,4 @@ The maintained style load order is `styles.css`, `theme.css`, feature CSS, then 
 - Do not commit generated installers, local databases, credentials or updater private keys.
 - Do not add separate source/release repositories, design comparison dumps or one-off campaign pages to the canonical tree.
 
-By contributing, you agree that your contribution is licensed under the repository's MIT License.
+By contributing, you agree that your contribution is licensed under the repository's Apache License 2.0.
