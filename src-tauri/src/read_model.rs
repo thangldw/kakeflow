@@ -2581,6 +2581,242 @@ pub fn upsert_monthly_category_budget(
         .ok_or(RepositoryError::Unavailable)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveMonthlyBudgetInput {
+    pub household_id: String,
+    pub month: String,
+    pub from_category_account_id: String,
+    pub to_category_account_id: String,
+    pub amount_jpy: i64,
+}
+
+/// Moves assigned budget between two expense categories of one month in a
+/// single transaction (covering an overspent category). The source can give up
+/// at most what it still has left this month, so the move never creates a new
+/// overspend; carry-over from earlier months is not touched.
+pub fn move_monthly_budget(
+    connection: &Connection,
+    input: &MoveMonthlyBudgetInput,
+) -> Result<Vec<MonthlyCategoryBudgetDto>, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.from_category_account_id, MAX_LOOKUP_ID_LEN)?;
+    validate_id(&input.to_category_account_id, MAX_LOOKUP_ID_LEN)?;
+    validate_month(connection, &input.month)?;
+    validate_jpy(input.amount_jpy, false)?;
+    ensure_household_exists(connection, &input.household_id)?;
+    if input.from_category_account_id == input.to_category_account_id {
+        return Err(RepositoryError::InvalidInput(
+            "Choose two different categories",
+        ));
+    }
+
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    for category in [
+        &input.from_category_account_id,
+        &input.to_category_account_id,
+    ] {
+        let active_expense = transaction
+            .query_row(
+                "SELECT 1 FROM accounts
+                 WHERE id = ?1 AND household_id = ?2
+                   AND account_kind = 'EXPENSE' AND is_archived = 0",
+                params![category, input.household_id],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(map_database_error)?
+            .is_some();
+        if !active_expense {
+            return Err(RepositoryError::NotFound);
+        }
+    }
+    let current = list_monthly_category_budgets(&transaction, &input.household_id, &input.month)?;
+    let source = current
+        .iter()
+        .find(|budget| budget.category_account_id == input.from_category_account_id)
+        .ok_or(RepositoryError::NotFound)?;
+    let movable = source.budget_jpy.min(source.remaining_jpy.max(0));
+    if input.amount_jpy > movable {
+        return Err(RepositoryError::InvalidInput(
+            "The source category does not have that much budget left",
+        ));
+    }
+    let target_budget = current
+        .iter()
+        .find(|budget| budget.category_account_id == input.to_category_account_id)
+        .map_or(0, |budget| budget.budget_jpy);
+    let new_target = target_budget
+        .checked_add(input.amount_jpy)
+        .ok_or(RepositoryError::InvalidInput("Invalid JPY amount"))?;
+    validate_jpy(new_target, true)?;
+
+    transaction
+        .execute(
+            "UPDATE monthly_category_budgets
+             SET budget_jpy = budget_jpy - ?4,
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE household_id = ?1 AND month = ?2 AND category_account_id = ?3",
+            params![
+                input.household_id,
+                input.month,
+                input.from_category_account_id,
+                input.amount_jpy
+            ],
+        )
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO monthly_category_budgets
+               (household_id, month, category_account_id, budget_jpy)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(household_id, month, category_account_id) DO UPDATE SET
+               budget_jpy = excluded.budget_jpy,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            params![
+                input.household_id,
+                input.month,
+                input.to_category_account_id,
+                new_target
+            ],
+        )
+        .map_err(map_database_error)?;
+    transaction.commit().map_err(map_database_error)?;
+    list_monthly_category_budgets(connection, &input.household_id, &input.month)
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvelopeCardDto {
+    pub card_account_id: String,
+    pub card_name: String,
+    /// Card liability balance at the end of the month, all posted transactions.
+    pub owed_jpy: i64,
+    /// Card payments (debits on the card in `CARD_PAYMENT` transactions) during the month.
+    pub payments_jpy: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvelopeCardActivityItemDto {
+    pub category_account_id: String,
+    pub card_account_id: String,
+    /// Expense debits minus credits (refunds) put on this card in the month.
+    pub amount_jpy: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvelopeCardActivityDto {
+    pub month: String,
+    pub cards: Vec<EnvelopeCardDto>,
+    pub activities: Vec<EnvelopeCardActivityItemDto>,
+}
+
+/// Read-only inputs for card payment envelopes. Activity uses the same filters
+/// as the budget actuals (posted, calculation-included, not a card payment,
+/// expense accounts) and only counts transactions whose single money-account
+/// entry is one credit card, so mixed cash and card postings are never guessed at.
+pub fn envelope_card_activity(
+    connection: &Connection,
+    household_id: &str,
+    month: &str,
+) -> Result<EnvelopeCardActivityDto, RepositoryError> {
+    validate_id(household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_month(connection, month)?;
+    ensure_household_exists(connection, household_id)?;
+    let month_start = format!("{month}-01");
+
+    let activities = {
+        let mut statement = connection
+            .prepare(
+                "WITH card_tx AS (
+                   SELECT t.id AS transaction_id, MAX(a.id) AS card_id
+                   FROM transactions t
+                   JOIN journal_entries je ON je.transaction_id = t.id
+                   JOIN accounts a ON a.id = je.account_id
+                   WHERE t.household_id = ?1 AND t.status = 'POSTED'
+                     AND t.calculation_target = 1
+                     AND t.transaction_type != 'CARD_PAYMENT'
+                     AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
+                     AND a.account_kind IN ('ASSET', 'LIABILITY')
+                   GROUP BY t.id
+                   HAVING COUNT(*) = 1
+                      AND MAX(a.account_kind) = 'LIABILITY'
+                      AND MAX(a.account_subtype) = 'CREDIT_CARD'
+                 )
+                 SELECT je.account_id, card_tx.card_id,
+                        SUM(CASE je.entry_side WHEN 'DEBIT' THEN je.amount_jpy ELSE -je.amount_jpy END)
+                 FROM card_tx
+                 JOIN journal_entries je ON je.transaction_id = card_tx.transaction_id
+                 JOIN accounts expense ON expense.id = je.account_id
+                   AND expense.account_kind = 'EXPENSE' AND expense.household_id = ?1
+                 GROUP BY je.account_id, card_tx.card_id
+                 ORDER BY je.account_id, card_tx.card_id",
+            )
+            .map_err(map_database_error)?;
+        let rows = statement
+            .query_map(params![household_id, month_start], |row| {
+                Ok(EnvelopeCardActivityItemDto {
+                    category_account_id: row.get(0)?,
+                    card_account_id: row.get(1)?,
+                    amount_jpy: row.get(2)?,
+                })
+            })
+            .map_err(map_database_error)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_database_error)?
+    };
+
+    let mut cards = {
+        let mut statement = connection
+            .prepare(
+                "SELECT a.id, a.name,
+                   COALESCE(SUM(CASE WHEN t.id IS NOT NULL AND t.occurred_on < date(?2, '+1 month')
+                     THEN CASE je.entry_side WHEN 'CREDIT' THEN je.amount_jpy ELSE -je.amount_jpy END
+                   END), 0),
+                   COALESCE(SUM(CASE WHEN t.transaction_type = 'CARD_PAYMENT'
+                       AND t.occurred_on >= ?2 AND t.occurred_on < date(?2, '+1 month')
+                       AND je.entry_side = 'DEBIT' THEN je.amount_jpy END), 0)
+                 FROM accounts a
+                 LEFT JOIN journal_entries je ON je.account_id = a.id
+                 LEFT JOIN transactions t ON t.id = je.transaction_id
+                   AND t.household_id = a.household_id AND t.status = 'POSTED'
+                 WHERE a.household_id = ?1 AND a.account_kind = 'LIABILITY'
+                   AND a.account_subtype = 'CREDIT_CARD'
+                 GROUP BY a.id, a.name
+                 ORDER BY a.name, a.id",
+            )
+            .map_err(map_database_error)?;
+        let rows = statement
+            .query_map(params![household_id, month_start], |row| {
+                Ok(EnvelopeCardDto {
+                    card_account_id: row.get(0)?,
+                    card_name: row.get(1)?,
+                    owed_jpy: row.get(2)?,
+                    payments_jpy: row.get(3)?,
+                })
+            })
+            .map_err(map_database_error)?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(map_database_error)?
+    };
+    cards.retain(|card| {
+        card.owed_jpy != 0
+            || card.payments_jpy != 0
+            || activities
+                .iter()
+                .any(|item| item.card_account_id == card.card_account_id)
+    });
+    Ok(EnvelopeCardActivityDto {
+        month: month.to_owned(),
+        cards,
+        activities,
+    })
+}
+
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SavingsGoalStatus {
@@ -6085,6 +6321,157 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn budget_move_covers_overspend_atomically_and_never_overdraws_the_source() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".to_owned(),
+                name: "Family".to_owned(),
+            },
+        )
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO accounts (id, household_id, name, account_kind, account_subtype, currency)
+                   VALUES ('family-spare-one', 'family', 'Spare One', 'EXPENSE', 'OTHER', 'JPY'),
+                          ('family-spare-two', 'family', 'Spare Two', 'EXPENSE', 'OTHER', 'JPY');
+                 INSERT INTO transactions (id, household_id, occurred_on, transaction_type, status)
+                   VALUES ('july-expense', 'family', '2026-07-03', 'EXPENSE', 'POSTED');
+                 INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                   VALUES ('m1', 'july-expense', 'family-groceries', 'DEBIT', 1200, 1),
+                          ('m2', 'july-expense', 'family-bank', 'CREDIT', 1200, 2);
+                 INSERT INTO monthly_category_budgets (household_id, month, category_account_id, budget_jpy)
+                   VALUES ('family', '2026-07', 'family-groceries', 1000),
+                          ('family', '2026-07', 'family-spare-one', 5000);",
+            )
+            .unwrap();
+        let input = |from: &str, to: &str, amount: i64| MoveMonthlyBudgetInput {
+            household_id: "family".into(),
+            month: "2026-07".into(),
+            from_category_account_id: from.into(),
+            to_category_account_id: to.into(),
+            amount_jpy: amount,
+        };
+        let budget_of = |rows: &[MonthlyCategoryBudgetDto], id: &str| {
+            rows.iter()
+                .find(|row| row.category_account_id == id)
+                .map(|row| (row.budget_jpy, row.remaining_jpy))
+        };
+
+        let moved = move_monthly_budget(
+            &connection,
+            &input("family-spare-one", "family-groceries", 200),
+        )
+        .unwrap();
+        assert_eq!(budget_of(&moved, "family-groceries"), Some((1200, 0)));
+        assert_eq!(budget_of(&moved, "family-spare-one"), Some((4800, 4800)));
+
+        // A target without a budget row gets one.
+        let created = move_monthly_budget(
+            &connection,
+            &input("family-spare-one", "family-spare-two", 300),
+        )
+        .unwrap();
+        assert_eq!(budget_of(&created, "family-spare-two"), Some((300, 300)));
+        assert_eq!(budget_of(&created, "family-spare-one"), Some((4500, 4500)));
+
+        let before = list_monthly_category_budgets(&connection, "family", "2026-07").unwrap();
+        for bad in [
+            input("family-spare-one", "family-groceries", 4501),
+            input("family-groceries", "family-spare-two", 1),
+            input("family-spare-one", "family-spare-one", 1),
+            input("family-spare-one", "family-groceries", 0),
+            input("family-spare-one", "family-groceries", -5),
+            input("family-spare-one", "family-bank", 1),
+            input("family-missing", "family-groceries", 1),
+        ] {
+            assert!(move_monthly_budget(&connection, &bad).is_err());
+        }
+        assert_eq!(
+            list_monthly_category_budgets(&connection, "family", "2026-07").unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn envelope_card_activity_attributes_only_single_card_postings_and_reports_owed_and_payments() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".to_owned(),
+                name: "Family".to_owned(),
+            },
+        )
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO transactions (id, household_id, occurred_on, transaction_type, status, calculation_target)
+                   VALUES ('june', 'family', '2026-06-20', 'EXPENSE', 'POSTED', 1),
+                          ('buy-card', 'family', '2026-07-03', 'EXPENSE', 'POSTED', 1),
+                          ('buy-cash', 'family', '2026-07-04', 'EXPENSE', 'POSTED', 1),
+                          ('buy-mixed', 'family', '2026-07-05', 'EXPENSE', 'POSTED', 1),
+                          ('refund', 'family', '2026-07-06', 'REFUND', 'POSTED', 1),
+                          ('payment', 'family', '2026-07-10', 'CARD_PAYMENT', 'POSTED', 0),
+                          ('excluded', 'family', '2026-07-11', 'EXPENSE', 'POSTED', 0),
+                          ('voided', 'family', '2026-07-12', 'EXPENSE', 'VOID', 1),
+                          ('august', 'family', '2026-08-02', 'EXPENSE', 'POSTED', 1);
+                 INSERT INTO journal_entries
+                   (id, transaction_id, account_id, entry_side, amount_jpy, line_number)
+                   VALUES ('a1', 'june', 'family-groceries', 'DEBIT', 4000, 1),
+                          ('a2', 'june', 'family-card', 'CREDIT', 4000, 2),
+                          ('b1', 'buy-card', 'family-groceries', 'DEBIT', 3000, 1),
+                          ('b2', 'buy-card', 'family-card', 'CREDIT', 3000, 2),
+                          ('c1', 'buy-cash', 'family-groceries', 'DEBIT', 2000, 1),
+                          ('c2', 'buy-cash', 'family-bank', 'CREDIT', 2000, 2),
+                          ('d1', 'buy-mixed', 'family-groceries', 'DEBIT', 1000, 1),
+                          ('d2', 'buy-mixed', 'family-card', 'CREDIT', 600, 2),
+                          ('d3', 'buy-mixed', 'family-bank', 'CREDIT', 400, 3),
+                          ('e1', 'refund', 'family-card', 'DEBIT', 500, 1),
+                          ('e2', 'refund', 'family-groceries', 'CREDIT', 500, 2),
+                          ('f1', 'payment', 'family-card', 'DEBIT', 1200, 1),
+                          ('f2', 'payment', 'family-bank', 'CREDIT', 1200, 2),
+                          ('g1', 'excluded', 'family-groceries', 'DEBIT', 700, 1),
+                          ('g2', 'excluded', 'family-card', 'CREDIT', 700, 2),
+                          ('h1', 'voided', 'family-groceries', 'DEBIT', 900, 1),
+                          ('h2', 'voided', 'family-card', 'CREDIT', 900, 2),
+                          ('i1', 'august', 'family-groceries', 'DEBIT', 800, 1),
+                          ('i2', 'august', 'family-card', 'CREDIT', 800, 2);",
+            )
+            .unwrap();
+
+        let july = envelope_card_activity(&connection, "family", "2026-07").unwrap();
+        assert_eq!(
+            july.activities,
+            vec![EnvelopeCardActivityItemDto {
+                category_account_id: "family-groceries".into(),
+                card_account_id: "family-card".into(),
+                // purchase 3000 - refund 500; cash, mixed, excluded and voided postings do not count
+                amount_jpy: 2500,
+            }]
+        );
+        assert_eq!(
+            july.cards.len(),
+            1,
+            "cards without any balance or movement are not listed"
+        );
+        assert_eq!(july.cards[0].card_account_id, "family-card");
+        // 4000 (June) + 3000 + 600 + 700 (calculation-excluded still owed) - 500 refund - 1200 payment
+        assert_eq!(july.cards[0].owed_jpy, 6600);
+        assert_eq!(july.cards[0].payments_jpy, 1200);
+
+        let june = envelope_card_activity(&connection, "family", "2026-06").unwrap();
+        assert_eq!(june.cards[0].owed_jpy, 4000);
+        assert_eq!(june.cards[0].payments_jpy, 0);
+        assert_eq!(june.activities[0].amount_jpy, 4000);
+
+        assert!(envelope_card_activity(&connection, "family", "2026-13").is_err());
+        assert!(envelope_card_activity(&connection, "missing", "2026-07").is_err());
     }
 
     #[test]

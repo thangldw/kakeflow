@@ -720,8 +720,8 @@ export interface TransactionDetailDto {
 }
 export interface UpdatePostedTransactionInputDto extends Omit<CreateManualTransactionInputDto, 'id'> { readonly transactionId: string; readonly calculationTarget: boolean }
 
-export type TransferPairStateDto = 'REJECTED' | 'LINKED'
-export type TransferPairActionDto = 'REJECT' | 'LINK' | 'CLEAR'
+export type TransferPairStateDto = 'REJECTED' | 'LINKED' | 'MERGED'
+export type TransferPairActionDto = 'REJECT' | 'LINK' | 'MERGE' | 'CLEAR'
 export interface TransferPairDecisionDto { readonly pairKey: string; readonly outTransactionId: string; readonly inTransactionId: string; readonly state: TransferPairStateDto; readonly decidedAt: string }
 export interface TransferPairDecisionInputDto { readonly householdId: string; readonly outTransactionId: string; readonly inTransactionId: string; readonly action: TransferPairActionDto }
 export interface SourceDocumentViewDto {
@@ -895,6 +895,11 @@ export interface ImportRunCountsDto {
 
 export interface MonthlyCategoryBudgetDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly categoryName: string; readonly budgetJpy: number; readonly actualJpy: number; readonly remainingJpy: number }
 export interface UpsertMonthlyCategoryBudgetInputDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly budgetJpy: number }
+export interface MoveMonthlyBudgetInputDto { readonly householdId: string; readonly month: string; readonly fromCategoryAccountId: string; readonly toCategoryAccountId: string; readonly amountJpy: number }
+
+export interface EnvelopeCardDto { readonly cardAccountId: string; readonly cardName: string; readonly owedJpy: number; readonly paymentsJpy: number }
+export interface EnvelopeCardActivityItemDto { readonly categoryAccountId: string; readonly cardAccountId: string; readonly amountJpy: number }
+export interface EnvelopeCardActivityDto { readonly month: string; readonly cards: readonly EnvelopeCardDto[]; readonly activities: readonly EnvelopeCardActivityItemDto[] }
 export interface MonthlyReviewMemoDto { readonly householdId: string; readonly month: string; readonly memo: string; readonly updatedAt: string }
 export interface UpsertMonthlyReviewMemoInputDto { readonly householdId: string; readonly month: string; readonly memo: string }
 export type SavingsGoalStatusDto = 'ACTIVE' | 'PAUSED' | 'COMPLETED' | 'CANCELLED'
@@ -1208,6 +1213,8 @@ export type AppCommand =
   | 'card_match_confirm'
   | 'card_payment_link_confirm'
   | 'card_payment_link_unlink'
+  | 'budget_move'
+  | 'envelope_card_activity_query'
   | 'transfer_pair_decisions_list'
   | 'transfer_pair_decide'
   | 'card_statement_due_date_update'
@@ -1367,6 +1374,8 @@ export interface PlatformClient {
   upsertDashboardPreferences(input: UpsertDashboardPreferencesInputDto): Promise<DashboardPreferencesDto>
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
+  moveBudget(input: MoveMonthlyBudgetInputDto): Promise<readonly MonthlyCategoryBudgetDto[]>
+  queryEnvelopeCardActivity(householdId: string, month: string): Promise<EnvelopeCardActivityDto>
   getMonthlyReviewMemo(householdId: string, month: string): Promise<MonthlyReviewMemoDto | null>
   upsertMonthlyReviewMemo(input: UpsertMonthlyReviewMemoInputDto): Promise<MonthlyReviewMemoDto | null>
   listSavingsGoals(householdId: string): Promise<readonly SavingsGoalDto[]>

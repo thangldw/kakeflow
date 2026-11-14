@@ -1,4 +1,5 @@
 import type {
+  EnvelopeCardActivityDto,
   TransferPairDecisionDto,
   AppBootstrapDto,
   AppHealthDto,
@@ -2320,9 +2321,34 @@ export function parseTransferPairDecisions(value: unknown): readonly TransferPai
   return value.map((item) => {
     const record = asRecord(item)
     if (typeof record.pairKey !== 'string' || typeof record.outTransactionId !== 'string' || typeof record.inTransactionId !== 'string'
-      || (record.state !== 'REJECTED' && record.state !== 'LINKED') || typeof record.decidedAt !== 'string') {
+      || (record.state !== 'REJECTED' && record.state !== 'LINKED' && record.state !== 'MERGED') || typeof record.decidedAt !== 'string') {
       throw new TypeError('transfer pair decision')
     }
     return { pairKey: record.pairKey, outTransactionId: record.outTransactionId, inTransactionId: record.inTransactionId, state: record.state, decidedAt: record.decidedAt }
   })
+}
+
+function signedYen(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError('whole yen')
+  return value
+}
+
+export function parseEnvelopeCardActivity(value: unknown): EnvelopeCardActivityDto {
+  const record = asRecord(value)
+  if (typeof record.month !== 'string' || !/^\d{4}-\d{2}$/.test(record.month) || !Array.isArray(record.cards) || !Array.isArray(record.activities)) {
+    throw new TypeError('envelope card activity')
+  }
+  return {
+    month: record.month,
+    cards: record.cards.map((item) => {
+      const card = asRecord(item)
+      if (typeof card.cardAccountId !== 'string' || typeof card.cardName !== 'string') throw new TypeError('envelope card')
+      return { cardAccountId: card.cardAccountId, cardName: card.cardName, owedJpy: signedYen(card.owedJpy), paymentsJpy: signedYen(card.paymentsJpy) }
+    }),
+    activities: record.activities.map((item) => {
+      const activity = asRecord(item)
+      if (typeof activity.categoryAccountId !== 'string' || typeof activity.cardAccountId !== 'string') throw new TypeError('envelope card activity item')
+      return { categoryAccountId: activity.categoryAccountId, cardAccountId: activity.cardAccountId, amountJpy: signedYen(activity.amountJpy) }
+    }),
+  }
 }
