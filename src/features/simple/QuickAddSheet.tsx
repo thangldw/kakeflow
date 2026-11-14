@@ -153,14 +153,14 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
         <button type="button" className="icon-btn quick-add-close" aria-label={localize("記録画面を閉じる")} disabled={busy} onClick={onClose}><X size={20} /></button>
       </div>
 
-      {/* Only the content scrolls: the head above and the footer with Save below stay on screen, so a short
-          viewport never hides Save ("amount, category, save" without scrolling). */}
-      <div className="quick-add-body">
-        <div className="quick-add-kind" role="group" aria-label={localize("記録の種類")}>
-          <button type="button" aria-pressed={kind === 'EXPENSE'} onClick={() => switchKind('EXPENSE')}>{localize("支出")}</button>
-          <button type="button" aria-pressed={kind === 'INCOME'} onClick={() => switchKind('INCOME')}>{localize("収入")}</button>
-        </div>
+      <div className="quick-add-kind" role="group" aria-label={localize("記録の種類")}>
+        <button type="button" aria-pressed={kind === 'EXPENSE'} onClick={() => switchKind('EXPENSE')}>{localize("支出")}</button>
+        <button type="button" aria-pressed={kind === 'INCOME'} onClick={() => switchKind('INCOME')}>{localize("収入")}</button>
+      </div>
 
+      {/* Only the content scrolls: the head and kind toggle above and the footer with Save below stay on screen, so
+          a short viewport never hides Save ("amount, category, save" without scrolling to it). */}
+      <div className="quick-add-body">
         {empty
           ? <div className="quick-add-empty">
             <p>{localize("記録できる口座がありません")}</p>

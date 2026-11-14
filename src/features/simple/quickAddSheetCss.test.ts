@@ -50,8 +50,8 @@ describe('quick-add sheet width rules', () => {
 
 // Save off-screen when the sheet opened was measured in Chromium (Save at y 881..973 on a 360x800 viewport) and the fix
 // was re-measured there at 320x568 to 1280x800. jsdom cannot measure any of that; this only guards the structure that
-// makes it work: a flex column whose head and footer never shrink, a body that is the only scroller, a dvh-aware
-// max-height, and a footer with the safe-area inset on phones.
+// makes it work: a flex column whose head, kind toggle and footer never shrink, a body that is the only scroller, a
+// dvh-aware max-height, and a footer with the safe-area inset on phones.
 describe('quick-add sheet sticky footer rules', () => {
   const phone = css.slice(css.indexOf('@media (max-width: 720px) {\n  .quick-add-backdrop'))
   const phoneRule = (selector: string) => {
@@ -77,8 +77,9 @@ describe('quick-add sheet sticky footer rules', () => {
     expect(body).toMatch(/overflow-x:\s*hidden/)
   })
 
-  it('keeps the head and the footer at their own height', () => {
+  it('keeps the head, the kind toggle and the footer at their own height', () => {
     expect(declarations('.quick-add-head')).toMatch(/flex:\s*none/)
+    expect(declarations('.quick-add-kind')).toMatch(/flex:\s*none/)
     expect(declarations('.quick-add-footer')).toMatch(/flex:\s*none/)
     expect(declarations('.quick-add-footer')).toMatch(/background:\s*var\(--surface\)/)
   })
