@@ -132,7 +132,8 @@ describe('production PWA contract', () => {
 
   it('bundles the Simple components with the catalog subset instead of the desktop client and full catalogs', async () => {
     const bundle = (await javascriptArtifactsBelow(dist)).map((artifact) => artifact.source).join('\n')
-    // Class names from SimpleTabBar, SimpleMorePage, SimpleHome and QuickAddSheet, and a Simple tab label from the subset.
+    // Class names from SimpleTabBar, the More list, SimpleHome and QuickAddSheet (mounted by the PWA's Simple shell), and a
+    // Simple tab label from the subset.
     for (const marker of ['simple-tabbar', 'simple-more-list', 'simple-home', 'quick-add-sheet', '取引一覧']) {
       expect(bundle, marker).toContain(marker)
     }

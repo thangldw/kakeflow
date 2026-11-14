@@ -266,13 +266,14 @@ export function localize(source: string): string {
   return translateText(activeLocale, source)
 }
 
-function savedLocale(): AppLocale {
+function savedLocale(fallback: AppLocale): AppLocale {
   const value = globalThis.localStorage?.getItem(STORAGE_KEY)
-  return value === 'en' || value === 'vi' ? value : 'ja'
+  return value === 'ja' || value === 'en' || value === 'vi' ? value : fallback
 }
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<AppLocale>(savedLocale)
+/** `fallbackLocale` is used only while no language is stored; it is not stored itself. */
+export function I18nProvider({ children, fallbackLocale = 'ja' }: { children: ReactNode; fallbackLocale?: AppLocale }) {
+  const [locale, setLocaleState] = useState<AppLocale>(() => savedLocale(fallbackLocale))
   activeLocale = locale
   const setLocale = useCallback((next: AppLocale) => {
     globalThis.localStorage?.setItem(STORAGE_KEY, next)
