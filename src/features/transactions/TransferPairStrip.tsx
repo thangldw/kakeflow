@@ -6,7 +6,8 @@ import type { TransactionRowDto, TransferPairActionDto, TransferPairDecisionDto 
 import { proposeFromRows } from './transferPairs'
 
 const yen = (value: number) => `¥${value.toLocaleString('ja-JP')}`
-const label = (row: TransactionRowDto | undefined, fallback: string) => row?.payee || row?.description || fallback
+// A leg that is not among the loaded rows (voided by a merge, or outside the visible range) must not leak its internal id.
+const label = (row: TransactionRowDto | undefined) => row?.payee || row?.description || localize("表示範囲外または無効化済みの取引")
 
 type TransferClient = Pick<PlatformClient, 'listTransferPairDecisions' | 'decideTransferPair'>
 
@@ -53,7 +54,7 @@ export function TransferPairStrip({ householdId, rows, revision, onChanged, clie
     {result.proposals.length > 0 && <ul className="transfer-pair-list">{result.proposals.map((proposal) => {
       const out = byId.get(proposal.outId); const inn = byId.get(proposal.inId); const rowId = `${id}-${proposal.outId}-${proposal.inId}`
       return <li key={rowId} id={rowId}>
-        <span className="transfer-pair-legs"><strong>{label(out, proposal.outId)}</strong> <small>{out?.creditAccountName}</small> → <strong>{label(inn, proposal.inId)}</strong> <small>{inn?.debitAccountName}</small></span>
+        <span className="transfer-pair-legs"><strong>{label(out)}</strong> <small>{out?.creditAccountName}</small> → <strong>{label(inn)}</strong> <small>{inn?.debitAccountName}</small></span>
         <span className="transfer-pair-meta">{yen(proposal.amountJpy)} · {proposal.dayGap === 0 ? localize("同日") : <>{proposal.dayGap}{localize("日差")}</>}</span>
         <span className="transfer-pair-actions">
           <button type="button" className="primary-btn" disabled={busy} aria-describedby={rowId} onClick={() => void decide('LINK', proposal.outId, proposal.inId)}>{localize("振替として確定")}</button>
@@ -65,7 +66,7 @@ export function TransferPairStrip({ householdId, rows, revision, onChanged, clie
     {result.ambiguousIds.length > 0 && <p className="transfer-pair-note">{result.ambiguousIds.length}{localize("件は同条件の相手が複数あるため候補にしていません。")}</p>}
     {decisions.length > 0 && <details className="transfer-pair-history"><summary>{localize("確定・却下の履歴")} ({decisions.length})</summary>
       <ul className="transfer-pair-list">{decisions.map((decision) => <li key={decision.pairKey}>
-        <span className="transfer-pair-legs"><strong>{label(byId.get(decision.outTransactionId), decision.outTransactionId)}</strong> → <strong>{label(byId.get(decision.inTransactionId), decision.inTransactionId)}</strong></span>
+        <span className="transfer-pair-legs"><strong>{label(byId.get(decision.outTransactionId))}</strong> → <strong>{label(byId.get(decision.inTransactionId))}</strong></span>
         <span className="transfer-pair-meta">{decision.state === 'MERGED' ? localize("統合済み") : decision.state === 'LINKED' ? localize("確定済み") : localize("却下済み")}</span>
         <span className="transfer-pair-actions"><button type="button" className="secondary-btn" disabled={busy} onClick={() => void decide('CLEAR', decision.outTransactionId, decision.inTransactionId)}>{localize("元に戻す")}</button></span>
       </li>)}</ul></details>}

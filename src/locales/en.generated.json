@@ -1267,6 +1267,7 @@
   "銀行": "bank",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Manage your banks, wallets, cards, income and spending categories.",
   "銀行CSVの取込先銀行口座を選択してください。": "Please select the bank account to import the bank CSV to.",
+  "表示範囲外または無効化済みの取引": "Transaction outside the visible range or voided",
   "カード支払いの確保": "Set aside for card payments",
   "カード利用のうち、その月に予算が残っていた分を「確保済み」とみなし、カードの支払いで減らします（試算）。予算のないカテゴリーのカード利用は確保されません。": "Card spending counts as \"set aside\" only as far as the category still had budget that month, and card payments reduce it (estimate). Card spending in categories without a budget is never set aside.",
   "確保済み": "Set aside",

@@ -1267,6 +1267,7 @@
   "銀行": "ngân hàng",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Quản lý ngân hàng, ví, thẻ, danh mục thu nhập và chi tiêu của bạn.",
   "銀行CSVの取込先銀行口座を選択してください。": "Vui lòng chọn tài khoản ngân hàng để nhập CSV ngân hàng vào.",
+  "表示範囲外または無効化済みの取引": "Giao dịch ngoài phạm vi hiển thị hoặc đã bị vô hiệu",
   "カード支払いの確保": "Tiền dành cho thanh toán thẻ",
   "カード利用のうち、その月に予算が残っていた分を「確保済み」とみなし、カードの支払いで減らします（試算）。予算のないカテゴリーのカード利用は確保されません。": "Chi tiêu thẻ chỉ được tính là \"đã dành\" trong phạm vi danh mục còn ngân sách tháng đó, và các khoản thanh toán thẻ sẽ trừ đi (ước tính). Chi tiêu thẻ ở danh mục không có ngân sách không bao giờ được dành.",
   "確保済み": "Đã dành",
