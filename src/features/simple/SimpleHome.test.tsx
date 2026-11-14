@@ -155,6 +155,49 @@ describe('SimpleHome', () => {
     expect(await screen.findByText('¥150,000 / ¥300,000')).toBeInTheDocument()
   })
 
+  it('blocks saving while the saved-amount text is invalid', async () => {
+    const client = fakeClient({ goals: [travelGoal] })
+    renderHome(client)
+    const card = (await screen.findByText('家族旅行')).closest('section')!
+    const field = within(card).getByLabelText('貯蓄済みの金額')
+    const button = within(card).getByRole('button', { name: '貯蓄済みを更新' })
+    fireEvent.change(field, { target: { value: '15000' } })
+    expect(button).toBeEnabled()
+    fireEvent.change(field, { target: { value: '15000x' } })
+    expect(field).toHaveAttribute('aria-invalid', 'true')
+    expect(button).toBeDisabled()
+    fireEvent.submit(button.closest('form')!)
+    fireEvent.click(button)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(client.updateSavingsGoal).not.toHaveBeenCalled()
+    fireEvent.change(field, { target: { value: '16000' } })
+    expect(button).toBeEnabled()
+  })
+
+  it('shows an alert and keeps the typed amount when the update fails', async () => {
+    const client = fakeClient({ goals: [travelGoal] })
+    client.updateSavingsGoal.mockRejectedValueOnce(new Error('offline'))
+    renderHome(client)
+    const card = (await screen.findByText('家族旅行')).closest('section')!
+    const field = within(card).getByLabelText('貯蓄済みの金額')
+    fireEvent.change(field, { target: { value: '150000' } })
+    fireEvent.click(within(card).getByRole('button', { name: '貯蓄済みを更新' }))
+    expect(await within(card).findByRole('alert')).toHaveTextContent('更新できませんでした')
+    expect(field).toHaveValue('150000')
+    expect(within(card).getByRole('button', { name: '貯蓄済みを更新' })).toBeEnabled()
+    expect(client.listSavingsGoals).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows exactly zero left as ¥0 to spend in the neutral tone, not as over budget', async () => {
+    renderHome(fakeClient({ dashboard: dashboard({ expenseJpy: 155_000 }) }))
+    const hero = (await screen.findByText('今月あと使える金額')).closest('section')!
+    expect(within(hero).getByText('¥0')).toBeInTheDocument()
+    expect(hero).not.toHaveClass('simple-hero-over')
+    expect(screen.queryByText('予算を超えています')).not.toBeInTheDocument()
+    expect(screen.queryByText('1日あたりの目安')).not.toBeInTheDocument()
+    expect(within(hero).getByRole('img')).toHaveAccessibleName('使った金額 ¥155,000 / 予算 ¥155,000')
+  })
+
   it('invites creating a goal when there is none', async () => {
     const { props } = renderHome(fakeClient())
     fireEvent.click(await screen.findByRole('button', { name: '目標を作る' }))

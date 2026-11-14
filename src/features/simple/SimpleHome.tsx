@@ -93,7 +93,8 @@ function RemainingCard({ remaining, month, onSetLimit }: { readonly remaining: R
     </section>
   }
 
-  const over = remaining.remainingJpy <= 0
+  // Exactly zero left is not over budget (ruling R8).
+  const over = remaining.remainingJpy < 0
   const showPerDay = remaining.remainingJpy > 0 && remaining.perDayJpy !== null
   const barLabel = `${localize("使った金額")} ${yen(remaining.spentJpy)} / ${localize("予算")} ${yen(remaining.totalBudgetJpy)}`
   return <section className={`simple-card simple-hero${over ? ' simple-hero-over' : ''}`} aria-labelledby={`${id}-title`}>
@@ -129,6 +130,8 @@ function NeedsAttention({ name, overJpy, onOpenBudgets }: { readonly name: strin
 function GoalCard({ goal, client, onSaved }: { readonly goal: SavingsGoalDto; readonly client: HomeClient; readonly onSaved: () => void }) {
   const id = useId()
   const [draft, setDraft] = useState(goal.savedJpy)
+  // YenInput keeps invalid text to itself, so the last valid draft must not be saved while the field is flagged.
+  const [draftValid, setDraftValid] = useState(true)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const pace = goalPace(goal)
@@ -136,6 +139,7 @@ function GoalCard({ goal, client, onSaved }: { readonly goal: SavingsGoalDto; re
   const amounts = `${yen(goal.savedJpy)} / ${yen(goal.targetJpy)}`
 
   const save = async () => {
+    if (!draftValid) return
     setBusy(true); setFailed(false)
     try {
       await client.updateSavingsGoal({
@@ -159,8 +163,8 @@ function GoalCard({ goal, client, onSaved }: { readonly goal: SavingsGoalDto; re
         ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b>
         : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p>
     <form className="simple-goal-update" onSubmit={(event) => { event.preventDefault(); void save() }}>
-      <label>{localize("貯蓄済みの金額")}<YenInput value={draft} onChange={setDraft} /></label>
-      <button type="submit" className="secondary-btn" disabled={busy}>{localize("貯蓄済みを更新")}</button>
+      <label>{localize("貯蓄済みの金額")}<YenInput value={draft} onChange={setDraft} onValidityChange={setDraftValid} /></label>
+      <button type="submit" className="secondary-btn" disabled={busy || !draftValid}>{localize("貯蓄済みを更新")}</button>
     </form>
     {failed && <p className="simple-error-text" role="alert">{localize("更新できませんでした")}</p>}
   </section>
