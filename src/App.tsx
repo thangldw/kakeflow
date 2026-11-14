@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import {
@@ -124,8 +124,13 @@ import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBoot
 import type { PageId, Transaction } from './types'
 import { navigation, navigationSections } from './navigation'
 import { SIMPLE_TAB_ICONS, SIMPLE_TABS, tabForPage, type SimpleTab } from './features/simple/simpleNavigation'
+import { QuickAddSheet } from './features/simple/QuickAddSheet'
+import { SimpleHome } from './features/simple/SimpleHome'
+import { SimpleMorePage, UiModeSwitch } from './features/simple/SimpleMorePage'
+import { SimpleTabBar } from './features/simple/SimpleTabBar'
+import { readUiMode, writeUiMode, type UiMode } from './features/simple/uiMode'
 import { localize, useI18n } from './i18n'
-import { KAKEFLOW_TOAST_EVENT, showToast, type ToastTone } from './toast'
+import { KAKEFLOW_TOAST_EVENT, showToast, type ToastAction, type ToastTone } from './toast'
 import { APP_VERSION } from './version'
 import { accountKindLabel, accountSubtypeLabel, brokerageEventTypeLabel, canonicalAccountName, directionLabel, evidenceRoleLabel, sourceTypeLabel, transactionTypeLabel } from './displayLabels'
 import { EnvelopeCarryPanel } from './features/budgets/EnvelopeCarryPanel'
@@ -378,21 +383,23 @@ function PageHeader({ eyebrow, title, description, headingId, children }: { eyeb
 }
 
 function ToastCenter() {
-  const [toast, setToast] = useState<{ readonly message: string; readonly tone: ToastTone } | null>(null)
+  const [toast, setToast] = useState<{ readonly message: string; readonly tone: ToastTone; readonly action?: ToastAction } | null>(null)
   useEffect(() => {
     let timer: ReturnType<typeof globalThis.setTimeout> | undefined
     const receive = (event: Event) => {
-      const detail = (event as CustomEvent<{ message?: unknown; tone?: unknown }>).detail
+      const detail = (event as CustomEvent<{ message?: unknown; tone?: unknown; action?: Partial<ToastAction> }>).detail
       if (typeof detail?.message !== 'string' || !detail.message.trim()) return
       const tone: ToastTone = detail.tone === 'error' || detail.tone === 'info' ? detail.tone : 'success'
-      setToast({ message: detail.message, tone })
+      const action = typeof detail.action?.label === 'string' && typeof detail.action.onAction === 'function' ? { label: detail.action.label, onAction: detail.action.onAction } : undefined
+      setToast({ message: detail.message, tone, action })
       if (timer) globalThis.clearTimeout(timer)
-      timer = globalThis.setTimeout(() => setToast(null), 2600)
+      // A toast with an action stays longer so there is time to reach the button.
+      timer = globalThis.setTimeout(() => setToast(null), action ? 8000 : 2600)
     }
     globalThis.addEventListener(KAKEFLOW_TOAST_EVENT, receive)
     return () => { globalThis.removeEventListener(KAKEFLOW_TOAST_EVENT, receive); if (timer) globalThis.clearTimeout(timer) }
   }, [])
-  return <><AppUpdateMonitor enabled={platformClient.runtime === 'tauri'} />{toast && <div className={`global-toast global-toast-${toast.tone}`} role={toast.tone === 'error' ? 'alert' : 'status'}><span>{toast.tone === 'error' ? <X size={15} /> : <Check size={15} />}</span><p>{toast.message}</p><button className="icon-btn" aria-label={localize("通知を閉じる")} onClick={() => setToast(null)}><X size={14} /></button></div>}</>
+  return <><AppUpdateMonitor enabled={platformClient.runtime === 'tauri'} />{toast && <div className={`global-toast global-toast-${toast.tone}${toast.action ? ' global-toast--action' : ''}`} role={toast.tone === 'error' ? 'alert' : 'status'}><span>{toast.tone === 'error' ? <X size={15} /> : <Check size={15} />}</span><p>{toast.message}</p>{toast.action && <button type="button" className="text-btn global-toast-action" onClick={() => { const { onAction } = toast.action ?? {}; setToast(null); onAction?.() }}>{toast.action.label}</button>}<button className="icon-btn" aria-label={localize("通知を閉じる")} onClick={() => setToast(null)}><X size={14} /></button></div>}</>
 }
 
 function KpiCard({ label, value, meta, trend, icon: Icon, accent }: { label: string; value: string; meta: string; trend?: string; icon: typeof TrendingUp; accent: string }) {
@@ -980,13 +987,24 @@ function TransactionsPage({ householdId, accountGroupId, accountGroups, onAccoun
   })
   const basisExpense = desktop ? liveTotals?.expenseJpy ?? 0 : basis === 'ACCRUAL' ? currentMonthMetrics.expense : currentMonthMetrics.cashOutflow
   const basisIncome = desktop ? liveTotals?.incomeJpy ?? 0 : currentMonthMetrics.income
-  const openDetail = async (transactionId: string, trigger: HTMLButtonElement) => {
+  const openDetail = async (transactionId: string, trigger: HTMLElement | null) => {
     if (!desktop || !householdId) return
     setDetailNotice('')
     detailReturnFocus.current = trigger
     try { setSelectedDetail(await platformClient.getTransactionDetail(householdId, transactionId)) }
     catch { setDetailNotice(localize("取引詳細を読み込めませんでした。")) }
   }
+  // Other screens (the Simple-mode "Edit" toast) open a transaction's detail through this event.
+  const openDetailRef = useRef(openDetail)
+  openDetailRef.current = openDetail
+  useEffect(() => {
+    const receiveOpenTransaction = (event: Event) => {
+      const transactionId = (event as CustomEvent<{ transactionId?: unknown }>).detail?.transactionId
+      if (typeof transactionId === 'string' && transactionId) void openDetailRef.current(transactionId, null)
+    }
+    globalThis.addEventListener('kakeflow:open-transaction', receiveOpenTransaction)
+    return () => globalThis.removeEventListener('kakeflow:open-transaction', receiveOpenTransaction)
+  }, [])
   const saveDetail = async (input: UpdatePostedTransactionInputDto) => {
     await platformClient.updateTransaction(input)
     setSelectedDetail(null); onChanged(); setDetailNotice(localize("取引と仕訳を更新しました。"))
@@ -2857,7 +2875,7 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
 
   if (!desktop) {
     const demoGoals = [{ name: localize("家族旅行"), saved: 362_000, target: 600_000, date: '2027-03-31', pace: 22_800 }, { name: localize("教育資金"), saved: 1_480_000, target: 3_000_000, date: '2030-04-01', pace: 33_100 }]
-    return <><PageHeader eyebrow={localize("プランニング")} title={localize("予算・貯蓄目標")} description={localize("計画値と確定済み元帳を比較し、家族の目標を追跡します。")} /><section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{localize("2026年7月")}</p></div><strong>{yen(budgetByCategory.reduce((sum, item) => sum + item.amount, 0))}</strong></div>{budgetByCategory.map((item) => { const rate = Math.round(item.amount / item.budget * 100); return <div className={`budget-row budget-row-${rate > 100 ? 'over' : rate > 85 ? 'review' : 'ok'}`} key={item.name}><div><strong>{item.name}</strong><small>{rate > 100 ? localize(`⚠ 超過 ${rate - 100}%`) : `${rate}%`}</small></div><span>{yen(item.amount)} <small>/ {yen(item.budget)}</small></span><div className="progress"><span style={{ width: `${Math.min(100, rate)}%` }} /></div></div>})}<p className="budget-caption">{localize("予算=計画値 / 実績=確定済み元帳値（発生ベース）")}</p></article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{demoGoals.length}{localize("件進行中")}</p></div><Goal size={19} /></div>{demoGoals.map((goal) => <div className="goal-editor demo-goal" key={goal.name}><div><strong>{goal.name}</strong><small>{localize("目標日")} {goal.date}</small></div><span>{yen(goal.saved)} / {yen(goal.target)}</span><div className="progress"><span style={{ width: `${goal.saved / goal.target * 100}%` }} /></div><p>{localize("必要ペース:")} {yen(goal.pace)} {localize("/ 月 —")} <b>{localize("順調")}</b></p></div>)}</article></section><PlanningTools /></>
+    return <><PageHeader eyebrow={localize("プランニング")} title={localize("予算・貯蓄目標")} description={localize("計画値と確定済み元帳を比較し、家族の目標を追跡します。")} /><section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{localize("2026年7月")}</p></div><strong>{yen(budgetByCategory.reduce((sum, item) => sum + item.amount, 0))}</strong></div>{budgetByCategory.map((item) => { const rate = Math.round(item.amount / item.budget * 100); return <div className={`budget-row budget-row-${rate > 100 ? 'over' : rate > 85 ? 'review' : 'ok'}`} key={item.name}><div><strong>{item.name}</strong><small>{rate > 100 ? localize(`⚠ 超過 ${rate - 100}%`) : `${rate}%`}</small></div><span>{yen(item.amount)} <small>/ {yen(item.budget)}</small></span><div className="progress"><span style={{ width: `${Math.min(100, rate)}%` }} /></div></div>})}<p className="budget-caption">{localize("予算=計画値 / 実績=確定済み元帳値（発生ベース）")}</p></article><article className="panel goal-panel" id="goals"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{demoGoals.length}{localize("件進行中")}</p></div><Goal size={19} /></div>{demoGoals.map((goal) => <div className="goal-editor demo-goal" key={goal.name}><div><strong>{goal.name}</strong><small>{localize("目標日")} {goal.date}</small></div><span>{yen(goal.saved)} / {yen(goal.target)}</span><div className="progress"><span style={{ width: `${goal.saved / goal.target * 100}%` }} /></div><p>{localize("必要ペース:")} {yen(goal.pace)} {localize("/ 月 —")} <b>{localize("順調")}</b></p></div>)}</article></section><PlanningTools /></>
   }
 
   const totalBudget = budgets.reduce((sum, budget) => sum + budget.budgetJpy, 0)
@@ -2867,7 +2885,7 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
     <PageHeader eyebrow={localize(`${month.replace('-', localize("年"))}月`)} title={localize("予算・貯蓄目標")} description={localize("確定済み台帳の支出と月間予算を比較します。")}><button className="primary-btn" onClick={() => setShowGoalForm((value) => !value)}><Goal size={17} /> {localize("目標を追加")}</button></PageHeader>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {showGoalForm && <section className="panel planning-form"><input aria-label={localize("目標名")} value={goalName} onChange={(event) => setGoalName(event.target.value)} placeholder={localize("家族旅行")} /><input aria-label={localize("目標額")} type="number" min="1" value={goalTarget} onChange={(event) => setGoalTarget(event.target.value)} placeholder="1000000" /><input aria-label={localize("目標日")} type="date" value={goalDate} onChange={(event) => setGoalDate(event.target.value)} /><button className="primary-btn" disabled={busy} onClick={() => void createGoal()}>{localize("保存")}</button></section>}
-    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => { const used = budget.budgetJpy === 0 ? (budget.actualJpy > 0 ? Infinity : 0) : budget.actualJpy / budget.budgetJpy; const over = budget.remainingJpy < 0; return <div className={`budget-row${over ? ' budget-row-over' : used >= 0.9 ? ' budget-row-review' : ''}`} key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong>{over && Number.isFinite(used) && <small>{localize("⚠ 超過 ")}{Math.round((used - 1) * 100)}%</small>}</div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div> })}</article><article className="panel goal-panel"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
+    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => { const used = budget.budgetJpy === 0 ? (budget.actualJpy > 0 ? Infinity : 0) : budget.actualJpy / budget.budgetJpy; const over = budget.remainingJpy < 0; return <div className={`budget-row${over ? ' budget-row-over' : used >= 0.9 ? ' budget-row-review' : ''}`} key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong>{over && Number.isFinite(used) && <small>{localize("⚠ 超過 ")}{Math.round((used - 1) * 100)}%</small>}</div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div> })}</article><article className="panel goal-panel" id="goals"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
     <EnvelopeCarryPanel householdId={householdId} month={month} revision={revision} onChanged={onChanged} />
     <PlanningTools />
   </>
@@ -2971,7 +2989,7 @@ function AccountEditor({ householdId, account, members, onChanged, setNotice }: 
   return <div className="account-editor"><span>{accountKindLabel(account.accountKind, text)} / {accountSubtypeLabel(account.accountSubtype, text)}</span><input aria-label={localize(`${account.name}の口座名`)} value={displayedName} onChange={(event) => setName(event.target.value)} /><label>{localize("所有者")}<select aria-label={localize(`${account.name}の所有者`)} value={owner} onChange={(event) => { const next = event.target.value; setOwner(next); if (next === 'HOUSEHOLD') setVisibility('SHARED') }}><option value="HOUSEHOLD">{localize("世帯共有")}</option>{members.filter((member) => member.status === 'ACTIVE' || member.id === account.ownerMemberId).map((member) => <option key={member.id} value={member.id}>{member.displayName}{member.status === 'ARCHIVED' ? localize("（アーカイブ済み）") : ''}</option>)}</select></label><label>{localize("共有区分")}<select aria-label={localize(`${account.name}の共有区分`)} disabled={owner === 'HOUSEHOLD'} value={visibility} onChange={(event) => setVisibility(event.target.value as AccountVisibilityDto)}><option value="SHARED">{localize("共有")}</option>{owner !== 'HOUSEHOLD' && <option value="PERSONAL">{localize("個人")}</option>}</select></label><div className="account-classification"><span>{account.ownerMemberName ?? localize("世帯共有")}</span><span>{account.visibility === 'SHARED' ? localize("共有") : localize("個人")}</span></div><button className="secondary-btn" disabled={busy || name.trim() === account.name} onClick={() => void rename()}>{localize("名前を保存")}</button><button className="secondary-btn" disabled={busy || !ownershipChanged} onClick={() => void updateOwnership()}>{localize("区分を保存")}</button><button className="text-btn" disabled={busy} onClick={() => void archive()}>{localize("アーカイブ")}</button></div>
 }
 
-function SettingsPage({ householdId, accounts, members, preferences, onPreferencesChanged, onAccountsChanged }: { householdId: string | null; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; preferences: DashboardPreferencesDto; onPreferencesChanged: (change: DashboardPreferenceChange) => void; onAccountsChanged: () => Promise<void> }) {
+function SettingsPage({ householdId, accounts, members, preferences, onPreferencesChanged, onAccountsChanged, uiMode, onUiModeChange }: { householdId: string | null; accounts: readonly AccountDto[]; members: readonly HouseholdMemberDto[]; preferences: DashboardPreferencesDto; onPreferencesChanged: (change: DashboardPreferenceChange) => void; onAccountsChanged: () => Promise<void>; uiMode?: UiMode; onUiModeChange?: (mode: UiMode) => void }) {
   const { locale, setLocale, text } = useI18n()
   const [passphrase, setPassphrase] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -3034,7 +3052,7 @@ function SettingsPage({ householdId, accounts, members, preferences, onPreferenc
     }
   }
 
-  return <><PageHeader eyebrow={localize("ローカルデータ")} title={localize("設定")} description={localize("口座、表示環境、バックアップを管理します。")} /><section className="panel preferences-panel"><div className="panel-head"><div><h2>{localize("環境設定")}</h2><p>{localize("言語、テーマ、画面密度はこの端末に保存されます。")}</p></div></div><div className="preference-row"><span><strong>{localize("言語")}</strong><small>Language / Ngôn ngữ</small></span><div className="settings-segment" role="group" aria-label={localize("言語")}>{([['ja', localize("日本語")], ['en', 'English'], ['vi', 'Tiếng Việt']] as const).map(([value, label]) => <button key={value} className={locale === value ? 'active' : ''} aria-pressed={locale === value} onClick={() => setLocale(value)}>{localize(label)}</button>)}</div></div><div className="preference-row"><span><strong>{localize("テーマ")}</strong><small>{localize("外観")}</small></span><div className="settings-segment" role="group" aria-label={localize("テーマ")}>{([['LIGHT', localize("ライト")], ['DARK', localize("ダーク")], ['SYSTEM', localize("システム")]] as const).map(([value, label]) => <button key={value} className={preferences.theme === value ? 'active' : ''} aria-pressed={preferences.theme === value} onClick={() => onPreferencesChanged({ theme: value })}>{localize(label)}</button>)}</div></div><div className="preference-row"><span><strong>{localize("密度")}</strong><small>{localize("一覧とカードの間隔")}</small></span><div className="settings-segment" role="group" aria-label={localize("画面密度")}>{([['COMFORTABLE', localize("標準")], ['COMPACT', localize("コンパクト")]] as const).map(([value, label]) => <button key={value} className={preferences.density === value ? 'active' : ''} aria-pressed={preferences.density === value} onClick={() => onPreferencesChanged({ density: value })}>{localize(label)}</button>)}</div></div></section><section className="panel account-settings"><div className="panel-head"><div><h2>{localize("口座・カテゴリー")}</h2><p>{localize("銀行、ウォレット、カード、収入・支出カテゴリーを管理します。")}</p></div></div><p className="account-visibility-note">{localize("「個人」はこの端末内の整理区分であり、閲覧制限やアクセス制御ではありません。")}</p>{platformClient.runtime === 'tauri' && householdId ? <><div className="planning-form account-create-form"><input aria-label={localize("新しい口座名")} value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder={localize("ゆうちょ銀行")} /><select aria-label={localize("口座種別")} value={accountKind} onChange={(event) => { const kind = event.target.value as AccountDto['accountKind']; setAccountKind(kind); setAccountSubtype(subtypes[kind][0]) }}>{Object.keys(subtypes).map((kind) => <option key={kind} value={kind}>{accountKindLabel(kind as AccountDto['accountKind'], text)}</option>)}</select><select aria-label={localize("口座サブタイプ")} value={accountSubtype} onChange={(event) => setAccountSubtype(event.target.value as AccountDto['accountSubtype'])}>{subtypes[accountKind].map((subtype) => <option key={subtype} value={subtype}>{accountSubtypeLabel(subtype, text)}</option>)}</select><select aria-label={localize("新しい口座の所有者")} value={accountOwner} onChange={(event) => { const next = event.target.value; setAccountOwner(next); if (next === 'HOUSEHOLD') setAccountVisibility('SHARED') }}><option value="HOUSEHOLD">{localize("世帯共有")}</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select><select aria-label={localize("新しい口座の共有区分")} disabled={accountOwner === 'HOUSEHOLD'} value={accountVisibility} onChange={(event) => setAccountVisibility(event.target.value as AccountVisibilityDto)}><option value="SHARED">{localize("共有")}</option>{accountOwner !== 'HOUSEHOLD' && <option value="PERSONAL">{localize("個人")}</option>}</select><button className="primary-btn" disabled={accountBusy} onClick={() => void createAccount()}>{localize("口座を追加")}</button></div><div className="account-list">{accounts.map((account) => <AccountEditor key={account.id} householdId={householdId} account={account} members={members} onChanged={onAccountsChanged} setNotice={setAccountNotice} />)}</div>{accountNotice && <p role="status">{accountNotice}</p>}</> : <p className="empty-state">{localize("口座管理はデスクトップ版で利用できます。")}</p>}</section><section className="panel settings-panel"><div><h2>{localize("暗号化バックアップ")}</h2><p>{localize("SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。")}</p></div><div className="backup-form"><label htmlFor="backup-passphrase">{localize("パスフレーズ")}</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder={localize("12文字以上")} /><label htmlFor="backup-confirmation">{localize("パスフレーズを確認")}</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? localize("データを固定中…") : localize("バックアップを作成")}</button>{platformClient.runtime === 'web' && <small>{localize("デスクトップ版で利用できます。")}</small>}{notice && <p role="status">{notice}</p>}</div></section><section className="panel settings-panel restore-panel"><div><h2>{localize("バックアップから復元")}</h2><p><strong>{localize("注意:")}</strong> {localize("現在の台帳と原本は、選択したバックアップの内容に置き換わります。復元前に現在のバックアップを作成してください。置き換えの最終確認はOSのダイアログで行います。")}</p></div><div className="backup-form"><label htmlFor="restore-passphrase">{localize("復元用パスフレーズ")}</label><input id="restore-passphrase" type="password" autoComplete="off" value={restorePassphrase} onChange={(event) => setRestorePassphrase(event.target.value)} placeholder={localize("バックアップ作成時のパスフレーズ")} /><label htmlFor="restore-confirmation">{localize("復元用パスフレーズを確認")}</label><input id="restore-confirmation" type="password" autoComplete="off" value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} /><button className="danger-btn" disabled={restoreBusy || platformClient.runtime !== 'tauri'} onClick={() => void restoreBackup()}>{restoreBusy ? localize("バックアップを検証中…") : localize("バックアップを選択して復元")}</button>{platformClient.runtime === 'web' && <small>{localize("復元はデスクトップ版で利用できます。")}</small>}{restoreNotice && <p role="status">{restoreNotice}</p>}</div></section></>
+  return <><PageHeader eyebrow={localize("ローカルデータ")} title={localize("設定")} description={localize("口座、表示環境、バックアップを管理します。")} /><section className="panel preferences-panel"><div className="panel-head"><div><h2>{localize("環境設定")}</h2><p>{localize("言語、テーマ、画面密度はこの端末に保存されます。")}</p></div></div><div className="preference-row"><span><strong>{localize("言語")}</strong><small>Language / Ngôn ngữ</small></span><div className="settings-segment" role="group" aria-label={localize("言語")}>{([['ja', localize("日本語")], ['en', 'English'], ['vi', 'Tiếng Việt']] as const).map(([value, label]) => <button key={value} className={locale === value ? 'active' : ''} aria-pressed={locale === value} onClick={() => setLocale(value)}>{localize(label)}</button>)}</div></div><div className="preference-row"><span><strong>{localize("テーマ")}</strong><small>{localize("外観")}</small></span><div className="settings-segment" role="group" aria-label={localize("テーマ")}>{([['LIGHT', localize("ライト")], ['DARK', localize("ダーク")], ['SYSTEM', localize("システム")]] as const).map(([value, label]) => <button key={value} className={preferences.theme === value ? 'active' : ''} aria-pressed={preferences.theme === value} onClick={() => onPreferencesChanged({ theme: value })}>{localize(label)}</button>)}</div></div>{householdId && uiMode && onUiModeChange && <div className="preference-row simple-settings-mode"><UiModeSwitch mode={uiMode} onChange={onUiModeChange} /></div>}<div className="preference-row"><span><strong>{localize("密度")}</strong><small>{localize("一覧とカードの間隔")}</small></span><div className="settings-segment" role="group" aria-label={localize("画面密度")}>{([['COMFORTABLE', localize("標準")], ['COMPACT', localize("コンパクト")]] as const).map(([value, label]) => <button key={value} className={preferences.density === value ? 'active' : ''} aria-pressed={preferences.density === value} onClick={() => onPreferencesChanged({ density: value })}>{localize(label)}</button>)}</div></div></section><section className="panel account-settings"><div className="panel-head"><div><h2>{localize("口座・カテゴリー")}</h2><p>{localize("銀行、ウォレット、カード、収入・支出カテゴリーを管理します。")}</p></div></div><p className="account-visibility-note">{localize("「個人」はこの端末内の整理区分であり、閲覧制限やアクセス制御ではありません。")}</p>{platformClient.runtime === 'tauri' && householdId ? <><div className="planning-form account-create-form"><input aria-label={localize("新しい口座名")} value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder={localize("ゆうちょ銀行")} /><select aria-label={localize("口座種別")} value={accountKind} onChange={(event) => { const kind = event.target.value as AccountDto['accountKind']; setAccountKind(kind); setAccountSubtype(subtypes[kind][0]) }}>{Object.keys(subtypes).map((kind) => <option key={kind} value={kind}>{accountKindLabel(kind as AccountDto['accountKind'], text)}</option>)}</select><select aria-label={localize("口座サブタイプ")} value={accountSubtype} onChange={(event) => setAccountSubtype(event.target.value as AccountDto['accountSubtype'])}>{subtypes[accountKind].map((subtype) => <option key={subtype} value={subtype}>{accountSubtypeLabel(subtype, text)}</option>)}</select><select aria-label={localize("新しい口座の所有者")} value={accountOwner} onChange={(event) => { const next = event.target.value; setAccountOwner(next); if (next === 'HOUSEHOLD') setAccountVisibility('SHARED') }}><option value="HOUSEHOLD">{localize("世帯共有")}</option>{members.filter((member) => member.status === 'ACTIVE').map((member) => <option key={member.id} value={member.id}>{member.displayName}</option>)}</select><select aria-label={localize("新しい口座の共有区分")} disabled={accountOwner === 'HOUSEHOLD'} value={accountVisibility} onChange={(event) => setAccountVisibility(event.target.value as AccountVisibilityDto)}><option value="SHARED">{localize("共有")}</option>{accountOwner !== 'HOUSEHOLD' && <option value="PERSONAL">{localize("個人")}</option>}</select><button className="primary-btn" disabled={accountBusy} onClick={() => void createAccount()}>{localize("口座を追加")}</button></div><div className="account-list">{accounts.map((account) => <AccountEditor key={account.id} householdId={householdId} account={account} members={members} onChanged={onAccountsChanged} setNotice={setAccountNotice} />)}</div>{accountNotice && <p role="status">{accountNotice}</p>}</> : <p className="empty-state">{localize("口座管理はデスクトップ版で利用できます。")}</p>}</section><section className="panel settings-panel"><div><h2>{localize("暗号化バックアップ")}</h2><p>{localize("SQLCipher台帳と暗号化済み原本を、認証付きアーカイブに保存します。パスフレーズを失うと復元できません。")}</p></div><div className="backup-form"><label htmlFor="backup-passphrase">{localize("パスフレーズ")}</label><input id="backup-passphrase" type="password" autoComplete="new-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} placeholder={localize("12文字以上")} /><label htmlFor="backup-confirmation">{localize("パスフレーズを確認")}</label><input id="backup-confirmation" type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /><button className="primary-btn" disabled={busy || platformClient.runtime !== 'tauri'} onClick={() => void createBackup()}>{busy ? localize("データを固定中…") : localize("バックアップを作成")}</button>{platformClient.runtime === 'web' && <small>{localize("デスクトップ版で利用できます。")}</small>}{notice && <p role="status">{notice}</p>}</div></section><section className="panel settings-panel restore-panel"><div><h2>{localize("バックアップから復元")}</h2><p><strong>{localize("注意:")}</strong> {localize("現在の台帳と原本は、選択したバックアップの内容に置き換わります。復元前に現在のバックアップを作成してください。置き換えの最終確認はOSのダイアログで行います。")}</p></div><div className="backup-form"><label htmlFor="restore-passphrase">{localize("復元用パスフレーズ")}</label><input id="restore-passphrase" type="password" autoComplete="off" value={restorePassphrase} onChange={(event) => setRestorePassphrase(event.target.value)} placeholder={localize("バックアップ作成時のパスフレーズ")} /><label htmlFor="restore-confirmation">{localize("復元用パスフレーズを確認")}</label><input id="restore-confirmation" type="password" autoComplete="off" value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} /><button className="danger-btn" disabled={restoreBusy || platformClient.runtime !== 'tauri'} onClick={() => void restoreBackup()}>{restoreBusy ? localize("バックアップを検証中…") : localize("バックアップを選択して復元")}</button>{platformClient.runtime === 'web' && <small>{localize("復元はデスクトップ版で利用できます。")}</small>}{restoreNotice && <p role="status">{restoreNotice}</p>}</div></section></>
 }
 
 function Onboarding({ onCreated, onCancel }: { onCreated: (household: HouseholdDto) => void; onCancel?: () => void }) {
@@ -3379,6 +3397,16 @@ function App() {
   const [dashboardPreferences, setDashboardPreferences] = useState<DashboardPreferencesDto>(() => defaultDashboardPreferences())
   const [dashboardPreferencesBusy, setDashboardPreferencesBusy] = useState(false)
   const [workspaceBasis, setWorkspaceBasis] = useState<WorkspaceBasis>('ACCRUAL')
+  // The stored mode is read in render so a household change never renders one frame in the previous household's mode.
+  const storedUiMode = useMemo(() => readUiMode(activeHouseholdId), [activeHouseholdId])
+  const [uiModeChoice, setUiModeChoice] = useState<{ readonly householdId: string | null; readonly mode: UiMode } | null>(null)
+  const uiMode = uiModeChoice && uiModeChoice.householdId === activeHouseholdId ? uiModeChoice.mode : storedUiMode
+  const [savingsActive, setSavingsActive] = useState(false)
+  const [quickAddOpen, setQuickAddOpen] = useState(false)
+  const simple = uiMode === 'simple'
+  // Simple mode always reads the whole household; the saved scope stays untouched and applies again in Full.
+  const effectiveAccountGroupId = simple ? null : activeAccountGroupId
+  const effectiveAttributionScope = simple ? ALL_ATTRIBUTION_SCOPE : activeAttributionScope
   const dashboardPreferencesHouseholdRef = useRef(activeHouseholdId)
   dashboardPreferencesHouseholdRef.current = activeHouseholdId
   const dashboardRequestGenerationRef = useRef(0)
@@ -3386,6 +3414,8 @@ function App() {
   const folderAutoScanRef = useRef(folderAutoScan)
   const hydratedFolderItemsRef = useRef(new Set<string>())
   const folderRefreshBusyRef = useRef(false)
+
+  useEffect(() => { if (page !== 'budgets') setSavingsActive(false) }, [page])
 
   useEffect(() => {
     const workspaceScroller = document.querySelector<HTMLElement>('.main-shell > main')
@@ -3599,8 +3629,8 @@ function App() {
     const requestGeneration = ++dashboardRequestGenerationRef.current
     const period = periodFromMonth(selectedMonth)
     void Promise.all([
-      platformClient.queryDashboard({ householdId, accountGroupId: activeAccountGroupId, attributionScope: activeAttributionScope, month: period.month, accountingBasis: homeBasis }),
-      platformClient.queryTransactions({ householdId, accountGroupId: activeAccountGroupId, attributionScope: activeAttributionScope, accountingBasis: homeBasis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
+      platformClient.queryDashboard({ householdId, accountGroupId: effectiveAccountGroupId, attributionScope: effectiveAttributionScope, month: period.month, accountingBasis: homeBasis }),
+      platformClient.queryTransactions({ householdId, accountGroupId: effectiveAccountGroupId, attributionScope: effectiveAttributionScope, accountingBasis: homeBasis, fromDate: period.fromDate, toDate: period.toDate, page: 1, pageSize: 4 }),
       platformClient.importSummary(householdId),
       platformClient.listCardSettlements(householdId),
     ]).then(([dashboard, page, summary, cards]) => {
@@ -3609,7 +3639,7 @@ function App() {
       if (active && dashboardRequestGenerationRef.current === requestGeneration) { setLiveDashboard(null); setLiveTransactions([]); setImportCounts(null); setLiveCards([]); setDashboardLoading(false) }
     })
     return () => { active = false }
-  }, [activeAccountGroupId, activeAttributionScope, activeHouseholdId, homeBasis, ledgerRevision, selectedMonth])
+  }, [activeHouseholdId, effectiveAccountGroupId, effectiveAttributionScope, homeBasis, ledgerRevision, selectedMonth])
 
   useEffect(() => {
     hydratedFolderItemsRef.current.clear()
@@ -3653,11 +3683,11 @@ function App() {
   }
 
   const activeHousehold = households.find((household) => household.id === activeHouseholdId) ?? null
-  const activeAccountGroup = accountGroups.find((group) => group.id === activeAccountGroupId) ?? null
-  const activeAttributionLabel = activeAttributionScope.kind === 'HOUSEHOLD_COMMON'
+  const activeAccountGroup = accountGroups.find((group) => group.id === effectiveAccountGroupId) ?? null
+  const activeAttributionLabel = effectiveAttributionScope.kind === 'HOUSEHOLD_COMMON'
     ? localize("世帯共通")
-    : activeAttributionScope.kind === 'MEMBER'
-      ? householdMembers.find((member) => member.id === activeAttributionScope.memberId)?.displayName ?? localize("不明なメンバー")
+    : effectiveAttributionScope.kind === 'MEMBER'
+      ? householdMembers.find((member) => member.id === effectiveAttributionScope.memberId)?.displayName ?? localize("不明なメンバー")
       : localize("世帯全体")
   const scopeAppliesToPage = page === 'overview' || page === 'transactions' || page === 'cards' || page === 'investments' || page === 'reports' || page === 'recurring'
   const basisAppliesToPage = page === 'transactions' || page === 'reports'
@@ -3714,19 +3744,54 @@ function App() {
   }
 
   const openImportPage = (initialView: 'LOCAL' | 'CONNECTORS' = 'LOCAL') => {
+    setSavingsActive(false)
     setImportInitialView(initialView)
     setPage('import')
   }
   const navigateToPage = (next: PageId) => {
+    setSavingsActive(false)
     if (next === 'reports') setReportsInitialView('CALENDAR')
     if (next === 'import') { openImportPage(); return }
     setPage(next)
   }
+  const openSavings = () => {
+    setPage('budgets')
+    setSavingsActive(true)
+    // After the budgets page has rendered; jsdom and older engines may lack scrollIntoView.
+    globalThis.setTimeout(() => {
+      const goals = document.getElementById('goals')
+      if (goals && typeof goals.scrollIntoView === 'function') goals.scrollIntoView({ block: 'start' })
+    }, 0)
+  }
+  const selectSimpleTab = (tab: SimpleTab) => {
+    if (tab === 'savings') { openSavings(); return }
+    const target = SIMPLE_TABS.find((item) => item.id === tab)
+    if (target) navigateToPage(target.page)
+  }
+  const changeUiMode = (mode: UiMode) => {
+    if (activeHouseholdId) writeUiMode(activeHouseholdId, mode)
+    setUiModeChoice({ householdId: activeHouseholdId, mode })
+    setQuickAddOpen(false)
+    // The More page belongs to Simple mode; Full mode starts again from its Home.
+    if (mode === 'full' && page === 'more') navigateToPage('overview')
+  }
+  const openTransaction = (transactionId: string) => {
+    navigateToPage('transactions')
+    globalThis.setTimeout(() => globalThis.dispatchEvent(new CustomEvent('kakeflow:open-transaction', { detail: { transactionId } })), 0)
+  }
+  const quickAddSaved = ({ transactionId, amountJpy, categoryName }: { transactionId: string; amountJpy: number; categoryName: string }) => {
+    setQuickAddOpen(false)
+    setLedgerRevision((value) => value + 1)
+    showToast(`${localize("保存しました")} ${yen(amountJpy)} · ${categoryName}`, 'success', { label: localize("修正"), onAction: () => openTransaction(transactionId) })
+  }
   const runGlobalSearch = (query: string) => {
+    setSavingsActive(false)
     setPage('transactions')
     globalThis.setTimeout(() => globalThis.dispatchEvent(new CustomEvent('kakeflow:global-search', { detail: { query } })), 0)
   }
   const openManualEntry = () => {
+    if (simple) { setQuickAddOpen(true); return }
+    setSavingsActive(false)
     setPage('transactions')
     globalThis.setTimeout(() => globalThis.dispatchEvent(new CustomEvent('kakeflow:manual-entry')), 0)
   }
@@ -3741,37 +3806,43 @@ function App() {
     return next
   })
   const openAllActions = () => {
+    setSavingsActive(false)
     setReportsInitialView('FORECAST')
     setPage('reports')
   }
 
+  const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))
   const pageContent = {
-    overview: <Overview setPage={navigateToPage} openAllActions={openAllActions} householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} revision={ledgerRevision} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} dashboardLoading={dashboardLoading} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
-    transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} accountGroups={accountGroups} onAccountGroupChange={selectAccountGroup} attributionScope={activeAttributionScope} revision={ledgerRevision} month={selectedMonth} basis={workspaceBasis === 'CASH' ? 'CASH' : 'ACCRUAL'} onBasisChange={setWorkspaceBasis} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
+    overview: simple
+      ? <SimpleHome householdId={activeHouseholdId} householdName={displayedHouseholdName} month={selectedMonth} revision={ledgerRevision} onSetLimit={() => navigateToPage('budgets')} onOpenBudgets={() => navigateToPage('budgets')} onOpenSavings={openSavings} />
+      : <Overview setPage={navigateToPage} openAllActions={openAllActions} householdId={activeHouseholdId} accountGroupId={effectiveAccountGroupId} attributionScope={effectiveAttributionScope} revision={ledgerRevision} liveDashboard={liveDashboard} liveTransactions={liveTransactions} liveCards={scopedCards} importCounts={importCounts} dashboardLoading={dashboardLoading} desktop={platformClient.runtime === 'tauri'} householdName={activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))} month={selectedMonth} preferences={dashboardPreferences} preferencesBusy={dashboardPreferencesBusy} updatePreferences={updateDashboardPreferences} />,
+    transactions: <TransactionsPage householdId={activeHouseholdId} accountGroupId={effectiveAccountGroupId} accountGroups={simple ? [] : accountGroups} onAccountGroupChange={selectAccountGroup} attributionScope={effectiveAttributionScope} revision={ledgerRevision} month={selectedMonth} basis={workspaceBasis === 'CASH' ? 'CASH' : 'ACCRUAL'} onBasisChange={setWorkspaceBasis} accounts={accounts} members={householdMembers} onChanged={() => setLedgerRevision((value) => value + 1)} />,
     import: <ImportPage previews={importPreviews} setPreviews={setImportPreviews} householdId={activeHouseholdId} accounts={accounts} members={householdMembers} summary={importCounts} onChanged={() => setLedgerRevision((value) => value + 1)} folderInbox={{ items: folderInboxItems, counts: folderInboxCounts, autoScan: folderAutoScan, busy: folderInboxBusy, setAutoScan: setFolderAutoScan, refresh: refreshFolderInbox, retry: retryFolderInboxItem, ignore: ignoreFolderInboxItem }} initialView={importInitialView} />,
     capture: <CaptureInboxWorkspace householdId={activeHouseholdId} accounts={accounts} onOpenImport={() => openImportPage()} onChanged={() => setLedgerRevision((value) => value + 1)} onInboxCountChanged={setCapturePendingCount} />,
     cards: <CardsPage cards={liveCards} householdId={activeHouseholdId} accounts={accounts} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} month={selectedMonth} />,
     investments: <InvestmentsPage householdId={activeHouseholdId} revision={ledgerRevision} openImport={() => openImportPage()} />,
-    reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} initialView={reportsInitialView} openPage={navigateToPage} />,
+    reports: <ReportsPage householdId={activeHouseholdId} accountGroupId={effectiveAccountGroupId} attributionScope={effectiveAttributionScope} accountGroups={accountGroups} onGroupsChanged={replaceAccountGroups} accounts={accounts} month={selectedMonth} revision={ledgerRevision} initialView={reportsInitialView} openPage={navigateToPage} />,
     budgets: <BudgetsPage householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} revision={ledgerRevision} onChanged={() => setLedgerRevision((value) => value + 1)} />,
-    recurring: <RecurringPage householdId={activeHouseholdId} accountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} month={selectedMonth} revision={ledgerRevision} openTransactions={() => setPage('transactions')} />,
+    recurring: <RecurringPage householdId={activeHouseholdId} accountGroupId={effectiveAccountGroupId} attributionScope={effectiveAttributionScope} month={selectedMonth} revision={ledgerRevision} openTransactions={() => setPage('transactions')} />,
     rules: <RulesPage householdId={activeHouseholdId} accounts={accounts} />,
     family: <FamilyPage householdId={activeHouseholdId} members={householdMembers} accounts={accounts} onMembersChanged={async () => { if (activeHouseholdId) { const next = await platformClient.listHouseholdMembers(activeHouseholdId); setHouseholdMembers(next); if (activeAttributionScope.kind === 'MEMBER' && !next.some((member) => member.id === activeAttributionScope.memberId)) selectAttributionScope(ALL_ATTRIBUTION_SCOPE) } }} />,
     audit: <AuditReadinessPage counts={importCounts} onOpenImport={() => openImportPage()} onOpenTransactions={() => setPage('transactions')} />,
-    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} /><SettingsConnectorControl householdId={activeHouseholdId} onConfigure={openConnectorConfiguration} /><AppUpdatePanel enabled={platformClient.runtime === 'tauri'} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
-    // Placeholder: the app shell renders the Simple-mode More page here once ui mode is wired in.
-    more: <></>,
+    settings: <><SettingsPage householdId={activeHouseholdId} accounts={accounts} members={householdMembers} preferences={dashboardPreferences} onPreferencesChanged={updateDashboardPreferences} onAccountsChanged={async () => { if (activeHouseholdId) setAccounts(await platformClient.listAccounts(activeHouseholdId)) }} uiMode={uiMode} onUiModeChange={changeUiMode} /><SettingsConnectorControl householdId={activeHouseholdId} onConfigure={openConnectorConfiguration} /><AppUpdatePanel enabled={platformClient.runtime === 'tauri'} /><SettingsDisclosure title={localize("コネクタ")} description={localize("Drive、Gmail、iCloud、モバイル・デスクトップリレー")}><IcloudDriveInboxSettingsPanel householdId={activeHouseholdId} /><GoogleDriveSettingsPanel householdId={activeHouseholdId} /><GmailSettingsPanel householdId={activeHouseholdId} /><SyncSettingsPanels householdId={activeHouseholdId} members={householdMembers} /></SettingsDisclosure><SettingsDisclosure title={localize("口座グループ・出力")} description={localize("保存済みスコープと台帳エクスポートを管理")}><AccountGroupsExportPanel householdId={activeHouseholdId} accounts={accounts} month={selectedMonth} groups={accountGroups} selectedAccountGroupId={activeAccountGroupId} attributionScope={activeAttributionScope} onGroupsChanged={replaceAccountGroups} /></SettingsDisclosure>{platformClient.runtime === 'tauri' && <SettingsDisclosure title={localize("パーサープロファイル")} description={localize("未対応CSVの区切り・文字コード・列対応を管理")}><DelimitedParserProfilesPanel householdId={activeHouseholdId} /></SettingsDisclosure>}</>,
+    // Simple mode's More page; Full mode never links here, so it simply renders the same list.
+    more: <SimpleMorePage mode={uiMode} onModeChange={changeUiMode} onNavigate={navigateToPage} />,
   }[page]
-  const displayedHouseholdName = activeHousehold?.name ?? (platformClient.runtime === 'web' ? localize("田中家") : localize("家計"))
   const completeHouseholdCreation = (household: HouseholdDto) => {
     setHouseholds((current) => [...current.filter((item) => item.id !== household.id), household])
     globalThis.localStorage?.setItem('kakeflow.activeHouseholdId', household.id)
+    // Households created here start in Simple mode; existing ones keep Full until the user switches.
+    writeUiMode(household.id, 'simple')
+    setUiModeChoice({ householdId: household.id, mode: 'simple' })
     setActiveHouseholdId(household.id)
     setShowCreateHousehold(false)
   }
   const showFirstRun = platformClient.runtime === 'tauri' && desktopLoaded && households.length === 0
   const nativeWindow = platformClient.runtime === 'tauri'
-  return <div className={`app-shell${nativeWindow ? ' app-shell--native' : ''}`}>{!nativeWindow && <DesktopTitleBar householdName={displayedHouseholdName} />}<Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} collapsed={sidebarCollapsed} toggleCollapsed={toggleSidebar} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} createHousehold={() => setShowCreateHousehold(true)} importActionableCount={folderInboxCounts?.actionable ?? 0} capturePendingCount={capturePendingCount} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} onGlobalSearch={runGlobalSearch} onManualEntry={openManualEntry} onImport={() => openImportPage()} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={scopeAppliesToPage} showBasis={basisAppliesToPage} basis={workspaceBasis} setBasis={setWorkspaceBasis} /><main><div className="workspace-content">{activeAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">{localize("家族集計範囲:")} <strong>{activeAttributionLabel}</strong>{localize("。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。")}</p>}{pageContent}{scopeAppliesToPage && <p className="scope-footnote">{localize("口座スコープ:")} <strong>{activeAccountGroup?.name ?? localize("すべての口座")}</strong>{activeAccountGroup ? localize(` ・ ${activeAccountGroup.accountIds.length}口座`) : ''}</p>}</div></main></div><ToastCenter />{(showFirstRun || showCreateHousehold) && <Onboarding onCancel={showFirstRun ? undefined : () => setShowCreateHousehold(false)} onCreated={completeHouseholdCreation} />}</div>
+  return <div className={`app-shell${nativeWindow ? ' app-shell--native' : ''}${simple ? ' app-shell--simple' : ''}${simple && sidebarOpen ? ' app-shell--drawer-open' : ''}`}>{!nativeWindow && <DesktopTitleBar householdName={displayedHouseholdName} />}<Sidebar page={page} setPage={navigateToPage} open={sidebarOpen} close={() => setSidebarOpen(false)} collapsed={sidebarCollapsed} toggleCollapsed={toggleSidebar} bootstrap={bootstrap} households={households} activeHouseholdId={activeHouseholdId} selectHousehold={selectHousehold} createHousehold={() => setShowCreateHousehold(true)} importActionableCount={folderInboxCounts?.actionable ?? 0} capturePendingCount={capturePendingCount} simple={simple} savingsActive={savingsActive} onSelectTab={selectSimpleTab} /><div className="main-shell"><Topbar page={page} openMenu={() => setSidebarOpen(true)} onGlobalSearch={runGlobalSearch} onManualEntry={openManualEntry} onImport={() => openImportPage()} month={selectedMonth} setMonth={selectMonth} accountGroups={accountGroups} accountGroupId={activeAccountGroupId} setAccountGroupId={selectAccountGroup} attributionScope={activeAttributionScope} setAttributionScope={selectAttributionScope} members={householdMembers} showAccountScope={!simple && scopeAppliesToPage} showBasis={!simple && basisAppliesToPage} basis={workspaceBasis} setBasis={setWorkspaceBasis} /><main><div className="workspace-content">{effectiveAttributionScope.kind !== 'ALL' && scopeAppliesToPage && <p className="attribution-scope-disclosure">{localize("家族集計範囲:")} <strong>{activeAttributionLabel}</strong>{localize("。収支・取引・予測のみを絞り込みます。純資産・資産残高・貯蓄目標・インポート状況は世帯全体です。")}</p>}{pageContent}{!simple && scopeAppliesToPage && <p className="scope-footnote">{localize("口座スコープ:")} <strong>{activeAccountGroup?.name ?? localize("すべての口座")}</strong>{activeAccountGroup ? localize(` ・ ${activeAccountGroup.accountIds.length}口座`) : ''}</p>}</div></main></div>{simple && <><button type="button" className="primary-btn simple-add-fab" onClick={() => setQuickAddOpen(true)}>{localize("＋ 支出を記録")}</button><SimpleTabBar active={tabForPage(page, savingsActive)} onSelect={selectSimpleTab} /><QuickAddSheet open={quickAddOpen} householdId={activeHouseholdId} accounts={accounts} onClose={() => setQuickAddOpen(false)} onSaved={quickAddSaved} onSetupAccounts={() => { setQuickAddOpen(false); navigateToPage('settings') }} /></>}<ToastCenter />{(showFirstRun || showCreateHousehold) && <Onboarding onCancel={showFirstRun ? undefined : () => setShowCreateHousehold(false)} onCreated={completeHouseholdCreation} />}</div>
 }
 
 export default App
