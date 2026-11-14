@@ -187,6 +187,19 @@ describe('Simple mode in the app shell', () => {
     expect(within(sidebar()).getByRole('button', { name: '取引' })).toHaveAttribute('aria-current', 'page')
   })
 
+  it('labels a saved earlier month neutrally and goes back to this month from the Home', async () => {
+    setUpDesktop()
+    storeMode({ family: 'simple' })
+    localStorage.setItem('kakeflow.selectedMonth', '2020-01')
+    render(<App />)
+    const label = await screen.findByRole('heading', { name: '残り金額' })
+    expect(label.closest('section')).toHaveTextContent('2020-01')
+    fireEvent.click(screen.getByRole('button', { name: '今月に戻る' }))
+    expect(await screen.findByRole('heading', { name: '今月あと使える金額' })).toBeInTheDocument()
+    expect(localStorage.getItem('kakeflow.selectedMonth')).not.toBe('2020-01')
+    expect(screen.queryByRole('button', { name: '今月に戻る' })).not.toBeInTheDocument()
+  })
+
   it('offers account setup from an empty quick-add sheet', async () => {
     storeMode({ 'demo-tanaka-family': 'simple' })
     render(<App />)

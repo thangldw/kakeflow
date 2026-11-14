@@ -20,6 +20,8 @@ interface SimpleHomeProps {
   readonly onSetLimit: () => void
   readonly onOpenBudgets: () => void
   readonly onOpenSavings: () => void
+  /** Switches the shown month back to the current Tokyo month; offered when another month is shown. */
+  readonly onGoToCurrentMonth?: () => void
   readonly client?: HomeClient
 }
 
@@ -33,7 +35,7 @@ type LoadState =
  * goal and at most one category that needs attention. Always reads the whole
  * household on the accrual basis.
  */
-export function SimpleHome({ householdId, householdName, month, revision, onSetLimit, onOpenBudgets, onOpenSavings, client = platformClient }: SimpleHomeProps) {
+export function SimpleHome({ householdId, householdName, month, revision, onSetLimit, onOpenBudgets, onOpenSavings, onGoToCurrentMonth, client = platformClient }: SimpleHomeProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [reloadKey, setReloadKey] = useState(0)
   const key = `${householdId ?? ''}|${month}`
@@ -74,7 +76,7 @@ export function SimpleHome({ householdId, householdName, month, revision, onSetL
   const { remaining, goal } = state.data
   return <div className="simple-home">
     <p className="simple-home-household">{householdName}</p>
-    <RemainingCard remaining={remaining} month={month} onSetLimit={onSetLimit} />
+    <RemainingCard remaining={remaining} month={month} onSetLimit={onSetLimit} onGoToCurrentMonth={onGoToCurrentMonth} />
     {remaining.mostOver && <NeedsAttention name={remaining.mostOver.name} overJpy={remaining.mostOver.overJpy} onOpenBudgets={onOpenBudgets} />}
     {goal
       ? <GoalCard key={`${goal.id}:${goal.savedJpy}`} goal={goal} client={client} onSaved={reload} />
@@ -82,14 +84,21 @@ export function SimpleHome({ householdId, householdName, month, revision, onSetL
   </div>
 }
 
-function RemainingCard({ remaining, month, onSetLimit }: { readonly remaining: RemainingToSpend; readonly month: string; readonly onSetLimit: () => void }) {
+function RemainingCard({ remaining, month, onSetLimit, onGoToCurrentMonth }: { readonly remaining: RemainingToSpend; readonly month: string; readonly onSetLimit: () => void; readonly onGoToCurrentMonth?: () => void }) {
   const id = useId()
+  // The month comes from the saved month selection, so it can be an earlier (or later) month than today's.
+  const otherMonth = month !== tokyoDate().slice(0, 7)
+  const monthLine = otherMonth && <p className="simple-hero-month">{month}</p>
+  const backToThisMonth = otherMonth && onGoToCurrentMonth
+    && <button type="button" className="secondary-btn simple-hero-action" onClick={onGoToCurrentMonth}>{localize("今月に戻る")}</button>
 
   if (remaining.basis === 'INCOME_MINUS_EXPENSE') {
     return <section className="simple-card simple-hero" aria-labelledby={`${id}-title`}>
       <h2 id={`${id}-title`} className="simple-hero-label">{localize("収入 − 支出（予算は未設定）")}</h2>
+      {monthLine}
       <p className="simple-hero-value">{signedYen(remaining.remainingJpy)}</p>
       <button type="button" className="primary-btn simple-hero-action" onClick={onSetLimit}>{localize("月の上限を決める")}</button>
+      {backToThisMonth}
     </section>
   }
 
@@ -98,7 +107,8 @@ function RemainingCard({ remaining, month, onSetLimit }: { readonly remaining: R
   const showPerDay = remaining.remainingJpy > 0 && remaining.perDayJpy !== null
   const barLabel = `${localize("使った金額")} ${yen(remaining.spentJpy)} / ${localize("予算")} ${yen(remaining.totalBudgetJpy)}`
   return <section className={`simple-card simple-hero${over ? ' simple-hero-over' : ''}`} aria-labelledby={`${id}-title`}>
-    <h2 id={`${id}-title`} className="simple-hero-label">{over ? localize("予算を超えています") : localize("今月あと使える金額")}</h2>
+    <h2 id={`${id}-title`} className="simple-hero-label">{over ? localize("予算を超えています") : otherMonth ? localize("残り金額") : localize("今月あと使える金額")}</h2>
+    {monthLine}
     <p className="simple-hero-value">{over ? yen(remaining.overByJpy) : yen(remaining.remainingJpy)}</p>
     <div className="simple-bar" role="img" aria-label={barLabel}>
       <span style={{ width: percent(remaining.usedRatio) }} />
@@ -113,6 +123,7 @@ function RemainingCard({ remaining, month, onSetLimit }: { readonly remaining: R
     </dl>
     {remaining.unbudgetedSpentJpy > 0 && <p className="simple-note"><span>{localize("予算のないカテゴリーの支出")}</span> <strong>{yen(remaining.unbudgetedSpentJpy)}</strong></p>}
     {remaining.budgetMonth !== null && remaining.budgetMonth !== month && <p className="simple-note"><span>{localize("以前の月の予算を使っています")}</span> <strong>{remaining.budgetMonth}</strong></p>}
+    {backToThisMonth}
   </section>
 }
 

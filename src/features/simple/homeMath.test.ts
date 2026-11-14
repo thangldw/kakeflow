@@ -59,6 +59,13 @@ describe('computeRemainingToSpend', () => {
     expect(r.perDayJpy).toBeNull()
   })
 
+  it('has no per-day figure for a future month', () => {
+    const r = computeRemainingToSpend({ ...base, month: '2026-12', budgetMonth: '2026-12' })
+    expect(r.basis).toBe('BUDGET')
+    expect(r.remainingJpy).toBeGreaterThan(0)
+    expect(r.perDayJpy).toBeNull()
+  })
+
   it('falls back to income minus expense when there are no budgets', () => {
     const r = computeRemainingToSpend({ ...base, budgets: [], budgetMonth: null })
     expect(r.basis).toBe('INCOME_MINUS_EXPENSE')

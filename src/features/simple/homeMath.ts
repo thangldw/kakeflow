@@ -102,8 +102,9 @@ export function computeRemainingToSpend(input: {
 
   const remainingJpy = totalBudgetJpy - spentJpy
   const usedRatio = totalBudgetJpy > 0 ? Math.min(1, Math.max(0, spentJpy / totalBudgetJpy)) : spentJpy > 0 ? 1 : 0
-  const isPastMonth = input.month < input.today.slice(0, 7)
-  const perDayJpy = !isPastMonth && remainingJpy >= 0 ? Math.floor(remainingJpy / daysLeftInMonth(input.today)) : null
+  // A daily allowance only makes sense for the month that is running now (not a past or a future one).
+  const isCurrentMonth = input.month === input.today.slice(0, 7)
+  const perDayJpy = isCurrentMonth && remainingJpy >= 0 ? Math.floor(remainingJpy / daysLeftInMonth(input.today)) : null
 
   return {
     basis: 'BUDGET',

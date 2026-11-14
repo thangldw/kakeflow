@@ -96,6 +96,32 @@ describe('SimpleHome', () => {
     expect(screen.queryByText('予算を超えたカテゴリー')).not.toBeInTheDocument()
   })
 
+  it('labels an earlier month neutrally, names the month and offers a way back to this month', async () => {
+    const october = { '2026-10': specBudgets.map((row) => ({ ...row, month: '2026-10' })) }
+    const { props } = renderHome(fakeClient({ budgets: october, dashboard: dashboard({ month: '2026-10' }) }), { month: '2026-10', onGoToCurrentMonth: vi.fn() })
+    const hero = (await screen.findByText('残り金額')).closest('section')!
+    expect(screen.queryByText('今月あと使える金額')).not.toBeInTheDocument()
+    expect(within(hero).getByText('2026-10')).toBeInTheDocument()
+    expect(within(hero).getByText('¥42,600')).toBeInTheDocument()
+    expect(within(hero).queryByText('1日あたりの目安')).not.toBeInTheDocument()
+    fireEvent.click(within(hero).getByRole('button', { name: '今月に戻る' }))
+    expect(props.onGoToCurrentMonth).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the this-month label and offers no way back for the current month', async () => {
+    renderHome(fakeClient(), { onGoToCurrentMonth: vi.fn() })
+    const hero = (await screen.findByText('今月あと使える金額')).closest('section')!
+    expect(within(hero).queryByText('2026-11')).not.toBeInTheDocument()
+    expect(within(hero).queryByRole('button', { name: '今月に戻る' })).not.toBeInTheDocument()
+  })
+
+  it('offers a way back from a month without budgets too', async () => {
+    renderHome(fakeClient({ budgets: {} }), { month: '2026-12', onGoToCurrentMonth: vi.fn() })
+    const hero = (await screen.findByText('収入 − 支出（予算は未設定）')).closest('section')!
+    expect(within(hero).getByText('2026-12')).toBeInTheDocument()
+    expect(within(hero).getByRole('button', { name: '今月に戻る' })).toBeInTheDocument()
+  })
+
   it('shows overspending as an over-budget amount, never as a negative hero number', async () => {
     const { container } = renderHome(fakeClient({ dashboard: dashboard({ expenseJpy: 170_000 }) }))
     const hero = (await screen.findByText('予算を超えています')).closest('section')!

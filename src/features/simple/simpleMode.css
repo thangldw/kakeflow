@@ -12,6 +12,7 @@
 .simple-hero-over .simple-hero-label,
 .simple-hero-over .simple-hero-value { color: var(--err); }
 .simple-hero-action { justify-self: start; }
+.simple-hero-month { margin: 0; color: var(--text2); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .simple-bar { height: 10px; overflow: hidden; border-radius: 999px; background: var(--surface2); border: 1px solid var(--hairline); }
 .simple-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--brand); }
