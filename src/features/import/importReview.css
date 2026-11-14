@@ -1,7 +1,7 @@
 .posting-entry-editor,.receipt-review-panel { grid-column: 1 / -1; display: grid; gap: 10px; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fafbf8; }
 .posting-entry-editor > header,.receipt-review-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .posting-entry-editor header small,.receipt-review-panel header small { display: block; margin-top: 2px; color: var(--muted); }
-.receipt-review-panel header b { padding: 4px 7px; border-radius: 6px; color: #587754; background: #e6efe2; }
+.receipt-review-panel header b { padding: 4px 7px; border-radius: 6px; color: #4a6a46; background: #e6efe2; }
 .posting-entry-list { display: grid; gap: 6px; }
 .posting-entry-row { display: grid; grid-template-columns: 24px 90px minmax(190px,1fr) minmax(110px,.45fr) auto; align-items: center; gap: 7px; }
 .posting-entry-row input,.posting-entry-row select,.receipt-item-table select { min-height: 34px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; background: #fff; color: var(--ink); }

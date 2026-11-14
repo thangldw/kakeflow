@@ -35,6 +35,6 @@ export const rakutenEnaviAdapter: ImportAdapter<CardStatementCandidate> = {
     }
     const statementTotal = transactions.reduce((sum, tx) => sum + (tx.billingAmount ?? 0), 0)
     const monthMatch = paymentHeader?.match(/^(\d{1,2})月/)
-    return { adapterId: this.id, records: [{ kind: 'card-statement', issuer: 'RAKUTEN_CARD', statementMonth: monthMatch?.[1], statementTotal, transactions }], issues, metadata: { paymentColumn: paymentHeader, detailCount: transactions.length } }
+    return { adapterId: this.id, records: [{ kind: 'card-statement', issuer: 'RAKUTEN_CARD', statementMonth: monthMatch?.[1], statementTotal, transactions }], issues, metadata: { paymentColumn: paymentHeader, detailCount: transactions.length, statementTotalSource: 'DETAIL_SUM' } }
   },
 }

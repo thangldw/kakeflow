@@ -54,6 +54,8 @@ const desktop = vi.hoisted(() => ({
   stageBackupRestore: vi.fn(),
   restartForRestore: vi.fn(),
   listBudgets: vi.fn(),
+  listTransferPairDecisions: vi.fn(),
+  decideTransferPair: vi.fn(),
   upsertBudget: vi.fn(),
   listSavingsGoals: vi.fn(),
   createSavingsGoal: vi.fn(),
@@ -143,6 +145,8 @@ vi.mock('./platform', async () => {
       getDashboardPreferences: desktop.getDashboardPreferences,
       upsertDashboardPreferences: desktop.upsertDashboardPreferences,
       listBudgets: desktop.listBudgets,
+      listTransferPairDecisions: desktop.listTransferPairDecisions,
+      decideTransferPair: desktop.decideTransferPair,
       upsertBudget: desktop.upsertBudget,
       listSavingsGoals: desktop.listSavingsGoals,
       createSavingsGoal: desktop.createSavingsGoal,
@@ -444,6 +448,8 @@ describe('KakeFlow desktop read models', () => {
     desktop.getActiveConnectorRefreshBatch.mockReset().mockResolvedValue(null)
     desktop.getConnectorRefreshBatch.mockReset()
     desktop.listBudgets.mockReset().mockResolvedValue([])
+    desktop.listTransferPairDecisions.mockReset().mockResolvedValue([])
+    desktop.decideTransferPair.mockReset().mockResolvedValue([])
     desktop.upsertBudget.mockReset().mockResolvedValue({ householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 50000, actualJpy: 0, remainingJpy: 50000 })
     desktop.listSavingsGoals.mockReset().mockResolvedValue([])
     desktop.createSavingsGoal.mockReset().mockResolvedValue({ id: 'goal', householdId: 'family', name: '旅行', targetJpy: 100000, savedJpy: 0, targetDate: '2027-07-01', status: 'ACTIVE', createdAt: '2026-07-01', updatedAt: '2026-07-01' })
@@ -2894,6 +2900,28 @@ describe('KakeFlow desktop read models', () => {
     fireEvent.change(screen.getByLabelText('目標額'), { target: { value: '100000' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(desktop.createSavingsGoal).toHaveBeenCalledWith(expect.objectContaining({ householdId: 'family', name: '旅行', targetJpy: 100000, status: 'ACTIVE' })))
+  })
+
+  it('marks overspent and near-limit budget rows with status classes and a text label', async () => {
+    desktop.listBudgets.mockResolvedValue([
+      { householdId: 'family', month: '2026-07', categoryAccountId: 'family-food-expense', categoryName: '食費', budgetJpy: 150000, actualJpy: 180000, remainingJpy: -30000 },
+      { householdId: 'family', month: '2026-07', categoryAccountId: 'family-home-expense', categoryName: '住居', budgetJpy: 100000, actualJpy: 92000, remainingJpy: 8000 },
+      { householdId: 'family', month: '2026-07', categoryAccountId: 'family-other-expense', categoryName: 'その他', budgetJpy: 100000, actualJpy: 20000, remainingJpy: 80000 },
+    ])
+    const { container } = render(<App />)
+    await screen.findByText('生協')
+    fireEvent.click(screen.getByRole('button', { name: '予算・目標' }))
+    await screen.findByText('カテゴリー予算')
+    const rows = await waitFor(() => {
+      const found = [...container.querySelectorAll('.budget-row')]
+      expect(found).toHaveLength(3)
+      return found
+    })
+    expect(rows[0]).toHaveClass('budget-row-over')
+    expect(rows[0]).toHaveTextContent('超過 20%')
+    expect(rows[1]).toHaveClass('budget-row-review')
+    expect(rows[1]).not.toHaveTextContent('超過')
+    expect(rows[2].className).toBe('budget-row')
   })
 
   it('requires explicit per-candidate approval before posting an import', async () => {

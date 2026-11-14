@@ -1,0 +1,2328 @@
+import type {
+  TransferPairDecisionDto,
+  AppBootstrapDto,
+  AppHealthDto,
+  AppStatusDto,
+  AccountDto,
+  BackupSummaryDto,
+  CommitSummaryDto,
+  CardMatchConfirmationDto,
+  CardReconciliationStatusDto,
+  CardSettlementDto,
+  CardSettlementBankMappingDto,
+  CardSettlementBalanceCoverageDto,
+  DashboardMonthlyTotalsDto,
+  DashboardPreferencesDto,
+  DashboardTemplateDto,
+  DashboardTemplateLayoutsDto,
+  DashboardWidgetIdDto,
+  DatabaseStatusDto,
+  ExtractedDocumentDto,
+  HouseholdDto,
+  HouseholdMemberDto,
+  LocalSyncFoundationStatusDto,
+  DesktopRelayStatusDto,
+  DesktopRelayPreparedDeliveryDto,
+  FamilyDeliveryStatusDto,
+  FamilyDeliveryPreparedArtifactDto,
+  FamilyDeliveryScheduleStatusDto,
+  MobileCaptureBackgroundStatusDto,
+  FamilyEnvelopePublicIdentityDto,
+  SealFamilyEnvelopeOutputDto,
+  PreparedFamilyEnvelopeOutputDto,
+  OpenFamilyEnvelopeOutputDto,
+  FamilySnapshotReviewDto,
+  ImportPreviewDto,
+  ImportBindingExpectationDto,
+  ImportRunCountsDto,
+  ImportSummaryDto,
+  PendingReviewListDto,
+  PendingReviewRunDto,
+  MonthlyCategoryBudgetDto,
+  MonthlyReviewMemoDto,
+  PreviewCandidateDto,
+  ReceiptReviewDto,
+  TransactionPageDto,
+  TransactionDetailDto,
+  SourceDocumentViewDto,
+  SourceRecordPageDto,
+  SourceRecordViewDto,
+  WatchedFolderDto,
+  WatchedFileMetadataDto,
+  WatchedFileInboxStateDto,
+  WatchedFileInboxItemDto,
+  WatchedFileInboxClaimDto,
+  SavingsGoalDto,
+  AppliedClassificationDto,
+  LastClassificationApplicationDto,
+  AttributionKindDto,
+  AudienceVisibilityDto,
+  ClassificationPreviewDto,
+  ClassificationRuleDto,
+  ReceiptMatchSuggestionDto,
+  ReceiptMatchConfirmationDto,
+  BulkUpdateTransactionMetadataResultDto,
+  ChangePackageReviewDto,
+  EvidenceBundleSummaryDto,
+  PendingImportApplySummaryDto,
+  PendingImportExportSummaryDto,
+  PendingImportStageDto,
+  MobileCaptureInboxItemDto,
+  MobileCaptureOcrResultDto,
+  MobileCapturePromoteResultDto,
+  MobileCaptureStatusDto,
+  MobileCaptureImagePreviewDto,
+  GoogleDriveAvailabilityDto,
+  GoogleDriveConnectionDto,
+  GoogleDriveSyncScheduleDto,
+  GoogleDriveInboxItemDto,
+  GoogleDriveInboxFileDto,
+  GoogleDriveInboxClaimDto,
+  GmailAvailabilityDto,
+  GmailConnectionDto,
+  GmailLabelDto,
+  GmailSyncScheduleDto,
+  GmailInboxItemDto,
+  GmailInboxFileDto,
+  GmailInboxClaimDto,
+  ConnectorAvailabilityDto,
+  ConnectorBindingDto,
+  ConnectorBindingSummaryDto,
+  ConnectorCapabilityDto,
+  ConnectorCursorDto,
+  ConnectorHealthDto,
+  ConnectorKindDto,
+  ConnectorLifecycleDto,
+  ConnectorRefreshBatchDto,
+  ConnectorRefreshBatchProgressDto,
+  ConnectorRefreshBatchStatusDto,
+  ConnectorRefreshItemDto,
+  ConnectorRefreshItemStatusDto,
+  ConnectorSummaryDto,
+  ConnectorSummaryPageDto,
+  ConfigurationDestinationDto,
+  DeleteConnectorBindingInputDto,
+  UpsertConnectorBindingInputDto,
+} from './types'
+
+export function parseHouseholds(value: unknown): readonly HouseholdDto[] {
+  if (!Array.isArray(value)) throw new TypeError('households')
+  return value.map(parseHousehold)
+}
+
+export function parseHousehold(value: unknown): HouseholdDto {
+  const record = asRecord(value)
+  if (typeof record.id !== 'string' || typeof record.name !== 'string' || record.baseCurrency !== 'JPY' || typeof record.createdAt !== 'string') {
+    throw new TypeError('household')
+  }
+  return { id: record.id, name: record.name, baseCurrency: record.baseCurrency, createdAt: record.createdAt }
+}
+
+export function parseHouseholdMembers(value: unknown): readonly HouseholdMemberDto[] {
+  if (!Array.isArray(value)) throw new TypeError('household members')
+  return value.map(parseHouseholdMember)
+}
+
+export function parseHouseholdMember(value: unknown): HouseholdMemberDto {
+  const record = asRecord(value)
+  if ((record.status !== 'ACTIVE' && record.status !== 'ARCHIVED') || (record.relationshipLabel !== null && typeof record.relationshipLabel !== 'string')) throw new TypeError('household member')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), displayName: asRequiredString(record.displayName),
+    relationshipLabel: record.relationshipLabel, status: record.status, sortOrder: asSafeInteger(record.sortOrder),
+    createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+export function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStatusDto {
+  const record = asRecord(value)
+  const device = asRecord(record.device); const principal = asRecord(record.principal)
+  const binding = asRecord(record.binding); const outbox = asRecord(record.outbox)
+  if (!['MACOS', 'WINDOWS', 'OTHER'].includes(String(record.platform))
+      || record.remoteTransport !== 'NOT_CONFIGURED' || record.restoreValidation !== 'ENABLED') throw new TypeError('local sync status')
+  const parseIdentity = (identity: Record<string, unknown>) => ({
+    id: asRequiredString(identity.id), displayName: asRequiredString(identity.displayName), createdAt: asRequiredString(identity.createdAt),
+  })
+  const memberId = asNullableString(binding.memberId); const memberName = asNullableString(binding.memberName)
+  if ((memberId === null) !== (memberName === null)) throw new TypeError('principal binding')
+  const latestRecordedAt = asNullableString(outbox.latestRecordedAt)
+  return {
+    device: parseIdentity(device), platform: record.platform as LocalSyncFoundationStatusDto['platform'],
+    principal: parseIdentity(principal),
+    binding: {
+      householdId: asRequiredString(binding.householdId), principalId: asRequiredString(binding.principalId),
+      memberId, memberName, updatedAt: asRequiredString(binding.updatedAt),
+    },
+    outbox: { envelopeCount: asSafeInteger(outbox.envelopeCount), latestSequence: asSafeInteger(outbox.latestSequence), latestRecordedAt },
+    remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED',
+  }
+}
+
+export const DESKTOP_RELAY_CONNECTION_STATES = new Set(['NOT_CONFIGURED', 'CONNECTED', 'DEGRADED'])
+export const DESKTOP_RELAY_DELIVERY_STATES = new Set(['IDLE', 'SENDING', 'ACCEPTED', 'FAILED_RETRYABLE'])
+export const DESKTOP_RELAY_INBOUND_STATES = new Set(['AVAILABLE', 'WAITING_FOR_REVIEW', 'DUPLICATE', 'REJECTED_INVALID', 'FAILED_RETRYABLE'])
+
+export function parseDesktopRelayStatus(value: unknown): DesktopRelayStatusDto {
+  const record = asRecord(value); const outbound = asRecord(record.outbound)
+  if (!DESKTOP_RELAY_CONNECTION_STATES.has(String(record.connectionState))
+      || !DESKTOP_RELAY_DELIVERY_STATES.has(String(outbound.deliveryState))
+      || !Array.isArray(record.inbound)) throw new TypeError('desktop relay status')
+  const endpoint = asNullableStrictString(record.endpoint)
+  const remotePrincipalId = asNullableStrictString(record.remotePrincipalId)
+  if (record.connectionState === 'NOT_CONFIGURED' ? endpoint !== null || remotePrincipalId !== null : endpoint === null || remotePrincipalId === null) throw new TypeError('desktop relay connection')
+  const pendingEnvelopeCount = asSafeInteger(outbound.pendingEnvelopeCount)
+  const totalEnvelopeCount = asSafeInteger(outbound.totalEnvelopeCount)
+  if (pendingEnvelopeCount > totalEnvelopeCount) throw new TypeError('desktop relay outbox')
+  const seen = new Set<string>()
+  const inbound = record.inbound.map((value) => {
+    const artifact = asRecord(value); const artifactId = asRequiredString(artifact.artifactId)
+    if (seen.has(artifactId) || !DESKTOP_RELAY_INBOUND_STATES.has(String(artifact.state))) throw new TypeError('desktop relay inbound')
+    seen.add(artifactId)
+    return {
+      artifactId, digest: asCanonicalHash(artifact.digest), createdAt: asIsoTimestamp(artifact.createdAt),
+      originDeviceId: asRequiredString(artifact.originDeviceId), state: artifact.state as DesktopRelayStatusDto['inbound'][number]['state'],
+    }
+  })
+  return {
+    householdId: asRequiredString(record.householdId), connectionState: record.connectionState as DesktopRelayStatusDto['connectionState'],
+    localDeviceId: asRequiredString(record.localDeviceId),
+    remotePrincipalId, endpoint,
+    outbound: {
+      pendingEnvelopeCount, totalEnvelopeCount,
+      deliveryState: outbound.deliveryState as DesktopRelayStatusDto['outbound']['deliveryState'],
+      latestAcceptedAt: outbound.latestAcceptedAt === null ? null : asIsoTimestamp(outbound.latestAcceptedAt),
+    },
+    inbound,
+  }
+}
+
+export function parseDesktopRelayPreparedDelivery(value: unknown): DesktopRelayPreparedDeliveryDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.packageBytes) || record.packageBytes.length === 0 || record.packageBytes.length > 64 * 1024 * 1024
+      || record.packageBytes.some((byte) => typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('desktop relay package bytes')
+  return {
+    deliveryId: asRequiredString(record.deliveryId), artifactId: asRequiredString(record.artifactId),
+    digest: asCanonicalHash(record.digest), householdId: asRequiredString(record.householdId),
+    originDeviceId: asRequiredString(record.originDeviceId), packageBytes: record.packageBytes,
+  }
+}
+
+export const FAMILY_CONNECTION_STATES = new Set(['NOT_CONFIGURED', 'CONNECTED', 'AUTH_EXPIRED', 'NETWORK_UNAVAILABLE', 'MEMBERSHIP_REVOKED'])
+export const FAMILY_MEMBERSHIP_STATES = new Set(['UNLINKED', 'INVITED', 'ACTIVE', 'REVOKED', 'ARCHIVED_BLOCKED'])
+export const FAMILY_OUTBOUND_STATES = new Set(['READY', 'BLOCKED_NO_RECIPIENT', 'SENDING', 'RELAY_ACCEPTED', 'FAILED_RETRYABLE', 'MEMBERSHIP_REVOKED'])
+export const FAMILY_INBOUND_STATES = new Set(['AVAILABLE', 'DOWNLOADING', 'WAITING_FOR_REVIEW', 'READY_TO_APPLY', 'APPLIED', 'DUPLICATE', 'REJECTED_INVALID', 'AUDIENCE_DENIED', 'FAILED_RETRYABLE'])
+export const FAMILY_ARTIFACT_SCHEMAS = new Set(['FAMILY_AUDIENCE_PARTITION_V1', 'FAMILY_AUDIENCE_PARTITION_V2', 'FAMILY_AUDIENCE_PARTITION_V3', 'FAMILY_AUDIENCE_PARTITION_V4'])
+export const FAMILY_DOMAINS = ['LEDGER', 'PLANNING', 'CONFIG', 'CARD', 'INVESTMENT'] as const
+
+export function parseFamilyDomainCounts(value: unknown): FamilyDeliveryStatusDto['outbound'][number]['domainCounts'] {
+  const counts = asRecord(value)
+  if (Object.keys(counts).length !== FAMILY_DOMAINS.length || FAMILY_DOMAINS.some((domain) => !(domain in counts))) throw new TypeError('family domain counts')
+  return Object.fromEntries(FAMILY_DOMAINS.map((domain) => [domain, asSafeInteger(counts[domain])])) as unknown as FamilyDeliveryStatusDto['outbound'][number]['domainCounts']
+}
+
+export function parseFamilyWithheldCounts(value: unknown): FamilyDeliveryStatusDto['outbound'][number]['withheldCountsByReason'] {
+  const counts = asRecord(value); const entries = Object.entries(counts)
+  if (entries.length > 64) throw new TypeError('family withheld counts')
+  const result: Record<string, number> = {}
+  for (const [reason, count] of entries) {
+    if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(reason)) throw new TypeError('family withheld reason')
+    result[reason] = asSafeInteger(count)
+  }
+  return result
+}
+
+export function parseFamilyDeliveryStatus(value: unknown): FamilyDeliveryStatusDto {
+  const record = asRecord(value)
+  if (!FAMILY_CONNECTION_STATES.has(String(record.connectionState)) || !Array.isArray(record.memberships)
+      || !Array.isArray(record.outbound) || !Array.isArray(record.inbound)) throw new TypeError('family delivery status')
+  const endpoint = asNullableStrictString(record.endpoint)
+  const remotePrincipalId = asNullableStrictString(record.remotePrincipalId)
+  if (record.connectionState === 'NOT_CONFIGURED'
+    ? endpoint !== null || remotePrincipalId !== null
+    : endpoint === null || remotePrincipalId === null) throw new TypeError('family delivery connection')
+  const localMemberId = asNullableStrictString(record.localMemberId)
+  const localMemberName = asNullableStrictString(record.localMemberName)
+  if ((localMemberId === null) !== (localMemberName === null)) throw new TypeError('family local member')
+  const membershipIds = new Set<string>()
+  const memberships = record.memberships.map((value) => {
+    const item = asRecord(value); const memberId = asRequiredString(item.memberId)
+    if (membershipIds.has(memberId) || !FAMILY_MEMBERSHIP_STATES.has(String(item.state))) throw new TypeError('family membership')
+    membershipIds.add(memberId)
+    const inviteId = asNullableStrictString(item.inviteId); const inviteExpiresAt = item.inviteExpiresAt === null ? null : asIsoTimestamp(item.inviteExpiresAt)
+    if (item.state === 'INVITED' ? inviteId === null || inviteExpiresAt === null : inviteId !== null || inviteExpiresAt !== null) throw new TypeError('family invitation state')
+    return {
+      memberId, memberName: asRequiredString(item.memberName), state: item.state as FamilyDeliveryStatusDto['memberships'][number]['state'],
+      remoteMembershipIds: (() => { if (!Array.isArray(item.remoteMembershipIds)) throw new TypeError('family membership ids'); const ids = item.remoteMembershipIds.map(asRequiredString); if (new Set(ids).size !== ids.length) throw new TypeError('family membership ids'); return ids })(),
+      inviteId, inviteExpiresAt, deviceCount: asSafeInteger(item.deviceCount),
+      lastDeliveryAt: item.lastDeliveryAt === null ? null : asIsoTimestamp(item.lastDeliveryAt),
+    }
+  })
+  const audienceKeys = new Set<string>()
+  const outbound = record.outbound.map((value) => {
+    const item = asRecord(value); const audienceKey = asRequiredString(item.audienceKey)
+    if (audienceKeys.has(audienceKey) || !FAMILY_OUTBOUND_STATES.has(String(item.state))
+        || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility)) || !Array.isArray(item.recipientNames)) throw new TypeError('family outbound')
+    audienceKeys.add(audienceKey)
+    const audienceMemberId = asNullableStrictString(item.audienceMemberId); const audienceMemberName = asNullableStrictString(item.audienceMemberName)
+    if (item.audienceVisibility === 'SHARED' ? audienceMemberId !== null || audienceMemberName !== null : audienceMemberId === null || audienceMemberName === null) throw new TypeError('family outbound audience')
+    const domainCounts = parseFamilyDomainCounts(item.domainCounts)
+    const withheldDomainCounts = parseFamilyDomainCounts(item.withheldDomainCounts)
+    const withheldCountsByReason = parseFamilyWithheldCounts(item.withheldCountsByReason)
+    const coverageState = String(item.coverageState)
+    if (!['COMPLETE', 'PARTIAL'].includes(coverageState)) throw new TypeError('family coverage state')
+    const withheldCount = Object.values(withheldCountsByReason).reduce((sum, count) => sum + count, 0)
+    const withheldDomainCount = Object.values(withheldDomainCounts).reduce((sum, count) => sum + count, 0)
+    if (withheldCount !== withheldDomainCount || (coverageState === 'COMPLETE') !== (withheldCount === 0)) throw new TypeError('family coverage state')
+    return {
+      audienceKey, audienceVisibility: item.audienceVisibility as AudienceVisibilityDto,
+      audienceMemberId, audienceMemberName,
+      recipientNames: item.recipientNames.map(asRequiredString), pendingChangeCount: asSafeInteger(item.pendingChangeCount),
+      state: item.state as FamilyDeliveryStatusDto['outbound'][number]['state'], withheldReason: asNullableStrictString(item.withheldReason),
+      domainCounts, withheldDomainCounts,
+      evidenceFileCount: asSafeInteger(item.evidenceFileCount), evidenceRecordCount: asSafeInteger(item.evidenceRecordCount),
+      withheldCountsByReason, coverageState: coverageState as FamilyDeliveryStatusDto['outbound'][number]['coverageState'],
+    }
+  })
+  const artifactIds = new Set<string>()
+  const inbound = record.inbound.map((value) => {
+    const item = asRecord(value); const artifactId = asRequiredString(item.artifactId)
+    if (artifactIds.has(artifactId) || !FAMILY_INBOUND_STATES.has(String(item.state))
+        || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility))) throw new TypeError('family inbound')
+    artifactIds.add(artifactId)
+    const audienceMemberName = asNullableStrictString(item.audienceMemberName)
+    if ((item.audienceVisibility === 'SHARED') !== (audienceMemberName === null)) throw new TypeError('family inbound audience')
+    if (typeof item.receivedBeforeRevocation !== 'boolean') throw new TypeError('family inbound revocation')
+    return {
+      artifactId, senderMemberName: asRequiredString(item.senderMemberName),
+      audienceVisibility: item.audienceVisibility as AudienceVisibilityDto, audienceMemberName,
+      itemCount: asSafeInteger(item.itemCount), createdAt: asIsoTimestamp(item.createdAt),
+      state: item.state as FamilyDeliveryStatusDto['inbound'][number]['state'], receivedBeforeRevocation: item.receivedBeforeRevocation,
+    }
+  })
+  return {
+    householdId: asRequiredString(record.householdId), connectionState: record.connectionState as FamilyDeliveryStatusDto['connectionState'],
+    endpoint, remotePrincipalId, localDeviceId: asRequiredString(record.localDeviceId), inboundCursor: asSafeInteger(record.inboundCursor), localMemberId, localMemberName,
+    memberships, outbound, withheldChangeCount: asSafeInteger(record.withheldChangeCount), inbound,
+  }
+}
+
+export const FAMILY_SCHEDULE_RESULTS = new Set(['NEVER', 'DISABLED', 'RUNNING', 'NO_CHANGES', 'DISCOVERED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED'])
+export const FAMILY_INTAKE_RESULTS = new Set(['NEVER', 'DISABLED', 'NO_AVAILABLE', 'REVIEW_PENDING', 'STAGED_FOR_REVIEW', 'FAILED_RETRYABLE', 'REJECTED_INVALID', 'AUDIENCE_DENIED'])
+
+export function parseFamilyDeliveryScheduleStatus(value: unknown): FamilyDeliveryScheduleStatusDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean'
+      || typeof record.intakeEnabled !== 'boolean'
+      || !FAMILY_SCHEDULE_RESULTS.has(String(record.lastResult))
+      || !FAMILY_INTAKE_RESULTS.has(String(record.lastIntakeResult))) throw new TypeError('family delivery schedule')
+  const intervalMinutes = asSafeInteger(record.intervalMinutes)
+  if (![15, 30, 60].includes(intervalMinutes)) throw new TypeError('family delivery interval')
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
+  const leaseExpiresAt = record.leaseExpiresAt === null ? null : asIsoTimestamp(record.leaseExpiresAt)
+  const lastAttemptAt = record.lastAttemptAt === null ? null : asIsoTimestamp(record.lastAttemptAt)
+  const lastSuccessAt = record.lastSuccessAt === null ? null : asIsoTimestamp(record.lastSuccessAt)
+  const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = asNullableStrictString(record.suspensionReason)
+  const lastErrorCode = asNullableStrictString(record.lastErrorCode)
+  const lastIntakeErrorCode = asNullableStrictString(record.lastIntakeErrorCode)
+  if ((record.running !== true) !== (leaseExpiresAt === null) || (record.running === true) !== (record.lastResult === 'RUNNING')) {
+    throw new TypeError('family delivery schedule lease')
+  }
+  if (!record.enabled && (record.running || nextDueAt !== null || record.lastResult !== 'DISABLED')) {
+    throw new TypeError('family delivery disabled schedule')
+  }
+  return {
+    householdId: asRequiredString(record.householdId), enabled: record.enabled, intervalMinutes,
+    nextDueAt, running: record.running, leaseExpiresAt, lastAttemptAt, lastSuccessAt,
+    lastResult: record.lastResult as FamilyDeliveryScheduleStatusDto['lastResult'],
+    lastDiscoveredCount: asSafeInteger(record.lastDiscoveredCount),
+    consecutiveFailures: asSafeInteger(record.consecutiveFailures), suspendedUntil,
+    suspensionReason, lastErrorCode, intakeEnabled: record.intakeEnabled,
+    lastIntakeResult: record.lastIntakeResult as FamilyDeliveryScheduleStatusDto['lastIntakeResult'],
+    lastStagedCount: asSafeInteger(record.lastStagedCount), lastIntakeErrorCode,
+    updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export const MOBILE_CAPTURE_BACKGROUND_RESULTS = new Set(['NEVER', 'DISABLED', 'RUNNING', 'NO_CHANGES', 'INGESTED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED'])
+
+export function parseMobileCaptureBackgroundStatus(value: unknown): MobileCaptureBackgroundStatusDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean'
+      || !MOBILE_CAPTURE_BACKGROUND_RESULTS.has(String(record.lastResult))) throw new TypeError('mobile capture background schedule')
+  const intervalMinutes = asSafeInteger(record.intervalMinutes)
+  if (![15, 30, 60].includes(intervalMinutes)) throw new TypeError('mobile capture background interval')
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
+  const leaseExpiresAt = record.leaseExpiresAt === null ? null : asIsoTimestamp(record.leaseExpiresAt)
+  const lastAttemptAt = record.lastAttemptAt === null ? null : asIsoTimestamp(record.lastAttemptAt)
+  const lastSuccessAt = record.lastSuccessAt === null ? null : asIsoTimestamp(record.lastSuccessAt)
+  const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = asNullableStrictString(record.suspensionReason)
+  const lastErrorCode = asNullableStrictString(record.lastErrorCode)
+  if ((record.running !== true) !== (leaseExpiresAt === null) || (record.running === true) !== (record.lastResult === 'RUNNING')) {
+    throw new TypeError('mobile capture background lease')
+  }
+  if (!record.enabled && (record.running || nextDueAt !== null || record.lastResult !== 'DISABLED')) {
+    throw new TypeError('mobile capture background disabled schedule')
+  }
+  return {
+    householdId: asRequiredString(record.householdId), enabled: record.enabled, intervalMinutes,
+    nextDueAt, running: record.running, leaseExpiresAt, lastAttemptAt, lastSuccessAt,
+    lastResult: record.lastResult as MobileCaptureBackgroundStatusDto['lastResult'],
+    lastIngestedCount: asSafeInteger(record.lastIngestedCount),
+    consecutiveFailures: asSafeInteger(record.consecutiveFailures), suspendedUntil,
+    suspensionReason, lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseFamilyPreparedArtifacts(value: unknown): readonly FamilyDeliveryPreparedArtifactDto[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) throw new TypeError('family prepared artifacts')
+  const ids = new Set<string>()
+  return value.map((entry) => {
+    const record = asRecord(entry); const artifactId = asRequiredString(record.artifactId)
+    if (ids.has(artifactId) || !Array.isArray(record.packageBytes) || record.packageBytes.length === 0 || record.packageBytes.length > 64 * 1024 * 1024
+        || record.packageBytes.some((byte) => typeof byte !== 'number' || !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('family prepared artifact')
+    ids.add(artifactId)
+    if (!['SHARED', 'PERSONAL'].includes(String(record.audienceVisibility))) throw new TypeError('family artifact audience')
+    const audienceVisibility = record.audienceVisibility as AudienceVisibilityDto
+    const audienceMemberId = asNullableStrictString(record.audienceMemberId)
+    if ((audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('family artifact audience')
+    if (!FAMILY_ARTIFACT_SCHEMAS.has(String(record.artifactSchema))) throw new TypeError('family artifact schema')
+    return {
+      deliveryId: asRequiredString(record.deliveryId), artifactId, digest: asCanonicalHash(record.digest),
+      householdId: asRequiredString(record.householdId), originDeviceId: asRequiredString(record.originDeviceId), audienceKey: asRequiredString(record.audienceKey),
+      audienceVisibility, audienceMemberId, artifactSchema: record.artifactSchema as FamilyDeliveryPreparedArtifactDto['artifactSchema'],
+      packageBytes: record.packageBytes,
+    }
+  })
+}
+
+export function parseFamilyEnvelopeIdentity(value: unknown): FamilyEnvelopePublicIdentityDto {
+  const record = asRecord(value)
+  const publicKey = asRequiredString(record.publicKey)
+  const generation = asSafeInteger(record.generation)
+  if (!/^[A-Za-z0-9_-]{43}$/.test(publicKey) || generation < 1) throw new TypeError('family envelope identity')
+  return { keyId: asCanonicalHash(record.keyId), publicKey, generation }
+}
+
+export function familyEnvelopeBytes(value: unknown, expectedSize: unknown, label: string): readonly number[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64 * 1024 * 1024
+      || value.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)
+      || asSafeInteger(expectedSize) !== value.length) throw new TypeError(label)
+  return value as number[]
+}
+
+export function parseSealedFamilyEnvelope(value: unknown): SealFamilyEnvelopeOutputDto {
+  const record = asRecord(value)
+  const envelopeBytes = familyEnvelopeBytes(record.envelopeBytes, record.envelopeByteSize, 'sealed family envelope')
+  const recipientCount = asSafeInteger(record.recipientCount)
+  if (recipientCount < 1 || recipientCount > 64) throw new TypeError('sealed family envelope recipients')
+  return { envelopeBytes, envelopeSha256: asCanonicalHash(record.envelopeSha256), envelopeByteSize: envelopeBytes.length, recipientCount }
+}
+
+export function parsePreparedFamilyEnvelope(value: unknown): PreparedFamilyEnvelopeOutputDto {
+  const sealed = parseSealedFamilyEnvelope(value)
+  const record = asRecord(value)
+  if (!['EXACT_CACHE', 'STALE_CACHE_REUSED', 'NEWLY_SEALED'].includes(String(record.cacheDisposition))) {
+    throw new TypeError('prepared family envelope cache disposition')
+  }
+  return {
+    ...sealed, recipientSetDigest: asCanonicalHash(record.recipientSetDigest),
+    cacheDisposition: record.cacheDisposition as PreparedFamilyEnvelopeOutputDto['cacheDisposition'],
+  }
+}
+
+export function parseNullablePreparedFamilyEnvelope(value: unknown): PreparedFamilyEnvelopeOutputDto | null {
+  return value === null ? null : parsePreparedFamilyEnvelope(value)
+}
+
+export function parseOpenedFamilyEnvelope(value: unknown): OpenFamilyEnvelopeOutputDto {
+  const record = asRecord(value)
+  const artifactBytes = familyEnvelopeBytes(record.artifactBytes, record.artifactByteSize, 'opened family envelope')
+  return { artifactBytes, artifactSha256: asCanonicalHash(record.artifactSha256), artifactByteSize: artifactBytes.length }
+}
+
+export function parseFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto {
+  const record = asRecord(value)
+  if (!['REVIEW_REQUIRED', 'READY', 'APPLIED'].includes(String(record.state))
+      || !['SHARED', 'PERSONAL'].includes(String(record.audienceVisibility)) || !Array.isArray(record.records)) throw new TypeError('family snapshot review')
+  const audienceMemberName = asNullableStrictString(record.audienceMemberName)
+  if ((record.audienceVisibility === 'SHARED') !== (audienceMemberName === null)) throw new TypeError('family snapshot audience')
+  const keys = new Set<string>()
+  const records = record.records.map((value) => {
+    const item = asRecord(value)
+    if (!['UPSERT', 'DELETE'].includes(String(item.operation)) || !['CREATE', 'UPDATE', 'DELETE', 'CONFLICT'].includes(String(item.reviewState))
+        || !['PENDING', 'APPLY_INCOMING', 'KEEP_LOCAL', 'SKIP'].includes(String(item.resolution))
+        || !FAMILY_DOMAINS.includes(item.domain as typeof FAMILY_DOMAINS[number])) throw new TypeError('family snapshot record')
+    const entityKind = asRequiredString(item.entityKind); const entityId = asRequiredString(item.entityId); const key = `${entityKind}\0${entityId}`
+    if (keys.has(key)) throw new TypeError('family snapshot record'); keys.add(key)
+    return {
+      recordOrder: asSafeInteger(item.recordOrder), entityKind, entityId, entityLabel: asRequiredString(item.entityLabel),
+      domain: item.domain as FamilySnapshotReviewDto['records'][number]['domain'], entitySummary: asRequiredString(item.entitySummary),
+      operation: item.operation as FamilySnapshotReviewDto['records'][number]['operation'], reviewState: item.reviewState as FamilySnapshotReviewDto['records'][number]['reviewState'],
+      resolution: item.resolution as FamilySnapshotReviewDto['records'][number]['resolution'],
+      localSummary: asNullableStrictString(item.localSummary), incomingSummary: asRequiredString(item.incomingSummary),
+    }
+  })
+  const result = {
+    packageId: asRequiredString(record.packageId), householdId: asRequiredString(record.householdId), senderMemberName: asRequiredString(record.senderMemberName),
+    audienceVisibility: record.audienceVisibility as AudienceVisibilityDto, audienceMemberName,
+    state: record.state as FamilySnapshotReviewDto['state'], recordCount: asSafeInteger(record.recordCount),
+    createCount: asSafeInteger(record.createCount), updateCount: asSafeInteger(record.updateCount), deleteCount: asSafeInteger(record.deleteCount), conflictCount: asSafeInteger(record.conflictCount),
+    evidenceFileCount: asSafeInteger(record.evidenceFileCount), evidenceRecordCount: asSafeInteger(record.evidenceRecordCount), records,
+  }
+  if (result.recordCount !== records.length || result.createCount + result.updateCount + result.deleteCount > result.recordCount) throw new TypeError('family snapshot counts')
+  return result
+}
+
+export function parseNullableFamilySnapshotReview(value: unknown): FamilySnapshotReviewDto | null {
+  return value === null ? null : parseFamilySnapshotReview(value)
+}
+
+export const MOBILE_CAPTURE_STATES = new Set(['RECEIVED', 'OCR_READY', 'OCR_REVIEW_REQUIRED', 'PROMOTED', 'DUPLICATE', 'REJECTED_INVALID', 'FAILED_RETRYABLE'])
+
+export function parseMobileCaptureInboxItem(value: unknown): MobileCaptureInboxItemDto {
+  const item = asRecord(value)
+  if (!MOBILE_CAPTURE_STATES.has(String(item.state)) || !['image/png', 'image/jpeg', 'application/pdf'].includes(String(item.mediaType))
+      || !['SHARED', 'PERSONAL'].includes(String(item.audienceVisibility))) throw new TypeError('mobile capture item')
+  const audienceVisibility = item.audienceVisibility as MobileCaptureInboxItemDto['audienceVisibility']
+  const audienceMemberId = asNullableStrictString(item.audienceMemberId)
+  if ((audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('mobile capture audience')
+  const byteSize = asSafeInteger(item.byteSize)
+  if (byteSize < 1 || byteSize > 25 * 1024 * 1024) throw new TypeError('mobile capture byte size')
+  const state = item.state as MobileCaptureInboxItemDto['state']
+  const latestExtractionId = asNullableStrictString(item.latestExtractionId)
+  const localRunId = asNullableStrictString(item.localRunId)
+  const localDocumentId = asNullableStrictString(item.localDocumentId)
+  const lastErrorCode = asNullableStrictString(item.lastErrorCode)
+  if ((localRunId === null) !== (localDocumentId === null)
+      || (['PROMOTED', 'DUPLICATE'].includes(state) && localRunId === null)
+      || (state === 'FAILED_RETRYABLE') !== (lastErrorCode !== null)) throw new TypeError('mobile capture state graph')
+  const senderMembershipId = item.senderMembershipId == null ? undefined : asRequiredString(item.senderMembershipId)
+  const senderMemberName = item.senderMemberName == null ? null : asRequiredString(item.senderMemberName)
+  const audienceMemberName = item.audienceMemberName == null ? null : asRequiredString(item.audienceMemberName)
+  const receivedBeforeSenderRevocation = item.receivedBeforeSenderRevocation == null ? false : item.receivedBeforeSenderRevocation
+  if (typeof receivedBeforeSenderRevocation !== 'boolean') throw new TypeError('mobile capture revocation')
+  return {
+    artifactId: asRequiredString(item.artifactId), captureId: asRequiredString(item.captureId), originalFilename: asRequiredString(item.originalFilename),
+    mediaType: item.mediaType as MobileCaptureInboxItemDto['mediaType'], byteSize, sourceSha256: asCanonicalHash(item.sourceSha256),
+    capturedAt: item.capturedAt === null ? null : asIsoTimestamp(item.capturedAt), receivedAt: asIsoTimestamp(item.receivedAt),
+    senderMembershipId, senderMemberName, audienceVisibility, audienceMemberId, audienceMemberName,
+    state, latestExtractionId, localRunId, localDocumentId, lastErrorCode, receivedBeforeSenderRevocation,
+  }
+}
+
+export function parseMobileCaptureInboxItems(value: unknown): readonly MobileCaptureInboxItemDto[] {
+  if (!Array.isArray(value) || value.length > 1_000) throw new TypeError('mobile capture items')
+  const ids = new Set<string>()
+  return value.map((entry) => {
+    const item = parseMobileCaptureInboxItem(entry)
+    if (ids.has(item.artifactId)) throw new TypeError('duplicate mobile capture item')
+    ids.add(item.artifactId)
+    return item
+  })
+}
+
+export function parseMobileCaptureStatus(value: unknown): MobileCaptureStatusDto {
+  const record = asRecord(value)
+  const endpoint = asNullableStrictString(record.endpoint); const localDeviceId = asRequiredString(record.localDeviceId)
+  const captureInboundCursor = asSafeInteger(record.captureInboundCursor); const items = parseMobileCaptureInboxItems(record.items)
+  return { endpoint, localDeviceId, captureInboundCursor, items }
+}
+
+export function parseMobileCaptureImagePreview(value: unknown): MobileCaptureImagePreviewDto {
+  const record = asRecord(value)
+  if (!['image/png', 'image/jpeg', 'application/pdf'].includes(String(record.mediaType))) throw new TypeError('mobile capture image preview')
+  const byteSize = asSafeInteger(record.byteSize)
+  if (byteSize < 1 || byteSize > 20 * 1024 * 1024 || typeof record.dataUrl !== 'string'
+      || !record.dataUrl.startsWith(`data:${record.mediaType};base64,`) || record.dataUrl.length > 36 * 1024 * 1024) throw new TypeError('mobile capture image preview')
+  return { filename: asRequiredString(record.filename), mediaType: record.mediaType as MobileCaptureImagePreviewDto['mediaType'], byteSize, dataUrl: record.dataUrl }
+}
+
+export function parseMobileCaptureOcrResult(value: unknown): MobileCaptureOcrResultDto {
+  const record = asRecord(value)
+  return { item: parseMobileCaptureInboxItem(record.item), extractionId: asRequiredString(record.extractionId), document: parseExtractedDocument(record.document) }
+}
+
+export function parseMobileCapturePromoteResult(value: unknown): MobileCapturePromoteResultDto {
+  const record = asRecord(value)
+  if (typeof record.reusedExisting !== 'boolean') throw new TypeError('mobile capture promote result')
+  const item = parseMobileCaptureInboxItem(record.item)
+  const runId = asRequiredString(record.runId); const documentId = asRequiredString(record.documentId)
+  if (item.localRunId !== runId || item.localDocumentId !== documentId || !['PROMOTED', 'DUPLICATE'].includes(item.state)) throw new TypeError('mobile capture promote result')
+  return { item, runId, documentId, reusedExisting: record.reusedExisting }
+}
+
+export function parseNullableString(value: unknown): string | null {
+  if (value === null || typeof value === 'string') return value
+  throw new TypeError('nullable string')
+}
+
+export function parseEvidenceBundleSummary(value: unknown): EvidenceBundleSummaryDto {
+  const record = asRecord(value)
+  return {
+    bundleId: asRequiredString(record.bundleId),
+    householdId: asRequiredString(record.householdId),
+    originInstallationId: asRequiredString(record.originInstallationId),
+    documentCount: asSafeInteger(record.documentCount),
+    recordCount: asSafeInteger(record.recordCount),
+    plaintextBytes: asSafeInteger(record.plaintextBytes),
+    importedDocumentCount: asSafeInteger(record.importedDocumentCount),
+    deduplicatedDocumentCount: asSafeInteger(record.deduplicatedDocumentCount),
+  }
+}
+
+export function parseNullableEvidenceBundleSummary(value: unknown): EvidenceBundleSummaryDto | null {
+  return value === null ? null : parseEvidenceBundleSummary(value)
+}
+
+export const MAX_PENDING_IMPORT_RECORDS = 100_000
+export const MAX_PENDING_IMPORT_CANDIDATES = 100_000
+export const MAX_PENDING_IMPORT_STATEMENTS = 16
+export const MAX_PENDING_IMPORT_DEPENDENCIES = 100_000
+export const MAX_PENDING_IMPORT_PACKAGE_BYTES = 512 * 1024 * 1024
+
+export function parsePendingImportCounts(record: Record<string, unknown>): { recordCount: number; candidateCount: number; statementCount: number } {
+  const recordCount = asBoundedInteger(record.recordCount, MAX_PENDING_IMPORT_RECORDS)
+  const candidateCount = asBoundedInteger(record.candidateCount, MAX_PENDING_IMPORT_CANDIDATES)
+  const statementCount = asBoundedInteger(record.statementCount, MAX_PENDING_IMPORT_STATEMENTS)
+  if (recordCount === 0 || candidateCount === 0) throw new TypeError('pending import counts')
+  return { recordCount, candidateCount, statementCount }
+}
+
+export function parseNullablePendingImportExportSummary(value: unknown, expectedHouseholdId: string): PendingImportExportSummaryDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  if (record.schemaVersion !== 1 || record.householdId !== expectedHouseholdId) throw new TypeError('pending import export')
+  const byteSize = asBoundedInteger(record.byteSize, MAX_PENDING_IMPORT_PACKAGE_BYTES)
+  if (byteSize === 0) throw new TypeError('pending import export size')
+  return {
+    packageId: asRequiredString(record.packageId), schemaVersion: 1, householdId: expectedHouseholdId,
+    portableRunId: asRequiredString(record.portableRunId), manifestSha256: asCanonicalHash(record.manifestSha256),
+    sourceSha256: asCanonicalHash(record.sourceSha256), ...parsePendingImportCounts(record), byteSize,
+  }
+}
+
+export function parseNullablePendingImportStage(value: unknown): PendingImportStageDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  if (record.schemaVersion !== 1 || typeof record.alreadyApplied !== 'boolean'
+      || !Array.isArray(record.accountDependencies) || record.accountDependencies.length > MAX_PENDING_IMPORT_DEPENDENCIES
+      || !Array.isArray(record.memberDependencies) || record.memberDependencies.length > MAX_PENDING_IMPORT_DEPENDENCIES
+      || !Object.hasOwn(record, 'existingLocalRunId')) throw new TypeError('pending import stage')
+  const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
+  const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
+  const accountDependencies = record.accountDependencies.map((value) => {
+    const dependency = asRecord(value)
+    if (!accountKinds.includes(dependency.accountKind as typeof accountKinds[number])
+        || (dependency.accountSubtype !== null && !accountSubtypes.includes(dependency.accountSubtype as typeof accountSubtypes[number]))
+        || !Object.hasOwn(dependency, 'institutionName') || !Object.hasOwn(dependency, 'maskedIdentifier')) throw new TypeError('pending import account dependency')
+    return {
+      portableAccountId: asRequiredString(dependency.portableAccountId), name: asRequiredString(dependency.name),
+      accountKind: dependency.accountKind as PendingImportStageDto['accountDependencies'][number]['accountKind'],
+      accountSubtype: dependency.accountSubtype as PendingImportStageDto['accountDependencies'][number]['accountSubtype'],
+      currency: asRequiredString(dependency.currency), institutionName: asNullableStrictString(dependency.institutionName),
+      maskedIdentifier: asNullableStrictString(dependency.maskedIdentifier),
+    }
+  })
+  const memberDependencies = record.memberDependencies.map((value) => {
+    const dependency = asRecord(value)
+    return { portableMemberId: asRequiredString(dependency.portableMemberId), displayName: asRequiredString(dependency.displayName), role: asRequiredString(dependency.role) }
+  })
+  if (new Set(accountDependencies.map((item) => item.portableAccountId)).size !== accountDependencies.length
+      || new Set(memberDependencies.map((item) => item.portableMemberId)).size !== memberDependencies.length) throw new TypeError('pending import duplicate dependency')
+  const existingLocalRunId = asNullableStrictString(record.existingLocalRunId)
+  if (record.alreadyApplied !== (existingLocalRunId !== null)) throw new TypeError('pending import applied state')
+  return {
+    packageId: asRequiredString(record.packageId), schemaVersion: 1,
+    originInstallationId: asRequiredString(record.originInstallationId), portableRunId: asRequiredString(record.portableRunId),
+    manifestSha256: asCanonicalHash(record.manifestSha256), sourceFilename: asRequiredString(record.sourceFilename),
+    sourceSha256: asCanonicalHash(record.sourceSha256), ...parsePendingImportCounts(record),
+    accountDependencies, memberDependencies, alreadyApplied: record.alreadyApplied, existingLocalRunId,
+  }
+}
+
+export function parsePendingImportApplySummary(value: unknown, expectedPackageId: string): PendingImportApplySummaryDto {
+  const record = asRecord(value)
+  if (record.packageId !== expectedPackageId || typeof record.reusedExisting !== 'boolean') throw new TypeError('pending import apply')
+  return {
+    packageId: expectedPackageId, localRunId: asRequiredString(record.localRunId),
+    localDocumentId: asRequiredString(record.localDocumentId), ...parsePendingImportCounts(record),
+    reusedExisting: record.reusedExisting,
+  }
+}
+
+export function parseBoolean(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new TypeError('boolean')
+  return value
+}
+
+export function parseNullableChangePackageReview(value: unknown): ChangePackageReviewDto | null {
+  return value === null ? null : parseChangePackageReview(value)
+}
+
+export function parseChangePackageReview(value: unknown): ChangePackageReviewDto {
+  const record = asRecord(value)
+  const states = ['STAGED', 'REVIEW_REQUIRED', 'READY', 'APPLIED', 'REJECTED'] as const
+  if (!states.includes(record.state as typeof states[number]) || !Array.isArray(record.records)) throw new TypeError('change package review')
+  return {
+    packageId: asRequiredString(record.packageId), targetHouseholdId: asRequiredString(record.targetHouseholdId),
+    sourceInstallationId: asRequiredString(record.sourceInstallationId), sourceRevision: asSafeInteger(record.sourceRevision),
+    sourceCreatedAt: asRequiredString(record.sourceCreatedAt), state: record.state as ChangePackageReviewDto['state'],
+    recordCount: asSafeInteger(record.recordCount), createCount: asSafeInteger(record.createCount),
+    updateCount: asSafeInteger(record.updateCount), unchangedCount: asSafeInteger(record.unchangedCount),
+    deleteCount: asSafeInteger(record.deleteCount), conflictCount: asSafeInteger(record.conflictCount),
+    records: record.records.map((item) => {
+      const entry = asRecord(item)
+      const operations = ['UPSERT', 'DELETE'] as const
+      const reviewStates = ['CREATE', 'UPDATE', 'UNCHANGED', 'DELETE', 'CONFLICT'] as const
+      const resolutions = ['PENDING', 'APPLY_INCOMING', 'KEEP_LOCAL', 'SKIP'] as const
+      if (!operations.includes(entry.operation as typeof operations[number])
+          || !reviewStates.includes(entry.reviewState as typeof reviewStates[number])
+          || !resolutions.includes(entry.resolution as typeof resolutions[number])) throw new TypeError('change package record')
+      return {
+        recordOrder: asSafeInteger(entry.recordOrder), entityKind: asRequiredString(entry.entityKind),
+        entityId: asRequiredString(entry.entityId), operation: entry.operation as 'UPSERT' | 'DELETE',
+        payloadSha256: asRequiredString(entry.payloadSha256),
+        reviewState: entry.reviewState as ChangePackageReviewDto['records'][number]['reviewState'],
+        resolution: entry.resolution as ChangePackageReviewDto['records'][number]['resolution'],
+        currentPayloadSha256: asNullableString(entry.currentPayloadSha256),
+        conflictReason: asNullableString(entry.conflictReason),
+      }
+    }),
+  }
+}
+
+export function parseAccounts(value: unknown): readonly AccountDto[] {
+  if (!Array.isArray(value)) throw new TypeError('accounts')
+  return value.map(parseAccount)
+}
+
+export function parseAccount(value: unknown): AccountDto {
+  const record = asRecord(value)
+  const accountKinds = ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'] as const
+  const accountSubtypes = ['BANK', 'CASH', 'WALLET', 'SECURITIES', 'CREDIT_CARD', 'RECEIVABLE', 'OTHER'] as const
+  if (!accountKinds.includes(record.accountKind as typeof accountKinds[number]) || !accountSubtypes.includes(record.accountSubtype as typeof accountSubtypes[number]) || record.currency !== 'JPY') throw new TypeError('account')
+  if ((record.ownershipKind !== 'HOUSEHOLD' && record.ownershipKind !== 'MEMBER') || (record.visibility !== 'SHARED' && record.visibility !== 'PERSONAL')) throw new TypeError('account ownership')
+  if (!Object.hasOwn(record, 'ownerMemberId') || !Object.hasOwn(record, 'ownerMemberName')) throw new TypeError('account owner fields')
+  const ownerMemberId = asNullableString(record.ownerMemberId)
+  const ownerMemberName = asNullableString(record.ownerMemberName)
+  if ((record.ownershipKind === 'HOUSEHOLD' && ownerMemberId !== null) || (record.ownershipKind === 'MEMBER' && ownerMemberId === null)) throw new TypeError('account owner')
+  if ((record.ownershipKind === 'HOUSEHOLD' && ownerMemberName !== null) || (record.ownershipKind === 'MEMBER' && ownerMemberName === null)) throw new TypeError('account owner name')
+  return {
+    id: asRequiredString(record.id), name: asRequiredString(record.name),
+    accountKind: record.accountKind as AccountDto['accountKind'],
+    accountSubtype: record.accountSubtype as AccountDto['accountSubtype'], currency: 'JPY',
+    ownershipKind: record.ownershipKind, ownerMemberId, ownerMemberName, visibility: record.visibility,
+  }
+}
+
+export function parseImportSummaryDto(value: unknown): ImportSummaryDto {
+  const record = asRecord(value)
+  if (typeof record.runId !== 'string' || typeof record.documentId !== 'string' || typeof record.status !== 'string' || typeof record.reusedExisting !== 'boolean') throw new TypeError('import summary')
+  return { runId: record.runId, documentId: record.documentId, status: record.status, recordCount: asSafeInteger(record.recordCount), candidateCount: asSafeInteger(record.candidateCount), reusedExisting: record.reusedExisting }
+}
+
+export function parsePendingReviewList(value: unknown, expectedHouseholdId: string): PendingReviewListDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.runs) || record.runs.length > 200) throw new TypeError('pending review list')
+  const runs = record.runs.map(parsePendingReviewRun)
+  if (new Set(runs.map((run) => run.runId)).size !== runs.length
+    || new Set(runs.map((run) => run.documentId)).size !== runs.length) {
+    throw new TypeError('duplicate pending review')
+  }
+  for (let index = 1; index < runs.length; index += 1) {
+    const previous = runs[index - 1]
+    const current = runs[index]
+    const previousTime = Date.parse(previous.startedAt)
+    const currentTime = Date.parse(current.startedAt)
+    if (previousTime < currentTime || (previousTime === currentTime && previous.runId > current.runId)) {
+      throw new TypeError('pending review order')
+    }
+  }
+  const householdId = asRequiredString(record.householdId)
+  if (householdId !== expectedHouseholdId) throw new TypeError('pending review household')
+  return { householdId, runs }
+}
+
+export function parsePendingReviewRun(value: unknown): PendingReviewRunDto {
+  const record = asRecord(value)
+  if (record.status !== 'REVIEW_REQUIRED'
+    || !Object.hasOwn(record, 'adapterId')
+    || !Object.hasOwn(record, 'adapterVersion')
+    || !Object.hasOwn(record, 'sourceModifiedAt')
+    || typeof record.adapterId === 'undefined'
+    || typeof record.adapterVersion === 'undefined'
+    || typeof record.sourceModifiedAt === 'undefined') throw new TypeError('pending review status')
+  const adapterId = asNullableString(record.adapterId)
+  const adapterVersion = asNullableString(record.adapterVersion)
+  if (adapterId === '' || adapterVersion === '') throw new TypeError('pending review adapter')
+  if (record.completionState !== 'CANDIDATE_REVIEW' && record.completionState !== 'SOURCE_READY' && record.completionState !== 'SOURCE_RESUME_REQUIRED') throw new TypeError('pending review completion state')
+  const candidateCount = asSafeInteger(record.candidateCount)
+  if ((candidateCount > 0) !== (record.completionState === 'CANDIDATE_REVIEW')) throw new TypeError('pending review completion consistency')
+  return {
+    runId: asRequiredString(record.runId),
+    documentId: asRequiredString(record.documentId),
+    status: 'REVIEW_REQUIRED',
+    adapterId,
+    adapterVersion,
+    startedAt: asIsoTimestamp(record.startedAt),
+    sourceType: asRequiredString(record.sourceType),
+    originalFilename: asRequiredString(record.originalFilename),
+    mediaType: asRequiredString(record.mediaType),
+    byteSize: asSafeInteger(record.byteSize),
+    sourceModifiedAt: record.sourceModifiedAt === null ? null : asIsoTimestamp(record.sourceModifiedAt),
+    recordCount: asSafeInteger(record.recordCount),
+    candidateCount,
+    completionState: record.completionState,
+  }
+}
+
+export function parseImportPreview(value: unknown): ImportPreviewDto {
+  const record = asRecord(value)
+  const source = asRecord(record.source)
+  if (!Array.isArray(record.candidates) || typeof source.sourceType !== 'string' || typeof source.originalFilename !== 'string' || typeof source.mediaType !== 'string' || typeof source.sha256 !== 'string') throw new TypeError('import preview')
+  const duplicateSummary = record.duplicateSummary == null ? undefined : (() => {
+    const summary = asRecord(record.duplicateSummary)
+    return { confirmedReplays: asSafeInteger(summary.confirmedReplays), likelyDuplicates: asSafeInteger(summary.likelyDuplicates), possibleDuplicates: asSafeInteger(summary.possibleDuplicates), unresolved: asSafeInteger(summary.unresolved), overlapStart: asNullableString(summary.overlapStart), overlapEnd: asNullableString(summary.overlapEnd) }
+  })()
+  return {
+    summary: parseImportSummaryDto(record.summary),
+    source: { sourceType: source.sourceType, originalFilename: source.originalFilename, mediaType: source.mediaType, byteSize: asSafeInteger(source.byteSize), sha256: source.sha256, ...parseAudience(source) },
+    expectedConnectorBinding: parseImportBindingExpectation(record.expectedConnectorBinding),
+    candidates: record.candidates.map(parsePreviewCandidate),
+    ...(duplicateSummary ? { duplicateSummary } : {}),
+  }
+}
+
+export function parseImportBindingExpectation(value: unknown): ImportBindingExpectationDto | null {
+  if (value === null) return null
+  try {
+    const record = asRecord(value)
+    assertExactFields(record, new Set(['connectorKind', 'connectionKey', 'version', 'generation']), 'import binding expectation')
+    const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'import binding expectation')
+    const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'import binding expectation')
+    validateManualConnectorKey(connectorKind, connectionKey)
+    return {
+      connectorKind,
+      connectionKey,
+      version: record.version === null ? null : asPositiveSafeInteger(record.version, 'import binding expectation'),
+      generation: asSafeInteger(record.generation),
+    }
+  } catch {
+    throw new TypeError('import binding expectation')
+  }
+}
+
+export function parsePreviewCandidate(value: unknown): PreviewCandidateDto {
+  const record = asRecord(value)
+  if ((record.direction !== 'IN' && record.direction !== 'OUT') || !['PENDING', 'READY', 'DUPLICATE', 'EXCLUDED'].includes(String(record.reviewStatus))) throw new TypeError('candidate')
+  if (!Array.isArray(record.evidenceRoles) || !record.evidenceRoles.every((role) => typeof role === 'string') || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('candidate details')
+  const attribution = parseAttribution(record)
+  const audience = parseAudience(record)
+  if (typeof record.calculationTarget !== 'boolean') throw new TypeError('candidate calculation target')
+  if (record.externalSource !== null && typeof record.externalSource !== 'undefined' && record.externalSource !== 'MONEY_FORWARD_ME') throw new TypeError('candidate external source')
+  if (record.suggestedTransactionType !== null && typeof record.suggestedTransactionType !== 'undefined' && record.suggestedTransactionType !== 'TRANSFER') throw new TypeError('candidate suggested type')
+  const externalFactHash = asNullableString(record.externalFactHash)
+  if (externalFactHash !== null && !/^[0-9a-f]{64}$/.test(externalFactHash)) throw new TypeError('candidate fact hash')
+  const duplicateMatch = record.duplicateMatch == null ? null : (() => {
+    const match = asRecord(record.duplicateMatch)
+    if (!['LIKELY', 'POSSIBLE'].includes(String(match.confidence)) || !['UNRESOLVED', 'LINK', 'KEEP_BOTH', 'EXCLUDE'].includes(String(match.decision)) || !Array.isArray(match.reasons) || !match.reasons.every((reason) => typeof reason === 'string')) throw new TypeError('duplicate match')
+    return { confidence: match.confidence as 'LIKELY' | 'POSSIBLE', matchedTransactionId: asNullableString(match.matchedTransactionId), matchedCandidateId: asNullableString(match.matchedCandidateId), occurredOn: asRequiredString(match.occurredOn), amountJpy: asSafeInteger(match.amountJpy), payee: asNullableString(match.payee), description: asNullableString(match.description), sourceFilename: asNullableString(match.sourceFilename), reasons: match.reasons, decision: match.decision as 'UNRESOLVED' | 'LINK' | 'KEEP_BOTH' | 'EXCLUDE' }
+  })()
+  return {
+    id: asRequiredString(record.id), accountId: asNullableString(record.accountId),
+    occurredOn: asRequiredString(record.occurredOn), postedOn: asNullableString(record.postedOn),
+    amountJpy: asSafeInteger(record.amountJpy), direction: record.direction,
+    descriptionRaw: asNullableString(record.descriptionRaw), merchantRaw: asNullableString(record.merchantRaw),
+    externalTransactionId: asNullableString(record.externalTransactionId),
+    externalSource: record.externalSource === 'MONEY_FORWARD_ME' ? record.externalSource : null,
+    externalFactHash, calculationTarget: record.calculationTarget,
+    suggestedTransactionType: record.suggestedTransactionType === 'TRANSFER' ? record.suggestedTransactionType : null,
+    institutionRaw: asNullableString(record.institutionRaw), categoryMajorRaw: asNullableString(record.categoryMajorRaw),
+    categoryMinorRaw: asNullableString(record.categoryMinorRaw), memoRaw: asNullableString(record.memoRaw),
+    extractionConfidenceBps: asNullableSafeInteger(record.extractionConfidenceBps),
+    normalizationConfidenceBps: asNullableSafeInteger(record.normalizationConfidenceBps),
+    ...attribution, ...audience,
+    reviewStatus: record.reviewStatus as PreviewCandidateDto['reviewStatus'],
+    evidenceCount: asSafeInteger(record.evidenceCount), evidenceRoles: record.evidenceRoles, issues: record.issues,
+    receiptReview: parseReceiptReview(record.receiptReview),
+    ...(typeof record.duplicateMatch === 'undefined' ? {} : { duplicateMatch }),
+  }
+}
+
+export function parseReceiptFieldProvenance(value: unknown) {
+  const record = asRecord(value)
+  const lineNumber = asSafeInteger(record.lineNumber)
+  if (lineNumber < 1 || record.method !== 'TEXT_PATTERN' || !Array.isArray(record.regionIndexes) || record.regionIndexes.length > 64) throw new TypeError('receipt provenance')
+  const regionIndexes = record.regionIndexes.map(asSafeInteger)
+  if (regionIndexes.some((index) => index < 0)) throw new TypeError('receipt provenance')
+  return { lineNumber, regionIndexes, method: 'TEXT_PATTERN' as const }
+}
+
+export function parseReceiptReview(value: unknown): ReceiptReviewDto | null {
+  if (value == null) return null
+  const record = asRecord(value)
+  const boundedText = (input: unknown): string | null => {
+    if (input == null) return null
+    const text = asRequiredString(input)
+    if (text.length > 512) throw new TypeError('receipt text')
+    return text
+  }
+  const jpy = (input: unknown, positive = false) => {
+    const amount = asSafeInteger(input)
+    if (amount < (positive ? 1 : 0)) throw new TypeError('receipt amount')
+    return amount
+  }
+  const nullableJpy = (input: unknown) => input == null ? null : jpy(input)
+  if (!Array.isArray(record.items) || record.items.length > 100 || !Array.isArray(record.taxes) || record.taxes.length > 16) throw new TypeError('receipt arrays')
+  const items = record.items.map((value) => {
+    const item = asRecord(value); const taxRatePercent = item.taxRatePercent
+    if (taxRatePercent != null && taxRatePercent !== 8 && taxRatePercent !== 10) throw new TypeError('receipt item tax rate')
+    const quantity = item.quantity == null ? null : asSafeInteger(item.quantity)
+    const confidenceBps = asSafeInteger(item.confidenceBps)
+    if ((quantity != null && (quantity < 1 || quantity > 10_000)) || confidenceBps > 10_000) throw new TypeError('receipt item')
+    return { description: boundedText(item.description) ?? (() => { throw new TypeError('receipt item description') })(), quantity, amountJpy: jpy(item.amountJpy, true), taxRatePercent: taxRatePercent as 8 | 10 | null, confidenceBps, provenance: parseReceiptFieldProvenance(item.provenance) }
+  })
+  const taxes = record.taxes.map((value) => {
+    const tax = asRecord(value); const ratePercent = tax.ratePercent; const confidenceBps = asSafeInteger(tax.confidenceBps)
+    if ((ratePercent !== 8 && ratePercent !== 10) || confidenceBps > 10_000) throw new TypeError('receipt tax')
+    return { ratePercent: ratePercent as 8 | 10, taxAmountJpy: nullableJpy(tax.taxAmountJpy), taxableAmountJpy: nullableJpy(tax.taxableAmountJpy), confidenceBps, provenance: parseReceiptFieldProvenance(tax.provenance) }
+  })
+  const adjustmentList = (input: unknown) => {
+    if (typeof input === 'undefined') return []
+    if (!Array.isArray(input) || input.length > 16) throw new TypeError('receipt adjustments')
+    return input.map((value) => {
+      const adjustment = asRecord(value); const confidenceBps = asSafeInteger(adjustment.confidenceBps)
+      if (confidenceBps > 10_000) throw new TypeError('receipt adjustment')
+      return { amountJpy: adjustment.amountJpy == null ? null : jpy(adjustment.amountJpy, true), confidenceBps, provenance: parseReceiptFieldProvenance(adjustment.provenance) }
+    })
+  }
+  const totalAmountJpy = jpy(record.totalAmountJpy, true)
+  const reconciliation = record.reconciliation == null ? null : (() => {
+    const input = asRecord(record.reconciliation)
+    if (input.status !== 'EXACT' && input.status !== 'DELTA' && input.status !== 'NO_ITEMS') throw new TypeError('receipt reconciliation')
+    const itemTotalJpy = input.itemTotalJpy == null ? null : jpy(input.itemTotalJpy)
+    const reconciledTotal = input.totalAmountJpy == null ? null : jpy(input.totalAmountJpy, true)
+    const deltaJpy = input.deltaJpy == null ? null : asSafeInteger(input.deltaJpy)
+    const numericMismatch = itemTotalJpy != null && reconciledTotal != null && deltaJpy != null
+      ? itemTotalJpy - reconciledTotal !== deltaJpy
+      : input.status !== 'NO_ITEMS' || itemTotalJpy !== null || deltaJpy !== null
+    if ((reconciledTotal != null && reconciledTotal !== totalAmountJpy) || numericMismatch || (input.status === 'EXACT' && deltaJpy !== 0) || (input.status === 'NO_ITEMS' && items.length !== 0)) throw new TypeError('receipt reconciliation')
+    return { status: input.status as 'EXACT' | 'DELTA' | 'NO_ITEMS', itemTotalJpy, totalAmountJpy: reconciledTotal, deltaJpy }
+  })()
+  const taxMode = record.taxMode
+  if (taxMode != null && taxMode !== 'INCLUDED' && taxMode !== 'EXCLUDED' && taxMode !== 'MIXED') throw new TypeError('receipt tax mode')
+  const provenance = asRecord(record.provenance); const sourceRowNumber = asSafeInteger(provenance.sourceRowNumber)
+  const documentPageNumber = provenance.documentPageNumber == null ? null : asSafeInteger(provenance.documentPageNumber)
+  if (sourceRowNumber < 1 || (documentPageNumber != null && documentPageNumber < 1)) throw new TypeError('receipt source provenance')
+  return {
+    merchant: boundedText(record.merchant), occurredOn: record.occurredOn == null ? null : asIsoDate(record.occurredOn), totalAmountJpy,
+    items, taxes, couponAmountJpy: nullableJpy(record.couponAmountJpy), pointsUsedJpy: nullableJpy(record.pointsUsedJpy),
+    couponEvidence: adjustmentList(record.couponEvidence), pointsUsedEvidence: adjustmentList(record.pointsUsedEvidence),
+    subtotalJpy: nullableJpy(record.subtotalJpy), changeJpy: nullableJpy(record.changeJpy), paymentMethod: boundedText(record.paymentMethod),
+    taxMode: taxMode as ReceiptReviewDto['taxMode'], reconciliation,
+    provenance: { sourceRecordId: asRequiredString(provenance.sourceRecordId), sourceRowNumber, documentPageNumber },
+  }
+}
+
+export function parseCommitSummary(value: unknown): CommitSummaryDto {
+  const record = asRecord(value)
+  if (typeof record.runId !== 'string') throw new TypeError('commit summary')
+  return { runId: record.runId, postedCount: asSafeInteger(record.postedCount) }
+}
+
+export function parseBackupSummary(value: unknown): BackupSummaryDto {
+  const record = asRecord(value)
+  if (record.formatVersion !== 2) throw new TypeError('backup version')
+  return { formatVersion: record.formatVersion, entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
+}
+
+export function parseNullableBackupSummary(value: unknown): BackupSummaryDto | null {
+  return value == null ? null : parseBackupSummary(value)
+}
+
+export function parseExtractedDocument(value: unknown): ExtractedDocumentDto {
+  const record = asRecord(value)
+  if ((record.method !== 'EMBEDDED_TEXT' && record.method !== 'OCR') || typeof record.text !== 'string' || !Array.isArray(record.issues) || !record.issues.every((issue) => typeof issue === 'string')) throw new TypeError('extracted document')
+  const confidenceBps = asSafeInteger(record.confidenceBps)
+  if (confidenceBps > 10_000) throw new TypeError('confidence')
+  const pages = typeof record.pages === 'undefined' ? undefined : parseExtractedPages(record.pages, record.pageCount)
+  const pageCount = pages ? pages.length : typeof record.pageCount === 'undefined' ? undefined : asBoundedInteger(record.pageCount, 10_000)
+  if (pageCount === 0) throw new TypeError('page count')
+  const regions = typeof record.regions === 'undefined' ? undefined : parseExtractedRegions(record.regions, pages)
+  return { method: record.method, text: record.text, confidenceBps, issues: record.issues, regions, pageCount, pages }
+}
+
+export function parseExtractedPages(value: unknown, declaredPageCount: unknown): NonNullable<ExtractedDocumentDto['pages']> {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 10_000) throw new TypeError('extracted pages')
+  const pageCount = asBoundedInteger(declaredPageCount, 10_000)
+  if (pageCount !== value.length) throw new TypeError('page count')
+  return value.map((item, index) => {
+    const page = asRecord(item)
+    const pageNumber = asBoundedInteger(page.pageNumber, 10_000)
+    if (pageNumber !== index + 1) throw new TypeError('page order')
+    const widthPixels = page.widthPixels === null ? null : asBoundedInteger(page.widthPixels, 20_000)
+    const heightPixels = page.heightPixels === null ? null : asBoundedInteger(page.heightPixels, 20_000)
+    if ((widthPixels === null) !== (heightPixels === null) || widthPixels === 0 || heightPixels === 0) throw new TypeError('page dimensions')
+    const confidenceBps = asBoundedInteger(page.confidenceBps, 10_000)
+    if (!Array.isArray(page.issues) || !page.issues.every((issue) => typeof issue === 'string')) throw new TypeError('page issues')
+    return { pageNumber, widthPixels, heightPixels, confidenceBps, issues: page.issues }
+  })
+}
+
+export function parseExtractedRegions(value: unknown, pages?: NonNullable<ExtractedDocumentDto['pages']>): NonNullable<ExtractedDocumentDto['regions']> {
+  if (!Array.isArray(value) || value.length > 10_000) throw new TypeError('extracted regions')
+  return value.map((item) => {
+    const region = asRecord(item)
+    const pageNumber = asBoundedInteger(region.pageNumber, 10_000)
+    if (pageNumber === 0 || (pages && pageNumber > pages.length)) throw new TypeError('region page')
+    if (region.coordinateSpace !== 'PIXELS' && region.coordinateSpace !== 'PDF_POINTS' && region.coordinateSpace !== 'UNLOCATED') throw new TypeError('coordinate space')
+    const confidenceBps = asBoundedInteger(region.confidenceBps, 10_000)
+    if (typeof region.text !== 'string' || typeof region.provenance !== 'string' || !region.provenance) throw new TypeError('region')
+    let boundingBox = null
+    if (region.boundingBox !== null) {
+      const box = asRecord(region.boundingBox)
+      boundingBox = {
+        left: asBoundedInteger(box.left, 100_000), top: asBoundedInteger(box.top, 100_000),
+        width: asBoundedInteger(box.width, 100_000), height: asBoundedInteger(box.height, 100_000),
+      }
+      if (boundingBox.width === 0 || boundingBox.height === 0 || region.coordinateSpace === 'UNLOCATED') throw new TypeError('region box')
+      const page = pages?.[pageNumber - 1]
+      if (region.coordinateSpace === 'PIXELS' && page?.widthPixels != null && page.heightPixels != null
+        && (boundingBox.left + boundingBox.width > page.widthPixels || boundingBox.top + boundingBox.height > page.heightPixels)) throw new TypeError('region bounds')
+    } else if (region.coordinateSpace !== 'UNLOCATED') throw new TypeError('region box')
+    return { pageNumber, coordinateSpace: region.coordinateSpace, boundingBox, text: region.text, confidenceBps, provenance: region.provenance }
+  })
+}
+
+export const CARD_STATUSES: readonly CardReconciliationStatusDto[] = ['UNMATCHED', 'POSSIBLE_MATCH', 'FULLY_RECONCILED', 'PARTIALLY_RECONCILED', 'OVERPAID', 'UNDERPAID', 'MANUAL_OVERRIDE']
+
+export function parseCardSettlementPayment(value: unknown) {
+  const record = asRecord(value)
+  const matchScoreBps = asNullableSafeInteger(record.matchScoreBps)
+  if (matchScoreBps != null && matchScoreBps > 10_000) throw new TypeError('card payment score')
+  return {
+    paymentId: asRequiredString(record.paymentId), bankTransactionId: asRequiredString(record.bankTransactionId),
+    paymentAmountJpy: asSafeInteger(record.paymentAmountJpy), paymentOn: asIsoDate(record.paymentOn), matchScoreBps,
+  }
+}
+
+export function parseCardSettlement(value: unknown): CardSettlementDto {
+    const record = asRecord(value)
+    if (!CARD_STATUSES.includes(record.reconciliationStatus as CardReconciliationStatusDto)) throw new TypeError('card status')
+    const matchScoreBps = asNullableSafeInteger(record.matchScoreBps)
+    if (matchScoreBps != null && matchScoreBps > 10_000) throw new TypeError('card score')
+    if (!Array.isArray(record.payments) || !Array.isArray(record.eligiblePayments)) throw new TypeError('card payments')
+    const payments = record.payments.map(parseCardSettlementPayment)
+    const eligiblePayments = record.eligiblePayments.map(parseCardSettlementPayment)
+    const allPaymentIds = new Set<string>(); const allBankTransactionIds = new Set<string>()
+    for (const collection of [payments, eligiblePayments]) collection.forEach((payment, index) => {
+      if (allPaymentIds.has(payment.paymentId) || allBankTransactionIds.has(payment.bankTransactionId)) throw new TypeError('duplicate card payment')
+      allPaymentIds.add(payment.paymentId); allBankTransactionIds.add(payment.bankTransactionId)
+      if (index > 0) {
+        const prior = collection[index - 1]
+        if (prior.paymentOn > payment.paymentOn || (prior.paymentOn === payment.paymentOn && prior.paymentId >= payment.paymentId)) throw new TypeError('card payment order')
+      }
+    })
+    const statementAmountJpy = asSafeInteger(record.statementAmountJpy)
+    const periodStart = asIsoDate(record.periodStart)
+    const periodEnd = asIsoDate(record.periodEnd)
+    const paymentDueOn = asNullableIsoDate(record.paymentDueOn)
+    if (periodStart > periodEnd || paymentDueOn != null && paymentDueOn < periodEnd) throw new TypeError('card statement dates')
+    const paidAmountJpy = asSafeInteger(record.paidAmountJpy)
+    const outstandingAmountJpy = asSafeInteger(record.outstandingAmountJpy)
+    const overpaidAmountJpy = asSafeInteger(record.overpaidAmountJpy)
+    if (paidAmountJpy !== payments.reduce((sum, payment) => sum + payment.paymentAmountJpy, 0)) throw new TypeError('card paid amount')
+    if (outstandingAmountJpy !== Math.max(statementAmountJpy - paidAmountJpy, 0) || overpaidAmountJpy !== Math.max(paidAmountJpy - statementAmountJpy, 0)) throw new TypeError('card settlement balance')
+    const expectedStatus: CardReconciliationStatusDto = paidAmountJpy === 0 ? 'UNMATCHED' : paidAmountJpy < statementAmountJpy ? 'PARTIALLY_RECONCILED' : paidAmountJpy === statementAmountJpy ? 'FULLY_RECONCILED' : 'OVERPAID'
+    if (record.reconciliationStatus !== expectedStatus) throw new TypeError('card settlement status')
+    return {
+      id: asRequiredString(record.id), cardAccountId: asRequiredString(record.cardAccountId), cardName: asRequiredString(record.cardName),
+      maskedIdentifier: asNullableString(record.maskedIdentifier), periodStart, periodEnd,
+      paymentDueOn, statementAmountJpy,
+      detailAmountJpy: asSafeSignedInteger(record.detailAmountJpy), lineCount: asSafeInteger(record.lineCount),
+      paymentId: asNullableString(record.paymentId), bankTransactionId: asNullableString(record.bankTransactionId),
+      paymentAmountJpy: asNullableSafeInteger(record.paymentAmountJpy), paymentOn: asNullableIsoDate(record.paymentOn),
+      matchScoreBps, reconciliationStatus: record.reconciliationStatus as CardReconciliationStatusDto,
+      paidAmountJpy, outstandingAmountJpy, overpaidAmountJpy, payments, eligiblePayments,
+    }
+}
+
+export function parseCardSettlements(value: unknown): readonly CardSettlementDto[] {
+  if (!Array.isArray(value)) throw new TypeError('card settlements')
+  return value.map(parseCardSettlement)
+}
+
+export function parseCardMatchConfirmation(value: unknown): CardMatchConfirmationDto {
+  const record = asRecord(value)
+  if (record.reconciliationStatus !== 'FULLY_RECONCILED') throw new TypeError('card confirmation')
+  return { statementId: asRequiredString(record.statementId), paymentId: asRequiredString(record.paymentId), reconciliationStatus: record.reconciliationStatus }
+}
+
+export function asIsoDate(value: unknown): string {
+  const result = asRequiredString(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(result)
+  if (!match || match[1] === '0000') throw new TypeError('date')
+  const year = Number(match[1]); const month = Number(match[2]); const day = Number(match[3]); const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) throw new TypeError('date')
+  return result
+}
+
+export function asNullableIsoDate(value: unknown): string | null {
+  return value == null ? null : asIsoDate(value)
+}
+
+export function parseCardSettlementBankMapping(value: unknown): CardSettlementBankMappingDto {
+  const record = asRecord(value)
+  return {
+    householdId: asRequiredString(record.householdId), cardAccountId: asRequiredString(record.cardAccountId),
+    cardAccountName: asRequiredString(record.cardAccountName), bankAccountId: asRequiredString(record.bankAccountId),
+    bankAccountName: asRequiredString(record.bankAccountName), createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+export function parseCardSettlementBankMappings(value: unknown): readonly CardSettlementBankMappingDto[] {
+  if (!Array.isArray(value)) throw new TypeError('card bank mappings')
+  return value.map(parseCardSettlementBankMapping)
+}
+
+export const COVERAGE_STATUSES = ['COVERED', 'SHORTFALL', 'OVERDUE'] as const
+
+export function parseCoverageStatement(value: unknown) {
+  const record = asRecord(value)
+  if (!COVERAGE_STATUSES.includes(record.status as typeof COVERAGE_STATUSES[number])) throw new TypeError('coverage status')
+  return {
+    statementId: asRequiredString(record.statementId), cardAccountId: asRequiredString(record.cardAccountId), cardAccountName: asRequiredString(record.cardAccountName),
+    paymentDueOn: asIsoDate(record.paymentDueOn), statementAmountJpy: asSafeInteger(record.statementAmountJpy), paidAmountJpy: asSafeInteger(record.paidAmountJpy),
+    outstandingAmountJpy: asSafeInteger(record.outstandingAmountJpy), projectedBankBalanceJpy: asSafeSignedInteger(record.projectedBankBalanceJpy),
+    shortfallJpy: asSafeInteger(record.shortfallJpy), status: record.status as typeof COVERAGE_STATUSES[number],
+  }
+}
+
+export function parseUnmappedCardSettlement(value: unknown) {
+  const record = asRecord(value)
+  if (record.status !== 'UNMAPPED' && record.status !== 'OVERDUE') throw new TypeError('unmapped status')
+  return {
+    statementId: asRequiredString(record.statementId), cardAccountId: asRequiredString(record.cardAccountId), cardAccountName: asRequiredString(record.cardAccountName),
+    paymentDueOn: asIsoDate(record.paymentDueOn), statementAmountJpy: asSafeInteger(record.statementAmountJpy), paidAmountJpy: asSafeInteger(record.paidAmountJpy),
+    outstandingAmountJpy: asSafeInteger(record.outstandingAmountJpy), status: record.status as 'UNMAPPED' | 'OVERDUE',
+  }
+}
+
+export function parseMissingDueCardSettlement(value: unknown) {
+  const record = asRecord(value)
+  if (typeof record.mappingConfigured !== 'boolean') throw new TypeError('mapping configured')
+  return {
+    statementId: asRequiredString(record.statementId), cardAccountId: asRequiredString(record.cardAccountId), cardAccountName: asRequiredString(record.cardAccountName),
+    statementAmountJpy: asSafeInteger(record.statementAmountJpy), paidAmountJpy: asSafeInteger(record.paidAmountJpy), outstandingAmountJpy: asSafeInteger(record.outstandingAmountJpy),
+    mappingConfigured: record.mappingConfigured,
+  }
+}
+
+export function parseCardSettlementBalanceCoverage(value: unknown): CardSettlementBalanceCoverageDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.banks) || !Array.isArray(record.unmappedStatements) || !Array.isArray(record.missingDueStatements)) throw new TypeError('coverage collections')
+  const asOf = asIsoDate(record.asOf); const historyFrom = asIsoDate(record.historyFrom); const horizonThrough = asIsoDate(record.horizonThrough)
+  if (horizonThrough < asOf) throw new TypeError('coverage range')
+  const horizonDays = asSafeInteger(record.horizonDays)
+  if (horizonDays > 365) throw new TypeError('coverage horizon')
+  const expectedHorizon = new Date(`${asOf}T00:00:00Z`); expectedHorizon.setUTCDate(expectedHorizon.getUTCDate() + horizonDays)
+  if (expectedHorizon.toISOString().slice(0, 10) !== horizonThrough) throw new TypeError('coverage horizon')
+  const statementIds = new Set<string>(); const bankIds = new Set<string>()
+  const banks = record.banks.map((value) => {
+    const bank = asRecord(value); if (!Array.isArray(bank.statements)) throw new TypeError('coverage statements')
+    const bankAccountId = asRequiredString(bank.bankAccountId); if (bankIds.has(bankAccountId)) throw new TypeError('duplicate bank'); bankIds.add(bankAccountId)
+    const balanceAsOfJpy = asSafeSignedInteger(bank.balanceAsOfJpy)
+    const statements = bank.statements.map(parseCoverageStatement)
+    statements.forEach((statement, index) => {
+      if (statementIds.has(statement.statementId)) throw new TypeError('duplicate statement'); statementIds.add(statement.statementId)
+      if (index > 0 && statements[index - 1].paymentDueOn > statement.paymentDueOn) throw new TypeError('statement order')
+      if (statement.outstandingAmountJpy !== Math.max(statement.statementAmountJpy - statement.paidAmountJpy, 0)) throw new TypeError('outstanding amount')
+      if (statement.shortfallJpy !== Math.max(-statement.projectedBankBalanceJpy, 0)) throw new TypeError('shortfall amount')
+      const priorBalance = index === 0 ? balanceAsOfJpy : statements[index - 1].projectedBankBalanceJpy
+      if (statement.projectedBankBalanceJpy !== priorBalance - statement.outstandingAmountJpy) throw new TypeError('projected balance step')
+      const expectedStatus = statement.paymentDueOn < asOf ? 'OVERDUE' : statement.shortfallJpy > 0 ? 'SHORTFALL' : 'COVERED'
+      if (statement.status !== expectedStatus) throw new TypeError('coverage status')
+    })
+    const projectedEndingBalanceJpy = asSafeSignedInteger(bank.projectedEndingBalanceJpy)
+    const maxShortfallJpy = asSafeInteger(bank.maxShortfallJpy)
+    if (projectedEndingBalanceJpy !== (statements.at(-1)?.projectedBankBalanceJpy ?? balanceAsOfJpy)) throw new TypeError('projected ending balance')
+    if (maxShortfallJpy !== Math.max(0, ...statements.map((statement) => statement.shortfallJpy))) throw new TypeError('maximum shortfall')
+    return {
+      bankAccountId, bankAccountName: asRequiredString(bank.bankAccountName), balanceAsOfJpy, projectedEndingBalanceJpy, maxShortfallJpy, statements,
+    }
+  })
+  const unmappedStatements = record.unmappedStatements.map(parseUnmappedCardSettlement)
+  unmappedStatements.forEach((statement) => {
+    if (statementIds.has(statement.statementId)) throw new TypeError('duplicate statement'); statementIds.add(statement.statementId)
+    if (statement.outstandingAmountJpy !== Math.max(statement.statementAmountJpy - statement.paidAmountJpy, 0)) throw new TypeError('outstanding amount')
+    if (statement.status !== (statement.paymentDueOn < asOf ? 'OVERDUE' : 'UNMAPPED')) throw new TypeError('unmapped status')
+  })
+  const missingDueStatements = record.missingDueStatements.map(parseMissingDueCardSettlement)
+  missingDueStatements.forEach((statement) => {
+    if (statementIds.has(statement.statementId)) throw new TypeError('duplicate statement'); statementIds.add(statement.statementId)
+    if (statement.outstandingAmountJpy !== Math.max(statement.statementAmountJpy - statement.paidAmountJpy, 0)) throw new TypeError('outstanding amount')
+  })
+  const datedDueDates = [...banks.flatMap((bank) => bank.statements.map((statement) => statement.paymentDueOn)), ...unmappedStatements.map((statement) => statement.paymentDueOn)]
+  const expectedHistoryFrom = datedDueDates.length > 0 ? [...datedDueDates].sort()[0] : asOf
+  if (historyFrom !== expectedHistoryFrom) throw new TypeError('coverage history')
+  return {
+    asOf, historyFrom, horizonThrough, horizonDays, banks, unmappedStatements, missingDueStatements,
+  }
+}
+
+export function parseVoid(value: unknown): void {
+  if (value !== null) throw new TypeError('void')
+}
+
+export function parseReceiptMatchSuggestion(value: unknown): ReceiptMatchSuggestionDto {
+  const record = asRecord(value)
+  if (record.transactionType !== 'EXPENSE' && record.transactionType !== 'CARD_PURCHASE') throw new TypeError('receipt match type')
+  if (!Array.isArray(record.reasons) || !record.reasons.every((reason) => typeof reason === 'string')) throw new TypeError('receipt match reasons')
+  const dayDifference = asSafeInteger(record.dayDifference); const merchantSimilarityBps = asSafeInteger(record.merchantSimilarityBps); const scoreBps = asSafeInteger(record.scoreBps)
+  if (dayDifference < 0 || dayDifference > 3 || merchantSimilarityBps < 0 || merchantSimilarityBps > 10000 || scoreBps < 0 || scoreBps > 10000) throw new TypeError('receipt match score')
+  return {
+    candidateId: asRequiredString(record.candidateId), transactionId: asRequiredString(record.transactionId), occurredOn: asIsoDate(record.occurredOn),
+    payee: asNullableString(record.payee), description: asNullableString(record.description), transactionType: record.transactionType,
+    amountJpy: asSafeInteger(record.amountJpy), dayDifference, merchantSimilarityBps, scoreBps, reasons: record.reasons,
+  }
+}
+
+export function parseReceiptMatchSuggestions(value: unknown): readonly ReceiptMatchSuggestionDto[] {
+  if (!Array.isArray(value) || value.length > 10) throw new TypeError('receipt matches')
+  const suggestions = value.map(parseReceiptMatchSuggestion)
+  if (new Set(suggestions.map((item) => item.transactionId)).size !== suggestions.length) throw new TypeError('receipt match duplicate')
+  if (suggestions.some((item, index) => index > 0 && suggestions[index - 1].scoreBps < item.scoreBps)) throw new TypeError('receipt match order')
+  return suggestions
+}
+
+export function parseReceiptMatchConfirmation(value: unknown): ReceiptMatchConfirmationDto {
+  const record = asRecord(value)
+  const evidenceCount = asSafeInteger(record.evidenceCount)
+  if (record.resolutionStatus !== 'LINKED' || evidenceCount < 1 || (record.runStatus !== 'POSTED' && record.runStatus !== 'REVIEW_REQUIRED')) throw new TypeError('receipt match confirmation')
+  return { runId: asRequiredString(record.runId), candidateId: asRequiredString(record.candidateId), transactionId: asRequiredString(record.transactionId), resolutionStatus: 'LINKED', evidenceCount, runStatus: record.runStatus }
+}
+
+export function parseBudget(value: unknown): MonthlyCategoryBudgetDto {
+  const record = asRecord(value)
+  return {
+    householdId: asRequiredString(record.householdId), month: asRequiredString(record.month),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
+    budgetJpy: asSafeInteger(record.budgetJpy), actualJpy: asSafeSignedInteger(record.actualJpy), remainingJpy: asSafeSignedInteger(record.remainingJpy),
+  }
+}
+
+export function parseBudgets(value: unknown): readonly MonthlyCategoryBudgetDto[] {
+  if (!Array.isArray(value)) throw new TypeError('budgets')
+  return value.map(parseBudget)
+}
+
+export function parseMonthlyReviewMemo(value: unknown): MonthlyReviewMemoDto {
+  const record = asRecord(value)
+  const month = asRequiredString(record.month)
+  const memo = asRequiredString(record.memo)
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || memo.length > 1200) throw new TypeError('monthly review memo')
+  return {
+    householdId: asRequiredString(record.householdId),
+    month,
+    memo,
+    updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseNullableMonthlyReviewMemo(value: unknown): MonthlyReviewMemoDto | null {
+  return value === null ? null : parseMonthlyReviewMemo(value)
+}
+
+export const GOAL_STATUSES = ['ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED'] as const
+
+export function parseSavingsGoal(value: unknown): SavingsGoalDto {
+  const record = asRecord(value)
+  if (!GOAL_STATUSES.includes(record.status as typeof GOAL_STATUSES[number])) throw new TypeError('goal status')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), name: asRequiredString(record.name),
+    targetJpy: asSafeInteger(record.targetJpy), savedJpy: asSafeInteger(record.savedJpy), targetDate: asRequiredString(record.targetDate),
+    status: record.status as SavingsGoalDto['status'], createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+export function parseSavingsGoals(value: unknown): readonly SavingsGoalDto[] {
+  if (!Array.isArray(value)) throw new TypeError('goals')
+  return value.map(parseSavingsGoal)
+}
+
+export function parseStringList(value: unknown): readonly string[] {
+  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.length > 0)) throw new TypeError('string list')
+  return value
+}
+
+export function parseClassificationRule(value: unknown): ClassificationRuleDto {
+  const record = asRecord(value)
+  if (typeof record.isEnabled !== 'boolean') throw new TypeError('classification rule')
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), name: asRequiredString(record.name),
+    priority: asSafeInteger(record.priority), isEnabled: record.isEnabled,
+    merchantContains: asNullableString(record.merchantContains), descriptionContains: asNullableString(record.descriptionContains),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
+    labels: parseStringList(record.labels), tags: parseStringList(record.tags),
+    createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
+  }
+}
+
+export function parseClassificationRules(value: unknown): readonly ClassificationRuleDto[] {
+  if (!Array.isArray(value)) throw new TypeError('classification rules')
+  return value.map(parseClassificationRule)
+}
+
+export function parseClassificationPreview(value: unknown): ClassificationPreviewDto {
+  const record = asRecord(value)
+  return { winningRuleId: asNullableString(record.winningRuleId), matches: parseClassificationRules(record.matches) }
+}
+
+export function parseAppliedClassification(value: unknown): AppliedClassificationDto {
+  const record = asRecord(value)
+  return {
+    transactionId: asRequiredString(record.transactionId), ruleId: asRequiredString(record.ruleId),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName),
+    labels: parseStringList(record.labels), tags: parseStringList(record.tags),
+    transactionUpdatedAt: asRequiredString(record.transactionUpdatedAt),
+  }
+}
+
+export function parseNullableLastClassificationApplication(value: unknown): LastClassificationApplicationDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  return {
+    transactionId: asRequiredString(record.transactionId), payee: asNullableString(record.payee), description: asNullableString(record.description),
+    ruleId: asNullableString(record.ruleId), ruleName: asRequiredString(record.ruleName),
+    rulePriority: record.rulePriority === null ? null : asSafeInteger(record.rulePriority),
+    merchantContains: asNullableString(record.merchantContains), descriptionContains: asNullableString(record.descriptionContains),
+    categoryAccountId: asRequiredString(record.categoryAccountId), categoryName: asRequiredString(record.categoryName), labels: parseStringList(record.labels), tags: parseStringList(record.tags),
+    appliedAt: asRequiredString(record.appliedAt),
+  }
+}
+
+export function parseDashboard(value: unknown): DashboardMonthlyTotalsDto {
+  const record = asRecord(value)
+  if (typeof record.month !== 'string' || typeof record.netWorthAsOf !== 'string' || (record.accountingBasis !== 'ACCRUAL' && record.accountingBasis !== 'CASH') || !Array.isArray(record.accrualTrend) || !Array.isArray(record.cashFlowTrend) || !Array.isArray(record.expenseCategories)) throw new TypeError('dashboard')
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(record.month) || record.cashFlowTrend.length !== 6) throw new TypeError('dashboard cash flow trend')
+  const requestedMonthOrdinal = Number(record.month.slice(0, 4)) * 12 + Number(record.month.slice(5)) - 1
+  const cashFlowTrend = record.cashFlowTrend.map((item, index) => {
+    const point = asRecord(item)
+    const month = asRequiredString(point.month)
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new TypeError('cash flow month')
+    const monthOrdinal = Number(month.slice(0, 4)) * 12 + Number(month.slice(5)) - 1
+    if (monthOrdinal !== requestedMonthOrdinal - 5 + index) throw new TypeError('cash flow month sequence')
+    const inflowJpy = asSafeInteger(point.inflowJpy)
+    const outflowJpy = asSafeInteger(point.outflowJpy)
+    const netCashFlowJpy = asSafeSignedInteger(point.netCashFlowJpy)
+    if (netCashFlowJpy !== inflowJpy - outflowJpy) throw new TypeError('cash flow net')
+    return { month, inflowJpy, outflowJpy, netCashFlowJpy }
+  })
+  return {
+    month: record.month,
+    accountingBasis: record.accountingBasis,
+    incomeJpy: asSafeSignedInteger(record.incomeJpy),
+    expenseJpy: asSafeSignedInteger(record.expenseJpy),
+    savingsJpy: asSafeSignedInteger(record.savingsJpy),
+    postedTransactionCount: asSafeInteger(record.postedTransactionCount),
+    netWorthAsOf: record.netWorthAsOf,
+    assetsJpy: asSafeSignedInteger(record.assetsJpy),
+    liabilitiesJpy: asSafeSignedInteger(record.liabilitiesJpy),
+    netWorthJpy: asSafeSignedInteger(record.netWorthJpy),
+    accrualTrend: record.accrualTrend.map((item) => {
+      const point = asRecord(item)
+      return { month: asRequiredString(point.month), incomeJpy: asSafeSignedInteger(point.incomeJpy), expenseJpy: asSafeSignedInteger(point.expenseJpy) }
+    }),
+    cashFlowTrend,
+    expenseCategories: record.expenseCategories.map((item) => {
+      const category = asRecord(item)
+      return { accountId: asRequiredString(category.accountId), name: asRequiredString(category.name), amountJpy: asSafeSignedInteger(category.amountJpy) }
+    }),
+  }
+}
+
+export function parseDashboardPreferences(value: unknown): DashboardPreferencesDto {
+  const record = asRecord(value)
+  const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION', 'CASH_FLOW'] as const
+  const themes = ['SYSTEM', 'LIGHT', 'DARK'] as const
+  const densities = ['COMFORTABLE', 'COMPACT'] as const
+  if (!templates.includes(record.template as typeof templates[number])
+    || !themes.includes(record.theme as typeof themes[number])
+    || !densities.includes(record.density as typeof densities[number])) {
+    throw new TypeError('dashboard preferences')
+  }
+  const templateLayouts = parseDashboardTemplateLayouts(record.templateLayouts)
+  return {
+    householdId: asRequiredString(record.householdId),
+    template: record.template as DashboardPreferencesDto['template'],
+    theme: record.theme as DashboardPreferencesDto['theme'],
+    density: record.density as DashboardPreferencesDto['density'],
+    templateLayouts,
+    updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseDashboardTemplateLayouts(value: unknown): DashboardTemplateLayoutsDto {
+  const record = asRecord(value)
+  const templates = ['FINANCIAL_OVERVIEW', 'HOUSEHOLD_LEDGER', 'ASSETS_LIABILITIES', 'CARD_RECONCILIATION', 'CASH_FLOW'] as const satisfies readonly DashboardTemplateDto[]
+  if (Object.keys(record).length !== templates.length || templates.some((template) => !Object.hasOwn(record, template))) throw new TypeError('dashboard template layouts')
+  const parseLayout = (template: DashboardTemplateDto) => {
+    const layout = asRecord(record[template])
+    if (Object.keys(layout).length !== 2 || !Object.hasOwn(layout, 'widgetOrder') || !Object.hasOwn(layout, 'hiddenWidgets')) throw new TypeError('dashboard layout')
+    const widgetOrder = parseDashboardWidgetIds(layout.widgetOrder, 4)
+    const eligible: readonly DashboardWidgetIdDto[] = template === 'CASH_FLOW'
+      ? ['TREND', 'RECENT', 'CARDS'] as const
+      : ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const
+    const hiddenWidgets = parseDashboardWidgetIds(layout.hiddenWidgets, eligible.length - 1)
+    if (widgetOrder.length !== 4
+      || (['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const).some((widget) => !widgetOrder.includes(widget))
+      || hiddenWidgets.some((widget) => !eligible.includes(widget as typeof eligible[number]))) throw new TypeError('dashboard layout domain')
+    return { widgetOrder, hiddenWidgets }
+  }
+  return {
+    FINANCIAL_OVERVIEW: parseLayout('FINANCIAL_OVERVIEW'),
+    HOUSEHOLD_LEDGER: parseLayout('HOUSEHOLD_LEDGER'),
+    ASSETS_LIABILITIES: parseLayout('ASSETS_LIABILITIES'),
+    CARD_RECONCILIATION: parseLayout('CARD_RECONCILIATION'),
+    CASH_FLOW: parseLayout('CASH_FLOW'),
+  }
+}
+
+export function parseDashboardWidgetIds(value: unknown, maximumLength: number): DashboardWidgetIdDto[] {
+  const widgets = ['TREND', 'SPENDING', 'RECENT', 'CARDS'] as const
+  if (!Array.isArray(value) || value.length > maximumLength) throw new TypeError('dashboard widgets')
+  const parsed = value.map((item) => {
+    if (typeof item !== 'string' || !widgets.includes(item as typeof widgets[number])) throw new TypeError('dashboard widget')
+    return item as DashboardWidgetIdDto
+  })
+  if (new Set(parsed).size !== parsed.length) throw new TypeError('dashboard widgets')
+  return parsed
+}
+
+export function parseTransactionPage(value: unknown): TransactionPageDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.items)) throw new TypeError('transactions')
+  return {
+    items: record.items.map(parseTransactionRow),
+    page: asSafeInteger(record.page),
+    pageSize: asSafeInteger(record.pageSize),
+    totalItems: asSafeInteger(record.totalItems),
+    totalPages: asSafeInteger(record.totalPages),
+  }
+}
+
+export function parseTransactionRow(value: unknown): TransactionPageDto['items'][number] {
+  const row = asRecord(value)
+  if (typeof row.id !== 'string' || typeof row.occurredOn !== 'string' || typeof row.transactionType !== 'string' || typeof row.status !== 'string' || typeof row.calculationTarget !== 'boolean') throw new TypeError('transaction')
+  const attribution = parseAttribution(row, true)
+  const audience = parseAudience(row, true)
+  return {
+    id: row.id,
+    occurredOn: row.occurredOn,
+    postedOn: asNullableString(row.postedOn),
+    transactionType: row.transactionType,
+    payee: asNullableString(row.payee),
+    description: asNullableString(row.description),
+    amountJpy: asSafeSignedInteger(row.amountJpy),
+    status: row.status,
+    calculationTarget: row.calculationTarget,
+    debitAccountId: asNullableString(row.debitAccountId),
+    debitAccountName: asNullableString(row.debitAccountName),
+    creditAccountId: asNullableString(row.creditAccountId),
+    creditAccountName: asNullableString(row.creditAccountName),
+    categoryAccountId: asNullableString(row.categoryAccountId),
+    categoryName: asNullableString(row.categoryName),
+    labels: parseTransactionLabels(row.labels),
+    tags: parseStringList(row.tags),
+    ...attribution, ...audience,
+  }
+}
+
+export function parseTransactionDetail(value: unknown): TransactionDetailDto {
+  const record = asRecord(value)
+  const allowedTypes = ['EXPENSE', 'INCOME', 'TRANSFER', 'CARD_PURCHASE', 'CARD_PAYMENT', 'REFUND', 'FEE', 'INTEREST', 'ADJUSTMENT']
+  if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.occurredOn !== 'string' || typeof record.status !== 'string' || typeof record.createdAt !== 'string' || typeof record.updatedAt !== 'string' || typeof record.editable !== 'boolean' || typeof record.calculationTarget !== 'boolean' || typeof record.transactionType !== 'string' || !allowedTypes.includes(record.transactionType) || !Array.isArray(record.entries) || !Array.isArray(record.sourceEvidence)) throw new TypeError('transaction detail')
+  const attribution = parseAttribution(record, true)
+  const audience = parseAudience(record, true)
+  return {
+    id: record.id, householdId: record.householdId, occurredOn: record.occurredOn, postedOn: asNullableString(record.postedOn),
+    transactionType: record.transactionType as TransactionDetailDto['transactionType'], payee: asNullableString(record.payee), description: asNullableString(record.description),
+    ...attribution, ...audience,
+    status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, editable: record.editable, calculationTarget: record.calculationTarget,
+    labels: parseTransactionLabels(record.labels), tags: parseStringList(record.tags),
+    entries: record.entries.map((item) => { const entry = asRecord(item); if (entry.side !== 'DEBIT' && entry.side !== 'CREDIT') throw new TypeError('journal entry'); return { id: asRequiredString(entry.id), accountId: asRequiredString(entry.accountId), accountName: asRequiredString(entry.accountName), accountKind: asRequiredString(entry.accountKind), side: entry.side, amountJpy: asSafeSignedInteger(entry.amountJpy), lineNumber: asSafeInteger(entry.lineNumber) } }),
+    sourceEvidence: record.sourceEvidence.map((item) => { const evidence = asRecord(item); return { sourceRecordId: asRequiredString(evidence.sourceRecordId), sourceDocumentId: asRequiredString(evidence.sourceDocumentId), sourceType: asRequiredString(evidence.sourceType), originalFilename: asRequiredString(evidence.originalFilename), mediaType: asRequiredString(evidence.mediaType), rowNumber: asSafeInteger(evidence.rowNumber), importedAt: asRequiredString(evidence.importedAt), evidenceRole: asRequiredString(evidence.evidenceRole), ...parseAudience(evidence, true) } }),
+  }
+}
+
+export const TRANSACTION_LABELS = ['SUBSCRIPTION', 'RECURRING', 'TAX_DEDUCTIBLE', 'REIMBURSABLE', 'UNUSUAL', 'SHARED_EXPENSE', 'PRIVATE_EXPENSE'] as const
+
+export function parseTransactionLabels(value: unknown): TransactionPageDto['items'][number]['labels'] {
+  if (!Array.isArray(value) || !value.every((item) => TRANSACTION_LABELS.includes(item as typeof TRANSACTION_LABELS[number]))) throw new TypeError('transaction labels')
+  return value as TransactionPageDto['items'][number]['labels']
+}
+
+export function parseBulkUpdateTransactionMetadataResult(value: unknown): BulkUpdateTransactionMetadataResultDto {
+  const record = asRecord(value)
+  return { updatedCount: asSafeInteger(record.updatedCount) }
+}
+
+export function parseSourceDocument(value: unknown): SourceDocumentViewDto {
+  const record = asRecord(value)
+  return {
+    id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), importRunId: asRequiredString(record.importRunId),
+    sourceType: asRequiredString(record.sourceType), originalFilename: asRequiredString(record.originalFilename), mediaType: asRequiredString(record.mediaType),
+    byteSize: asSafeInteger(record.byteSize), sha256: asRequiredString(record.sha256), sourceModifiedAt: asNullableString(record.sourceModifiedAt),
+    importedAt: asRequiredString(record.importedAt), adapterId: asNullableString(record.adapterId), adapterVersion: asNullableString(record.adapterVersion),
+    recordCount: asSafeInteger(record.recordCount), ...parseAudience(record, true),
+  }
+}
+
+export function parseAttribution(record: Record<string, unknown>): { attributionKind: AttributionKindDto; attributedMemberId: string | null }
+export function parseAttribution(record: Record<string, unknown>, withName: true): { attributionKind: AttributionKindDto; attributedMemberId: string | null; attributedMemberName: string | null }
+export function parseAttribution(record: Record<string, unknown>, withName = false): { attributionKind: AttributionKindDto; attributedMemberId: string | null; attributedMemberName?: string | null } {
+  if (record.attributionKind !== 'HOUSEHOLD' && record.attributionKind !== 'MEMBER') throw new TypeError('attribution kind')
+  if (!Object.hasOwn(record, 'attributedMemberId')) throw new TypeError('attributed member')
+  const attributedMemberId = asNullableString(record.attributedMemberId)
+  if ((record.attributionKind === 'HOUSEHOLD') !== (attributedMemberId === null)) throw new TypeError('attribution tuple')
+  const attributionKind = record.attributionKind as AttributionKindDto
+  if (!withName) return { attributionKind, attributedMemberId }
+  if (!Object.hasOwn(record, 'attributedMemberName')) throw new TypeError('attributed member name')
+  const attributedMemberName = asNullableString(record.attributedMemberName)
+  if ((record.attributionKind === 'HOUSEHOLD') !== (attributedMemberName === null)) throw new TypeError('attribution name tuple')
+  return { attributionKind, attributedMemberId, attributedMemberName }
+}
+
+export function parseAudience(record: Record<string, unknown>): { audienceVisibility: AudienceVisibilityDto; audienceMemberId: string | null }
+export function parseAudience(record: Record<string, unknown>, withName: true): { audienceVisibility: AudienceVisibilityDto; audienceMemberId: string | null; audienceMemberName: string | null }
+export function parseAudience(record: Record<string, unknown>, withName = false): { audienceVisibility: AudienceVisibilityDto; audienceMemberId: string | null; audienceMemberName?: string | null } {
+  if (record.audienceVisibility !== 'SHARED' && record.audienceVisibility !== 'PERSONAL') throw new TypeError('audience visibility')
+  if (!Object.hasOwn(record, 'audienceMemberId')) throw new TypeError('audience member')
+  const audienceMemberId = asNullableString(record.audienceMemberId)
+  if ((record.audienceVisibility === 'SHARED') !== (audienceMemberId === null)) throw new TypeError('audience tuple')
+  const audienceVisibility = record.audienceVisibility as AudienceVisibilityDto
+  if (!withName) return { audienceVisibility, audienceMemberId }
+  if (!Object.hasOwn(record, 'audienceMemberName')) throw new TypeError('audience member name')
+  const audienceMemberName = asNullableString(record.audienceMemberName)
+  if ((record.audienceVisibility === 'SHARED') !== (audienceMemberName === null)) throw new TypeError('audience name tuple')
+  return { audienceVisibility, audienceMemberId, audienceMemberName }
+}
+
+export function parseSourceRecord(value: unknown): SourceRecordViewDto {
+  const record = asRecord(value)
+  const payloadJson = asRequiredString(record.payloadJson)
+  try { JSON.parse(payloadJson) } catch { throw new TypeError('source record payload') }
+  return {
+    id: asRequiredString(record.id), sourceDocumentId: asRequiredString(record.sourceDocumentId), rowNumber: asSafeInteger(record.rowNumber),
+    recordHash: asRequiredString(record.recordHash), payloadJson, createdAt: asRequiredString(record.createdAt), evidenceRole: asNullableString(record.evidenceRole),
+  }
+}
+
+export function parseSourceRecords(value: unknown): readonly SourceRecordViewDto[] {
+  if (!Array.isArray(value)) throw new TypeError('source records')
+  return value.map(parseSourceRecord)
+}
+
+export function parseSourceRecordPage(value: unknown): SourceRecordPageDto {
+  const record = asRecord(value)
+  return {
+    items: parseSourceRecords(record.items), page: asSafeInteger(record.page), pageSize: asSafeInteger(record.pageSize),
+    totalItems: asSafeInteger(record.totalItems), totalPages: asSafeInteger(record.totalPages),
+  }
+}
+
+export const CONNECTOR_KINDS = new Set<ConnectorKindDto>(['GOOGLE_DRIVE', 'GMAIL', 'WATCHED_FOLDER', 'MANUAL_IMPORT'])
+export const CONNECTOR_CAPABILITIES = new Set<ConnectorCapabilityDto>(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'IMPORT_FILE', 'ACCOUNT_BINDING'])
+export const CONNECTOR_AVAILABILITIES = new Set<ConnectorAvailabilityDto>(['AVAILABLE', 'RUNTIME_UNSUPPORTED', 'CONFIG_MISSING'])
+export const CONNECTOR_LIFECYCLES = new Set<ConnectorLifecycleDto>(['DISCONNECTED', 'CONFIGURING', 'CONNECTED'])
+export const CONNECTOR_HEALTH = new Set<ConnectorHealthDto>(['NEVER_REFRESHED', 'MANUAL', 'FRESH', 'STALE', 'RUNNING', 'RETRY_BACKOFF', 'NEEDS_ACTION'])
+export const CONNECTOR_DESTINATIONS = new Set<ConfigurationDestinationDto>(['GOOGLE_DRIVE_SETTINGS', 'GMAIL_SETTINGS', 'WATCHED_FOLDER_SETTINGS', 'IMPORT_INBOX'])
+export const CONNECTOR_DESCRIPTOR_CAPABILITIES: Readonly<Record<ConnectorKindDto, ReadonlySet<ConnectorCapabilityDto>>> = {
+  GOOGLE_DRIVE: new Set(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING']),
+  GMAIL: new Set(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING']),
+  WATCHED_FOLDER: new Set(['CONFIGURE', 'DISCONNECT', 'REFRESH_NOW', 'SCHEDULE', 'RETRY', 'ACCOUNT_BINDING']),
+  MANUAL_IMPORT: new Set(['IMPORT_FILE', 'ACCOUNT_BINDING']),
+}
+export const CONNECTOR_DESTINATION_BY_KIND: Readonly<Record<ConnectorKindDto, ConfigurationDestinationDto>> = {
+  GOOGLE_DRIVE: 'GOOGLE_DRIVE_SETTINGS',
+  GMAIL: 'GMAIL_SETTINGS',
+  WATCHED_FOLDER: 'WATCHED_FOLDER_SETTINGS',
+  MANUAL_IMPORT: 'IMPORT_INBOX',
+}
+export const CONNECTOR_SUMMARY_FIELDS = new Set([
+  'schemaVersion', 'connectorKind', 'connectionKey', 'displayLabel', 'availability', 'lifecycle', 'health', 'capabilities',
+  'lastAttemptAt', 'lastSuccessAt', 'freshnessDeadlineAt', 'nextDueAt', 'pendingReviewCount', 'consecutiveFailures',
+  'lastErrorCode', 'bindingSummary', 'configurationDestination',
+])
+export const CONNECTOR_PAGE_FIELDS = new Set(['schemaVersion', 'items', 'nextCursor'])
+export const CONNECTOR_BINDING_FIELDS = new Set(['allowedAccountCount', 'parserProfileConfigured', 'version'])
+export const CONNECTOR_CURSOR_FIELDS = new Set(['connectorKind', 'connectionKey'])
+export const CONNECTOR_BINDING_DTO_FIELDS = new Set([
+  'householdId', 'connectorKind', 'connectionKey', 'allowedAccountIds', 'parserProfileId', 'parserProfileVersion',
+  'version', 'createdAt', 'updatedAt',
+])
+export const CONNECTOR_BINDING_UPSERT_FIELDS = new Set([
+  'householdId', 'connectorKind', 'connectionKey', 'allowedAccountIds', 'parserProfileId', 'parserProfileVersion',
+  'expectedVersion',
+])
+export const CONNECTOR_BINDING_DELETE_FIELDS = new Set(['householdId', 'connectorKind', 'connectionKey', 'expectedVersion'])
+export const CONNECTOR_REFRESH_BATCH_STATUSES = new Set<ConnectorRefreshBatchStatusDto>(['ACTIVE', 'COMPLETE', 'PARTIAL', 'FAILED'])
+export const CONNECTOR_REFRESH_ITEM_STATUSES = new Set<ConnectorRefreshItemStatusDto>(['PENDING', 'RUNNING', 'SUCCEEDED', 'NO_CHANGES', 'SKIPPED_MANUAL', 'FAILED_RETRYABLE', 'NEEDS_ACTION'])
+export const CONNECTOR_REFRESH_BATCH_FIELDS = new Set([
+  'batchId', 'householdId', 'status', 'totalCount', 'terminalCount', 'succeededCount', 'noChangesCount',
+  'skippedManualCount', 'failedCount', 'changedCount', 'createdAt', 'updatedAt', 'completedAt',
+])
+export const CONNECTOR_REFRESH_PROGRESS_FIELDS = new Set([...CONNECTOR_REFRESH_BATCH_FIELDS, 'schemaVersion', 'items'])
+export const CONNECTOR_REFRESH_ITEM_FIELDS = new Set([
+  'connectorKind', 'connectionKey', 'status', 'changedCount', 'lastErrorCode', 'updatedAt', 'startedAt', 'completedAt',
+])
+export const CONNECTOR_KIND_ORDER: Readonly<Record<ConnectorKindDto, number>> = {
+  GOOGLE_DRIVE: 0,
+  GMAIL: 1,
+  WATCHED_FOLDER: 2,
+  MANUAL_IMPORT: 3,
+}
+export const UTF8_ENCODER = new TextEncoder()
+
+export function connectorListArgs(householdId: string, cursor?: ConnectorCursorDto, limit?: number): Record<string, unknown> {
+  if (typeof householdId !== 'string' || householdId.length === 0) throw new TypeError('household id')
+  if (typeof limit !== 'undefined' && (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)) throw new TypeError('connector limit')
+  return { householdId, cursor: typeof cursor === 'undefined' ? null : asConnectorCursor(cursor), limit: limit ?? null }
+}
+
+export function connectorBindingListArgs(householdId: string): { readonly householdId: string } {
+  return { householdId: asConnectorBindingIdentifier(householdId, 128, 'connector binding') }
+}
+
+export function connectorRefreshOneInput(householdId: string, connectorKind: ConnectorKindDto, connectionKey: string) {
+  const parsedKind = asConnectorEnum(connectorKind, CONNECTOR_KINDS, 'connector refresh')
+  if (parsedKind === 'MANUAL_IMPORT') throw new TypeError('connector refresh')
+  return {
+    householdId: asConnectorBindingIdentifier(householdId, 128, 'connector refresh'),
+    connectorKind: parsedKind,
+    connectionKey: asConnectorIdentifier(connectionKey, 128, 'connector refresh'),
+  }
+}
+
+export function parseConnectorRefreshProgress(value: unknown, expectedHouseholdId: string, expectedBatchId: string): ConnectorRefreshBatchProgressDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_REFRESH_PROGRESS_FIELDS, 'connector refresh')
+  if (record.schemaVersion !== 1 || !Array.isArray(record.items) || record.items.length > 10_000) throw new TypeError('connector refresh')
+  const batch = parseConnectorRefreshBatchRecord(record, expectedHouseholdId, expectedBatchId)
+  const items = record.items.map(parseConnectorRefreshItem)
+  if (items.length !== batch.totalCount) throw new TypeError('connector refresh')
+  const identities = new Set<string>()
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]
+    const identity = `${item.connectorKind}\u0000${item.connectionKey}`
+    if (identities.has(identity)) throw new TypeError('connector refresh')
+    identities.add(identity)
+    if (index > 0 && compareConnectorIdentity(items[index - 1], item) >= 0) throw new TypeError('connector refresh')
+  }
+  const succeededCount = items.filter(({ status }) => status === 'SUCCEEDED').length
+  const noChangesCount = items.filter(({ status }) => status === 'NO_CHANGES').length
+  const skippedManualCount = items.filter(({ status }) => status === 'SKIPPED_MANUAL').length
+  const failedCount = items.filter(({ status }) => status === 'FAILED_RETRYABLE' || status === 'NEEDS_ACTION').length
+  const terminalCount = succeededCount + noChangesCount + skippedManualCount + failedCount
+  const changedCount = items.reduce((total, item) => total + item.changedCount, 0)
+  if (!Number.isSafeInteger(changedCount)
+    || terminalCount !== batch.terminalCount
+    || succeededCount !== batch.succeededCount
+    || noChangesCount !== batch.noChangesCount
+    || skippedManualCount !== batch.skippedManualCount
+    || failedCount !== batch.failedCount
+    || changedCount !== batch.changedCount) throw new TypeError('connector refresh')
+  return { schemaVersion: 1, ...batch, items }
+}
+
+export function parseNullableActiveConnectorRefreshProgress(
+  value: unknown,
+  expectedHouseholdId: string,
+): ConnectorRefreshBatchProgressDto | null {
+  if (value === null) return null
+  const batchId = asConnectorBindingIdentifier(asRecord(value).batchId, 64, 'connector refresh')
+  const progress = parseConnectorRefreshProgress(value, expectedHouseholdId, batchId)
+  if (progress.status !== 'ACTIVE') throw new TypeError('connector refresh')
+  return progress
+}
+
+export function parseConnectorRefreshBatch(value: unknown, expectedHouseholdId: string): ConnectorRefreshBatchDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_REFRESH_BATCH_FIELDS, 'connector refresh')
+  return parseConnectorRefreshBatchRecord(record, expectedHouseholdId)
+}
+
+export function parseConnectorRefreshBatchRecord(record: Record<string, unknown>, expectedHouseholdId: string, expectedBatchId?: string): ConnectorRefreshBatchDto {
+  const batchId = asConnectorBindingIdentifier(record.batchId, 64, 'connector refresh')
+  const householdId = asConnectorBindingIdentifier(record.householdId, 128, 'connector refresh')
+  const status = asConnectorEnum(record.status, CONNECTOR_REFRESH_BATCH_STATUSES, 'connector refresh')
+  const totalCount = asBoundedInteger(record.totalCount, 10_000)
+  const terminalCount = asBoundedInteger(record.terminalCount, 10_000)
+  const succeededCount = asBoundedInteger(record.succeededCount, 10_000)
+  const noChangesCount = asBoundedInteger(record.noChangesCount, 10_000)
+  const skippedManualCount = asBoundedInteger(record.skippedManualCount, 10_000)
+  const failedCount = asBoundedInteger(record.failedCount, 10_000)
+  const changedCount = asSafeInteger(record.changedCount)
+  const createdAt = asConnectorTimestamp(record.createdAt)
+  const updatedAt = asConnectorTimestamp(record.updatedAt)
+  const completedAt = asNullableConnectorTimestamp(record.completedAt)
+  if (householdId !== expectedHouseholdId || (expectedBatchId !== undefined && batchId !== expectedBatchId)
+    || terminalCount !== succeededCount + noChangesCount + skippedManualCount + failedCount
+    || terminalCount > totalCount
+    || Date.parse(updatedAt) < Date.parse(createdAt)
+    || (completedAt !== null && (Date.parse(completedAt) < Date.parse(createdAt) || Date.parse(completedAt) > Date.parse(updatedAt)))) {
+    throw new TypeError('connector refresh')
+  }
+  const active = status === 'ACTIVE'
+  if ((active && (completedAt !== null || terminalCount >= totalCount))
+    || (!active && (completedAt === null || terminalCount !== totalCount))
+    || (status === 'COMPLETE' && failedCount !== 0)
+    || (status === 'PARTIAL' && (failedCount === 0 || succeededCount + noChangesCount === 0))
+    || (status === 'FAILED' && (failedCount === 0 || succeededCount + noChangesCount !== 0))) {
+    throw new TypeError('connector refresh')
+  }
+  return {
+    batchId, householdId, status, totalCount, terminalCount, succeededCount, noChangesCount,
+    skippedManualCount, failedCount, changedCount, createdAt, updatedAt, completedAt,
+  }
+}
+
+export function parseConnectorRefreshItem(value: unknown): ConnectorRefreshItemDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_REFRESH_ITEM_FIELDS, 'connector refresh item')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector refresh item')
+  const connectionKey = asConnectorIdentifier(record.connectionKey, 128, 'connector refresh item')
+  const status = asConnectorEnum(record.status, CONNECTOR_REFRESH_ITEM_STATUSES, 'connector refresh item')
+  const changedCount = asSafeInteger(record.changedCount)
+  const lastErrorCode = record.lastErrorCode === null ? null : asStableConnectorErrorCode(record.lastErrorCode)
+  const updatedAt = asConnectorTimestamp(record.updatedAt)
+  const startedAt = asNullableConnectorTimestamp(record.startedAt)
+  const completedAt = asNullableConnectorTimestamp(record.completedAt)
+  if ((connectorKind === 'MANUAL_IMPORT') !== (status === 'SKIPPED_MANUAL')
+    || (connectorKind === 'MANUAL_IMPORT' && connectionKey !== 'manual-import')
+    || (startedAt !== null && Date.parse(startedAt) > Date.parse(updatedAt))
+    || (completedAt !== null && (Date.parse(completedAt) > Date.parse(updatedAt) || (startedAt !== null && Date.parse(completedAt) < Date.parse(startedAt))))) {
+    throw new TypeError('connector refresh item')
+  }
+  const pendingShape = status === 'PENDING' && changedCount === 0 && lastErrorCode === null && startedAt === null && completedAt === null
+  const runningShape = status === 'RUNNING' && changedCount === 0 && lastErrorCode === null && startedAt !== null && completedAt === null
+  const succeededShape = status === 'SUCCEEDED' && changedCount > 0 && lastErrorCode === null && startedAt !== null && completedAt !== null
+  const noChangesShape = status === 'NO_CHANGES' && changedCount === 0 && lastErrorCode === null && startedAt !== null && completedAt !== null
+  const skippedShape = status === 'SKIPPED_MANUAL' && changedCount === 0 && lastErrorCode === null && startedAt === null && completedAt !== null
+  const failedShape = (status === 'FAILED_RETRYABLE' || status === 'NEEDS_ACTION') && changedCount === 0 && lastErrorCode !== null && startedAt !== null && completedAt !== null
+  if (!pendingShape && !runningShape && !succeededShape && !noChangesShape && !skippedShape && !failedShape) throw new TypeError('connector refresh item')
+  return { connectorKind, connectionKey, status, changedCount, lastErrorCode, updatedAt, startedAt, completedAt }
+}
+
+export function compareConnectorIdentity(left: Pick<ConnectorRefreshItemDto, 'connectorKind' | 'connectionKey'>, right: Pick<ConnectorRefreshItemDto, 'connectorKind' | 'connectionKey'>): number {
+  return CONNECTOR_KIND_ORDER[left.connectorKind] - CONNECTOR_KIND_ORDER[right.connectorKind]
+    || (left.connectionKey < right.connectionKey ? -1 : left.connectionKey > right.connectionKey ? 1 : 0)
+}
+
+export function asStableConnectorErrorCode(value: unknown): string {
+  const code = asRequiredString(value)
+  if (code.length > 64 || !/^[A-Z0-9_]+$/.test(code)) throw new TypeError('connector refresh item')
+  return code
+}
+
+export function parseConnectorBindings(value: unknown, expectedHouseholdId: string): readonly ConnectorBindingDto[] {
+  if (!Array.isArray(value) || value.length > 1024) throw new TypeError('connector binding')
+  const bindings = value.map(parseConnectorBinding)
+  const identities = new Set<string>()
+  for (const binding of bindings) {
+    if (binding.householdId !== expectedHouseholdId) throw new TypeError('connector binding')
+    const identity = `${binding.connectorKind}\u0000${binding.connectionKey}`
+    if (identities.has(identity)) throw new TypeError('connector binding')
+    identities.add(identity)
+  }
+  return bindings
+}
+
+export function parseConnectorBinding(value: unknown): ConnectorBindingDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_DTO_FIELDS, 'connector binding')
+  const common = parseConnectorBindingCommon(record)
+  const version = asPositiveSafeInteger(record.version, 'connector binding')
+  const createdAt = asConnectorTimestamp(record.createdAt)
+  const updatedAt = asConnectorTimestamp(record.updatedAt)
+  if (Date.parse(createdAt) > Date.parse(updatedAt)) throw new TypeError('connector binding')
+  return { ...common, version, createdAt, updatedAt }
+}
+
+export function parseUpsertConnectorBindingInput(value: UpsertConnectorBindingInputDto): UpsertConnectorBindingInputDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_UPSERT_FIELDS, 'connector binding')
+  const common = parseConnectorBindingCommon(record)
+  const expectedVersion = record.expectedVersion === null
+    ? null
+    : asPositiveSafeInteger(record.expectedVersion, 'connector binding')
+  return { ...common, expectedVersion }
+}
+
+export function parseUpsertConnectorBindingResponse(value: unknown, input: UpsertConnectorBindingInputDto): ConnectorBindingDto {
+  const binding = parseConnectorBinding(value)
+  if (binding.householdId !== input.householdId
+    || binding.connectorKind !== input.connectorKind
+    || binding.connectionKey !== input.connectionKey) throw new TypeError('connector binding')
+  return binding
+}
+
+export function parseDeleteConnectorBindingInput(value: DeleteConnectorBindingInputDto): DeleteConnectorBindingInputDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_DELETE_FIELDS, 'connector binding')
+  const householdId = asConnectorBindingIdentifier(record.householdId, 128, 'connector binding')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector binding')
+  const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'connector binding')
+  validateManualConnectorKey(connectorKind, connectionKey)
+  return {
+    householdId,
+    connectorKind,
+    connectionKey,
+    expectedVersion: asPositiveSafeInteger(record.expectedVersion, 'connector binding'),
+  }
+}
+
+export function parseConnectorBindingCommon(record: Record<string, unknown>): Pick<ConnectorBindingDto,
+  'householdId' | 'connectorKind' | 'connectionKey' | 'allowedAccountIds' | 'parserProfileId' | 'parserProfileVersion'> {
+  const householdId = asConnectorBindingIdentifier(record.householdId, 128, 'connector binding')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector binding')
+  const connectionKey = asConnectorBindingIdentifier(record.connectionKey, 128, 'connector binding')
+  validateManualConnectorKey(connectorKind, connectionKey)
+  if (!Array.isArray(record.allowedAccountIds) || record.allowedAccountIds.length < 1 || record.allowedAccountIds.length > 256) {
+    throw new TypeError('connector binding')
+  }
+  const allowedAccountIds = record.allowedAccountIds.map((id) => asConnectorBindingIdentifier(id, 64, 'connector binding'))
+  if (new Set(allowedAccountIds).size !== allowedAccountIds.length) throw new TypeError('connector binding')
+  const parserProfileId = record.parserProfileId === null
+    ? null
+    : asConnectorBindingIdentifier(record.parserProfileId, 64, 'connector binding')
+  const parserProfileVersion = record.parserProfileVersion === null
+    ? null
+    : asPositiveSafeInteger(record.parserProfileVersion, 'connector binding')
+  if ((parserProfileId === null) !== (parserProfileVersion === null)) throw new TypeError('connector binding')
+  return { householdId, connectorKind, connectionKey, allowedAccountIds, parserProfileId, parserProfileVersion }
+}
+
+export function asConnectorBindingIdentifier(value: unknown, maximumBytes: number, label: string): string {
+  if (typeof value !== 'string' || value.length > maximumBytes || !/^[A-Za-z0-9_-]+$/.test(value)) throw new TypeError(label)
+  return value
+}
+
+export function asPositiveSafeInteger(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new TypeError(label)
+  return value
+}
+
+export function asConnectorTimestamp(value: unknown): string {
+  const timestamp = asNullableConnectorTimestamp(value)
+  if (timestamp === null) throw new TypeError('connector binding')
+  return timestamp
+}
+
+export function validateManualConnectorKey(connectorKind: ConnectorKindDto, connectionKey: string): void {
+  if (connectorKind === 'MANUAL_IMPORT' && connectionKey !== 'manual-import') throw new TypeError('connector binding')
+}
+
+export function parseConnectorSummaryPage(value: unknown): ConnectorSummaryPageDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_PAGE_FIELDS, 'connector page')
+  if (record.schemaVersion !== 1 || !Array.isArray(record.items) || record.items.length > 100) throw new TypeError('connector page')
+  const items = record.items.map(parseConnectorSummary)
+  const identities = new Set<string>()
+  for (const item of items) {
+    const identity = `${item.connectorKind}\u0000${item.connectionKey}`
+    if (identities.has(identity)) throw new TypeError('connector identity')
+    identities.add(identity)
+  }
+  return { schemaVersion: 1, items, nextCursor: asNullableConnectorCursor(record.nextCursor) }
+}
+
+export function parseConnectorSummary(value: unknown): ConnectorSummaryDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_SUMMARY_FIELDS, 'connector summary')
+  if (record.schemaVersion !== 1) throw new TypeError('connector schema')
+  const connectorKind = asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector kind')
+  const availability = asConnectorEnum(record.availability, CONNECTOR_AVAILABILITIES, 'connector availability')
+  const lifecycle = asConnectorEnum(record.lifecycle, CONNECTOR_LIFECYCLES, 'connector lifecycle')
+  const health = asConnectorEnum(record.health, CONNECTOR_HEALTH, 'connector health')
+  const configurationDestination = asConnectorEnum(record.configurationDestination, CONNECTOR_DESTINATIONS, 'connector destination')
+  const capabilities = parseConnectorCapabilities(record.capabilities)
+  const connectionKey = asConnectorIdentifier(record.connectionKey, 128, 'connector connection key')
+  const displayLabel = asConnectorDisplayLabel(record.displayLabel)
+  const lastErrorCode = asNullableConnectorIdentifier(record.lastErrorCode, 128, 'connector error code')
+  const summary: ConnectorSummaryDto = {
+    schemaVersion: 1,
+    connectorKind,
+    connectionKey,
+    displayLabel,
+    availability,
+    lifecycle,
+    health,
+    capabilities,
+    lastAttemptAt: asNullableConnectorTimestamp(record.lastAttemptAt),
+    lastSuccessAt: asNullableConnectorTimestamp(record.lastSuccessAt),
+    freshnessDeadlineAt: asNullableConnectorTimestamp(record.freshnessDeadlineAt),
+    nextDueAt: asNullableConnectorTimestamp(record.nextDueAt),
+    pendingReviewCount: asSafeInteger(record.pendingReviewCount),
+    consecutiveFailures: asBoundedInteger(record.consecutiveFailures, 255),
+    lastErrorCode,
+    bindingSummary: parseNullableConnectorBindingSummary(record.bindingSummary),
+    configurationDestination,
+  }
+  validateConnectorSummary(summary)
+  return summary
+}
+
+export function parseConnectorCapabilities(value: unknown): readonly ConnectorCapabilityDto[] {
+  if (!Array.isArray(value)) throw new TypeError('connector capabilities')
+  const capabilities = value.map((capability) => asConnectorEnum(capability, CONNECTOR_CAPABILITIES, 'connector capability'))
+  if (new Set(capabilities).size !== capabilities.length) throw new TypeError('connector capabilities')
+  return capabilities
+}
+
+export function parseNullableConnectorBindingSummary(value: unknown): ConnectorBindingSummaryDto | null {
+  if (value === null) return null
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_BINDING_FIELDS, 'connector binding')
+  if (typeof record.parserProfileConfigured !== 'boolean') throw new TypeError('connector binding')
+  return {
+    allowedAccountCount: asBoundedInteger(record.allowedAccountCount, 65535),
+    parserProfileConfigured: record.parserProfileConfigured,
+    version: asSafeInteger(record.version),
+  }
+}
+
+export function validateConnectorSummary(summary: ConnectorSummaryDto): void {
+  const allowedCapabilities = CONNECTOR_DESCRIPTOR_CAPABILITIES[summary.connectorKind]
+  if (summary.configurationDestination !== CONNECTOR_DESTINATION_BY_KIND[summary.connectorKind]
+      || summary.capabilities.some((capability) => !allowedCapabilities.has(capability))
+      || (summary.availability === 'RUNTIME_UNSUPPORTED' && summary.capabilities.length !== 0)
+      || (summary.lifecycle !== 'CONNECTED' && summary.capabilities.some((capability) => capability === 'REFRESH_NOW' || capability === 'SCHEDULE' || capability === 'RETRY'))
+      || (summary.health === 'RUNNING' && !summary.capabilities.includes('REFRESH_NOW'))
+      || (summary.health === 'RETRY_BACKOFF' && !summary.capabilities.includes('RETRY'))) {
+    throw new TypeError('connector capabilities')
+  }
+  if ((summary.lifecycle === 'DISCONNECTED' || summary.lifecycle === 'CONFIGURING') && summary.health !== 'NEVER_REFRESHED') throw new TypeError('connector state')
+  if (summary.lifecycle === 'CONNECTED' && summary.connectorKind === 'MANUAL_IMPORT' && summary.health !== 'MANUAL') throw new TypeError('connector state')
+  if (summary.lifecycle === 'CONNECTED' && summary.connectorKind !== 'MANUAL_IMPORT' && summary.health === 'MANUAL') throw new TypeError('connector state')
+}
+
+export function asConnectorEnum<T extends string>(value: unknown, allowed: ReadonlySet<T>, label: string): T {
+  if (typeof value !== 'string' || !allowed.has(value as T)) throw new TypeError(label)
+  return value as T
+}
+
+export function asConnectorIdentifier(value: unknown, maximumBytes: number, label: string): string {
+  const identifier = asRequiredString(value)
+  const bytes = UTF8_ENCODER.encode(identifier)
+  if (identifier.trim() !== identifier || bytes.length > maximumBytes || bytes.some((byte) => byte < 0x21 || byte > 0x7e || byte === 0x2f)) throw new TypeError(label)
+  return identifier
+}
+
+export function asNullableConnectorIdentifier(value: unknown, maximumBytes: number, label: string): string | null {
+  return value === null ? null : asConnectorIdentifier(value, maximumBytes, label)
+}
+
+export function asConnectorDisplayLabel(value: unknown): string {
+  const label = asRequiredString(value)
+  if (label.trim() !== label || UTF8_ENCODER.encode(label).length > 256 || /\p{Cc}/u.test(label)) throw new TypeError('connector display label')
+  return label
+}
+
+export function asNullableConnectorTimestamp(value: unknown): string | null {
+  if (value === null) return null
+  const timestamp = asRequiredString(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/.exec(timestamp)
+  if (!match) throw new TypeError('connector timestamp')
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number)
+  const daysInMonth = month === 2 ? ((year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0)) ? 29 : 28) : [4, 6, 9, 11].includes(month) ? 30 : 31
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > daysInMonth || hour > 23 || minute > 59 || second > 59) throw new TypeError('connector timestamp')
+  return timestamp
+}
+
+export function asNullableConnectorCursor(value: unknown): ConnectorCursorDto | null {
+  if (value === null) return null
+  return parseConnectorCursor(value)
+}
+
+export function asConnectorCursor(value: unknown): ConnectorCursorDto {
+  try {
+    return parseConnectorCursor(value)
+  } catch {
+    throw new TypeError('connector cursor')
+  }
+}
+
+export function parseConnectorCursor(value: unknown): ConnectorCursorDto {
+  const record = asRecord(value)
+  assertExactFields(record, CONNECTOR_CURSOR_FIELDS, 'connector cursor')
+  return {
+    connectorKind: asConnectorEnum(record.connectorKind, CONNECTOR_KINDS, 'connector cursor'),
+    connectionKey: asConnectorIdentifier(record.connectionKey, 128, 'connector cursor'),
+  }
+}
+
+export function assertExactFields(record: Record<string, unknown>, allowed: ReadonlySet<string>, label: string): void {
+  if (Object.keys(record).some((field) => !allowed.has(field))) throw new TypeError(label)
+}
+
+export function parseWatchedFolderSource(record: Record<string, unknown>) {
+  if (record.sourceType !== 'LOCAL_FOLDER' && record.sourceType !== 'ICLOUD_PICKER') throw new TypeError('watched folder source type')
+  if (record.provider !== 'LOCAL' && record.provider !== 'ICLOUD') throw new TypeError('watched folder provider')
+  if ((record.sourceType === 'LOCAL_FOLDER') !== (record.provider === 'LOCAL')) throw new TypeError('watched folder source')
+  return { sourceType: record.sourceType, provider: record.provider } as const
+}
+export function parseWatchedFolder(value: unknown): WatchedFolderDto {
+  const record = asRecord(value)
+  if (typeof record.id !== 'string' || typeof record.householdId !== 'string' || typeof record.label !== 'string' || typeof record.displayName !== 'string' || typeof record.isEnabled !== 'boolean' || typeof record.createdAt !== 'string') throw new TypeError('watched folder')
+  const { sourceType, provider } = parseWatchedFolderSource(record)
+  return { id: record.id, householdId: record.householdId, label: record.label, displayName: record.displayName, sourceType, provider, isEnabled: record.isEnabled, createdAt: record.createdAt }
+}
+export function parseWatchedFolders(value: unknown): readonly WatchedFolderDto[] { if (!Array.isArray(value)) throw new TypeError('watched folders'); return value.map(parseWatchedFolder) }
+export function parseNullableWatchedFolder(value: unknown): WatchedFolderDto | null { return value === null ? null : parseWatchedFolder(value) }
+export function parseWatchedFileMetadata(value: unknown): WatchedFileMetadataDto { const record = asRecord(value); return { relativePath: asRequiredString(record.relativePath), fileName: asRequiredString(record.fileName), mediaType: asRequiredString(record.mediaType), byteSize: asSafeInteger(record.byteSize), modifiedUnixMs: record.modifiedUnixMs === null ? null : asSafeInteger(record.modifiedUnixMs) } }
+export function parseWatchedFolderScan(value: unknown) { const record = asRecord(value); if (!Array.isArray(record.files)) throw new TypeError('watched folder scan'); return { watchedFolderId: asRequiredString(record.watchedFolderId), files: record.files.map(parseWatchedFileMetadata) } }
+export function parseWatchedFile(value: unknown) { const record = asRecord(value); if (!Array.isArray(record.fileBytes) || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('watched file'); return { ...parseWatchedFileMetadata(record), fileBytes: record.fileBytes as number[] } }
+
+export const WATCHED_FILE_INBOX_STATES = new Set<WatchedFileInboxStateDto>(['DISCOVERED', 'PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'FAILED', 'IGNORED', 'REMOVED'])
+export function parseWatchedFileInboxItem(value: unknown): WatchedFileInboxItemDto {
+  const record = asRecord(value)
+  if (!WATCHED_FILE_INBOX_STATES.has(record.state as WatchedFileInboxStateDto)) throw new TypeError('watched inbox state')
+  const state = record.state as WatchedFileInboxStateDto
+  const importRunId = asNullableString(record.importRunId)
+  const lastErrorCode = asNullableString(record.lastErrorCode)
+  const attemptCount = asSafeInteger(record.attemptCount)
+  if (attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('watched inbox invariant')
+  if (lastErrorCode !== null && !/^[A-Z][A-Z0-9_]{1,63}$/.test(lastErrorCode)) throw new TypeError('watched inbox error code')
+  const { sourceType, provider } = parseWatchedFolderSource(record)
+  return {
+    id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), watchedFolderId: asRequiredString(record.watchedFolderId),
+    watchedFolderLabel: asRequiredString(record.watchedFolderLabel), sourceType, provider,
+    relativePath: asRequiredString(record.relativePath), fileName: asRequiredString(record.fileName),
+    mediaType: asRequiredString(record.mediaType), byteSize: asSafeInteger(record.byteSize), modifiedUnixMs: asNullableSafeInteger(record.modifiedUnixMs),
+    fingerprint: asCanonicalHash(record.fingerprint), state, attemptCount, importRunId, lastErrorCode,
+    discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+export function parseWatchedFileInboxItems(value: unknown): readonly WatchedFileInboxItemDto[] {
+  if (!Array.isArray(value)) throw new TypeError('watched inbox items')
+  const items = value.map(parseWatchedFileInboxItem)
+  if (new Set(items.map((item) => item.id)).size !== items.length) throw new TypeError('duplicate watched inbox item')
+  return items
+}
+export function parseWatchedFileInboxCounts(value: unknown) {
+  const record = asRecord(value)
+  const keys = ['discovered', 'processing', 'ready', 'needsMapping', 'staged', 'failed', 'ignored', 'removed', 'actionable', 'total'] as const
+  const counts = Object.fromEntries(keys.map((key) => [key, asSafeInteger(record[key])])) as unknown as import('./types').WatchedFileInboxCountsDto
+  const sum = counts.discovered + counts.processing + counts.ready + counts.needsMapping + counts.staged + counts.failed + counts.ignored + counts.removed
+  if (!Number.isSafeInteger(sum) || counts.total !== sum || counts.actionable !== counts.discovered + counts.ready + counts.needsMapping + counts.failed) throw new TypeError('watched inbox counts')
+  return counts
+}
+export function parseWatchedFileInboxClaim(value: unknown): WatchedFileInboxClaimDto {
+  const record = asRecord(value)
+  const items = parseWatchedFileInboxItems(record.items)
+  if (items.length < 1 || items.length > 25 || items.some((item) => item.state !== 'PROCESSING')) throw new TypeError('watched inbox claim')
+  return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
+}
+
+export const GOOGLE_DRIVE_CONNECTION_STATES = new Set(['AUTHORIZING', 'SELECTING_FOLDER', 'CONNECTED', 'AUTH_REQUIRED', 'DISCONNECTED'])
+export const GOOGLE_DRIVE_INBOX_STATES = new Set(['DISCOVERED', 'PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'FAILED', 'IGNORED', 'REMOVED', 'TOO_LARGE', 'UNSUPPORTED'])
+export const GOOGLE_DRIVE_SYNC_RESULTS = new Set(['NEVER', 'RUNNING', 'NO_CHANGES', 'DISCOVERED', 'FAILED_RETRYABLE', 'LEASE_EXPIRED', 'TERMINAL_SUSPENDED', 'DISABLED'])
+export const GOOGLE_DRIVE_SUSPENSIONS = new Set(['RETRY_BACKOFF', 'AUTH_EXPIRED', 'MISSING_CREDENTIAL', 'CURSOR_INVALID'])
+
+export function parseGoogleDriveAvailability(value: unknown): GoogleDriveAvailabilityDto {
+  const record = asRecord(value)
+  if (typeof record.available !== 'boolean' || record.authorizationMode !== 'SYSTEM_BROWSER_LOOPBACK' || record.scopeProfile !== 'DRIVE_READONLY') throw new TypeError('google drive availability')
+  const unavailableReason = record.unavailableReason === null ? null : asRequiredString(record.unavailableReason)
+  if (unavailableReason !== null && unavailableReason !== 'CLIENT_ID_NOT_COMPILED' && unavailableReason !== 'UNSUPPORTED_RUNTIME') throw new TypeError('google drive unavailable reason')
+  if (record.available !== (unavailableReason === null)) throw new TypeError('google drive availability invariant')
+  return { available: record.available, authorizationMode: record.authorizationMode, scopeProfile: record.scopeProfile, unavailableReason }
+}
+
+export function parseGoogleDriveConnection(value: unknown): GoogleDriveConnectionDto {
+  const record = asRecord(value)
+  if (!GOOGLE_DRIVE_CONNECTION_STATES.has(String(record.status))) throw new TypeError('google drive connection state')
+  const accountEmail = asNullableString(record.accountEmail)
+  const folderName = asNullableString(record.folderName)
+  const driveScope = record.driveScope === null ? null : asRequiredString(record.driveScope)
+  if (typeof record.folderBound !== 'boolean' || (driveScope !== null && driveScope !== 'MY_DRIVE' && driveScope !== 'SHARED_DRIVE')) throw new TypeError('google drive folder binding')
+  const lastFullScanAt = record.lastFullScanAt === null ? null : asIsoTimestamp(record.lastFullScanAt)
+  const lastChangeAt = record.lastChangeAt === null ? null : asIsoTimestamp(record.lastChangeAt)
+  if (record.folderBound !== (folderName !== null && driveScope !== null)) throw new TypeError('google drive folder binding invariant')
+  if ((record.status === 'SELECTING_FOLDER' || record.status === 'CONNECTED') && accountEmail === null) throw new TypeError('google drive account binding')
+  if (record.status === 'CONNECTED' && !record.folderBound) throw new TypeError('google drive connected invariant')
+  return {
+    id: asRequiredString(record.id), accountEmail, folderName, driveScope: driveScope as GoogleDriveConnectionDto['driveScope'], folderBound: record.folderBound,
+    status: record.status as GoogleDriveConnectionDto['status'], lastFullScanAt, lastChangeAt,
+    createdAt: asIsoTimestamp(record.createdAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseGoogleDriveConnections(value: unknown): readonly GoogleDriveConnectionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('google drive connections')
+  return value.map(parseGoogleDriveConnection)
+}
+
+export function parseGoogleDriveSchedule(value: unknown): GoogleDriveSyncScheduleDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean' || ![15, 30, 60].includes(Number(record.intervalMinutes)) || !GOOGLE_DRIVE_SYNC_RESULTS.has(String(record.lastResult))) throw new TypeError('google drive schedule')
+  const intervalMinutes = record.intervalMinutes as 15 | 30 | 60
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt)
+  const leaseExpiresAt = record.leaseExpiresAt === null ? null : asIsoTimestamp(record.leaseExpiresAt)
+  const lastAttemptAt = record.lastAttemptAt === null ? null : asIsoTimestamp(record.lastAttemptAt)
+  const lastSuccessAt = record.lastSuccessAt === null ? null : asIsoTimestamp(record.lastSuccessAt)
+  const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = record.suspensionReason === null ? null : asRequiredString(record.suspensionReason)
+  const lastErrorCode = asNullableString(record.lastErrorCode)
+  const lastDiscoveredCount = asSafeInteger(record.lastDiscoveredCount); const consecutiveFailures = asSafeInteger(record.consecutiveFailures)
+  if (suspensionReason !== null && !GOOGLE_DRIVE_SUSPENSIONS.has(suspensionReason)) throw new TypeError('google drive suspension')
+  if (record.running !== (record.lastResult === 'RUNNING') || record.running !== (leaseExpiresAt !== null) || consecutiveFailures > 10) throw new TypeError('google drive schedule invariant')
+  if (record.enabled !== (nextDueAt !== null) || (!record.enabled && (leaseExpiresAt !== null || suspensionReason !== null || suspendedUntil !== null))) throw new TypeError('google drive schedule lifecycle')
+  if ((suspensionReason === null && suspendedUntil !== null)
+    || (suspensionReason === 'RETRY_BACKOFF' && suspendedUntil === null)
+    || (suspensionReason !== null && suspensionReason !== 'RETRY_BACKOFF' && (suspendedUntil !== null || record.lastResult !== 'TERMINAL_SUSPENDED'))) throw new TypeError('google drive schedule suspension invariant')
+  return {
+    connectionId: asRequiredString(record.connectionId), enabled: record.enabled, intervalMinutes, nextDueAt, running: record.running,
+    leaseExpiresAt, lastAttemptAt, lastSuccessAt, lastResult: record.lastResult as GoogleDriveSyncScheduleDto['lastResult'],
+    lastDiscoveredCount, consecutiveFailures, suspendedUntil, suspensionReason: suspensionReason as GoogleDriveSyncScheduleDto['suspensionReason'],
+    lastErrorCode, updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseGoogleDriveInboxItem(value: unknown): GoogleDriveInboxItemDto {
+  const record = asRecord(value)
+  if (!GOOGLE_DRIVE_INBOX_STATES.has(String(record.state))) throw new TypeError('google drive inbox state')
+  const state = record.state as GoogleDriveInboxItemDto['state']; const attemptCount = asSafeInteger(record.attemptCount)
+  const importRunId = asNullableString(record.importRunId); const lastErrorCode = asNullableString(record.lastErrorCode)
+  const contentSha256 = record.contentSha256 === null ? null : asCanonicalHash(record.contentSha256)
+  const remoteMd5Checksum = record.remoteMd5Checksum === null ? null : asRequiredString(record.remoteMd5Checksum)
+  if (attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('google drive inbox invariant')
+  if (remoteMd5Checksum !== null && !/^[0-9a-f]{32}$/.test(remoteMd5Checksum)) throw new TypeError('google drive md5')
+  if (contentSha256 !== null && !['PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'IGNORED', 'FAILED'].includes(state)) throw new TypeError('google drive content state')
+  return {
+    id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), connectionId: asRequiredString(record.connectionId),
+    fileId: asRequiredString(record.fileId), generationFingerprint: asCanonicalHash(record.generationFingerprint),
+    fileName: asRequiredString(record.fileName), mediaType: asRequiredString(record.mediaType), remoteByteSize: asNullableSafeInteger(record.remoteByteSize),
+    remoteModifiedAt: record.remoteModifiedAt === null ? null : asIsoTimestamp(record.remoteModifiedAt), remoteMd5Checksum,
+    driveVersion: asNullableString(record.driveVersion), contentSha256, state, attemptCount, importRunId, lastErrorCode,
+    discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseGoogleDriveInboxItems(value: unknown): readonly GoogleDriveInboxItemDto[] {
+  if (!Array.isArray(value)) throw new TypeError('google drive inbox')
+  const items = value.map(parseGoogleDriveInboxItem)
+  if (new Set(items.map((item) => item.id)).size !== items.length) throw new TypeError('duplicate google drive inbox item')
+  return items
+}
+
+export function parseGoogleDriveInboxFile(value: unknown): GoogleDriveInboxFileDto {
+  const record = asRecord(value)
+  const item = parseGoogleDriveInboxItem(record.item)
+  if (!['READY', 'NEEDS_MAPPING'].includes(item.state) || item.contentSha256 === null) throw new TypeError('google drive inbox readable state')
+  if (!Array.isArray(record.fileBytes) || record.fileBytes.length > 25 * 1024 * 1024 || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('google drive inbox file')
+  if (item.remoteByteSize !== null && record.fileBytes.length !== item.remoteByteSize) throw new TypeError('google drive inbox file size')
+  return { item, fileBytes: record.fileBytes as number[] }
+}
+
+export function parseGoogleDriveInboxClaim(value: unknown): GoogleDriveInboxClaimDto {
+  const record = asRecord(value)
+  const items = parseGoogleDriveInboxItems(record.items)
+  if (items.length < 1 || items.length > 20 || items.some((item) => item.state !== 'PROCESSING' || item.contentSha256 === null)) throw new TypeError('google drive inbox claim')
+  return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
+}
+
+export const GMAIL_CONNECTION_STATES = new Set(['AUTHORIZING', 'SELECTING_LABEL', 'CONNECTED', 'AUTH_REQUIRED', 'DISCONNECTED'])
+export const GMAIL_INBOX_STATES = new Set(['DISCOVERED', 'PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'FAILED', 'IGNORED', 'REMOVED', 'TOO_LARGE', 'UNSUPPORTED'])
+
+export function parseGmailAvailability(value: unknown): GmailAvailabilityDto {
+  const record = asRecord(value)
+  if (typeof record.available !== 'boolean' || record.authorizationMode !== 'SYSTEM_BROWSER_LOOPBACK' || record.scopeProfile !== 'GMAIL_READONLY') throw new TypeError('gmail availability')
+  const unavailableReason = record.unavailableReason === null ? null : asRequiredString(record.unavailableReason)
+  if (unavailableReason !== null && unavailableReason !== 'CLIENT_ID_NOT_COMPILED') throw new TypeError('gmail unavailable reason')
+  if (record.available !== (unavailableReason === null)) throw new TypeError('gmail availability invariant')
+  return { available: record.available, authorizationMode: record.authorizationMode, scopeProfile: record.scopeProfile, unavailableReason }
+}
+
+export function parseGmailConnection(value: unknown): GmailConnectionDto {
+  const record = asRecord(value)
+  if (!GMAIL_CONNECTION_STATES.has(String(record.status))) throw new TypeError('gmail connection state')
+  const accountEmail = asNullableString(record.accountEmail); const labelId = asNullableString(record.labelId); const labelName = asNullableString(record.labelName)
+  if (typeof record.labelBound !== 'boolean' || record.labelBound !== (labelId !== null && labelName !== null)) throw new TypeError('gmail label binding')
+  if ((record.status === 'SELECTING_LABEL' || record.status === 'CONNECTED') && accountEmail === null) throw new TypeError('gmail account binding')
+  if (record.status === 'CONNECTED' && !record.labelBound) throw new TypeError('gmail connected invariant')
+  return {
+    id: asRequiredString(record.id), status: record.status as GmailConnectionDto['status'], accountEmail, labelId, labelName,
+    gmailQuery: asRequiredString(record.gmailQuery), labelBound: record.labelBound,
+    lastFullScanAt: record.lastFullScanAt === null ? null : asIsoTimestamp(record.lastFullScanAt), lastChangeAt: record.lastChangeAt === null ? null : asIsoTimestamp(record.lastChangeAt),
+    createdAt: asIsoTimestamp(record.createdAt), updatedAt: asIsoTimestamp(record.updatedAt),
+  }
+}
+
+export function parseGmailConnections(value: unknown): readonly GmailConnectionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('gmail connections')
+  return value.map(parseGmailConnection)
+}
+
+export function parseGmailLabels(value: unknown): readonly GmailLabelDto[] {
+  if (!Array.isArray(value)) throw new TypeError('gmail labels')
+  const labels = value.map((value) => { const record = asRecord(value); if (record.kind !== 'SYSTEM' && record.kind !== 'USER') throw new TypeError('gmail label kind'); return { id: asRequiredString(record.id), name: asRequiredString(record.name), kind: record.kind } as GmailLabelDto })
+  if (new Set(labels.map((label) => label.id)).size !== labels.length) throw new TypeError('duplicate gmail label')
+  return labels
+}
+
+export function parseGmailSchedule(value: unknown): GmailSyncScheduleDto {
+  const record = asRecord(value)
+  if (typeof record.enabled !== 'boolean' || typeof record.running !== 'boolean' || ![15, 30, 60].includes(Number(record.intervalMinutes)) || !GOOGLE_DRIVE_SYNC_RESULTS.has(String(record.lastResult))) throw new TypeError('gmail schedule')
+  const nextDueAt = record.nextDueAt === null ? null : asIsoTimestamp(record.nextDueAt); const suspendedUntil = record.suspendedUntil === null ? null : asIsoTimestamp(record.suspendedUntil)
+  const suspensionReason = record.suspensionReason === null ? null : asRequiredString(record.suspensionReason); if (suspensionReason !== null && !GOOGLE_DRIVE_SUSPENSIONS.has(suspensionReason)) throw new TypeError('gmail suspension')
+  const lastDiscoveredCount = asSafeInteger(record.lastDiscoveredCount); const consecutiveFailures = asSafeInteger(record.consecutiveFailures)
+  if (consecutiveFailures > 10 || record.running !== (record.lastResult === 'RUNNING') || record.enabled !== (nextDueAt !== null)) throw new TypeError('gmail schedule invariant')
+  if ((suspensionReason === null && suspendedUntil !== null) || (suspensionReason === 'RETRY_BACKOFF' && suspendedUntil === null)) throw new TypeError('gmail suspension invariant')
+  return { connectionId: asRequiredString(record.connectionId), enabled: record.enabled, intervalMinutes: record.intervalMinutes as 15 | 30 | 60, nextDueAt, running: record.running, lastResult: record.lastResult as GmailSyncScheduleDto['lastResult'], lastDiscoveredCount, consecutiveFailures, suspendedUntil, suspensionReason: suspensionReason as GmailSyncScheduleDto['suspensionReason'], lastErrorCode: asNullableString(record.lastErrorCode), updatedAt: asIsoTimestamp(record.updatedAt) }
+}
+
+export function parseGmailInboxItem(value: unknown): GmailInboxItemDto {
+  const record = asRecord(value); if (!GMAIL_INBOX_STATES.has(String(record.state))) throw new TypeError('gmail inbox state')
+  const state = record.state as GmailInboxItemDto['state']; const attemptCount = asSafeInteger(record.attemptCount); const importRunId = asNullableString(record.importRunId); const lastErrorCode = asNullableString(record.lastErrorCode)
+  if (record.mediaType !== 'message/rfc822' || typeof record.contentReady !== 'boolean' || attemptCount > 5 || (state === 'STAGED') !== (importRunId !== null) || (state === 'FAILED') !== (lastErrorCode !== null)) throw new TypeError('gmail inbox invariant')
+  if (record.contentReady && !['PROCESSING', 'READY', 'NEEDS_MAPPING', 'STAGED', 'IGNORED', 'FAILED'].includes(state)) throw new TypeError('gmail content state')
+  return { id: asCanonicalHash(record.id), householdId: asRequiredString(record.householdId), connectionId: asRequiredString(record.connectionId), fileName: asRequiredString(record.fileName), mediaType: record.mediaType, internalDateMs: asSafeInteger(record.internalDateMs), estimatedByteSize: asNullableSafeInteger(record.estimatedByteSize), contentReady: record.contentReady, state, attemptCount, importRunId, lastErrorCode, discoveredAt: asIsoTimestamp(record.discoveredAt), updatedAt: asIsoTimestamp(record.updatedAt) }
+}
+
+export function parseGmailInboxItems(value: unknown): readonly GmailInboxItemDto[] {
+  if (!Array.isArray(value)) throw new TypeError('gmail inbox')
+  const items = value.map(parseGmailInboxItem); if (new Set(items.map((item) => item.id)).size !== items.length) throw new TypeError('duplicate gmail inbox item')
+  return items
+}
+
+export function parseGmailInboxFile(value: unknown): GmailInboxFileDto {
+  const record = asRecord(value); const item = parseGmailInboxItem(record.item)
+  if (!['READY', 'NEEDS_MAPPING'].includes(item.state) || !item.contentReady) throw new TypeError('gmail inbox readable state')
+  if (!Array.isArray(record.fileBytes) || record.fileBytes.length > 25 * 1024 * 1024 || record.fileBytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) throw new TypeError('gmail inbox file')
+  return { item, fileBytes: record.fileBytes as number[] }
+}
+
+export function parseGmailInboxClaim(value: unknown): GmailInboxClaimDto {
+  const record = asRecord(value); const items = parseGmailInboxItems(record.items)
+  if (items.length < 1 || items.length > 20 || items.some((item) => item.state !== 'PROCESSING' || !item.contentReady)) throw new TypeError('gmail inbox claim')
+  return { leaseToken: asCanonicalHash(record.leaseToken), leaseExpiresAt: asIsoTimestamp(record.leaseExpiresAt), items }
+}
+
+export function parseImportSummary(value: unknown): ImportRunCountsDto {
+  const record = asRecord(value)
+  const keys = ['totalRuns', 'discovered', 'extracting', 'reviewRequired', 'posted', 'failed', 'rolledBack', 'sourceDocuments', 'sourceRecords', 'pendingCandidates', 'readyCandidates'] as const
+  const counts = Object.fromEntries(keys.map((key) => [key, asSafeInteger(record[key])])) as unknown as Omit<ImportRunCountsDto, 'latestSuccessfulImportAt' | 'latestSourceFilename' | 'latestSourceType' | 'distinctSourceTypes'>
+  const latestSuccessfulImportAt = record.latestSuccessfulImportAt === null ? null : asIsoTimestamp(record.latestSuccessfulImportAt)
+  const latestSourceFilename = asNullableString(record.latestSourceFilename)
+  const latestSourceType = asNullableString(record.latestSourceType)
+  if ((latestSuccessfulImportAt === null) !== (latestSourceFilename === null) || (latestSuccessfulImportAt === null) !== (latestSourceType === null)) throw new TypeError('import freshness')
+  return { ...counts, latestSuccessfulImportAt, latestSourceFilename, latestSourceType, distinctSourceTypes: asSafeInteger(record.distinctSourceTypes) }
+}
+
+export function parseBootstrap(value: unknown): AppBootstrapDto {
+  const record = asRecord(value)
+  if (typeof record.application !== 'string') throw new TypeError('application')
+
+  return {
+    application: record.application,
+    database: parseDatabaseStatus(record.database),
+  }
+}
+
+export function parseHealth(value: unknown): AppHealthDto {
+  const record = asRecord(value)
+  if (record.status !== 'ok' && record.status !== 'degraded') throw new TypeError('status')
+
+  return {
+    status: record.status,
+    database: parseDatabaseStatus(record.database),
+  }
+}
+
+export function parseStatus(value: unknown): AppStatusDto {
+  const record = asRecord(value)
+  if (record.integrity !== 'ok' && record.integrity !== 'failed') throw new TypeError('integrity')
+
+  return {
+    schemaVersion: asSafeInteger(record.schemaVersion),
+    integrity: record.integrity,
+  }
+}
+
+export function parseDatabaseStatus(value: unknown): DatabaseStatusDto {
+  const record = asRecord(value)
+  if (typeof record.healthy !== 'boolean') throw new TypeError('healthy')
+
+  return {
+    healthy: record.healthy,
+    schemaVersion: asSafeInteger(record.schemaVersion),
+  }
+}
+
+export function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('object')
+  return value as Record<string, unknown>
+}
+
+export function asSafeInteger(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new TypeError('integer')
+  return value
+}
+
+export function asBoundedInteger(value: unknown, maximum: number): number {
+  const integer = asSafeInteger(value)
+  if (integer > maximum) throw new TypeError('bounded integer')
+  return integer
+}
+
+export function asSafeSignedInteger(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new TypeError('integer')
+  return value
+}
+
+export function asNullableString(value: unknown): string | null {
+  if (value === null || typeof value === 'undefined') return null
+  if (typeof value !== 'string') throw new TypeError('string')
+  return value
+}
+
+export function asNullableStrictString(value: unknown): string | null {
+  if (value === null) return null
+  return asRequiredString(value)
+}
+
+export function asRequiredString(value: unknown): string {
+  if (typeof value !== 'string' || value.length === 0) throw new TypeError('string')
+  return value
+}
+
+export function asCanonicalHash(value: unknown): string {
+  const hash = asRequiredString(value)
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new TypeError('hash')
+  return hash
+}
+
+export function asIsoTimestamp(value: unknown): string {
+  const timestamp = asRequiredString(value)
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(timestamp) || Number.isNaN(Date.parse(timestamp))) throw new TypeError('timestamp')
+  return timestamp
+}
+
+export function asNullableSafeInteger(value: unknown): number | null {
+  if (value === null || typeof value === 'undefined') return null
+  return asSafeInteger(value)
+}
+
+export function parseTransferPairDecisions(value: unknown): readonly TransferPairDecisionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('transfer pair decisions')
+  return value.map((item) => {
+    const record = asRecord(item)
+    if (typeof record.pairKey !== 'string' || typeof record.outTransactionId !== 'string' || typeof record.inTransactionId !== 'string'
+      || (record.state !== 'REJECTED' && record.state !== 'LINKED') || typeof record.decidedAt !== 'string') {
+      throw new TypeError('transfer pair decision')
+    }
+    return { pairKey: record.pairKey, outTransactionId: record.outTransactionId, inTransactionId: record.inTransactionId, state: record.state, decidedAt: record.decidedAt }
+  })
+}

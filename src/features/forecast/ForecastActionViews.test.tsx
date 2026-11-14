@@ -45,3 +45,27 @@ describe('ForecastActionViews', () => {
     expect([...container.querySelectorAll('.action-copy h3')].map((node) => node.textContent)).toEqual([actions[2].title, actions[1].title, actions[0].title])
   })
 })
+
+describe('ScenarioSimulator inside the forecast view', () => {
+  it('shows the baseline until a what-if value is entered, then the adjusted closing cash', () => {
+    render(<ForecastActionViews data={data} />)
+    expect(screen.getByText('シナリオ試算')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('毎月の支出の増減（円）'), { target: { value: '50000' } })
+    fireEvent.change(screen.getByLabelText('初月の一時的な支出（円）'), { target: { value: '100000' } })
+    const rows = screen.getAllByRole('row').slice(1).map((row) => row.textContent)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toContain('−¥150,000')
+  })
+
+  it('warns when cash goes negative and blocks invalid or negative one-time input', () => {
+    render(<ForecastActionViews data={data} />)
+    fireEvent.change(screen.getByLabelText('毎月の支出の増減（円）'), { target: { value: '5000000' } })
+    expect(screen.getByText(/現預金がマイナスになる月があります/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('毎月の支出の増減（円）'), { target: { value: '12.5' } })
+    expect(screen.getByRole('alert')).toHaveTextContent('整数の円')
+    expect(screen.queryAllByRole('row')).toHaveLength(0)
+    fireEvent.change(screen.getByLabelText('毎月の支出の増減（円）'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('初月の一時的な支出（円）'), { target: { value: '-1' } })
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+  })
+})

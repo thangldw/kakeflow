@@ -1425,3 +1425,25 @@ describe('platform client', () => {
     await expect(client.getSourceDocument('family', 'doc')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'source_document_get' })
   })
 })
+
+describe('transfer pair decision commands', () => {
+  const decision = { pairKey: 'in-1|out-1', outTransactionId: 'out-1', inTransactionId: 'in-1', state: 'LINKED', decidedAt: '2026-07-01T00:00:00.000Z' }
+
+  it('lists and records decisions through validated commands with the Rust argument shapes', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return [decision] as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.listTransferPairDecisions('family')).resolves.toEqual([decision])
+    const input = { householdId: 'family', outTransactionId: 'out-1', inTransactionId: 'in-1', action: 'LINK' as const }
+    await expect(client.decideTransferPair(input)).resolves.toEqual([decision])
+    expect(calls).toEqual([['transfer_pair_decisions_list', { householdId: 'family' }], ['transfer_pair_decide', { input }]])
+  })
+
+  it('rejects malformed responses and is unavailable outside Tauri', async () => {
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...decision, state: 'CLEARED' }] as T })
+    await expect(bad.listTransferPairDecisions('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'transfer_pair_decisions_list' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.listTransferPairDecisions('family')).rejects.toMatchObject({ command: 'transfer_pair_decisions_list' })
+    await expect(demo.decideTransferPair({ householdId: 'family', outTransactionId: 'a', inTransactionId: 'b', action: 'REJECT' })).rejects.toMatchObject({ command: 'transfer_pair_decide' })
+  })
+})

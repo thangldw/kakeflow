@@ -6,10 +6,10 @@
 .forecast-panel h2 { font-size: 20px; }
 .action-count { align-items: center; background: #17202a; border-radius: 999px; color: #fff; display: flex; font-weight: 800; height: 30px; justify-content: center; min-width: 30px; }
 .action-list { display: grid; gap: 10px; list-style: none; margin: 18px 0 0; padding: 0; }
-.action-item { align-items: start; border: 1px solid #dde4eb; border-left: 4px solid #7a8794; border-radius: 10px; display: grid; gap: 12px; grid-template-columns: auto 1fr auto; padding: 13px; }
+.action-item { align-items: start; border: 1px solid var(--hairline, #dde4eb); border-left: 4px solid #7a8794; border-radius: 10px; display: grid; gap: 12px; grid-template-columns: auto 1fr auto; padding: 13px; }
 .action-item--critical { border-left-color: #c93b45; } .action-item--high { border-left-color: #e27a24; } .action-item--medium { border-left-color: #d2a718; } .action-item--low { border-left-color: #658195; }
 .action-badges { display: grid; gap: 4px; text-align: center; }
-.action-badges span, .action-badges strong { background: #eef2f5; border-radius: 4px; font-size: 12px; padding: 3px 5px; white-space: nowrap; }
+.action-badges span, .action-badges strong { background: var(--chip, #eef2f5); border-radius: 4px; font-size: 12px; padding: 3px 5px; white-space: nowrap; }
 .action-badges strong { color: #9f2730; }
 .action-copy h3 { font-size: 14px; } .action-copy > p { color: #53616f; font-size: 12px; line-height: 1.55; margin: 5px 0; }
 .action-meta { display: flex; gap: 12px; font-size: 11px; } .action-meta b { color: #b6333e; }
@@ -21,8 +21,9 @@
 .home-action-center { margin: 0 0 18px; }
 .home-action-center .action-center { padding: 16px 18px; }
 .home-action-center .action-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.home-action-center .action-item { grid-template-columns: 1fr; }
-.home-action-center .action-item > button { width: 100%; }
+.home-action-center .action-item { align-items: center; grid-template-columns: 1fr auto; row-gap: 6px; }
+.home-action-center .action-item .action-badges { display: flex; gap: 6px; grid-column: 1 / -1; justify-self: start; }
+.home-action-center .action-item > button { width: auto; }
 .home-action-all { background: transparent; border: 0; color: var(--text, #17202a); cursor: pointer; display: block; font: inherit; font-size: 12px; font-weight: 750; margin: 8px 4px 0 auto; padding: 6px 8px; }
 .home-action-all:focus-visible { outline: 3px solid #61a4e8; outline-offset: 2px; }
 .home-action-stale { background: #fff4d6; border-radius: 8px; color: #705300; font-size: 12px; margin: 0 0 8px; padding: 9px 12px; }
@@ -44,3 +45,13 @@
 .assumption-grid { display: grid; gap: 8px; grid-template-columns: repeat(4, 1fr); margin-top: 10px; } .assumption-grid span { color: #617080; display: grid; gap: 3px; } .assumption-grid strong { color: var(--text, #17202a); }
 @media (max-width: 1050px) { .forecast-action-layout { grid-template-columns: 1fr; } .home-action-center .action-list { grid-template-columns: 1fr; } }
 @media (max-width: 680px) { .forecast-months, .assumption-grid { grid-template-columns: 1fr; } .action-item { grid-template-columns: auto 1fr; } .action-item > button { grid-column: 1 / -1; } }
+.scenario-simulator .scenario-note { color: #617080; font-size: 12px; margin: 8px 0 14px; }
+.scenario-fields { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+.scenario-fields label { display: grid; font-size: 12px; font-weight: 650; gap: 4px; }
+.scenario-fields input { border: 1px solid var(--border, #d9e0e7); border-radius: 8px; font: inherit; min-height: 40px; padding: 6px 10px; }
+.scenario-fields input[aria-invalid="true"] { border-color: #b6333e; }
+.scenario-table { border-collapse: collapse; font-size: 12px; margin-top: 14px; width: 100%; }
+.scenario-table th, .scenario-table td { border-bottom: 1px solid var(--border, #d9e0e7); padding: 8px 6px; text-align: right; }
+.scenario-table th:first-child { text-align: left; }
+.scenario-table .is-negative, .scenario-error, .scenario-warning { color: #b6333e; }
+.scenario-error, .scenario-warning { font-size: 12px; margin: 10px 0 0; }
