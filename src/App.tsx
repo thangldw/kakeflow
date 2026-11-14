@@ -119,6 +119,7 @@ import { delimitedParserProfilePlatform } from './features/parser-profiles/delim
 import type { DelimitedParserProfileDto } from './features/parser-profiles/delimitedParserProfilePlatform'
 import { parseCustomDelimitedBytes } from './ingestion'
 import type { CustomColumnRole, CustomDelimitedPreview } from './ingestion'
+import { goalPace } from './domain/goalPace'
 import { budgetByCategory, budgetUsage, currentMonthMetrics, savings, savingsRate } from './metrics'
 import { platformClient, PlatformIpcError } from './platform'
 import type { AccountDto, AccountOwnershipKindDto, AccountVisibilityDto, AppBootstrapDto, AttributionScopeDto, CardSettlementBalanceCoverageDto, CardSettlementBankMappingDto, CardSettlementDto, ClassificationRuleDto, DashboardMonthlyTotalsDto, DashboardPreferencesDto, DashboardWidgetIdDto, ExtractedDocumentDto, GmailInboxItemDto, GoogleDriveInboxItemDto, HouseholdDto, HouseholdMemberDto, ImportPreviewDto, ImportRunCountsDto, LastClassificationApplicationDto, ManualTransactionTypeDto, MonthlyCategoryBudgetDto, PendingReviewRunDto, PostingDecisionDto, ReceiptMatchSuggestionDto, SavingsGoalDto, SourceRecordViewDto, TransactionDetailDto, TransactionLabelDto, TransactionRowDto, UpdatePostedTransactionInputDto, WatchedFileInboxCountsDto, WatchedFileInboxItemDto, WatchedFolderDto } from './platform'
@@ -2880,14 +2881,6 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged }: { ho
   const totalBudget = budgets.reduce((sum, budget) => sum + budget.budgetJpy, 0)
   const totalActual = budgets.reduce((sum, budget) => sum + budget.actualJpy, 0)
   const palette = ['#ed714d', '#6f7d57', '#e4aa45', '#7f9ba5']
-  const goalPace = (goal: SavingsGoalDto) => {
-    const remaining = Math.max(0, goal.targetJpy - goal.savedJpy)
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const target = new Date(`${goal.targetDate}T00:00:00`)
-    const days = Math.ceil((target.getTime() - today.getTime()) / 86_400_000)
-    const months = Math.max(1, Math.ceil(Math.max(0, days) / (365.25 / 12)))
-    return { remaining, months, monthly: remaining === 0 ? 0 : Math.ceil(remaining / months), overdue: days < 0 && remaining > 0 }
-  }
   return <>
     <PageHeader eyebrow={localize(`${month.replace('-', localize("年"))}月`)} title={localize("予算・貯蓄目標")} description={localize("確定済み台帳の支出と月間予算を比較します。")}><button className="primary-btn" onClick={() => setShowGoalForm((value) => !value)}><Goal size={17} /> {localize("目標を追加")}</button></PageHeader>
     {notice && <div className="import-notice" role="status">{notice}</div>}
