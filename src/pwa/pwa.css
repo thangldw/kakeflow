@@ -59,8 +59,14 @@ body {
 
 .pwa-state {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-left: auto;
+}
+
+/* A pill wraps to the next row as a whole; its words never split (the Vietnamese labels are longer). */
+.pwa-state span {
+  white-space: nowrap;
 }
 
 .pwa-state span,

@@ -634,7 +634,7 @@ describe('PWA Simple mode and language', () => {
     expect(screen.getByText('ĐÃ KHÓA')).toBeInTheDocument()
     await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
     await screen.findByRole('navigation', { name: 'Trang chính' })
-    expect([...screen.getByLabelText('Trạng thái kho dữ liệu').children].map((pill) => pill.textContent)).toEqual(['TRÊN MÁY', 'ĐÃ MỞ KHÓA', 'DÙNG ĐƯỢC NGOẠI TUYẾN'])
+    expect([...screen.getByLabelText('Trạng thái kho dữ liệu').children].map((pill) => pill.textContent)).toEqual(['CỤC BỘ', 'ĐÃ MỞ KHÓA', 'DÙNG NGOẠI TUYẾN'])
     fireEvent.click(screen.getByRole('button', { name: 'Khóa kho dữ liệu' }))
     expect(await screen.findByText('ĐÃ KHÓA')).toBeInTheDocument()
     expect(screen.queryByText('LOCKED')).not.toBeInTheDocument()
