@@ -18,6 +18,8 @@ import type {
   Transaction,
   TransactionDetail,
 } from '../platform/pwa/types'
+import { formatJpy } from './formatJpy'
+import { PostedLedgerList } from './PostedLedgerList'
 import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
 import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
 import './pwa.css'
@@ -86,10 +88,6 @@ const pwaConnectorCopy: ManualConnectorControlCopy = {
 const defaultOcrDocument: PwaOcrDocument = async (bytes, mediaType) => {
   const { paddleOcrDocument } = await import('../features/import/paddleOcr')
   return paddleOcrDocument(bytes, mediaType)
-}
-
-function formatJpy(value: number) {
-  return `¥${new Intl.NumberFormat('ja-JP').format(value)}`
 }
 
 function messageOf(cause: unknown) {
@@ -642,7 +640,7 @@ function LedgerScreen({ transactions, onProvenance }: {
   readonly transactions: readonly Transaction[]
   readonly onProvenance: (id: string) => Promise<void>
 }) {
-  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 05 · APPEND-ONLY</p><h1>Posted ledger</h1></div></div><div className="pwa-panel">{transactions.length === 0 ? <p>No posted transactions.</p> : transactions.slice().reverse().map((transaction) => <article className="pwa-ledger-row" key={transaction.id}><div><time>{transaction.occurredOn}</time><h2>{transaction.payee}</h2><small>{transaction.transactionType} · {transaction.canonicalPostingHash.slice(0, 12)}…</small></div><strong>{formatJpy(transaction.amountJpy)}</strong><button className="pwa-quiet" type="button" onClick={() => void onProvenance(transaction.id)}>View provenance</button></article>)}</div></section>
+  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 05 · APPEND-ONLY</p><h1>Posted ledger</h1></div></div><PostedLedgerList transactions={transactions} onProvenance={onProvenance} /></section>
 }
 
 function EvidenceScreen({ detail, evidence }: {

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { translateText } from '../i18n'
-import { defaultChart } from './defaultChart'
+import type { Account, CreateAccountInput } from '../platform/pwa/types'
+import { addDefaultChart, defaultChart } from './defaultChart'
 
 const english = (source: string) => translateText('en', source)
 const vietnamese = (source: string) => translateText('vi', source)
@@ -38,5 +39,35 @@ describe('defaultChart', () => {
     const japanese = defaultChart('household', (source) => source).map((account) => account.name)
     expect(japanese).toContain('現金')
     expect(japanese.every((name) => /[ぁ-んァ-ヶ一-龯]/u.test(name))).toBe(true)
+  })
+})
+
+describe('addDefaultChart', () => {
+  function fakeClient(accounts: Account[]) {
+    return {
+      accounts,
+      listAccounts: vi.fn(async () => [...accounts]),
+      createAccount: vi.fn(async (input: CreateAccountInput) => { accounts.push({ ...input, currency: 'JPY' }) }),
+    }
+  }
+
+  it('creates every starter account in an empty household', async () => {
+    const client = fakeClient([])
+    await addDefaultChart(client, 'household', english)
+    expect(client.accounts.map((account) => account.id)).toEqual(defaultChart('household', english).map((account) => account.id))
+  })
+
+  it('skips ids that exist and same-kind accounts with the same name, and never changes existing accounts', async () => {
+    const asset: Account = { id: 'asset', householdId: 'household', name: ' cash ', kind: 'ASSET', currency: 'JPY' }
+    const other: Account = { id: 'expense-other', householdId: 'household', name: '雑費', kind: 'EXPENSE', currency: 'JPY' }
+    const salaryAsExpense: Account = { id: 'expense', householdId: 'household', name: 'Salary', kind: 'EXPENSE', currency: 'JPY' }
+    const client = fakeClient([asset, other, salaryAsExpense])
+    await addDefaultChart(client, 'household', english)
+    const created = client.createAccount.mock.calls.map(([input]) => input.id)
+    expect(created).not.toContain('asset-cash')
+    expect(created).not.toContain('expense-other')
+    // A same name of another kind does not count.
+    expect(created).toContain('income-salary')
+    expect(client.accounts.slice(0, 3)).toEqual([asset, other, salaryAsExpense])
   })
 })
