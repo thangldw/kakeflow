@@ -10,6 +10,8 @@ interface YenInputProps {
   readonly 'aria-label'?: string
   /** Called on each keystroke with whether the typed text is a valid amount (invalid text never reaches onChange). */
   readonly onValidityChange?: (valid: boolean) => void
+  /** Also flags the field (aria-invalid) for a reason the parent checks, such as an amount that must be above 0. */
+  readonly invalid?: boolean
 }
 
 /**
@@ -17,7 +19,7 @@ interface YenInputProps {
  * invalid text is flagged and never reaches the parent. Put it inside a label
  * as usual; the unit is a CSS pseudo-element so label-based queries still match.
  */
-export function YenInput({ value, onChange, allowNegative = false, suffix = true, 'aria-label': ariaLabel, onValidityChange }: YenInputProps) {
+export function YenInput({ value, onChange, allowNegative = false, suffix = true, 'aria-label': ariaLabel, onValidityChange, invalid = false }: YenInputProps) {
   const [text, setText] = useState(() => formatYenText(value))
   const [focused, setFocused] = useState(false)
   const parsed = parseYenText(text, allowNegative)
@@ -35,7 +37,7 @@ export function YenInput({ value, onChange, allowNegative = false, suffix = true
   return <span className={`yen-field${suffix ? ' yen-field--suffix' : ''}`}>
     <input
       type="text" inputMode={allowNegative ? 'text' : 'numeric'} autoComplete="off" value={text} aria-label={ariaLabel}
-      aria-invalid={parsed == null}
+      aria-invalid={parsed == null || invalid}
       onFocus={() => { setFocused(true); setText((current) => { const n = parseYenText(current, allowNegative); return n == null ? current : String(n) }) }}
       onChange={(event) => {
         setText(event.target.value)

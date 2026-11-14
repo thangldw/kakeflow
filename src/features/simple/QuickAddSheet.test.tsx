@@ -187,6 +187,11 @@ describe('QuickAddSheet', () => {
     expect(saveButton()).toBeEnabled()
   })
 
+  it('limits the note to 200 characters', () => {
+    renderSheet()
+    expect(screen.getByLabelText('メモ（任意）')).toHaveAttribute('maxLength', '200')
+  })
+
   it('wraps Tab between the close button and the last field, skipping the keypad', () => {
     renderSheet()
     const close = screen.getByRole('button', { name: '記録画面を閉じる' })
@@ -197,6 +202,44 @@ describe('QuickAddSheet', () => {
     expect(close).toHaveFocus()
     fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
     expect(note).toHaveFocus()
+  })
+
+  it('sends Tab from a focused keypad button back into the tab order, at the close button or the last field', () => {
+    renderSheet()
+    const close = screen.getByRole('button', { name: '記録画面を閉じる' })
+    const note = screen.getByLabelText('メモ（任意）')
+    // Keypad buttons are tap targets (tabindex -1), but a script or a pointer can still focus one.
+    const five = screen.getByRole('button', { name: '5' })
+    five.focus()
+    expect(five).toHaveFocus()
+    expect(fireEvent.keyDown(five, { key: 'Tab' })).toBe(false)
+    expect(close).toHaveFocus()
+
+    five.focus()
+    expect(fireEvent.keyDown(five, { key: 'Tab', shiftKey: true })).toBe(false)
+    expect(note).toHaveFocus()
+  })
+
+  it('leaves Tab between fields in the middle of the sheet to the browser', () => {
+    renderSheet()
+    amountField().focus()
+    // Not prevented: the browser moves focus to the next field itself.
+    expect(fireEvent.keyDown(amountField(), { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(amountField(), { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(amountField()).toHaveFocus()
+  })
+
+  it('wraps from Save to the close button once Save is enabled and is the last stop', () => {
+    renderSheet()
+    tapKeys('500')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    const save = saveButton()
+    expect(save).toBeEnabled()
+    save.focus()
+    expect(fireEvent.keyDown(save, { key: 'Tab' })).toBe(false)
+    expect(screen.getByRole('button', { name: '記録画面を閉じる' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: '記録画面を閉じる' }), { key: 'Tab', shiftKey: true })
+    expect(save).toHaveFocus()
   })
 
   it('shows the empty state when there is no expense category', () => {
@@ -246,7 +289,7 @@ describe('QuickAddSheet', () => {
     renderSheet()
     tapKeys('500')
     fireEvent.click(screen.getByRole('button', { name: '食費' }))
-    const date = screen.getByLabelText('日にち')
+    const date = screen.getByLabelText('記録する日付')
     expect(date).toHaveValue('2026-11-14')
     expect(saveButton()).toBeEnabled()
     fireEvent.change(date, { target: { value: '' } })
@@ -263,6 +306,9 @@ describe('QuickAddSheet', () => {
     expect(isCalendarDate('')).toBe(false)
     expect(isCalendarDate('2026-2-3')).toBe(false)
     expect(isCalendarDate('2024-02-29')).toBe(true)
+    // 2028 is a leap year, 2027 is not.
+    expect(isCalendarDate('2028-02-29')).toBe(true)
+    expect(isCalendarDate('2027-02-29')).toBe(false)
     expect(isCalendarDate('2026-11-14')).toBe(true)
   })
 
@@ -289,5 +335,38 @@ describe('QuickAddSheet', () => {
     tapKeys('900')
     fireEvent.click(saveButton())
     await waitFor(() => expect(props.onSaved).toHaveBeenCalledWith(expect.objectContaining({ amountJpy: 900, categoryName: '教育' })))
+  })
+
+  it('puts Save and the error in a footer outside the scrolling body, with the same enabled rules', async () => {
+    const props = renderSheet({ client: fakeClient({ fail: true }) })
+    const dialog = screen.getByRole('dialog')
+    const footer = dialog.querySelector('.quick-add-footer')
+    const body = dialog.querySelector('.quick-add-body')
+    expect(footer).not.toBeNull()
+    expect(body).not.toBeNull()
+    // The footer is the dialog's last part and a sibling of the body, so it never scrolls with the content.
+    expect(dialog.lastElementChild).toBe(footer)
+    expect(footer?.parentElement).toBe(dialog)
+    expect(body?.contains(footer as Node)).toBe(false)
+    expect(footer).toContainElement(saveButton())
+    expect(body).toContainElement(amountField())
+    expect(body).toContainElement(screen.getByLabelText('メモ（任意）'))
+
+    expect(saveButton()).toBeDisabled()
+    tapKeys('450')
+    expect(saveButton()).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    expect(saveButton()).toBeEnabled()
+    fireEvent.click(saveButton())
+    await waitFor(() => expect(props.client.createManualTransaction).toHaveBeenCalledTimes(1))
+    const alert = await screen.findByRole('alert')
+    expect(footer).toContainElement(alert)
+    expect(saveButton()).toBeEnabled()
+  })
+
+  it('has no footer in the empty state', () => {
+    renderSheet({ accounts: accounts.filter((entry) => entry.accountKind !== 'EXPENSE') })
+    expect(screen.getByRole('dialog').querySelector('.quick-add-footer')).toBeNull()
+    expect(screen.queryByRole('button', { name: '記録を保存' })).not.toBeInTheDocument()
   })
 })

@@ -1,7 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { X } from 'lucide-react'
 import { localize } from '../../i18n'
-import { platformClient } from '../../platform'
 import type { AccountDto, PlatformClient } from '../../platform/types'
 import { parseYenText } from '../../ui/yen'
 import { tokyoDate } from './homeMath'
@@ -16,13 +15,16 @@ interface QuickAddSheetProps {
   readonly accounts: readonly AccountDto[]
   readonly onClose: () => void
   readonly onSaved: (result: { transactionId: string; amountJpy: number; categoryName: string }) => void
-  /** Opens account settings from the empty state. */
-  readonly onSetupAccounts?: () => void
-  readonly client?: QuickAddClient
+  /** Opens account settings (or sets accounts up) from the empty state; gets the kind being recorded. */
+  readonly onSetupAccounts?: (kind: QuickAddKind) => void
+  /** The ledger client: the desktop app passes its platform client, the PWA its own adapter. */
+  readonly client: QuickAddClient
   readonly now?: () => Date
 }
 
-const KEYPAD_DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0'] as const
+/** Keeps the note well inside the PWA vault's 512-unit payee limit, so a long note never fails only at save. */
+const NOTE_MAX_LENGTH = 200
+const KEYPAD_DIGITS =['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0'] as const
 const FOCUSABLE = 'button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])'
 
 /**
@@ -36,7 +38,7 @@ export function QuickAddSheet(props: QuickAddSheetProps) {
   return <QuickAddSheetBody {...props} householdId={props.householdId} />
 }
 
-function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAccounts, client = platformClient, now }: QuickAddSheetProps & { readonly householdId: string }) {
+function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAccounts, client, now }: QuickAddSheetProps & { readonly householdId: string }) {
   const titleId = useId()
   const payingLabelId = useId()
   const amountId = useId()
@@ -156,72 +158,77 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
         <button type="button" aria-pressed={kind === 'INCOME'} onClick={() => switchKind('INCOME')}>{localize("収入")}</button>
       </div>
 
-      {empty
-        ? <div className="quick-add-empty">
-          <p>{localize("記録できる口座がありません")}</p>
-          {onSetupAccounts && <button type="button" className="primary-btn" onClick={onSetupAccounts}>{localize("口座を設定する")}</button>}
-        </div>
-        : <>
-          <div className="quick-add-amount">
-            <label htmlFor={amountId}>{localize("記録する金額")}</label>
-            <span className="quick-add-amount-field">
-              <span aria-hidden="true">¥</span>
-              <input
-                ref={amountRef} id={amountId} type="text" inputMode={coarsePointer ? 'none' : 'numeric'} autoComplete="off"
-                value={amountText} aria-invalid={amount === null}
-                onChange={(event) => { setAmountText(event.target.value); setFailed(false) }}
-              />
-            </span>
+      {/* Only the content scrolls: the head and kind toggle above and the footer with Save below stay on screen, so
+          a short viewport never hides Save ("amount, category, save" without scrolling to it). */}
+      <div className="quick-add-body">
+        {empty
+          ? <div className="quick-add-empty">
+            <p>{localize("記録できる口座がありません")}</p>
+            {onSetupAccounts && <button type="button" className="primary-btn" onClick={() => onSetupAccounts(kind)}>{localize("口座を設定する")}</button>}
           </div>
-
-          <div className="quick-add-keypad">
-            {KEYPAD_DIGITS.map((key) => <button key={key} type="button" tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={() => pressKey(key)}>{key}</button>)}
-            <button type="button" tabIndex={-1} aria-label={localize("1文字削除")} onMouseDown={(event) => event.preventDefault()} onClick={() => { setFailed(false); setAmountText((current) => current.slice(0, -1)) }}>⌫</button>
-          </div>
-
-          <fieldset className="quick-add-categories">
-            <legend>{localize("カテゴリー")}</legend>
-            <div className="quick-add-chips">
-              {choices.chips.map((chip) => <button key={chip.id} type="button" className="quick-add-chip" aria-pressed={chip.id === categoryId}
-                onClick={() => setCategoryId((current) => current === chip.id ? null : chip.id)}>{chip.name}</button>)}
-              {choices.allCategories.length > choices.chips.length && <button type="button" className="quick-add-chip quick-add-more" aria-expanded={moreOpen}
-                aria-pressed={categoryId !== null && !chipIds.has(categoryId)} onClick={() => setMoreOpen((value) => !value)}>{localize("もっと見る")}</button>}
+          : <>
+            <div className="quick-add-amount">
+              <label htmlFor={amountId}>{localize("記録する金額")}</label>
+              <span className="quick-add-amount-field">
+                <span aria-hidden="true">¥</span>
+                <input
+                  ref={amountRef} id={amountId} type="text" inputMode={coarsePointer ? 'none' : 'numeric'} autoComplete="off"
+                  value={amountText} aria-invalid={amount === null}
+                  onChange={(event) => { setAmountText(event.target.value); setFailed(false) }}
+                />
+              </span>
             </div>
-            {moreOpen && <select aria-label={localize("カテゴリー")} value={categoryId ?? ''} onChange={(event) => setCategoryId(event.target.value || null)}>
-              <option value="" disabled>{localize("カテゴリー")}</option>
-              {choices.allCategories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-            </select>}
-          </fieldset>
 
-          <div className="quick-add-details">
-            {payingOpen || payingAccount === null
-              ? <div className="quick-add-paying">
-                <span id={payingLabelId}>{payingLabel}</span>
-                <select aria-labelledby={payingLabelId} value={payingAccountId ?? ''} onChange={(event) => setPayingChoice(event.target.value || null)}>
-                  {payingAccount === null && <option value="" disabled>{localize("口座を選択")}</option>}
-                  {choices.payingAccounts.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
-                </select>
+            <div className="quick-add-keypad">
+              {KEYPAD_DIGITS.map((key) => <button key={key} type="button" tabIndex={-1} onMouseDown={(event) => event.preventDefault()} onClick={() => pressKey(key)}>{key}</button>)}
+              <button type="button" tabIndex={-1} aria-label={localize("1文字削除")} onMouseDown={(event) => event.preventDefault()} onClick={() => { setFailed(false); setAmountText((current) => current.slice(0, -1)) }}>⌫</button>
+            </div>
+
+            <fieldset className="quick-add-categories">
+              <legend>{localize("カテゴリー")}</legend>
+              <div className="quick-add-chips">
+                {choices.chips.map((chip) => <button key={chip.id} type="button" className="quick-add-chip" aria-pressed={chip.id === categoryId}
+                  onClick={() => setCategoryId((current) => current === chip.id ? null : chip.id)}>{chip.name}</button>)}
+                {choices.allCategories.length > choices.chips.length && <button type="button" className="quick-add-chip quick-add-more" aria-expanded={moreOpen}
+                  aria-pressed={categoryId !== null && !chipIds.has(categoryId)} onClick={() => setMoreOpen((value) => !value)}>{localize("もっと見る")}</button>}
               </div>
-              : <button type="button" className="quick-add-paying quick-add-paying-row" aria-expanded={false} onClick={() => setPayingOpen(true)}>
-                <span>{payingLabel}</span>
-                <strong>{payingAccount.name}</strong>
-              </button>}
-            <label className="quick-add-field">
-              <span>{localize("日にち")}</span>
-              <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />
-            </label>
-            <label className="quick-add-field">
-              <span>{localize("メモ（任意）")}</span>
-              <input type="text" value={note} onChange={(event) => setNote(event.target.value)} />
-            </label>
-          </div>
+              {moreOpen && <select aria-label={localize("カテゴリー")} value={categoryId ?? ''} onChange={(event) => setCategoryId(event.target.value || null)}>
+                <option value="" disabled>{localize("カテゴリー")}</option>
+                {choices.allCategories.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+              </select>}
+            </fieldset>
 
-          {failed && <p className="quick-add-error" role="alert">{localize("保存できませんでした。もう一度お試しください。")}</p>}
+            <div className="quick-add-details">
+              {payingOpen || payingAccount === null
+                ? <div className="quick-add-paying">
+                  <span id={payingLabelId}>{payingLabel}</span>
+                  <select aria-labelledby={payingLabelId} value={payingAccountId ?? ''} onChange={(event) => setPayingChoice(event.target.value || null)}>
+                    {payingAccount === null && <option value="" disabled>{localize("口座を選択")}</option>}
+                    {choices.payingAccounts.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                  </select>
+                </div>
+                : <button type="button" className="quick-add-paying quick-add-paying-row" aria-expanded={false} onClick={() => setPayingOpen(true)}>
+                  <span>{payingLabel}</span>
+                  <strong>{payingAccount.name}</strong>
+                </button>}
+              <label className="quick-add-field">
+                <span>{localize("記録する日付")}</span>
+                <input type="date" value={occurredOn} onChange={(event) => setOccurredOn(event.target.value)} />
+              </label>
+              <label className="quick-add-field">
+                <span>{localize("メモ（任意）")}</span>
+                <input type="text" maxLength={NOTE_MAX_LENGTH} value={note} onChange={(event) => setNote(event.target.value)} />
+              </label>
+            </div>
+          </>}
+      </div>
 
-          <button type="button" className="primary-btn quick-add-save" disabled={!canSave} onClick={() => void save()}>
-            {busy ? localize("保存中…") : localize("記録を保存")}
-          </button>
-        </>}
+      {!empty && <div className="quick-add-footer">
+        {failed && <p className="quick-add-error" role="alert">{localize("保存できませんでした。もう一度お試しください。")}</p>}
+        <button type="button" className="primary-btn quick-add-save" disabled={!canSave} onClick={() => void save()}>
+          {busy ? localize("保存中…") : localize("記録を保存")}
+        </button>
+      </div>}
     </section>
   </div>
 }

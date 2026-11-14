@@ -7,6 +7,9 @@ import {
 import type { ExtractedDocumentDto } from '../platform'
 import type { ConnectorSummaryDto } from '../platform/types'
 import { parseReceiptText, type ReceiptTextFields } from '../features/import/receiptText'
+import { UiModeSwitch } from '../features/simple/SimpleMorePage'
+import { readUiMode, writeUiMode, type UiMode } from '../features/simple/uiMode'
+import { I18nProvider, localize, useI18n, type AppLocale } from '../i18n'
 import type { PwaLedgerClient } from '../platform/pwa/client'
 import type {
   Account,
@@ -18,8 +21,15 @@ import type {
   Transaction,
   TransactionDetail,
 } from '../platform/pwa/types'
+import { addDefaultChart } from './defaultChart'
+import { formatJpy } from './formatJpy'
+import { LanguageSwitch } from './LanguageSwitch'
+import { PostedLedgerList } from './PostedLedgerList'
 import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
+import { SimpleShell, type PwaPage } from './SimpleShell'
 import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
+import '../features/simple/simpleMode.css'
+import './simple-tokens.css'
 import './pwa.css'
 
 export type PwaOcrDocument = (
@@ -84,10 +94,6 @@ const defaultOcrDocument: PwaOcrDocument = async (bytes, mediaType) => {
   return paddleOcrDocument(bytes, mediaType)
 }
 
-function formatJpy(value: number) {
-  return `¥${new Intl.NumberFormat('ja-JP').format(value)}`
-}
-
 function messageOf(cause: unknown) {
   return cause instanceof Error ? cause.message : String(cause)
 }
@@ -95,6 +101,20 @@ function messageOf(cause: unknown) {
 function randomId(prefix: string) {
   const token = globalThis.crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
   return `${prefix}-${token}`
+}
+
+/**
+ * The Simple/Full entry of one vault's household. Every PWA vault's household id is `household`, so the entry is
+ * prefixed with the vault's database name: vaults on one device keep their own mode.
+ */
+function uiModeKey(databaseName: string, householdId: string) {
+  return `${databaseName}:${householdId}`
+}
+
+/** The language a first run starts in: the browser's when it is Vietnamese or Japanese, English otherwise. */
+function browserLocale(): AppLocale {
+  const language = (globalThis.navigator?.language ?? '').toLowerCase()
+  return language.startsWith('vi') ? 'vi' : language.startsWith('ja') ? 'ja' : 'en'
 }
 
 async function readFileBytes(file: File): Promise<Uint8Array> {
@@ -181,14 +201,16 @@ export default function PwaRoot(props: PwaRootProps) {
       setDirectoryError('Could not save the vault selection. Check browser storage and try again.')
     }
   }
-  return <PwaVaultRoot {...props} key={directory.active} databaseName={directory.active}
-    vaults={directory.vaults} directoryError={directoryError}
-    onSelectVault={active => selectDirectory({ ...directory, active })}
-    onCreateNewVault={() => {
-      const id = crypto.randomUUID()
-      const entry = { id: `${base}-vault-${id}`, name: `Vault ${directory.vaults.length + 1} · ${id.slice(0, 8)}` }
-      selectDirectory({ active: entry.id, vaults: [...directory.vaults, entry] })
-    }} />
+  return <I18nProvider fallbackLocale={browserLocale()}>
+    <PwaVaultRoot {...props} key={directory.active} databaseName={directory.active}
+      vaults={directory.vaults} directoryError={directoryError}
+      onSelectVault={active => selectDirectory({ ...directory, active })}
+      onCreateNewVault={() => {
+        const id = crypto.randomUUID()
+        const entry = { id: `${base}-vault-${id}`, name: `Vault ${directory.vaults.length + 1} · ${id.slice(0, 8)}` }
+        selectDirectory({ active: entry.id, vaults: [...directory.vaults, entry] })
+      }} />
+  </I18nProvider>
 }
 
 function PwaVaultRoot({
@@ -200,6 +222,12 @@ function PwaVaultRoot({
   onSelectVault: (id: string) => void; onCreateNewVault: () => void;
 }) {
   const session = usePwaClient(databaseName)
+  // Subscribes to the language, so the setup form and the Simple shell follow a change at once.
+  const { text } = useI18n()
+  // Per device and household (every PWA vault's household id is `household`); absent means the classic screens.
+  const [uiMode, setUiMode] = useState<UiMode>('full')
+  // In Simple mode, a classic page opened from More is shown with the classic navigation and a way back.
+  const [classicVisit, setClassicVisit] = useState(false)
   const [passphrase, setPassphrase] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [screen, setScreen] = useState<Screen>('overview')
@@ -241,6 +269,7 @@ function PwaVaultRoot({
         client.listConnectorSummaries(active.id),
       ])
       if (generation !== vaultLoadGeneration.current) return false
+      setUiMode(readUiMode(uiModeKey(databaseName, active.id)))
       setHousehold(active)
       setAccounts(nextAccounts)
       setSummary(nextSummary)
@@ -253,7 +282,7 @@ function PwaVaultRoot({
       if (generation !== vaultLoadGeneration.current) return false
       throw cause
     }
-  }, [])
+  }, [databaseName])
 
   const submitVault = async (create: boolean) => {
     setError(null)
@@ -300,6 +329,13 @@ function PwaVaultRoot({
         name: String(data.get('expenseName') ?? ''),
         kind: 'EXPENSE',
       })
+      // Vaults set up from here on start in Simple mode with the starter accounts, named in the current language.
+      writeUiMode(uiModeKey(databaseName, nextHousehold.id), 'simple')
+      try {
+        await addDefaultChart(session.client, nextHousehold.id, text)
+      } catch {
+        setError(localize("既定の口座を追加できませんでした"))
+      }
       await loadVault(session.client)
     } catch (cause) {
       setError(messageOf(cause))
@@ -418,6 +454,7 @@ function PwaVaultRoot({
   const lockVault = () => {
     vaultLoadGeneration.current += 1
     session.lockVault()
+    setClassicVisit(false)
     setBusy(false)
     setError(null)
     setPassphrase('')
@@ -432,23 +469,53 @@ function PwaVaultRoot({
     setConnectorSummaries([])
   }
 
-  const status = session.mode === 'unlocked' ? 'UNLOCKED' : 'LOCKED'
+  // The Simple shell may have written to the vault, so the classic screens reload their copy before they show.
+  const refreshClassic = async () => {
+    if (!session.client) return
+    try {
+      await loadVault(session.client)
+    } catch (cause) {
+      setError(messageOf(cause))
+    }
+  }
+
+  const switchUiMode = async (mode: UiMode) => {
+    if (!household) return
+    writeUiMode(uiModeKey(databaseName, household.id), mode)
+    setError(null)
+    setClassicVisit(false)
+    setScreen('overview')
+    if (mode === 'full') await refreshClassic()
+    setUiMode(mode)
+  }
+
+  const openClassicPage = async (page: PwaPage) => {
+    setError(null)
+    await refreshClassic()
+    setScreen(page)
+    setClassicVisit(true)
+  }
+
+  const status = session.mode === 'unlocked' ? localize("解錠中") : localize("施錠中")
+  const showSimple = session.mode === 'unlocked' && household !== null && uiMode === 'simple' && !classicVisit
   const effectiveError = error ?? session.error
   const canActivateUpdate = canActivatePwaUpdate({
     vaultUnlocked: session.mode === 'unlocked',
     activeOperation: busy || Boolean(draft?.candidate && !posted),
   })
 
-  return <div className="pwa-shell">
+  // The header's vault status pills and Lock vault follow the language. The receipt-flow, ledger, evidence and
+  // backup/restore screens stay English in this phase (see the PWA Simple spec).
+  return <div className={`pwa-shell${showSimple ? ' pwa-shell--simple' : ''}`}>
     <header className="pwa-header">
       <a className="pwa-brand" href="/kakeflow/" aria-label="KakeFlow home">
         <span className="pwa-mark" aria-hidden="true">K</span>
         <span>KakeFlow <small>Local Ledger</small></span>
       </a>
-      <div className="pwa-state" aria-label="Runtime state">
-        <span>LOCAL</span><span>{status}</span><span>OFFLINE READY</span>
+      <div className="pwa-state" aria-label={localize("保管庫の状態")}>
+        <span>{localize("ローカル保存中")}</span><span>{status}</span><span>{localize("オフラインで利用可")}</span>
       </div>
-      {session.mode === 'unlocked' && <button className="pwa-quiet" type="button" onClick={lockVault}>Lock vault</button>}
+      {session.mode === 'unlocked' && <button className="pwa-quiet" type="button" onClick={lockVault}>{localize("保管庫に鍵をかける")}</button>}
     </header>
     {serviceWorker.updateAvailable && <aside className="pwa-update" role="status">
       <span><strong>Update ready</strong> The new app shell will activate only at a safe boundary.</span>
@@ -482,26 +549,35 @@ function PwaVaultRoot({
 
     {session.mode === 'unlocked' && !household && <main className="pwa-auth">
       <form className="pwa-auth-card" onSubmit={(event) => { event.preventDefault(); void setupHousehold(event.currentTarget) }}>
-        <p className="pwa-eyebrow">ONE-TIME LOCAL SETUP</p>
-        <h1>Set up your household</h1>
-        <p>Create the minimum balanced-ledger accounts. No provider connection is required.</p>
-        <label>Household name<input name="householdName" required /></label>
-        <label>Money account<input name="assetName" required /></label>
-        <label>Expense account<input name="expenseName" required /></label>
+        <p className="pwa-eyebrow">{localize("初回のローカル設定")}</p>
+        <h1>{localize("世帯を設定する")}</h1>
+        <p>{localize("この端末だけに保存されます。入力した口座に加えて、現金・クレジットカード・給与と、よく使う支出カテゴリーも用意するので、すぐに予算を立てられます。")}</p>
+        <div className="pwa-setup-language"><LanguageSwitch /></div>
+        <label>{localize("世帯の名前")}<input name="householdName" required /></label>
+        <label>{localize("お金の口座")}<input name="assetName" required /></label>
+        <label>{localize("支出の口座")}<input name="expenseName" required /></label>
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
-        <button className="pwa-primary" type="submit" disabled={busy}>Save local setup</button>
+        <button className="pwa-primary" type="submit" disabled={busy}>{localize("ローカル設定を保存")}</button>
       </form>
     </main>}
 
-    {session.mode === 'unlocked' && household && <div className="pwa-workspace">
+    {showSimple && session.client && household && <>
+      {effectiveError && <p className="pwa-error pwa-simple-error" role="alert">{effectiveError}</p>}
+      <SimpleShell client={session.client} household={household} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }}
+        onActivity={() => setError(null)} />
+    </>}
+
+    {session.mode === 'unlocked' && household && !showSimple && <div className="pwa-workspace">
       <nav className="pwa-navigation" aria-label="PWA workflow">
         {navigation.map((item) => <button key={item.id} type="button" aria-current={screen === item.id ? 'page' : undefined} onClick={() => setScreen(item.id)}>
           <span aria-hidden="true">{item.step}</span>{item.label}
         </button>)}
       </nav>
       <main className="pwa-content">
+        {classicVisit && <button className="pwa-quiet pwa-back-to-simple" type="button" onClick={() => setClassicVisit(false)}><span aria-hidden="true">← </span>{localize("かんたん表示に戻る")}</button>}
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
-        {screen === 'overview' && <Overview household={household} summary={summary} transactions={transactions} onImport={() => setScreen('import')} />}
+        {screen === 'overview' && <Overview household={household} summary={summary} transactions={transactions} onImport={() => setScreen('import')}
+          uiMode={uiMode} onUiModeChange={(mode) => { void switchUiMode(mode) }} />}
         {screen === 'sources' && connectorSummaries[0] && <div className="pwa-sources"><ManualConnectorControlCenter
           summary={connectorSummaries[0]}
           copy={pwaConnectorCopy}
@@ -533,11 +609,13 @@ function PwaVaultRoot({
   </div>
 }
 
-function Overview({ household, summary, transactions, onImport }: {
+function Overview({ household, summary, transactions, onImport, uiMode, onUiModeChange }: {
   readonly household: Household
   readonly summary: DashboardSummary | null
   readonly transactions: readonly Transaction[]
   readonly onImport: () => void
+  readonly uiMode: UiMode
+  readonly onUiModeChange: (mode: UiMode) => void
 }) {
   return <section>
     <div className="pwa-page-head"><div><p className="pwa-eyebrow">{household.name} · JPY</p><h1>Household overview</h1></div><button className="pwa-primary" type="button" onClick={onImport}>Import receipt</button></div>
@@ -547,6 +625,7 @@ function Overview({ household, summary, transactions, onImport }: {
       <article><span>Ledger entries</span><strong>{summary?.transactionCount ?? 0}</strong></article>
     </div>
     <section className="pwa-panel"><h2>Recent postings</h2>{transactions.length === 0 ? <p>No postings yet. Import a receipt to start.</p> : transactions.slice(-4).reverse().map((transaction) => <div className="pwa-row" key={transaction.id}><span>{transaction.occurredOn} · {transaction.payee}</span><strong>{formatJpy(transaction.amountJpy)}</strong></div>)}</section>
+    <section className="pwa-panel pwa-mode-panel"><UiModeSwitch mode={uiMode} onChange={onUiModeChange} /></section>
   </section>
 }
 
@@ -638,7 +717,7 @@ function LedgerScreen({ transactions, onProvenance }: {
   readonly transactions: readonly Transaction[]
   readonly onProvenance: (id: string) => Promise<void>
 }) {
-  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 05 · APPEND-ONLY</p><h1>Posted ledger</h1></div></div><div className="pwa-panel">{transactions.length === 0 ? <p>No posted transactions.</p> : transactions.slice().reverse().map((transaction) => <article className="pwa-ledger-row" key={transaction.id}><div><time>{transaction.occurredOn}</time><h2>{transaction.payee}</h2><small>{transaction.transactionType} · {transaction.canonicalPostingHash.slice(0, 12)}…</small></div><strong>{formatJpy(transaction.amountJpy)}</strong><button className="pwa-quiet" type="button" onClick={() => void onProvenance(transaction.id)}>View provenance</button></article>)}</div></section>
+  return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">STEP 05 · APPEND-ONLY</p><h1>Posted ledger</h1></div></div><PostedLedgerList transactions={transactions} onProvenance={onProvenance} /></section>
 }
 
 function EvidenceScreen({ detail, evidence }: {

@@ -15,6 +15,8 @@ export default defineConfig({
     ...devices['Desktop Chrome'],
     baseURL: `http://127.0.0.1:${port}`,
     browserName: 'chromium',
+    // The PWA starts in the browser's language; the specs use the English labels.
+    locale: 'en-US',
     channel: process.env.CI ? undefined : 'chrome',
     serviceWorkers: 'allow',
     trace: 'retain-on-failure',

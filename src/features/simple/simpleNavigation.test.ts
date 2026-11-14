@@ -6,9 +6,9 @@ describe('simple navigation model', () => {
   it('has the five simple tabs in order with their pages and Japanese source labels', () => {
     expect(SIMPLE_TABS.map((tab) => [tab.id, tab.page, tab.label])).toEqual([
       ['today', 'overview', '今日'],
-      ['transactions', 'transactions', '取引'],
+      ['transactions', 'transactions', '取引一覧'],
       ['budget', 'budgets', '予算管理'],
-      ['savings', 'budgets', '貯金'],
+      ['savings', 'budgets', '貯蓄管理'],
       ['more', 'more', 'そのほか'],
     ])
   })

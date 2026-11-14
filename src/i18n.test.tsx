@@ -33,6 +33,17 @@ describe('application localization', () => {
     expect(document.documentElement.lang).toBe('ja')
   })
 
+  it('uses the fallback locale only while no language is stored, without storing it', () => {
+    const { unmount } = render(<I18nProvider fallbackLocale="vi"><LocaleProbe /></I18nProvider>)
+    expect(screen.getByText('vi:Tổng quan tài chính gia đình')).toBeInTheDocument()
+    expect(localStorage.getItem('kakeflow.locale')).toBeNull()
+    unmount()
+
+    localStorage.setItem('kakeflow.locale', 'ja')
+    render(<I18nProvider fallbackLocale="en"><LocaleProbe /></I18nProvider>)
+    expect(screen.getByText('ja:家計の概要')).toBeInTheDocument()
+  })
+
   it('switches and persists English and Vietnamese', () => {
     render(<I18nProvider><LocaleProbe /></I18nProvider>)
     fireEvent.click(screen.getByRole('button', { name: 'English' }))

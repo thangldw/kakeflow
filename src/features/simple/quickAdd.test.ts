@@ -53,6 +53,28 @@ describe('quickAddChoices', () => {
     expect(choices.defaultCategoryId).toBe('home')
   })
 
+  it('pins the PWA starter chart\'s expense-other account last, behind the most used', () => {
+    const pwaAccounts = [
+      account('cash', 'ASSET', 'CASH'),
+      account('expense-food', 'EXPENSE'),
+      account('expense-other', 'EXPENSE'),
+      account('expense-transport', 'EXPENSE'),
+      account('expense-utilities', 'EXPENSE'),
+      account('expense-fun', 'EXPENSE'),
+      account('expense-daily', 'EXPENSE'),
+    ]
+    const usage: QuickAddUsage = { categoryCounts: { 'expense-other': 7, 'expense-utilities': 3 }, lastPayingAccountId: null }
+    const choices = quickAddChoices(pwaAccounts, 'EXPENSE', usage)
+    expect(ids(choices.chips)).toEqual(['expense-utilities', 'expense-food', 'expense-transport', 'expense-fun', 'expense-daily', 'expense-other'])
+  })
+
+  it('pins a bare other-expense id and ignores look-alike ids', () => {
+    const lookAlike = [account('food', 'EXPENSE'), account('another-expense', 'EXPENSE'), account('other-expense', 'EXPENSE'), account('food-other', 'EXPENSE')]
+    const choices = quickAddChoices(lookAlike, 'EXPENSE', noUsage)
+    expect(ids(choices.chips).at(-1)).toBe('other-expense')
+    expect(ids(choices.chips)).toEqual(['food', 'another-expense', 'food-other', 'other-expense'])
+  })
+
   it('never lists the other-expense account twice, even when it is the most used', () => {
     const usage: QuickAddUsage = { categoryCounts: { 'h1-other-expense': 50, food: 2 }, lastPayingAccountId: null }
     const chips = ids(quickAddChoices(accounts, 'EXPENSE', usage).chips)

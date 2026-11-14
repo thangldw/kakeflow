@@ -5,28 +5,45 @@ import { PwaVaultDatabase } from './database'
 import { EvidenceStore, type EvidenceStoreOptions } from './evidenceStore'
 import type {
   Account,
+  AccountSubtype,
   ApproveCandidateInput,
+  Budget,
   CreateAccountInput,
   CreateHouseholdInput,
   DashboardSummary,
   Household,
   ManualTransactionInput,
+  MonthlyBudgetRow,
+  MonthlyDashboard,
+  MonthlyExpenseCategory,
   PostingEntry,
   ReceiptCandidate,
+  SaveSavingsGoalInput,
+  SavingsGoal,
+  SavingsGoalStatus,
   SourceEvidence,
   SourceRecord,
   StageReceiptInput,
   Transaction,
   TransactionDetail,
   TransactionProvenance,
+  TransactionType,
+  UpsertBudgetInput,
 } from './types'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
+const ACCOUNT_SUBTYPES: readonly AccountSubtype[] = ['BANK', 'CASH', 'WALLET', 'CREDIT_CARD', 'OTHER']
+const SAVINGS_GOAL_STATUSES: readonly SavingsGoalStatus[] = ['ACTIVE', 'COMPLETED', 'CANCELLED']
+// Separates the parts of a budget projection id; household and account ids may not contain it.
+const BUDGET_ID_SEPARATOR = '~'
+
 export interface ClientOptions {
   readonly vaultId?: string
   readonly evidence?: EvidenceStoreOptions
+  /** Clock for record timestamps such as savings goal createdAt/updatedAt. Defaults to the system clock. */
+  readonly now?: () => Date
 }
 
 export interface RestoreClientOptions extends ClientOptions, RestorePwaArchiveOptions {}
@@ -50,6 +67,7 @@ export class PwaLedgerClient {
   private constructor(
     private readonly database: PwaVaultDatabase,
     private readonly evidence: EvidenceStore,
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   static async createVault(
@@ -58,16 +76,16 @@ export class PwaLedgerClient {
     options: ClientOptions = {},
   ) {
     const database = await PwaVaultDatabase.create(databaseName, passphrase, options.vaultId)
-    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence))
+    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
   }
 
   static async unlock(
     databaseName: string,
     passphrase: string,
-    options: Pick<ClientOptions, 'evidence'> = {},
+    options: Pick<ClientOptions, 'evidence' | 'now'> = {},
   ) {
     const database = await PwaVaultDatabase.open(databaseName, passphrase)
-    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence))
+    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
   }
 
   static async restoreVault(
@@ -76,9 +94,9 @@ export class PwaLedgerClient {
     passphrase: string,
     options: RestoreClientOptions = {},
   ) {
-    const { evidence, ...restoreOptions } = options
+    const { evidence, now, ...restoreOptions } = options
     const database = await restorePwaArchive(databaseName, archive, passphrase, restoreOptions)
-    return new PwaLedgerClient(database, new EvidenceStore(database, evidence))
+    return new PwaLedgerClient(database, new EvidenceStore(database, evidence), now)
   }
 
   lock() {
@@ -116,6 +134,9 @@ export class PwaLedgerClient {
     if (!['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE'].includes(input.kind)) {
       throw new Error('Invalid account kind')
     }
+    if (input.subtype !== undefined && !ACCOUNT_SUBTYPES.includes(input.subtype)) {
+      throw new Error('Invalid account subtype')
+    }
     if (await this.hasProjection('ACCOUNT', input.id)) throw new Error('Account already exists')
     const account: Account = {
       id: input.id,
@@ -123,6 +144,7 @@ export class PwaLedgerClient {
       name: input.name.trim(),
       kind: input.kind,
       currency: 'JPY',
+      ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
     }
     await this.appendDomainChange(
       [{ id: eventId(), eventType: 'ACCOUNT_CREATED', payload: encodeJson(account) }],
@@ -350,11 +372,12 @@ export class PwaLedgerClient {
     let incomeJpy = 0
     let expenseJpy = 0
     for (const transaction of transactions) {
-      if (['INCOME', 'INTEREST'].includes(transaction.transactionType)) {
+      const accrual = accrualOf(transaction.transactionType)
+      if (accrual === 'INCOME') {
         incomeJpy = checkedAdd(incomeJpy, transaction.amountJpy)
-      } else if (['EXPENSE', 'CARD_PURCHASE', 'FEE'].includes(transaction.transactionType)) {
+      } else if (accrual === 'EXPENSE') {
         expenseJpy = checkedAdd(expenseJpy, transaction.amountJpy)
-      } else if (transaction.transactionType === 'REFUND') {
+      } else if (accrual === 'REFUND') {
         expenseJpy = checkedAdd(expenseJpy, -transaction.amountJpy)
       }
     }
@@ -365,6 +388,145 @@ export class PwaLedgerClient {
       netJpy: incomeJpy - expenseJpy,
       transactionCount: transactions.length,
     }
+  }
+
+  async monthlyDashboard(householdId: string, month: string): Promise<MonthlyDashboard> {
+    validateIdentifier('household ID', householdId)
+    validateMonth(month)
+    await this.requireHousehold(householdId)
+    const totals = await this.monthTotals(householdId, month)
+    const expenseCategories: MonthlyExpenseCategory[] = [...totals.categoryJpy]
+      .filter(([, amountJpy]) => amountJpy > 0)
+      .map(([accountId, amountJpy]) => ({
+        accountId,
+        name: totals.expenseAccounts.get(accountId)?.name ?? accountId,
+        amountJpy,
+      }))
+      // Largest spending first; ties by name, then id, so the order is stable.
+      .sort((left, right) => (
+        right.amountJpy - left.amountJpy
+        || left.name.localeCompare(right.name)
+        || left.accountId.localeCompare(right.accountId)
+      ))
+    return {
+      householdId,
+      month,
+      incomeJpy: totals.incomeJpy,
+      expenseJpy: totals.expenseJpy,
+      expenseCategories,
+    }
+  }
+
+  async upsertBudget(input: UpsertBudgetInput): Promise<Budget> {
+    validateBudgetKeyPart('household ID', input.householdId)
+    validateMonth(input.month)
+    validateBudgetKeyPart('category account ID', input.categoryAccountId)
+    validateNonNegativeJpy(input.budgetJpy)
+    const id = budgetProjectionId(input.householdId, input.month, input.categoryAccountId)
+    validateIdentifier('budget ID', id)
+    await this.requireHousehold(input.householdId)
+    const account = await this.optionalModel<Account>('ACCOUNT', input.categoryAccountId)
+    if (!account || account.householdId !== input.householdId) {
+      throw new Error('Unknown category account')
+    }
+    if (account.kind !== 'EXPENSE') throw new Error('Category account must be an EXPENSE account')
+    const budget: Budget = {
+      householdId: input.householdId,
+      month: input.month,
+      categoryAccountId: input.categoryAccountId,
+      budgetJpy: input.budgetJpy,
+    }
+    // Last write wins: the projection for this household, month and category is replaced.
+    await this.appendDomainChange(
+      [{ id: eventId(), eventType: 'BUDGET_SET', payload: encodeJson(budget) }],
+      [{ projectionType: 'BUDGET', id, payload: encodeJson(budget) }],
+    )
+    return budget
+  }
+
+  async listBudgets(householdId: string, month: string): Promise<MonthlyBudgetRow[]> {
+    validateBudgetKeyPart('household ID', householdId)
+    validateMonth(month)
+    await this.requireHousehold(householdId)
+    const prefix = budgetProjectionId(householdId, month, '')
+    const ids = (await this.database.listProjectionIds('BUDGET')).filter((id) => id.startsWith(prefix))
+    const budgets = await Promise.all(ids.map((id) => this.model<Budget>('BUDGET', id)))
+    const totals = await this.monthTotals(householdId, month)
+    return budgets
+      .map((budget) => {
+        const actualJpy = totals.categoryJpy.get(budget.categoryAccountId) ?? 0
+        return {
+          ...budget,
+          categoryName: totals.expenseAccounts.get(budget.categoryAccountId)?.name ?? budget.categoryAccountId,
+          actualJpy,
+          remainingJpy: budget.budgetJpy - actualJpy,
+        }
+      })
+      .sort((left, right) => (
+        left.categoryName.localeCompare(right.categoryName)
+        || left.categoryAccountId.localeCompare(right.categoryAccountId)
+      ))
+  }
+
+  async createSavingsGoal(input: SaveSavingsGoalInput): Promise<SavingsGoal> {
+    validateSavingsGoalInput(input)
+    if (input.status !== undefined && input.status !== 'ACTIVE') {
+      throw new Error('New savings goals start ACTIVE')
+    }
+    await this.requireHousehold(input.householdId)
+    if (await this.hasProjection('SAVINGS_GOAL', input.id)) throw new Error('Savings goal already exists')
+    const timestamp = this.now().toISOString()
+    const goal: SavingsGoal = {
+      id: input.id,
+      householdId: input.householdId,
+      name: input.name.trim(),
+      targetJpy: input.targetJpy,
+      savedJpy: input.savedJpy,
+      targetDate: input.targetDate,
+      status: 'ACTIVE',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    await this.appendDomainChange(
+      [{ id: eventId(), eventType: 'SAVINGS_GOAL_CREATED', payload: encodeJson(goal) }],
+      [{ projectionType: 'SAVINGS_GOAL', id: goal.id, payload: encodeJson(goal) }],
+    )
+    return goal
+  }
+
+  async updateSavingsGoal(input: SaveSavingsGoalInput): Promise<SavingsGoal> {
+    validateSavingsGoalInput(input)
+    const existing = await this.optionalModel<SavingsGoal>('SAVINGS_GOAL', input.id)
+    if (!existing || existing.householdId !== input.householdId) throw new Error('Savings goal not found')
+    // An explicit status wins; otherwise reaching the target completes the goal,
+    // and anything else keeps the stored status.
+    const status = input.status
+      ?? (input.savedJpy >= input.targetJpy ? 'COMPLETED' : existing.status)
+    const goal: SavingsGoal = {
+      ...existing,
+      name: input.name.trim(),
+      targetJpy: input.targetJpy,
+      savedJpy: input.savedJpy,
+      targetDate: input.targetDate,
+      status,
+      updatedAt: this.now().toISOString(),
+    }
+    await this.appendDomainChange(
+      [{ id: eventId(), eventType: 'SAVINGS_GOAL_UPDATED', payload: encodeJson(goal) }],
+      [{ projectionType: 'SAVINGS_GOAL', id: goal.id, payload: encodeJson(goal) }],
+    )
+    return goal
+  }
+
+  async listSavingsGoals(householdId: string): Promise<SavingsGoal[]> {
+    return (await this.listModels<SavingsGoal>('SAVINGS_GOAL'))
+      .filter((goal) => goal.householdId === householdId)
+      // Nearest target date first; ties by name, then id.
+      .sort((left, right) => (
+        left.targetDate.localeCompare(right.targetDate)
+        || left.name.localeCompare(right.name)
+        || left.id.localeCompare(right.id)
+      ))
   }
 
   async exportVault(): Promise<Uint8Array> {
@@ -378,6 +540,61 @@ export class PwaLedgerClient {
       this.evidence.getEvidence(sourceId),
     ])
     return { source, bytes }
+  }
+
+  private async requireHousehold(householdId: string) {
+    if (!(await this.hasProjection('HOUSEHOLD', householdId))) throw new Error('Unknown household')
+  }
+
+  /**
+   * Accrual totals for one calendar month. The month is the first seven characters
+   * of `occurredOn`, which is already a Tokyo calendar date, so no timezone conversion
+   * happens here. Per-category amounts are the DEBIT entries on EXPENSE accounts of
+   * expense-type transactions minus the CREDIT entries on EXPENSE accounts of refunds.
+   */
+  private async monthTotals(householdId: string, month: string) {
+    const [transactions, accounts] = await Promise.all([
+      this.listTransactions(householdId),
+      this.listAccounts(householdId),
+    ])
+    const expenseAccounts = new Map(
+      accounts.filter((account) => account.kind === 'EXPENSE').map((account) => [account.id, account]),
+    )
+    let incomeJpy = 0
+    let expenseJpy = 0
+    const netByCategory = new Map<string, number>()
+    const addEntries = (transaction: Transaction, side: PostingEntry['side'], sign: 1 | -1) => {
+      for (const entry of transaction.entries) {
+        if (entry.side !== side || !expenseAccounts.has(entry.accountId)) continue
+        netByCategory.set(
+          entry.accountId,
+          checkedAdd(netByCategory.get(entry.accountId) ?? 0, sign * entry.amountJpy),
+        )
+      }
+    }
+    for (const transaction of transactions) {
+      if (transaction.occurredOn.slice(0, 7) !== month) continue
+      const accrual = accrualOf(transaction.transactionType)
+      if (accrual === 'INCOME') {
+        incomeJpy = checkedAdd(incomeJpy, transaction.amountJpy)
+      } else if (accrual === 'EXPENSE') {
+        // A malformed expense without EXPENSE-account entries still counts in
+        // expenseJpy, but in no category.
+        expenseJpy = checkedAdd(expenseJpy, transaction.amountJpy)
+        addEntries(transaction, 'DEBIT', 1)
+      } else if (accrual === 'REFUND') {
+        expenseJpy = checkedAdd(expenseJpy, -transaction.amountJpy)
+        addEntries(transaction, 'CREDIT', -1)
+      }
+    }
+    // A refund can exceed the same month's spending in a category (for example a
+    // refund of last month's purchase). Category amounts never go below zero, so such
+    // a category is clamped to 0; expenseJpy keeps the unclamped accrual total, like
+    // dashboard(), and then no longer equals the category sum for that month.
+    const categoryJpy = new Map(
+      [...netByCategory].map(([accountId, amountJpy]) => [accountId, Math.max(0, amountJpy)] as const),
+    )
+    return { incomeJpy, expenseJpy, categoryJpy, expenseAccounts }
   }
 
   private async validatePostingAccounts(householdId: string, entries: readonly PostingEntry[]) {
@@ -461,6 +678,39 @@ function validateReceiptInput(input: StageReceiptInput) {
   }
 }
 
+function validateSavingsGoalInput(input: SaveSavingsGoalInput) {
+  validateIdentifier('savings goal ID', input.id)
+  validateIdentifier('household ID', input.householdId)
+  validateName('goal name', input.name)
+  validatePositiveJpy(input.targetJpy)
+  validateNonNegativeJpy(input.savedJpy)
+  validateCalendarDate(input.targetDate)
+  if (input.status !== undefined && !SAVINGS_GOAL_STATUSES.includes(input.status)) {
+    throw new Error('Invalid goal status')
+  }
+}
+
+function validateBudgetKeyPart(name: string, value: string) {
+  validateIdentifier(name, value)
+  if (value.includes(BUDGET_ID_SEPARATOR)) throw new Error(`Invalid ${name}`)
+}
+
+function budgetProjectionId(householdId: string, month: string, categoryAccountId: string) {
+  return [householdId, month, categoryAccountId].join(BUDGET_ID_SEPARATOR)
+}
+
+type Accrual = 'INCOME' | 'EXPENSE' | 'REFUND' | null
+
+// TRANSFER, CARD_PAYMENT and ADJUSTMENT are neither income nor expense.
+function accrualOf(transactionType: TransactionType): Accrual {
+  if (transactionType === 'INCOME' || transactionType === 'INTEREST') return 'INCOME'
+  if (transactionType === 'EXPENSE' || transactionType === 'CARD_PURCHASE' || transactionType === 'FEE') {
+    return 'EXPENSE'
+  }
+  if (transactionType === 'REFUND') return 'REFUND'
+  return null
+}
+
 function validateIdentifier(name: string, value: string) {
   const hasControl = [...value].some((character) => {
     const code = character.charCodeAt(0)
@@ -487,8 +737,22 @@ function validateDate(value: string) {
   }
 }
 
+function validateMonth(value: string) {
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(value)) throw new Error('Invalid month')
+}
+
+// Stricter than validateDate: also rejects dates such as 2027-02-30 that Date.parse rolls over.
+function validateCalendarDate(value: string) {
+  validateDate(value)
+  if (new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) throw new Error('Invalid date')
+}
+
 function validatePositiveJpy(value: number) {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid JPY amount')
+}
+
+function validateNonNegativeJpy(value: number) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid JPY amount')
 }
 
 function encodeJson(value: unknown) {

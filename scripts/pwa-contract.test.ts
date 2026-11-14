@@ -130,6 +130,18 @@ describe('production PWA contract', () => {
     ))).toEqual([])
   })
 
+  it('bundles the Simple components with the catalog subset instead of the desktop client and full catalogs', async () => {
+    const bundle = (await javascriptArtifactsBelow(dist)).map((artifact) => artifact.source).join('\n')
+    // Class names from SimpleTabBar, the More list, SimpleHome and QuickAddSheet (mounted by the PWA's Simple shell), and a
+    // Simple tab label from the subset.
+    for (const marker of ['simple-tabbar', 'simple-more-list', 'simple-home', 'quick-add-sheet', '取引一覧']) {
+      expect(bundle, marker).toContain(marker)
+    }
+    // A command only the desktop platform client sends, and a key only the full desktop catalog holds.
+    expect(bundle).not.toContain('local_sync_foundation_status')
+    expect(bundle).not.toContain('レビュー範囲')
+  })
+
   it('ships tracked and production WASM without a personal build root', async () => {
     const files = await filesBelow(dist)
     const productionWasm = files.find((file) => /^assets\/kakeflow_core_bg-.*\.wasm$/u.test(file))
