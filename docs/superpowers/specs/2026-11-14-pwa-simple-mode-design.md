@@ -56,11 +56,11 @@ The people this product is for mostly use a phone. The mobile build is the PWA (
 ### Catalog subset and language
 
 - A script generates `src/pwa/locales/{en,vi}.subset.json` containing exactly the keys used by the PWA entry, `src/features/simple/**`, `src/ui/**` and the PWA shell (found by scanning for `localize("…")` and the i18n helper calls), and a test asserts the generated files are up to date and contain none of the contract's forbidden words. The PWA build aliases `./locales/{en,vi}.generated.json` (imported by `src/i18n.tsx`) to the subsets.
-- `PwaRoot` mounts `I18nProvider` (default language from `navigator.language`: `vi` → Vietnamese, `ja` → Japanese, otherwise English) and offers a language switch (Japanese / English / Tiếng Việt). The existing English-only receipt screens keep their English text for now.
+- `PwaRoot` mounts `I18nProvider` (default language: the stored choice in `kakeflow.locale` first, then `navigator.language`: `vi` → Vietnamese, `ja` → Japanese, otherwise English) and offers a language switch (Japanese / English / Tiếng Việt). The existing English-only receipt screens keep their English text for now and carry `lang="en"`, so screen readers use an English voice there while the page language follows the locale.
 
 ### PWA shell
 
-- Same rule as desktop: the mode key `kakeflow.uiMode` is per device and household (the PWA household id is `household`); absent means the existing screens; a vault created after this ships starts in Simple.
+- Same rule as desktop: the mode entry in `kakeflow.uiMode` is per device and vault, keyed `<databaseName>:household` (every PWA vault uses the household id `household`, so the database name keeps vaults on one device apart); absent means the existing screens; a vault created after this ships starts in Simple. The quick-add usage history (chip order, last paying account) uses the same per-vault key (`kakeflow.simpleUsage.<databaseName>:household`).
 - Simple shell: the five-entry bottom tab bar (Today, History, Budget, Savings, More), the floating "+ Add spending" button and the quick-add sheet; Today is `SimpleHome`; History is the existing ledger list; Budget shows `BudgetEditor`; Savings shows `GoalsPanel`; More lists the existing PWA pages (Import a receipt, Evidence, Backup and recovery) and the mode and language switches.
 - New-vault bootstrap in Simple mode creates a small default chart so budgeting works at once: a cash asset, a credit-card liability, an income account, and expense categories (groceries, utilities, transport, entertainment, other); names come from the chosen language. Existing vaults with only the two setup accounts get an "Add a category" form in the Budget screen.
 
@@ -78,7 +78,15 @@ Phone users are the priority; mobile runs as a browser/PWA where users unlock th
 - `Account.subtype` is optional; without it ASSET accounts count as cash-like paying accounts and LIABILITY as cards.
 - Default categories are created only for new vaults in Simple mode; older vaults add categories from the Budget screen.
 - The receipt-flow screens stay English-only in this phase.
-- The header's vault chrome (the status pills and "Lock vault") follows the language. The receipt-flow, ledger, evidence and backup/restore screens, the update banner and the vault engine's own error messages stay English in this phase.
+- The vault chrome follows the language: the create, unlock and household setup cards, the status pills and "Lock vault". The receipt-flow, ledger, evidence and backup/restore screens, the update banner and the vault engine's own error messages stay English in this phase (marked `lang="en"`).
+- A stored `kakeflow.locale` (shared with the desktop web preview on the same origin) wins over `navigator.language`, and the PWA follows it. This deliberately changes the earlier rule that the PWA ignored the stored choice and always rendered English; the PWA still never overwrites the stored value unless the user picks a language.
+- The mode entry is keyed `<databaseName>:household` per vault (see PWA shell); the old constant `household` entry is no longer read, so a pre-release PWA vault that was in Simple opens in the classic screens once.
+- Budget carry-over: when the selected month has no budgets, the Budget tab shows the budgets of the same earlier month Home falls back to (the nearest of the twelve previous months with budgets), labelled "Budgets carried over from <month>". The first save in such a month writes all of that month's budgets for the selected month and then applies the edit, so no category silently drops out of "Left to spend"; later saves are normal. The desktop Full Budget page does not do this yet.
+
+### Security notes
+
+- Budget projection ids are `<householdId>~<YYYY-MM>~<categoryAccountId>` and, like the existing event types and projection ids, are plaintext IndexedDB keys. They reveal which months have budgets and which categories were budgeted (for the starter categories, their fixed ids such as `expense-groceries`), but no amounts or names; payloads stay encrypted.
+- The display mode and the quick-add usage history (category ids with use counts, the last paying account id) are stored in `localStorage` outside the vault, unencrypted, keyed per vault. They hold ids and counts, no amounts, names or notes.
 - The language switch lives under More and in the vault setup screen.
 
 ## Left to the builder
