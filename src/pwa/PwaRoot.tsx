@@ -496,7 +496,7 @@ function PwaVaultRoot({
     setClassicVisit(true)
   }
 
-  const status = session.mode === 'unlocked' ? 'UNLOCKED' : 'LOCKED'
+  const status = session.mode === 'unlocked' ? localize("解錠中") : localize("施錠中")
   const showSimple = session.mode === 'unlocked' && household !== null && uiMode === 'simple' && !classicVisit
   const effectiveError = error ?? session.error
   const canActivateUpdate = canActivatePwaUpdate({
@@ -504,16 +504,18 @@ function PwaVaultRoot({
     activeOperation: busy || Boolean(draft?.candidate && !posted),
   })
 
+  // The header's vault status pills and Lock vault follow the language. The receipt-flow, ledger, evidence and
+  // backup/restore screens stay English in this phase (see the PWA Simple spec).
   return <div className={`pwa-shell${showSimple ? ' pwa-shell--simple' : ''}`}>
     <header className="pwa-header">
       <a className="pwa-brand" href="/kakeflow/" aria-label="KakeFlow home">
         <span className="pwa-mark" aria-hidden="true">K</span>
         <span>KakeFlow <small>Local Ledger</small></span>
       </a>
-      <div className="pwa-state" aria-label="Runtime state">
-        <span>LOCAL</span><span>{status}</span><span>OFFLINE READY</span>
+      <div className="pwa-state" aria-label={localize("保管庫の状態")}>
+        <span>{localize("ローカル保存中")}</span><span>{status}</span><span>{localize("オフラインで利用可")}</span>
       </div>
-      {session.mode === 'unlocked' && <button className="pwa-quiet" type="button" onClick={lockVault}>Lock vault</button>}
+      {session.mode === 'unlocked' && <button className="pwa-quiet" type="button" onClick={lockVault}>{localize("保管庫に鍵をかける")}</button>}
     </header>
     {serviceWorker.updateAvailable && <aside className="pwa-update" role="status">
       <span><strong>Update ready</strong> The new app shell will activate only at a safe boundary.</span>

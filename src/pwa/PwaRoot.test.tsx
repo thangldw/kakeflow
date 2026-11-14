@@ -627,4 +627,26 @@ describe('PWA Simple mode and language', () => {
     expect(await screen.findByRole('heading', { name: 'Thiết lập hộ gia đình' })).toBeInTheDocument()
     expect(within(screen.getByRole('group', { name: 'Ngôn ngữ' })).getByRole('button', { name: 'Tiếng Việt' })).toHaveAttribute('aria-pressed', 'true')
   })
+
+  it('shows the vault status pills and Lock vault in Vietnamese', async () => {
+    browserLanguage('vi-VN')
+    await createVault('pwa-simple-vietnamese-chrome')
+    expect(screen.getByText('ĐÃ KHÓA')).toBeInTheDocument()
+    await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+    await screen.findByRole('navigation', { name: 'Trang chính' })
+    expect([...screen.getByLabelText('Trạng thái kho dữ liệu').children].map((pill) => pill.textContent)).toEqual(['TRÊN MÁY', 'ĐÃ MỞ KHÓA', 'DÙNG ĐƯỢC NGOẠI TUYẾN'])
+    fireEvent.click(screen.getByRole('button', { name: 'Khóa kho dữ liệu' }))
+    expect(await screen.findByText('ĐÃ KHÓA')).toBeInTheDocument()
+    expect(screen.queryByText('LOCKED')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Lock vault' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the English vault status pills and Lock vault text', async () => {
+    browserLanguage('en-US')
+    await createVault('pwa-simple-english-chrome')
+    await setUpHousehold()
+    await screen.findByRole('navigation', { name: 'Main pages' })
+    expect([...screen.getByLabelText('Runtime state').children].map((pill) => pill.textContent)).toEqual(['LOCAL', 'UNLOCKED', 'OFFLINE READY'])
+    expect(screen.getByRole('button', { name: 'Lock vault' })).toBeInTheDocument()
+  })
 })

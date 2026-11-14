@@ -78,6 +78,7 @@ Phone users are the priority; mobile runs as a browser/PWA where users unlock th
 - `Account.subtype` is optional; without it ASSET accounts count as cash-like paying accounts and LIABILITY as cards.
 - Default categories are created only for new vaults in Simple mode; older vaults add categories from the Budget screen.
 - The receipt-flow screens stay English-only in this phase.
+- The header's vault chrome (the status pills and "Lock vault") follows the language. The receipt-flow, ledger, evidence and backup/restore screens, the update banner and the vault engine's own error messages stay English in this phase.
 - The language switch lives under More and in the vault setup screen.
 
 ## Left to the builder
