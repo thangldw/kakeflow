@@ -1,6 +1,6 @@
 # Simple mode redesign: design
 
-Date: 2026-11-14. Status: draft for approval. Mockups: https://claude.ai/artifact/B2Xq79KYdpcE5jS2kV2p8h (private; option A and the quick-add sheet were chosen).
+Date: 2026-11-14. Status: implemented in phase 1 on desktop and the web preview; PWA and passkey remain follow-ups. Mockups: https://claude.ai/artifact/B2Xq79KYdpcE5jS2kV2p8h (private; option A and the quick-add sheet were chosen).
 
 ## Intent and why
 
