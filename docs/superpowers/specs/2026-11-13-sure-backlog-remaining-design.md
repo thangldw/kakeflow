@@ -30,24 +30,30 @@ Status: implemented on this branch with the default decision (decisions are **no
 
 **Not done.** Credit-card payment envelopes (a per-card pseudo-category funded when card spending is posted). They overlap card settlement reconciliation and should be specified together with it.
 
-## 3. AI assistant (read-only)
+## 3. AI assistant (read-only): deferred to the future
 
-**Why a threat model first.** The ledger is encrypted on device; any assistant that sends rows to a model provider changes the trust boundary documented in `docs/ARCHITECTURE.md` and `docs/SECURITY.md`.
+Owner decision (2026-11-14): look for a very small model that is genuinely effective; if there is none, defer. Outcome: **deferred**, because effectiveness for this app is not established. Findings (sources checked 2026-11-14):
 
-**Proposed constraints.** Off by default; per-session explicit consent; read-only tools (summaries, search, forecast) that return aggregates by default and raw rows only when the user selects them; no credentials, evidence files or free-text memos leave the device without a per-item choice; every call logged locally with the exact payload; a local-model option is the baseline and a provider is an opt-in adapter.
+- **Candidate: FunctionGemma 270M** (Google, 2025-12-18; a Gemma 3 270M tuned for function calling). Designed to turn natural language into calls over a fixed action set, to run offline on edge devices, and to be fine-tuned ("molded, not just prompted"). Google reports 58% on its Mobile Actions evaluation before fine-tuning and 85% after, on a held-out set. Runtimes listed by Google include llama.cpp, Ollama, LiteRT-LM and ONNX; weights are open for "responsible commercial use" under the Gemma terms (not reviewed here). Sources: [Google blog](https://blog.google/technology/developers/functiongemma/), [Gemma docs](https://ai.google.dev/gemma/docs/functiongemma).
+- **Comparison data is weak.** A third-party model card reports BFCL v4 of 54.08 (thinking) and 29.17 (non-thinking) for Qwen3-0.6B against 27.03 for FunctionGemma, with the two winning different subtests; it is vendor-reported and uses its own setup ([card](https://huggingface.co/MultiverseComputingCAI/LittleLamb-ToolCalling/blob/main/README.md)). A search for an independent benchmark of sub-1B models on tool calling and JSON-schema adherence found none.
+- **Not evidenced at all:** Japanese and Vietnamese quality (Google says only "multilingual inputs" and lists no languages), memory and download size, and accuracy on ledger-style queries. The 58% to 85% figures come from a different domain (phone actions).
 
-**Decision needed.** Which provider class is acceptable (local only, or a named API)? Default: local only until the owner decides.
+**Why not now.** Using it would mean fine-tuning on our own tool schema in three languages, building the evaluation, shipping a native runtime (a llama.cpp sidecar or similar; the PWA has no equivalent) and distributing a model file, all before knowing it works for Japanese ledger questions.
 
-**Acceptance.** A test proves that with the feature off no ledger data is passed to the assistant layer; the payload log matches what was sent; revoking consent clears session context.
+**Spike to run later (go/no-go).** (1) Fix a read-only tool set of at most eight tools (search transactions, totals by category, forecast, budget remainder and similar). (2) Write 100 to 150 labelled queries across ja, en and vi with the expected tool and arguments, including negatives that must be refused. (3) Measure FunctionGemma zero-shot and one small fine-tune through an existing runtime. (4) Go only if tool and argument accuracy is high enough that a wrong call is rare, answers are composed by deterministic code from the tool result (the model only routes, it never writes numbers), and the model file and runtime are acceptable for a local-first desktop app.
+
+**Constraints that stay in force when it is built.** Off by default; per-session explicit consent; read-only tools returning aggregates unless the user selects rows; no credentials, evidence files or free-text memos leave the device; every call logged locally with the exact payload; local-only (no provider) unless the owner decides otherwise.
+
+**Acceptance (future).** A test proves that with the feature off nothing reaches the assistant layer; the payload log matches what was sent; revoking consent clears session context.
 
 ## 3a. Simulator input pattern (implemented)
 
 `src/ui/YenInput.tsx` and `src/ui/yen.ts`: text input with `inputMode="numeric"`, raw digits while focused, thousands separators after blur, a 円 mark drawn with CSS (so label-based queries still match), invalid text flagged with `aria-invalid` and never passed to the parent, and no silent revert. Applied to the three yen fields of the budgets simulators. Not applied to the what-if scenario panel on the forecast: its fields start empty, already say (円) in the label, and its tests rely on the text-level validation message.
 
-## 4. Third-party history importers (Mint, YNAB, Monarch, Actual)
+## 4. Third-party history importers (Mint, YNAB, Monarch, Actual): will not do
 
-These exports mix several accounts in one file. The only account-mapping UI today is the Money Forward institution mapping in `ImportPage`. Build a generic "source account to destination account" mapping step first (reusing the MF mapping contract in `importMapper.ts`); each importer then becomes a small fail-closed adapter like the OFX and QIF ones (date order proven from the file, whole-yen JPY only, unknown columns blocked). Default: build only on demonstrated demand; the target cohort is Japanese households.
+Owner decision (2026-11-14): not needed. Removed from the backlog.
 
-## 5. Bank feeds
+## 5. Bank feeds: will not do
 
-Belongs to roadmap Stage 3 (connector SDK). Requirements before any feed: candidates only (never auto-posted), per-connector freshness and incident state, credential isolation outside the PWA vault, replay fixtures and duplicate detection against `import_deduplication`. Not started.
+Owner decision (2026-11-14): not needed. Removed from the backlog. (The roadmap's Stage 3 connector SDK is unaffected; this only records that no bank-feed work is planned from the Sure reference.)

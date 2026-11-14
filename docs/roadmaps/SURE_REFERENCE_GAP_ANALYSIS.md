@@ -24,7 +24,7 @@ Monthly category budgets (budget, actual, remaining only), receipt-to-transactio
 2. **Statement control-total proof for every statement adapter** (ohmzi fork): require parsed rows to sum to the printed statement total before a statement becomes postable.
 3. **Zero-based budgeting layer** (Ready-to-Assign, signed carry, credit-card payment envelopes): confirmed absent. Correction: an earlier draft of this document listed envelope budgeting as present; that grep matched encrypted sync envelopes, not budgets. KakeFlow has only per-category monthly `budget`/`actual`/`remaining`.
 4. **Scenario simulation / what-if projections** (Sure roadmap, "Exploring"): pure TypeScript model over existing forecast read models.
-5. **Local, opt-in AI assistant / MCP read-only tools** over the encrypted ledger: only after a threat model for sending ledger data to any model provider.
-6. **Third-party history importers** (Mint, YNAB, Monarch, Actual): low value for the Japan cohort; build only on demand.
-7. **Bank-feed connectors** (SimpleFIN, Plaid and similar): belongs to roadmap Stage 3 connector SDK; candidates only, never auto-posted.
+5. **Local, opt-in AI assistant / MCP read-only tools**: deferred to the future (owner decision 2026-11-14). A tiny on-device function-calling model (FunctionGemma 270M) exists but its effectiveness for Japanese and Vietnamese ledger queries is not established; the design notes hold the evidence and a go/no-go spike.
+6. **Third-party history importers** (Mint, YNAB, Monarch, Actual): will not do (owner decision 2026-11-14).
+7. **Bank-feed connectors** (SimpleFIN, Plaid and similar): will not do (owner decision 2026-11-14).
 8. **Structural debt**: split `App.tsx` (4,027 lines), `platform/client.ts` (2,868) and `platform/types.ts` (1,399) behind existing tests before adding large UI features.
