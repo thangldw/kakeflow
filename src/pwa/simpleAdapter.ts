@@ -37,6 +37,20 @@ function goalDto(goal: SavingsGoal): SavingsGoalDto {
   }
 }
 
+/** The vault rejects a payee longer than this many UTF-16 code units. */
+const PAYEE_MAX_UNITS = 512
+
+/**
+ * Safety net for the vault's payee limit (the quick-add note field is already capped well below it).
+ * Cuts at 512 units and drops a high surrogate left alone at the end, so no character is split in half.
+ */
+function limitPayee(payee: string): string {
+  if (payee.length <= PAYEE_MAX_UNITS) return payee
+  const cut = payee.slice(0, PAYEE_MAX_UNITS)
+  const last = cut.charCodeAt(cut.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut
+}
+
 /** The single entry on `side`, or null when there are none or several. */
 function soleEntry(input: CreateManualTransactionInputDto, side: 'DEBIT' | 'CREDIT') {
   const entries = input.entries.filter((entry) => entry.side === side)
@@ -87,13 +101,16 @@ export function createSimpleAdapter(client: PwaLedgerClient, householdId: string
     async updateSavingsGoal(input: UpdateSavingsGoalInputDto) {
       const stored = (await client.listSavingsGoals(input.householdId)).find((goal) => goal.id === input.id)
       if (!stored) throw new Error('Savings goal not found')
-      // The caller's status is not passed on (the vault has no PAUSED). Below the target an open goal is
-      // ACTIVE, so lowering the saved amount reopens a completed goal; at or above the target no status is
-      // sent and the vault marks the goal COMPLETED. A cancelled goal stays cancelled.
-      const reopen = input.savedJpy < input.targetJpy && stored.status !== 'CANCELLED'
+      // The caller's status is not passed on (the vault has no PAUSED). A cancelled goal stays CANCELLED,
+      // even at or above its target. Otherwise a goal below its target is ACTIVE, so lowering the saved
+      // amount reopens a completed goal; at or above the target no status is sent and the vault marks the
+      // goal COMPLETED.
+      const status = stored.status === 'CANCELLED' ? 'CANCELLED' as const
+        : input.savedJpy < input.targetJpy ? 'ACTIVE' as const
+          : undefined
       return goalDto(await client.updateSavingsGoal({
         id: input.id, householdId: input.householdId, name: input.name, targetJpy: input.targetJpy,
-        savedJpy: input.savedJpy, targetDate: input.targetDate, ...(reopen ? { status: 'ACTIVE' as const } : {}),
+        savedJpy: input.savedJpy, targetDate: input.targetDate, ...(status ? { status } : {}),
       }))
     },
 
@@ -105,7 +122,7 @@ export function createSimpleAdapter(client: PwaLedgerClient, householdId: string
         .find((account) => account?.kind === 'EXPENSE' || account?.kind === 'INCOME')
       // The vault requires a payee. Quick add sends its note as the description; without a note the
       // category name stands in.
-      const payee = input.payee?.trim() || input.description?.trim() || category?.name || ''
+      const payee = limitPayee(input.payee?.trim() || input.description?.trim() || category?.name || '')
       const amountJpy = input.entries.filter((entry) => entry.side === 'DEBIT').reduce((total, entry) => total + entry.amountJpy, 0)
       const transaction = await client.createManualTransaction({
         id: input.id,

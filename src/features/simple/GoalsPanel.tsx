@@ -1,11 +1,14 @@
 import { useId, useState, type FormEvent } from 'react'
 import { goalPace } from '../../domain/goalPace'
-import { localize } from '../../i18n'
+import { localize, useI18n } from '../../i18n'
+import { formatDateLabel } from '../../monthLabel'
 import type { SavingsGoalDto } from '../../platform/types'
 import { YenInput } from '../../ui/YenInput'
 import { isCalendarDate } from './quickAdd'
 
 const yen = (value: number) => `¥${value.toLocaleString('ja-JP')}`
+/** Long enough for any real goal name, and far inside the vault's 512-unit name limit. */
+const NAME_MAX_LENGTH = 120
 const percent = (ratio: number) => `${Math.round(Math.min(1, Math.max(0, ratio)) * 100)}%`
 
 export interface NewGoalInput {
@@ -48,6 +51,7 @@ function GoalPaceLine({ goal }: { readonly goal: SavingsGoalDto }) {
 
 function GoalItem({ goal, onUpdateSaved }: { readonly goal: SavingsGoalDto; readonly onUpdateSaved: GoalsPanelProps['onUpdateSaved'] }) {
   const id = useId()
+  const { localeCode } = useI18n()
   const [draft, setDraft] = useState(goal.savedJpy)
   // YenInput keeps invalid text to itself, so the last valid draft must not be saved while the field is flagged.
   const [draftValid, setDraftValid] = useState(true)
@@ -69,11 +73,11 @@ function GoalItem({ goal, onUpdateSaved }: { readonly goal: SavingsGoalDto; read
     <div className="simple-bar simple-bar-goal" role="img" aria-label={`${localize("貯蓄の目標")} ${goal.name} ${amounts}`}>
       <span style={{ width: percent(ratio) }} />
     </div>
-    <p className="simple-note"><span>{localize("目標の日付")}</span> <strong>{goal.targetDate}</strong></p>
+    <p className="simple-note"><span>{localize("目標の日付")}</span> <strong>{formatDateLabel(goal.targetDate, localeCode)}</strong></p>
     <GoalPaceLine goal={goal} />
     <form className="simple-goal-update" onSubmit={(event) => { void save(event) }}>
       <label>{localize("貯蓄済みの金額")}<YenInput value={draft} onChange={(value) => { setDraft(value); setFailed(false) }} onValidityChange={setDraftValid} /></label>
-      <button type="submit" className="secondary-btn" disabled={busy || !draftValid}>{localize("貯蓄済みを更新")}</button>
+      <button type="submit" className="secondary-btn" aria-describedby={`${id}-title`} disabled={busy || !draftValid}>{localize("貯蓄済みを更新")}</button>
     </form>
     {failed && <p className="simple-error-text" role="alert">{localize("更新できませんでした")}</p>}
   </section>
@@ -116,11 +120,11 @@ function NewGoalForm({ onCreate }: { readonly onCreate: GoalsPanelProps['onCreat
     <h2 id={`${id}-title`} className="simple-panel-title">{localize("新しい目標を作る")}</h2>
     <label className="simple-field">
       <span>{localize("目標の名前")}</span>
-      <input type="text" autoComplete="off" value={name} aria-invalid={error === 'name'} onChange={(event) => { setName(event.target.value); setError(null) }} />
+      <input type="text" autoComplete="off" maxLength={NAME_MAX_LENGTH} value={name} aria-invalid={error === 'name'} onChange={(event) => { setName(event.target.value); setError(null) }} />
     </label>
     <label className="simple-field">
       <span>{localize("目標金額")}</span>
-      <YenInput key={formKey} value={targetJpy} onChange={(value) => { setTargetJpy(value); setError(null) }} onValidityChange={setTargetValid} />
+      <YenInput key={formKey} value={targetJpy} onChange={(value) => { setTargetJpy(value); setError(null) }} onValidityChange={setTargetValid} invalid={error === 'target'} />
     </label>
     <label className="simple-field">
       <span>{localize("目標の日付")}</span>

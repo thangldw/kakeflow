@@ -22,7 +22,9 @@ interface QuickAddSheetProps {
   readonly now?: () => Date
 }
 
-const KEYPAD_DIGITS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0'] as const
+/** Keeps the note well inside the PWA vault's 512-unit payee limit, so a long note never fails only at save. */
+const NOTE_MAX_LENGTH = 200
+const KEYPAD_DIGITS =['1', '2', '3', '4', '5', '6', '7', '8', '9', '00', '0'] as const
 const FOCUSABLE = 'button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])'
 
 /**
@@ -212,7 +214,7 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
             </label>
             <label className="quick-add-field">
               <span>{localize("メモ（任意）")}</span>
-              <input type="text" value={note} onChange={(event) => setNote(event.target.value)} />
+              <input type="text" maxLength={NOTE_MAX_LENGTH} value={note} onChange={(event) => setNote(event.target.value)} />
             </label>
           </div>
 

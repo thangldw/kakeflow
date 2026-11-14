@@ -70,7 +70,9 @@ describe('GoalsPanel list', () => {
     expect(trip).toHaveTextContent(`${yen(120_000)} / ${yen(300_000)}`)
     expect(trip).toHaveTextContent(`Needed per month ${yen(pace.monthly)}`)
     expect(trip).toHaveTextContent(`Months left ${pace.months}`)
-    expect(trip).toHaveTextContent('Target date')
+    expect(trip).toHaveTextContent('Target date Jun 30, 2027')
+    expect(trip).not.toHaveTextContent('2027-06-30')
+    expect(within(trip).getByRole('button', { name: 'Update saved amount' })).toHaveAccessibleDescription('家族旅行')
     expect(goalCard('パソコン')).toHaveTextContent('Goal reached')
     expect(goalCard('車検')).toHaveTextContent('Past the target date')
     expect(goalCard('車検')).toHaveTextContent(`Still to save ${yen(60_000)}`)
@@ -132,7 +134,13 @@ describe('GoalsPanel new goal', () => {
     const form = fill('  ', '100000', '2027-12-31')
     fireEvent.click(within(form).getByRole('button', { name: 'Add goal' }))
     expect(within(form).getByRole('alert')).toHaveTextContent('Enter a goal name')
+    expect(within(form).getByLabelText('Target amount')).toHaveAttribute('aria-invalid', 'false')
     expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it('limits the goal name to 120 characters', () => {
+    renderPanel()
+    expect(within(createForm()).getByLabelText('Goal name')).toHaveAttribute('maxLength', '120')
   })
 
   it('requires a target above zero and blocks invalid amount text', () => {
@@ -140,6 +148,7 @@ describe('GoalsPanel new goal', () => {
     const form = fill('新車', '0', '2027-12-31')
     fireEvent.click(within(form).getByRole('button', { name: 'Add goal' }))
     expect(within(form).getByRole('alert')).toHaveTextContent('Enter a target amount above ¥0')
+    expect(within(form).getByLabelText('Target amount')).toHaveAttribute('aria-invalid', 'true')
     expect(lowerCaseStarts(container)).toEqual([])
     fireEvent.change(within(form).getByLabelText('Target amount'), { target: { value: '1万' } })
     expect(within(form).getByRole('button', { name: 'Add goal' })).toBeDisabled()

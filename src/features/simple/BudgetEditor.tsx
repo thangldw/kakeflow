@@ -13,6 +13,9 @@ interface BudgetEditorProps {
   readonly onAddCategory?: (name: string) => Promise<void>
 }
 
+/** Long enough for any real category name, and far inside the vault's 512-unit name limit. */
+const NAME_MAX_LENGTH = 120
+
 /** Simple-mode budget editor: one yen field per spending category for one month. Props only. */
 export function BudgetEditor({ month, categories, budgets, onSave, onAddCategory }: BudgetEditorProps) {
   const id = useId()
@@ -63,7 +66,7 @@ function BudgetRow({ category, budgetJpy, onSave }: { readonly category: { reado
       <span id={nameId} className="simple-budget-name">{category.name}</span>
       <YenInput value={draft} onChange={(value) => { setDraft(value); setStatus('idle') }} onValidityChange={(valid) => { setDraftValid(valid); setStatus('idle') }} />
     </label>
-    <button type="submit" className="secondary-btn" disabled={busy || !draftValid || draft === saved}>{localize("予算を保存する")}</button>
+    <button type="submit" className="secondary-btn" aria-describedby={nameId} disabled={busy || !draftValid || draft === saved}>{localize("予算を保存する")}</button>
     {status === 'saved' && <p className="simple-note simple-budget-status" role="status">{localize("予算を保存しました")}</p>}
     {status === 'failed' && <p className="simple-error-text" role="alert">{localize("予算を保存できませんでした")}</p>}
   </form>
@@ -91,7 +94,7 @@ function AddCategoryForm({ onAddCategory }: { readonly onAddCategory: (name: str
     <h3 id={`${id}-title`} className="simple-card-label">{localize("カテゴリーの追加")}</h3>
     <label className="simple-field">
       <span>{localize("新しいカテゴリーの名前")}</span>
-      <input type="text" autoComplete="off" value={name} aria-invalid={error === 'empty'} onChange={(event) => { setName(event.target.value); setError(null) }} />
+      <input type="text" autoComplete="off" maxLength={NAME_MAX_LENGTH} value={name} aria-invalid={error === 'empty'} onChange={(event) => { setName(event.target.value); setError(null) }} />
     </label>
     <button type="submit" className="secondary-btn" disabled={busy}>{localize("このカテゴリーを追加")}</button>
     {error && <p className="simple-error-text" role="alert">{error === 'empty' ? localize("カテゴリー名を入力してください") : localize("カテゴリーを追加できませんでした")}</p>}

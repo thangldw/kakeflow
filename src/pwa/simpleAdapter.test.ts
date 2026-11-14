@@ -189,6 +189,33 @@ describe('PWA adapter for the Simple components', () => {
       .toMatchObject({ savedJpy: 20_000, status: 'CANCELLED' })
   })
 
+  it('keeps a cancelled goal cancelled when its saved amount reaches or passes the target', async () => {
+    const client = await fullVault()
+    await client.createSavingsGoal({ id: 'trip', householdId: HOUSEHOLD, name: '旅行', targetJpy: 100_000, savedJpy: 10_000, targetDate: '2027-06-30' })
+    await client.updateSavingsGoal({ id: 'trip', householdId: HOUSEHOLD, name: '旅行', targetJpy: 100_000, savedJpy: 10_000, targetDate: '2027-06-30', status: 'CANCELLED' })
+    const adapter = createSimpleAdapter(client, HOUSEHOLD)
+    const input = { id: 'trip', householdId: HOUSEHOLD, name: '旅行', targetJpy: 100_000, targetDate: '2027-06-30', status: 'ACTIVE' } as const
+    expect(await adapter.updateSavingsGoal({ ...input, savedJpy: 100_000 })).toMatchObject({ savedJpy: 100_000, status: 'CANCELLED' })
+    expect(await adapter.updateSavingsGoal({ ...input, savedJpy: 150_000 })).toMatchObject({ savedJpy: 150_000, status: 'CANCELLED' })
+    expect((await client.listSavingsGoals(HOUSEHOLD))[0].status).toBe('CANCELLED')
+  })
+
+  it('cuts a payee longer than the vault allows to 512 UTF-16 units without splitting a character', async () => {
+    const client = await fullVault()
+    const adapter = createSimpleAdapter(client, HOUSEHOLD)
+    const accounts = await adapter.listAccountDtos()
+    const base = buildQuickAddInput({
+      id: 't-long', householdId: HOUSEHOLD, kind: 'EXPENSE', amountJpy: 500, categoryId: 'food', payingAccountId: 'cash', occurredOn: '2026-11-14', note: '', accounts,
+    })
+    // 511 plain units then emoji (2 units each): a plain cut at 512 would leave half an emoji.
+    await adapter.createManualTransaction({ ...base, description: `${'あ'.repeat(511)}${'😀'.repeat(50)}` })
+    const stored = (await client.listTransactions(HOUSEHOLD)).find((transaction) => transaction.id === 't-long')!
+    expect(stored.payee).toBe('あ'.repeat(511))
+    await adapter.createManualTransaction({ ...base, id: 't-long-2', entries: base.entries.map((entry) => ({ ...entry, id: `${entry.id}-2` })), description: 'い'.repeat(900) })
+    const second = (await client.listTransactions(HOUSEHOLD)).find((transaction) => transaction.id === 't-long-2')!
+    expect(second.payee).toBe('い'.repeat(512))
+  })
+
   it('feeds loadSimpleHome the figures of a hand-computed month', async () => {
     const client = await fullVault()
     await client.upsertBudget({ householdId: HOUSEHOLD, month: NOVEMBER, categoryAccountId: 'food', budgetJpy: 50_000 })

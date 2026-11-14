@@ -187,6 +187,11 @@ describe('QuickAddSheet', () => {
     expect(saveButton()).toBeEnabled()
   })
 
+  it('limits the note to 200 characters', () => {
+    renderSheet()
+    expect(screen.getByLabelText('メモ（任意）')).toHaveAttribute('maxLength', '200')
+  })
+
   it('wraps Tab between the close button and the last field, skipping the keypad', () => {
     renderSheet()
     const close = screen.getByRole('button', { name: '記録画面を閉じる' })
