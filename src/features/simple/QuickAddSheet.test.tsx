@@ -199,6 +199,44 @@ describe('QuickAddSheet', () => {
     expect(note).toHaveFocus()
   })
 
+  it('sends Tab from a focused keypad button back into the tab order, at the close button or the last field', () => {
+    renderSheet()
+    const close = screen.getByRole('button', { name: '記録画面を閉じる' })
+    const note = screen.getByLabelText('メモ（任意）')
+    // Keypad buttons are tap targets (tabindex -1), but a script or a pointer can still focus one.
+    const five = screen.getByRole('button', { name: '5' })
+    five.focus()
+    expect(five).toHaveFocus()
+    expect(fireEvent.keyDown(five, { key: 'Tab' })).toBe(false)
+    expect(close).toHaveFocus()
+
+    five.focus()
+    expect(fireEvent.keyDown(five, { key: 'Tab', shiftKey: true })).toBe(false)
+    expect(note).toHaveFocus()
+  })
+
+  it('leaves Tab between fields in the middle of the sheet to the browser', () => {
+    renderSheet()
+    amountField().focus()
+    // Not prevented: the browser moves focus to the next field itself.
+    expect(fireEvent.keyDown(amountField(), { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(amountField(), { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(amountField()).toHaveFocus()
+  })
+
+  it('wraps from Save to the close button once Save is enabled and is the last stop', () => {
+    renderSheet()
+    tapKeys('500')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    const save = saveButton()
+    expect(save).toBeEnabled()
+    save.focus()
+    expect(fireEvent.keyDown(save, { key: 'Tab' })).toBe(false)
+    expect(screen.getByRole('button', { name: '記録画面を閉じる' })).toHaveFocus()
+    fireEvent.keyDown(screen.getByRole('button', { name: '記録画面を閉じる' }), { key: 'Tab', shiftKey: true })
+    expect(save).toHaveFocus()
+  })
+
   it('shows the empty state when there is no expense category', () => {
     const onSetupAccounts = vi.fn()
     renderSheet({ accounts: accounts.filter((a) => a.accountKind !== 'EXPENSE'), onSetupAccounts })
@@ -263,6 +301,9 @@ describe('QuickAddSheet', () => {
     expect(isCalendarDate('')).toBe(false)
     expect(isCalendarDate('2026-2-3')).toBe(false)
     expect(isCalendarDate('2024-02-29')).toBe(true)
+    // 2028 is a leap year, 2027 is not.
+    expect(isCalendarDate('2028-02-29')).toBe(true)
+    expect(isCalendarDate('2027-02-29')).toBe(false)
     expect(isCalendarDate('2026-11-14')).toBe(true)
   })
 

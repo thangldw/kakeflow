@@ -1,6 +1,7 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import App from '../../App'
 import { I18nProvider } from '../../i18n'
 import type { AccountDto, DashboardMonthlyTotalsDto, MonthlyCategoryBudgetDto, SavingsGoalDto } from '../../platform/types'
 import type { HomeClient } from './homeLoader'
@@ -139,6 +140,80 @@ describe('Simple screens in English', () => {
     expect(screen.getByRole('button', { name: 'Audit trail' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
     expect(lowerCaseStarts(container)).toEqual([])
+  })
+})
+
+describe('Simple screens in English: every other state starts with a capital', () => {
+  it('over-budget hero and the needs-attention card', async () => {
+    const client = homeClient()
+    vi.mocked(client.queryDashboard).mockResolvedValue({
+      ...dashboard, expenseJpy: 200_000,
+      expenseCategories: [{ accountId: 'food', name: '食費', amountJpy: 180_000 }, { accountId: 'daily', name: '日用品', amountJpy: 20_000 }],
+    })
+    const { container } = inLocale('en', <SimpleHome {...homeProps} month="2026-11" client={client} />)
+    expect(await screen.findByRole('heading', { name: 'Over budget by' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Category over budget' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument()
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('overdue goal card', async () => {
+    const client = homeClient()
+    vi.mocked(client.listSavingsGoals).mockResolvedValue([{ ...goal, targetDate: '2026-01-31' }])
+    const { container } = inLocale('en', <SimpleHome {...homeProps} month="2026-11" client={client} />)
+    expect(await screen.findByText('Past the target date')).toBeInTheDocument()
+    expect(screen.getByText('Still to save')).toBeInTheDocument()
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('no-goal card', async () => {
+    const client = homeClient()
+    vi.mocked(client.listSavingsGoals).mockResolvedValue([])
+    const { container } = inLocale('en', <SimpleHome {...homeProps} month="2026-11" client={client} />)
+    expect(await screen.findByRole('button', { name: 'Create a goal' })).toBeInTheDocument()
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('loading state', () => {
+    const client = homeClient()
+    vi.mocked(client.queryDashboard).mockReturnValue(new Promise(() => undefined))
+    const { container } = inLocale('en', <SimpleHome {...homeProps} month="2026-11" client={client} />)
+    expect(screen.getByRole('status')).toHaveAccessibleName('Loading your home screen')
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('error state', async () => {
+    const client = homeClient()
+    vi.mocked(client.queryDashboard).mockRejectedValue(new Error('offline'))
+    const { container } = inLocale('en', <SimpleHome {...homeProps} month="2026-11" client={client} />)
+    expect(await screen.findByText('Could not load')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('income sheet', () => {
+    const { container } = inLocale('en', <QuickAddSheet {...sheetProps} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByRole('dialog', { name: 'Add income' })).toBeInTheDocument()
+    expect(screen.getByText('Received in')).toBeInTheDocument()
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('empty sheet', () => {
+    const { container } = inLocale('en', <QuickAddSheet {...sheetProps} accounts={accounts.filter((item) => item.accountKind !== 'EXPENSE')} onSetupAccounts={() => undefined} />)
+    expect(screen.getByText('No account to record to')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Set up accounts' })).toBeInTheDocument()
+    expect(lowerCaseStarts(container)).toEqual([])
+  })
+
+  it('Simple sidebar entries', async () => {
+    localStorage.setItem('kakeflow.uiMode', JSON.stringify({ 'demo-tanaka-family': 'simple' }))
+    inLocale('en', <App />)
+    const sidebar = await screen.findByRole('complementary', { name: 'Main navigation' })
+    await waitFor(() => expect(sidebar.querySelector('.simple-nav-section')).not.toBeNull())
+    const nav = sidebar.querySelector('nav')!
+    expect(within(nav).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['Today', 'History', 'Budget', 'Savings', 'More'])
+    expect(lowerCaseStarts(nav)).toEqual([])
   })
 })
 
