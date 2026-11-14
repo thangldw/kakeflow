@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AccountingBasisDto, DashboardExpenseCategoryDto, DashboardMonthlyTotalsDto } from '../../platform/types'
 
 // The shell runs against the browser preview client by default. Tests that need
 // ledger data switch `runtime.tauri` on; the listed methods are then replaced by
@@ -55,22 +56,28 @@ const LAYOUTS = {
   CARD_RECONCILIATION: { widgetOrder: ['CARDS', 'RECENT', 'TREND', 'SPENDING'], hiddenWidgets: [] },
   CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: [] },
 }
-const EMPTY_ANALYTICS = { expenseCategories: [], dailyTrend: [], monthlyTrend: [], budgetSummary: null, goalSummary: null }
-
-function dashboard(request: { month: string; accountingBasis: string }, expenseJpy: number) {
-  return { month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 300_000, expenseJpy, savingsJpy: 300_000 - expenseJpy, postedTransactionCount: 3, ...EMPTY_ANALYTICS, expenseCategories: [{ categoryAccountId: 'family-food-expense', categoryName: '食費', amountJpy: expenseJpy }] }
+// Typed as the real DTO so the Home reads categories by `accountId` exactly as it does at runtime.
+function dashboard(request: { month: string; accountingBasis: AccountingBasisDto }, expenseJpy: number): DashboardMonthlyTotalsDto {
+  return {
+    month: request.month, accountingBasis: request.accountingBasis, incomeJpy: 300_000, expenseJpy, savingsJpy: 300_000 - expenseJpy, postedTransactionCount: 3,
+    netWorthAsOf: `${request.month}-01`, assetsJpy: 0, liabilitiesJpy: 0, netWorthJpy: 0, accrualTrend: [], cashFlowTrend: [],
+    expenseCategories: categoryActuals ?? [{ accountId: 'family-food-expense', name: '食費', amountJpy: expenseJpy }],
+  }
 }
 
 let expenseJpy = 40_000
+/** Per-category spending for the dashboard; null means everything was spent on food. */
+let categoryActuals: DashboardExpenseCategoryDto[] | null = null
 
 function setUpDesktop() {
   runtime.tauri = true
   expenseJpy = 40_000
+  categoryActuals = null
   desktop.listHouseholds.mockReset().mockResolvedValue([FAMILY])
   desktop.createHousehold.mockReset().mockImplementation(async (input: { id: string; name: string }) => ({ id: 'new-home', name: input.name, baseCurrency: 'JPY', createdAt: '2026-11-14T00:00:00Z' }))
   desktop.listHouseholdMembers.mockReset().mockResolvedValue([{ id: 'taro', householdId: 'family', displayName: '太郎', relationshipLabel: '父', status: 'ACTIVE', sortOrder: 0, createdAt: '2026-07-01T00:00:00Z', updatedAt: '2026-07-01T00:00:00Z' }])
   desktop.listAccounts.mockReset().mockResolvedValue(ACCOUNTS)
-  desktop.queryDashboard.mockReset().mockImplementation(async (request: { month: string; accountingBasis: string }) => dashboard(request, expenseJpy))
+  desktop.queryDashboard.mockReset().mockImplementation(async (request: { month: string; accountingBasis: AccountingBasisDto }) => dashboard(request, expenseJpy))
   desktop.queryTransactions.mockReset().mockResolvedValue({ items: [], page: 1, pageSize: 25, totalItems: 0, totalPages: 0 })
   desktop.listBudgets.mockReset().mockImplementation(async (_householdId: string, month: string) => [{ householdId: 'family', month, categoryAccountId: 'family-food-expense', categoryName: '食費', budgetJpy: 100_000, actualJpy: expenseJpy, remainingJpy: 100_000 - expenseJpy }])
   desktop.listSavingsGoals.mockReset().mockResolvedValue([])
@@ -203,6 +210,28 @@ describe('Simple mode in the app shell', () => {
     expect(await screen.findByRole('heading', { name: '今月あと使える金額' })).toBeInTheDocument()
     expect(localStorage.getItem('kakeflow.selectedMonth')).not.toBe('2020-01')
     expect(screen.queryByRole('button', { name: '今月に戻る' })).not.toBeInTheDocument()
+  })
+
+  it('shows the most overspent category and unbudgeted spending from the dashboard categories', async () => {
+    setUpDesktop()
+    expenseJpy = 125_000
+    // Food has a 100,000 budget; その他 has none.
+    categoryActuals = [
+      { accountId: 'family-food-expense', name: '食費', amountJpy: 120_000 },
+      { accountId: 'family-other-expense', name: 'その他', amountJpy: 5_000 },
+    ]
+    storeMode({ family: 'simple' })
+    render(<App />)
+    const attention = (await screen.findByRole('heading', { name: '予算を超えたカテゴリー' })).closest('section')!
+    expect(attention).toHaveTextContent('食費')
+    expect(attention).toHaveTextContent('+¥20,000')
+    expect(screen.getByText('予算のないカテゴリーの支出').parentElement).toHaveTextContent('¥5,000')
+  })
+
+  it('has no attention card or unbudgeted line when all spending is within a budget', async () => {
+    await renderSimpleDesktop()
+    expect(screen.queryByRole('heading', { name: '予算を超えたカテゴリー' })).not.toBeInTheDocument()
+    expect(screen.queryByText('予算のないカテゴリーの支出')).not.toBeInTheDocument()
   })
 
   it('offers account setup from an empty quick-add sheet', async () => {

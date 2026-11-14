@@ -66,7 +66,7 @@ export function SimpleHome({ householdId, householdName, month, revision, onSetL
   }
 
   if (state.kind === 'loading' || state.key !== key) {
-    return <div className="simple-home" aria-busy="true" aria-label={localize("ホームを準備中")}>
+    return <div className="simple-home" role="status" aria-busy="true" aria-label={localize("ホームを準備中")}>
       <p className="simple-home-household">{householdName}</p>
       <div className="skeleton simple-skeleton-hero" />
       <div className="skeleton simple-skeleton-card" />

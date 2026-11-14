@@ -100,10 +100,12 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
 
   const save = async () => {
     if (!canSave || amount === null || !category || !payingAccount) return
-    const transactionId = crypto.randomUUID()
+    let transactionId: string
     setBusy(true)
     setFailed(false)
     try {
+      // randomUUID throws outside a secure context; that must show the error, not reject unhandled.
+      transactionId = crypto.randomUUID()
       const input = buildQuickAddInput({
         id: transactionId, householdId, kind, amountJpy: amount, categoryId: category.id,
         payingAccountId: payingAccount.id, occurredOn, note, accounts,
@@ -131,7 +133,8 @@ function QuickAddSheetBody({ householdId, accounts, onClose, onSaved, onSetupAcc
       return
     }
     if (event.key !== 'Tab') return
-    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])]
+    // The keypad buttons are buttons with tabindex -1: reachable by tap, never by Tab.
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].filter((element) => element.getAttribute('tabindex') !== '-1')
     if (focusable.length === 0) { event.preventDefault(); headingRef.current?.focus(); return }
     const activeIndex = focusable.indexOf(document.activeElement as HTMLElement)
     if (event.shiftKey && activeIndex <= 0) { event.preventDefault(); focusable[focusable.length - 1].focus() }

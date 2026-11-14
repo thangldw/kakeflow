@@ -49,7 +49,10 @@ const amountField = () => screen.getByLabelText('記録する金額') as HTMLInp
 const saveButton = () => screen.getByRole('button', { name: '記録を保存' })
 const tapKeys = (keys: string) => { for (const key of keys) fireEvent.click(screen.getByRole('button', { name: key })) }
 
-afterEach(() => localStorage.clear())
+afterEach(() => {
+  localStorage.clear()
+  vi.restoreAllMocks()
+})
 
 describe('QuickAddSheet', () => {
   it('renders nothing when closed', () => {
@@ -171,6 +174,29 @@ describe('QuickAddSheet', () => {
     expect(props.onSaved).not.toHaveBeenCalled()
     expect(props.onClose).not.toHaveBeenCalled()
     expect(readQuickAddUsage('h1').lastPayingAccountId).toBeNull()
+  })
+
+  it('shows the error alert when no transaction id can be created (non-secure context)', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockImplementation(() => { throw new Error('randomUUID needs a secure context') })
+    const props = renderSheet()
+    tapKeys('500')
+    fireEvent.click(screen.getByRole('button', { name: '食費' }))
+    fireEvent.click(saveButton())
+    expect(await screen.findByRole('alert')).toHaveTextContent('保存できませんでした。もう一度お試しください。')
+    expect(props.client.createManualTransaction).not.toHaveBeenCalled()
+    expect(saveButton()).toBeEnabled()
+  })
+
+  it('wraps Tab between the close button and the last field, skipping the keypad', () => {
+    renderSheet()
+    const close = screen.getByRole('button', { name: '記録画面を閉じる' })
+    const note = screen.getByLabelText('メモ（任意）')
+    // Save is disabled while the form is empty, so the note field is the last stop.
+    note.focus()
+    fireEvent.keyDown(note, { key: 'Tab' })
+    expect(close).toHaveFocus()
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
+    expect(note).toHaveFocus()
   })
 
   it('shows the empty state when there is no expense category', () => {

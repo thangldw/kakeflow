@@ -78,6 +78,7 @@ describe('SimpleHome', () => {
     client.queryDashboard.mockImplementation(() => new Promise(() => {}))
     const { container } = renderHome(client)
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull()
+    expect(screen.getByRole('status', { name: 'ホームを準備中' })).toHaveAttribute('aria-busy', 'true')
   })
 
   it('shows the remaining amount, the daily allowance and an accessible spending bar', async () => {
