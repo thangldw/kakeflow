@@ -130,6 +130,7 @@ import { SimpleMorePage, UiModeSwitch } from './features/simple/SimpleMorePage'
 import { SimpleTabBar } from './features/simple/SimpleTabBar'
 import { readUiMode, writeUiMode, type UiMode } from './features/simple/uiMode'
 import { localize, useI18n } from './i18n'
+import { formatMonthLabel } from './monthLabel'
 import { showToast } from './toast'
 import { GlobalToast } from './ui/GlobalToast'
 import { APP_VERSION } from './version'
@@ -348,7 +349,7 @@ function Topbar({ page, openMenu, onGlobalSearch, onManualEntry, onImport, month
   const controlsRef = useRef<HTMLDivElement>(null)
   const selectedScopeLabel = accountGroups.find((group) => group.id === accountGroupId)?.name ?? text('すべての口座')
   const currentMonth = currentTokyoPeriod().month
-  const monthLabel = new Intl.DateTimeFormat(localeCode, { year: 'numeric', month: 'long' }).format(new Date(`${month}-01T12:00:00`))
+  const monthLabel = formatMonthLabel(month, localeCode)
   const pickerYearLabel = new Intl.DateTimeFormat(localeCode, { year: 'numeric' }).format(new Date(`${pickerYear}-01-01T12:00:00`))
   const pickerMonthLabel = (index: number) => new Intl.DateTimeFormat(localeCode, { month: 'short' }).format(new Date(`${pickerYear}-${String(index + 1).padStart(2, '0')}-01T12:00:00`))
   const accountCount = accountGroups.reduce((sum, group) => sum + group.accountIds.length, 0)
@@ -648,7 +649,7 @@ function Overview({ setPage, openAllActions, householdId, accountGroupId, attrib
   const availablePanels = activeLayout.widgetOrder.filter((widget) => dashboardTemplateWidgetOrder[preferences.template].includes(widget))
   const visiblePanels = availablePanels.filter((widget) => !effectiveHiddenWidgets(preferences).includes(widget))
   const panelOrder = visiblePanels.map((widget) => panels[widget])
-  const monthLabel = new Intl.DateTimeFormat(localeCode, { year: 'numeric', month: 'long' }).format(new Date(`${month}-01T00:00:00`))
+  const monthLabel = formatMonthLabel(month, localeCode)
   const overviewDescription = locale === 'ja'
     ? (desktop ? localize(`選択月の計算対象の確定取引 ${liveDashboard?.postedTransactionCount ?? 0}件を${cashFlow ? localize("資金移動") : localize("発生")}ベースで集計しています（集計対象外を除く）。`) : localize(`家計は順調です。予算の ${(budgetUsage * 100).toFixed(1)}% を使いました。`))
     : locale === 'vi' ? `Tổng hợp ${desktop ? liveDashboard?.postedTransactionCount ?? 0 : transactions.length} giao dịch đã xác nhận trong tháng đã chọn.`

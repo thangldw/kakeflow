@@ -99,7 +99,10 @@ describe('Simple screens in English', () => {
 
   it('Home names another month neutrally and offers Back to this month', async () => {
     const { container } = inLocale('en', <SimpleHome {...homeProps} month="2026-10" onGoToCurrentMonth={() => undefined} client={homeClient()} />)
-    expect(await screen.findByRole('heading', { name: 'Left to spend' })).toBeInTheDocument()
+    const hero = (await screen.findByRole('heading', { name: 'Left to spend' })).closest('section')!
+    // The same words as the top bar's month button, not the raw 2026-10.
+    expect(within(hero).getByText('October 2026')).toBeInTheDocument()
+    expect(hero).not.toHaveTextContent('2026-10')
     expect(screen.getByRole('button', { name: 'Back to this month' })).toBeInTheDocument()
     expect(lowerCaseStarts(container)).toEqual([])
   })
@@ -108,7 +111,7 @@ describe('Simple screens in English', () => {
     const client = homeClient()
     vi.mocked(client.listSavingsGoals).mockResolvedValue([{ ...goal, savedJpy: goal.targetJpy }])
     inLocale('en', <SimpleHome {...homeProps} month="2026-11" client={client} />)
-    expect(screen.getByLabelText('Preparing your home screen')).toBeInTheDocument()
+    expect(screen.getByLabelText('Loading your home screen')).toBeInTheDocument()
     expect(await screen.findByText('Goal reached')).toBeInTheDocument()
   })
 
@@ -142,7 +145,7 @@ describe('Simple screens in English', () => {
 describe('Simple screens in Vietnamese', () => {
   it('Home', async () => {
     inLocale('vi', <SimpleHome {...homeProps} month="2026-11" client={homeClient()} />)
-    expect(screen.getByLabelText('Đang chuẩn bị màn hình chính')).toBeInTheDocument()
+    expect(screen.getByLabelText('Đang tải trang chủ')).toBeInTheDocument()
     const hero = (await screen.findByRole('heading', { name: 'Còn được tiêu tháng này' })).closest('section')!
     expect(within(hero).getByText('Ngân sách')).toBeInTheDocument()
     const goalCard = screen.getByRole('heading', { name: '家族旅行' }).closest('section')!
@@ -154,7 +157,9 @@ describe('Simple screens in Vietnamese', () => {
 
   it('Home for another month', async () => {
     inLocale('vi', <SimpleHome {...homeProps} month="2026-10" onGoToCurrentMonth={() => undefined} client={homeClient()} />)
-    expect(await screen.findByRole('heading', { name: 'Còn lại' })).toBeInTheDocument()
+    const hero = (await screen.findByRole('heading', { name: 'Còn lại' })).closest('section')!
+    expect(within(hero).getByText('tháng 10 năm 2026')).toBeInTheDocument()
+    expect(hero).not.toHaveTextContent('2026-10')
     expect(screen.getByRole('button', { name: 'Về tháng này' })).toBeInTheDocument()
   })
 

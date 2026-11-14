@@ -102,7 +102,9 @@ describe('SimpleHome', () => {
     const { props } = renderHome(fakeClient({ budgets: october, dashboard: dashboard({ month: '2026-10' }) }), { month: '2026-10', onGoToCurrentMonth: vi.fn() })
     const hero = (await screen.findByText('残り金額')).closest('section')!
     expect(screen.queryByText('今月あと使える金額')).not.toBeInTheDocument()
-    expect(within(hero).getByText('2026-10')).toBeInTheDocument()
+    // Written like the top bar, never as the raw 2026-10.
+    expect(within(hero).getByText('2026年10月')).toBeInTheDocument()
+    expect(hero).not.toHaveTextContent('2026-10')
     expect(within(hero).getByText('¥42,600')).toBeInTheDocument()
     expect(within(hero).queryByText('1日あたりの目安')).not.toBeInTheDocument()
     fireEvent.click(within(hero).getByRole('button', { name: '今月に戻る' }))
@@ -112,14 +114,14 @@ describe('SimpleHome', () => {
   it('keeps the this-month label and offers no way back for the current month', async () => {
     renderHome(fakeClient(), { onGoToCurrentMonth: vi.fn() })
     const hero = (await screen.findByText('今月あと使える金額')).closest('section')!
-    expect(within(hero).queryByText('2026-11')).not.toBeInTheDocument()
+    expect(within(hero).queryByText('2026年11月')).not.toBeInTheDocument()
     expect(within(hero).queryByRole('button', { name: '今月に戻る' })).not.toBeInTheDocument()
   })
 
   it('offers a way back from a month without budgets too', async () => {
     renderHome(fakeClient({ budgets: {} }), { month: '2026-12', onGoToCurrentMonth: vi.fn() })
     const hero = (await screen.findByText('収入 − 支出（予算は未設定）')).closest('section')!
-    expect(within(hero).getByText('2026-12')).toBeInTheDocument()
+    expect(within(hero).getByText('2026年12月')).toBeInTheDocument()
     expect(within(hero).getByRole('button', { name: '今月に戻る' })).toBeInTheDocument()
   })
 
@@ -142,7 +144,8 @@ describe('SimpleHome', () => {
   it('notes when an earlier month\'s budget is used', async () => {
     renderHome(fakeClient({ budgets: { '2026-09': specBudgets.map((row) => ({ ...row, month: '2026-09' })) } }))
     const note = await screen.findByText('以前の月の予算を使っています')
-    expect(note.parentElement).toHaveTextContent('2026-09')
+    expect(note.parentElement).toHaveTextContent('2026年9月')
+    expect(note.parentElement).not.toHaveTextContent('2026-09')
     expect(screen.getByText('¥42,600')).toBeInTheDocument()
   })
 

@@ -211,10 +211,15 @@ describe('Simple mode in the app shell', () => {
     localStorage.setItem('kakeflow.selectedMonth', '2020-01')
     render(<App />)
     const label = await screen.findByRole('heading', { name: '残り金額' })
-    expect(label.closest('section')).toHaveTextContent('2020-01')
+    // The Home names the month exactly as the top bar's month button does.
+    const topBarMonth = () => document.querySelector<HTMLButtonElement>('.period-stepper button[aria-haspopup="dialog"]')!.textContent
+    expect(topBarMonth()).toBe('2020年1月')
+    expect(label.closest('section')!.querySelector('.simple-hero-month')).toHaveTextContent(/^2020年1月$/)
     fireEvent.click(screen.getByRole('button', { name: '今月に戻る' }))
     expect(await screen.findByRole('heading', { name: '今月あと使える金額' })).toBeInTheDocument()
-    expect(localStorage.getItem('kakeflow.selectedMonth')).not.toBe('2020-01')
+    const tokyoMonth = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).format(new Date())
+    expect(localStorage.getItem('kakeflow.selectedMonth')).toBe(tokyoMonth)
+    expect(topBarMonth()).toBe(new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long' }).format(new Date(`${tokyoMonth}-01T12:00:00`)))
     expect(screen.queryByRole('button', { name: '今月に戻る' })).not.toBeInTheDocument()
   })
 
