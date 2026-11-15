@@ -154,6 +154,14 @@ export interface Budget {
 
 export type UpsertBudgetInput = Budget
 
+export interface CopyBudgetsInput {
+  readonly householdId: string
+  /** Calendar month `YYYY-MM` to copy from. */
+  readonly fromMonth: string
+  /** Calendar month `YYYY-MM` to copy into; rows it already has are kept. */
+  readonly toMonth: string
+}
+
 export interface MonthlyBudgetRow extends Budget {
   readonly categoryName: string
   readonly actualJpy: number

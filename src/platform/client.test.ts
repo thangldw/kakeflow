@@ -1467,6 +1467,23 @@ describe('budget move command', () => {
   })
 })
 
+describe('budget copy command', () => {
+  const row = { householdId: 'family', month: '2026-07', categoryAccountId: 'food', categoryName: '食費', budgetJpy: 1200, actualJpy: 0, remainingJpy: 1200 }
+
+  it('sends the Rust argument shape and validates the returned month', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return [row] as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    const input = { householdId: 'family', fromMonth: '2026-06', toMonth: '2026-07' }
+    await expect(client.copyBudgets(input)).resolves.toEqual([row])
+    expect(calls).toEqual([['budget_copy', { input }]])
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...row, budgetJpy: 1.5 }] as T })
+    await expect(bad.copyBudgets(input)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'budget_copy' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.copyBudgets(input)).rejects.toMatchObject({ command: 'budget_copy' })
+  })
+})
+
 describe('envelope card activity command', () => {
   const dto = { month: '2026-07', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: -3000, paymentsJpy: 1200 }], activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: -500 }] }
 

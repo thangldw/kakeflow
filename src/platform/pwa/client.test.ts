@@ -492,6 +492,96 @@ describe('authoritative PWA ledger client', () => {
       expect(await client.revision()).toBe(revision)
       await expect(client.listBudgets('household-1', '2026-11')).resolves.toEqual([])
     })
+
+    it('copies a month in one write, keeps rows the target already has and is idempotent', async () => {
+      const client = await simpleClient('client-budget-copy')
+      await post(client, 't-1', '2026-11-03', 'EXPENSE', 1_200, 'groceries', 'cash')
+      const october = { householdId: 'household-1', month: '2026-10' }
+      await client.upsertBudget({ ...october, categoryAccountId: 'groceries', budgetJpy: 5_000 })
+      await client.upsertBudget({ ...october, categoryAccountId: 'utilities', budgetJpy: 0 })
+      await client.upsertBudget({ ...october, categoryAccountId: 'transport', budgetJpy: 3_000 })
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-11', categoryAccountId: 'transport', budgetJpy: 9_000 })
+      // A stored row for a category that is not an expense account is never copied.
+      const stray = { ...october, categoryAccountId: 'cash', budgetJpy: 7_000 }
+      await (Reflect.get(client, 'database') as PwaVaultDatabase).appendPostingAtomically({
+        expectedRevision: await client.revision(),
+        events: [{ id: 'stray-budget', eventType: 'BUDGET_SET', payload: new TextEncoder().encode(JSON.stringify(stray)) }],
+        projections: [{ projectionType: 'BUDGET', id: 'household-1~2026-10~cash', payload: new TextEncoder().encode(JSON.stringify(stray)) }],
+      })
+      const append = vi.spyOn(PwaVaultDatabase.prototype, 'appendPostingAtomically')
+      try {
+        const copied = await client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' })
+        expect(append).toHaveBeenCalledTimes(1)
+        expect(append.mock.calls[0][0].events).toHaveLength(2)
+        expect(append.mock.calls[0][0].projections).toHaveLength(2)
+        expect(copied).toEqual(await client.listBudgets('household-1', '2026-11'))
+        expect(copied.map((row) => [row.categoryAccountId, row.budgetJpy, row.actualJpy])).toEqual([
+          ['groceries', 5_000, 1_200],
+          ['transport', 9_000, 0],
+          ['utilities', 0, 0],
+        ])
+
+        const revision = await client.revision()
+        await expect(client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' }))
+          .resolves.toEqual(copied)
+        await expect(client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-01', toMonth: '2026-02' }))
+          .resolves.toEqual([])
+        expect(append).toHaveBeenCalledTimes(1)
+        expect(await client.revision()).toBe(revision)
+      } finally {
+        append.mockRestore()
+      }
+    })
+
+    it('does not overwrite a row another write adds to the target month while it copies', async () => {
+      const client = await simpleClient('client-budget-copy-race')
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'groceries', budgetJpy: 5_000 })
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'utilities', budgetJpy: 2_000 })
+      const listAccounts = client.listAccounts.bind(client)
+      // The competing write lands after the copy has looked at the target month but before it writes.
+      vi.spyOn(client, 'listAccounts').mockImplementationOnce(async (householdId) => {
+        await client.upsertBudget({ householdId: 'household-1', month: '2026-11', categoryAccountId: 'groceries', budgetJpy: 9_000 })
+        return listAccounts(householdId)
+      })
+      await expect(client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' }))
+        .rejects.toThrow('Projection revision conflict')
+      await expect(client.listBudgets('household-1', '2026-11')).resolves.toEqual([
+        expect.objectContaining({ categoryAccountId: 'groceries', budgetJpy: 9_000 }),
+      ])
+      // The next attempt copies only what is still missing and keeps the other writer's value.
+      const copied = await client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' })
+      expect(copied.map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([
+        ['groceries', 9_000],
+        ['utilities', 2_000],
+      ])
+    })
+
+    it('rejects invalid copies and writes nothing when the single write fails', async () => {
+      const client = await simpleClient('client-budget-copy-invalid')
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'groceries', budgetJpy: 5_000 })
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'utilities', budgetJpy: 2_000 })
+      const valid = { householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' }
+      const revision = await client.revision()
+
+      await expect(client.copyBudgets({ ...valid, toMonth: '2026-10' })).rejects.toThrow('Choose two different months')
+      for (const month of ['2026-13', '26-11', '2026-00', '2026-1']) {
+        await expect(client.copyBudgets({ ...valid, fromMonth: month })).rejects.toThrow('Invalid month')
+        await expect(client.copyBudgets({ ...valid, toMonth: month })).rejects.toThrow('Invalid month')
+      }
+      await expect(client.copyBudgets({ ...valid, householdId: 'nobody' })).rejects.toThrow('Unknown household')
+      await expect(client.copyBudgets({ ...valid, householdId: 'a~b' })).rejects.toThrow('Invalid household ID')
+
+      const append = vi.spyOn(PwaVaultDatabase.prototype, 'appendPostingAtomically')
+        .mockRejectedValueOnce(new DOMException('quota', 'QuotaExceededError'))
+      try {
+        await expect(client.copyBudgets(valid)).rejects.toMatchObject({ name: 'QuotaExceededError' })
+      } finally {
+        append.mockRestore()
+      }
+      expect(await client.revision()).toBe(revision)
+      await expect(client.listBudgets('household-1', '2026-11')).resolves.toEqual([])
+      await expect(client.copyBudgets(valid)).resolves.toHaveLength(2)
+    })
   })
 
   describe('savings goals', () => {

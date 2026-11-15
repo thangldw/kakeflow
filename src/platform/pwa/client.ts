@@ -8,6 +8,7 @@ import type {
   AccountSubtype,
   ApproveCandidateInput,
   Budget,
+  CopyBudgetsInput,
   CreateAccountInput,
   CreateHouseholdInput,
   DashboardSummary,
@@ -444,6 +445,47 @@ export class PwaLedgerClient {
     return budget
   }
 
+  /**
+   * Copies `fromMonth`'s budgets of existing expense categories into `toMonth` in one atomic write.
+   * Rows `toMonth` already has are kept, so a second call is a no-op.
+   */
+  async copyBudgets(input: CopyBudgetsInput): Promise<MonthlyBudgetRow[]> {
+    validateBudgetKeyPart('household ID', input.householdId)
+    validateMonth(input.fromMonth)
+    validateMonth(input.toMonth)
+    if (input.fromMonth === input.toMonth) throw new Error('Choose two different months')
+    await this.requireHousehold(input.householdId)
+    // Read the revision before anything the write depends on: a write that lands later (another tab
+    // adding a row to `toMonth`) then fails with a revision conflict instead of being overwritten.
+    const expectedRevision = await this.database.revision()
+    const sourcePrefix = budgetProjectionId(input.householdId, input.fromMonth, '')
+    const ids = await this.database.listProjectionIds('BUDGET')
+    const existing = new Set(ids)
+    const sourceIds = ids.filter((id) => id.startsWith(sourcePrefix))
+    if (sourceIds.length > 0) {
+      const expenseAccountIds = new Set((await this.listAccounts(input.householdId))
+        .filter((account) => account.kind === 'EXPENSE')
+        .map((account) => account.id))
+      const copies = (await Promise.all(sourceIds.map((id) => this.model<Budget>('BUDGET', id))))
+        .filter((budget) => expenseAccountIds.has(budget.categoryAccountId))
+        .map((budget): Budget => ({ ...budget, month: input.toMonth }))
+        .filter((budget) => !existing.has(budgetProjectionId(budget.householdId, budget.month, budget.categoryAccountId)))
+        .sort((left, right) => left.categoryAccountId.localeCompare(right.categoryAccountId))
+      if (copies.length > 0) {
+        await this.appendDomainChange(
+          copies.map((budget) => ({ id: eventId(), eventType: 'BUDGET_SET', payload: encodeJson(budget) })),
+          copies.map((budget) => ({
+            projectionType: 'BUDGET',
+            id: budgetProjectionId(budget.householdId, budget.month, budget.categoryAccountId),
+            payload: encodeJson(budget),
+          })),
+          expectedRevision,
+        )
+      }
+    }
+    return this.listBudgets(input.householdId, input.toMonth)
+  }
+
   async listBudgets(householdId: string, month: string): Promise<MonthlyBudgetRow[]> {
     validateBudgetKeyPart('household ID', householdId)
     validateMonth(month)
@@ -610,8 +652,9 @@ export class PwaLedgerClient {
   private async appendDomainChange(
     events: readonly PlainEventWrite[],
     projections: readonly PlainProjectionWrite[],
+    knownRevision?: number,
   ) {
-    const expectedRevision = await this.database.revision()
+    const expectedRevision = knownRevision ?? await this.database.revision()
     return this.database.appendPostingAtomically({ expectedRevision, events, projections })
   }
 
