@@ -1267,6 +1267,7 @@
   "銀行": "ngân hàng",
   "銀行、ウォレット、カード、収入・支出カテゴリーを管理します。": "Quản lý ngân hàng, ví, thẻ, danh mục thu nhập và chi tiêu của bạn.",
   "銀行CSVの取込先銀行口座を選択してください。": "Vui lòng chọn tài khoản ngân hàng để nhập CSV ngân hàng vào.",
+  "この月の予算はまだありません。予算を保存すると、引き継ぎ元の月のカテゴリー予算をすべてこの月にコピーしてから、変更を反映します。": "Tháng này chưa có ngân sách. Khi bạn lưu một ngân sách, toàn bộ ngân sách theo danh mục của tháng ghi bên dưới sẽ được sao chép sang tháng này trước, sau đó thay đổi của bạn mới được áp dụng.",
   "予算の引き継ぎ元": "Ngân sách được chuyển tiếp từ",
   "保管庫の状態": "Trạng thái kho dữ liệu",
   "ローカル保存中": "CỤC BỘ",
