@@ -26,6 +26,7 @@ import { addDefaultChart } from './defaultChart'
 import { formatJpy } from './formatJpy'
 import { LanguageSwitch } from './LanguageSwitch'
 import { PostedLedgerList } from './PostedLedgerList'
+import { QuickUnlockCard } from './QuickUnlockCard'
 import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
 import { SimpleShell, type PwaPage } from './SimpleShell'
 import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
@@ -616,7 +617,7 @@ function PwaVaultRoot({
 
     {showSimple && session.client && household && <>
       {effectiveError && <p className="pwa-error pwa-simple-error" role="alert">{effectiveError}</p>}
-      <SimpleShell client={session.client} household={household} usageKey={uiModeKey(databaseName, household.id)} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }}
+      <SimpleShell client={session.client} household={household} usageKey={uiModeKey(databaseName, household.id)} passkeyAuthenticator={passkeyAuthenticator} onOpenPage={(page) => { void openClassicPage(page) }} onSwitchToClassic={() => { void switchUiMode('full') }}
         onActivity={() => setError(null)} />
     </>}
 
@@ -630,7 +631,8 @@ function PwaVaultRoot({
         {classicVisit && <button className="pwa-quiet pwa-back-to-simple" type="button" lang={pageLang} onClick={() => setClassicVisit(false)}><span aria-hidden="true">← </span>{localize("かんたん表示に戻る")}</button>}
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}
         {screen === 'overview' && <Overview household={household} summary={summary} transactions={transactions} onImport={() => setScreen('import')}
-          uiMode={uiMode} onUiModeChange={(mode) => { void switchUiMode(mode) }} pageLang={pageLang} />}
+          uiMode={uiMode} onUiModeChange={(mode) => { void switchUiMode(mode) }} pageLang={pageLang}
+          client={session.client} passkeyAuthenticator={passkeyAuthenticator} />}
         {screen === 'sources' && connectorSummaries[0] && <div className="pwa-sources"><ManualConnectorControlCenter
           summary={connectorSummaries[0]}
           copy={pwaConnectorCopy}
@@ -662,7 +664,7 @@ function PwaVaultRoot({
   </div>
 }
 
-function Overview({ household, summary, transactions, onImport, uiMode, onUiModeChange, pageLang }: {
+function Overview({ household, summary, transactions, onImport, uiMode, onUiModeChange, pageLang, client, passkeyAuthenticator }: {
   readonly household: Household
   readonly summary: DashboardSummary | null
   readonly transactions: readonly Transaction[]
@@ -671,6 +673,9 @@ function Overview({ household, summary, transactions, onImport, uiMode, onUiMode
   readonly onUiModeChange: (mode: UiMode) => void
   /** The page language, for the localized mode switch inside this English screen. */
   readonly pageLang: string
+  /** The unlocked vault, for the quick unlock card. */
+  readonly client: PwaLedgerClient | null
+  readonly passkeyAuthenticator?: PasskeyAuthenticator
 }) {
   return <section>
     <div className="pwa-page-head"><div><p className="pwa-eyebrow">{household.name} · JPY</p><h1>Household overview</h1></div><button className="pwa-primary" type="button" onClick={onImport}>Import receipt</button></div>
@@ -681,6 +686,7 @@ function Overview({ household, summary, transactions, onImport, uiMode, onUiMode
     </div>
     <section className="pwa-panel"><h2>Recent postings</h2>{transactions.length === 0 ? <p>No postings yet. Import a receipt to start.</p> : transactions.slice(-4).reverse().map((transaction) => <div className="pwa-row" key={transaction.id}><span>{transaction.occurredOn} · {transaction.payee}</span><strong>{formatJpy(transaction.amountJpy)}</strong></div>)}</section>
     <section className="pwa-panel pwa-mode-panel" lang={pageLang}><UiModeSwitch mode={uiMode} onChange={onUiModeChange} /></section>
+    {client && <div className="pwa-mode-panel" lang={pageLang}><QuickUnlockCard client={client} authenticator={passkeyAuthenticator} /></div>}
   </section>
 }
 

@@ -619,3 +619,12 @@ body {
 
 .pwa-back-to-simple { margin-bottom: 18px; }
 .pwa-mode-panel { margin-top: 16px; max-width: 420px; }
+.pwa-mode-panel:empty { display: none; }
+
+/* The quick unlock card (src/pwa/QuickUnlockCard.tsx): a Simple card in More and in the classic overview. */
+.pwa-quick-unlock { gap: 12px; }
+.pwa-quick-unlock-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.pwa-quick-unlock-entry { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--surface2); overflow-wrap: anywhere; }
+.pwa-quick-unlock-form { display: grid; gap: 10px; }
+.pwa-quick-unlock-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.pwa-quick-unlock-actions > button { flex: 1 1 140px; }

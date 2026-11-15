@@ -30,6 +30,7 @@ import { I18nProvider } from '../i18n'
 import { readUiMode, writeUiMode } from '../features/simple/uiMode'
 import { PwaLedgerClient } from '../platform/pwa/client'
 import { PasskeyCancelledError, type PasskeyAuthenticator } from '../platform/pwa/passkey'
+import { fakePasskeyAuthenticator } from '../test/fakePasskey'
 import type { Household } from '../platform/pwa/types'
 import type { PwaOcrDocument } from './PwaRoot'
 import PwaRoot, { BackupScreen } from './PwaRoot'
@@ -492,8 +493,8 @@ describe('PWA Simple mode and language', () => {
     Object.defineProperty(navigator, 'language', { configurable: true, get: () => language })
   }
 
-  async function createVault(databaseName: string) {
-    render(<PwaRoot databaseName={databaseName} ocrDocument={vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt)} />)
+  async function createVault(databaseName: string, authenticator?: PasskeyAuthenticator) {
+    render(<PwaRoot databaseName={databaseName} passkeyAuthenticator={authenticator} ocrDocument={vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt)} />)
     // The create and unlock cards follow the language, so the helpers accept the English or the Vietnamese label.
     fireEvent.change(screen.getByLabelText(/^(?:Vault passphrase|Cụm mật khẩu của kho dữ liệu)$/), { target: { value: passphrase } })
     fireEvent.change(screen.getByLabelText(/^(?:Confirm passphrase|Xác nhận cụm mật khẩu)$/), { target: { value: passphrase } })
@@ -689,6 +690,60 @@ describe('PWA Simple mode and language', () => {
     // The localized way back keeps the page language.
     expect(screen.getByRole('button', { name: /Về chế độ Đơn giản/u })).toHaveAttribute('lang', 'vi')
     expect(document.documentElement.lang).toBe('vi')
+  })
+
+  it('offers the quick unlock card under More, and once it is on the unlock screen offers the passkey', async () => {
+    browserLanguage('en-US')
+    vi.stubGlobal('PublicKeyCredential', class {})
+    try {
+      const authenticator = fakePasskeyAuthenticator()
+      await createVault('pwa-quick-unlock-simple', authenticator)
+      await setUpHousehold()
+      fireEvent.click(within(await screen.findByRole('navigation', { name: 'Main pages' })).getByRole('button', { name: 'More' }))
+      const card = (await screen.findByRole('heading', { name: 'Quick unlock with fingerprint, face or PIN' })).closest('section')!
+      fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }))
+      fireEvent.change(within(card).getByLabelText('Vault passphrase'), { target: { value: passphrase } })
+      fireEvent.click(within(card).getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await within(card).findByRole('button', { name: 'Confirm with fingerprint, face or PIN' }))
+      expect(await within(card).findByText('On for this device')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+      expect(await screen.findByRole('button', { name: 'Unlock with passkey' })).toBeInTheDocument()
+    } finally {
+      Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+    }
+  })
+
+  it('shows the quick unlock card on the classic overview in the page language, inside the English workspace', async () => {
+    browserLanguage('vi-VN')
+    vi.stubGlobal('PublicKeyCredential', class {})
+    try {
+      await createVault('pwa-quick-unlock-classic', fakePasskeyAuthenticator())
+      await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+      fireEvent.click(within(await screen.findByRole('navigation', { name: 'Trang chính' })).getByRole('button', { name: 'Thêm' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Sổ cái và chứng từ' }))
+      fireEvent.click(await screen.findByRole('button', { name: /Overview/u }))
+      await screen.findByRole('heading', { name: 'Household overview' })
+
+      const heading = await screen.findByRole('heading', { name: 'Mở nhanh bằng vân tay, khuôn mặt hoặc mã PIN' })
+      expect(document.querySelector('.pwa-workspace')).toHaveAttribute('lang', 'en')
+      expect(heading.closest('[lang]')).toHaveAttribute('lang', 'vi')
+      expect(screen.getByRole('button', { name: 'Bật' })).toHaveClass('primary-btn')
+    } finally {
+      Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+    }
+  })
+
+  it('shows no quick unlock card on the classic overview where the browser cannot offer a passkey', async () => {
+    browserLanguage('en-US')
+    await createVault('pwa-quick-unlock-unavailable', fakePasskeyAuthenticator())
+    await setUpHousehold()
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full' }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+    await new Promise((done) => setTimeout(done, 30))
+    expect(screen.queryByRole('heading', { name: 'Quick unlock with fingerprint, face or PIN' })).not.toBeInTheDocument()
+    expect(document.querySelector('.pwa-mode-panel:empty')).not.toBeNull()
   })
 
   it('keeps the English vault status pills and Lock vault text', async () => {
