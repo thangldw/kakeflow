@@ -33,3 +33,15 @@ export interface VaultKeyMaterial {
   readonly metadata: VaultMetadata
   readonly key: CryptoKey
 }
+
+export interface PasskeyEntry {
+  readonly credentialIdBase64Url: string
+  readonly wrapped: EncryptedEnvelope
+  readonly label: string
+  readonly createdAt: string
+}
+
+export interface PasskeyConfig {
+  readonly prfSaltBase64: string
+  readonly entries: readonly PasskeyEntry[]
+}
