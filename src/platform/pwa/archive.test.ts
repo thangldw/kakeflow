@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { unzipSync, zipSync } from 'fflate'
+import { openDB } from 'idb'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 const argonMock = vi.hoisted(() => ({
@@ -18,6 +19,8 @@ vi.mock('./argonWorker', () => ({ deriveArgon2idInWorker: argonMock.derive }))
 
 import { inspectPwaArchive } from './archive'
 import { PwaLedgerClient } from './client'
+import { PwaVaultDatabase } from './database'
+import type { PasskeyAuthenticator } from './passkey'
 
 const originalFetch = globalThis.fetch
 const sourcePassphrase = 'source correct horse battery staple'
@@ -296,5 +299,97 @@ describe('encrypted PWA archive and staged restore', () => {
     await expect(restored.listBudgets('household', '2026-08')).resolves.toEqual([
       expect.objectContaining({ budgetJpy: 1_000, actualJpy: 1_234, remainingJpy: -234 }),
     ])
+  })
+})
+
+describe('passkey wrappers and archives', () => {
+  beforeAll(() => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('kakeflow_core_bg.wasm')) {
+        const bytes = await readFile(resolve('src/platform/pwa/core-wasm/kakeflow_core_bg.wasm'))
+        return new Response(bytes, { headers: { 'Content-Type': 'application/wasm' } })
+      }
+      return originalFetch(input)
+    })
+  })
+
+  afterAll(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('never exports passkey wrappers and restores a vault without passkeys', async () => {
+    const { client } = await sourceClient('archive-passkey-source')
+    const authenticator: PasskeyAuthenticator = {
+      create: async () => ({ credentialId: new Uint8Array(20).fill(5), prfOutput: new Uint8Array(32).fill(3) }),
+      get: async () => ({ credentialId: new Uint8Array(20).fill(5), prfOutput: new Uint8Array(32).fill(3) }),
+    }
+    await client.verifyPassphrase(sourcePassphrase)
+    await client.enablePasskey(sourcePassphrase, authenticator, 'Archive passkey')
+    const row = await PwaVaultDatabase.readVaultRow('archive-passkey-source')
+    const passkeys = row?.passkeys
+    expect(passkeys?.entries).toHaveLength(1)
+
+    const archive = await client.exportVault()
+    const forbidden = [
+      'passkeys',
+      'PASSKEY_WRAP',
+      'Archive passkey',
+      passkeys!.prfSaltBase64,
+      passkeys!.entries[0].credentialIdBase64Url,
+      passkeys!.entries[0].wrapped.ciphertextBase64,
+      passkeys!.entries[0].wrapped.nonceBase64,
+    ]
+    const archiveText = new TextDecoder().decode(archive)
+    for (const value of forbidden) expect(archiveText).not.toContain(value)
+    for (const bytes of Object.values(unzipSync(archive))) {
+      const text = new TextDecoder().decode(bytes)
+      for (const value of forbidden) expect(text).not.toContain(value)
+    }
+
+    await destination('archive-passkey-destination')
+    const restored = await PwaLedgerClient.restoreVault(
+      'archive-passkey-destination',
+      archive,
+      sourcePassphrase,
+      { vaultId: 'restored-passkey-vault', evidence: { getDirectory: undefined } },
+    )
+    expect((await restored.listHouseholds())[0].name).toBe('Archive household')
+    expect(await restored.listPasskeys()).toEqual([])
+    expect(await PwaLedgerClient.readPasskeyCount('archive-passkey-destination')).toBe(0)
+  })
+
+  it('removes passkey wrappers from every vault row when restoring into the same database', async () => {
+    const { client } = await sourceClient('archive-passkey-same-database')
+    const authenticator: PasskeyAuthenticator = {
+      create: async () => ({ credentialId: new Uint8Array(20).fill(6), prfOutput: new Uint8Array(32).fill(4) }),
+      get: async () => ({ credentialId: new Uint8Array(20).fill(6), prfOutput: new Uint8Array(32).fill(4) }),
+    }
+    await client.verifyPassphrase(sourcePassphrase)
+    await client.enablePasskey(sourcePassphrase, authenticator, 'Same database passkey')
+    expect((await PwaVaultDatabase.readVaultRow('archive-passkey-same-database'))?.passkeys?.entries)
+      .toHaveLength(1)
+    const archive = await client.exportVault()
+    client.close()
+
+    const restored = await PwaLedgerClient.restoreVault(
+      'archive-passkey-same-database',
+      archive,
+      sourcePassphrase,
+      { vaultId: 'restored-same-database-vault', evidence: { getDirectory: undefined } },
+    )
+    expect((await restored.listHouseholds())[0].name).toBe('Archive household')
+    restored.close()
+
+    const database = await openDB('archive-passkey-same-database')
+    const rows = await database.getAll('vaults')
+    database.close()
+    expect(rows.map((row) => row.vaultId).sort()).toEqual(
+      ['restored-same-database-vault', 'source-vault'],
+    )
+    for (const row of rows) {
+      expect(row).not.toHaveProperty('passkeys')
+      expect(JSON.stringify(row)).not.toContain('Same database passkey')
+    }
+    expect(await PwaLedgerClient.readPasskeyCount('archive-passkey-same-database')).toBe(0)
   })
 })

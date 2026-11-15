@@ -205,3 +205,11 @@ export interface MonthlyDashboard {
   readonly expenseJpy: number
   readonly expenseCategories: readonly MonthlyExpenseCategory[]
 }
+
+/** What the UI may show about an enrolled passkey; the wrapper itself never leaves the client. */
+export interface PasskeySummary {
+  readonly credentialIdBase64Url: string
+  readonly label: string
+  /** ISO timestamp of the enrolment. */
+  readonly createdAt: string
+}

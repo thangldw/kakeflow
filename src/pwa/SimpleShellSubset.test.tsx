@@ -27,6 +27,8 @@ import viSubset from './locales/vi.subset.json'
 import { previousMonths } from '../features/simple/homeMath'
 import { I18nProvider, translateText } from '../i18n'
 import { PwaLedgerClient } from '../platform/pwa/client'
+import { PasskeyCancelledError, PasskeyUnsupportedError } from '../platform/pwa/passkey'
+import { fakePasskeyAuthenticator } from '../test/fakePasskey'
 import type { Household } from '../platform/pwa/types'
 import { defaultChart } from './defaultChart'
 import { SimpleShell } from './SimpleShell'
@@ -79,6 +81,8 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+  vi.restoreAllMocks()
   render(<I18nProvider>{null}</I18nProvider>)
   cleanup()
 })
@@ -89,6 +93,8 @@ afterAll(() => {
 
 describe.each([['en', enSubset], ['vi', viSubset]] as const)('Simple screens on the %s PWA catalog subset', (locale, subset) => {
   const t = (source: string) => translateText(locale, source)
+  // Each Turn off button is named after its entry, so its accessible name starts with the visible text.
+  const turnOff = new RegExp(`^${t('無効にする')} `, 'u')
 
   it('serves every subset key in the language, never its Japanese source', () => {
     const fallbacks = Object.keys(subset).filter((source) => t(source) === source || japanese.test(t(source)))
@@ -151,5 +157,114 @@ describe.each([['en', enSubset], ['vi', viSubset]] as const)('Simple screens on 
     openTab('今日')
     expect(await screen.findByRole('heading', { name: 'Trip' })).toBeInTheDocument()
     expect(japaneseText(body)).toEqual([])
+  })
+
+  it('shows no Japanese in any step, message or confirmation of the quick unlock card', async () => {
+    vi.stubGlobal('PublicKeyCredential', class {})
+    const client = await chartVault(locale)
+    // The first prompt is cancelled, the second is unsupported, the third works.
+    let prompts = 0
+    const authenticator = fakePasskeyAuthenticator({ create: () => {
+      prompts += 1
+      if (prompts === 1) return Promise.reject(new PasskeyCancelledError())
+      if (prompts === 2) return Promise.reject(new PasskeyUnsupportedError())
+      return Promise.resolve() as Promise<never>
+    } })
+    localStorage.setItem('kakeflow.locale', locale)
+    render(<I18nProvider>
+      <SimpleShell client={client} household={household} usageKey="subset:household" onOpenPage={vi.fn()} onSwitchToClassic={vi.fn()} passkeyAuthenticator={authenticator} />
+    </I18nProvider>)
+    const body = document.body
+    fireEvent.click(within(screen.getByRole('navigation', { name: t('主なページ') })).getByRole('button', { name: t('そのほか') }))
+    const card = (await screen.findByRole('heading', { name: t('指紋・顔・PINですばやく開く') })).closest('section')!
+    // The language switch names each language in itself, so 日本語 is the one expected Japanese text.
+    const expected = ['日本語']
+    expect(japaneseText(body)).toEqual(expected)
+
+    const startAndCheck = async (value: string) => {
+      fireEvent.click(within(card).getByRole('button', { name: t('オンにする') }))
+      fireEvent.change(within(card).getByLabelText(t('保管庫用パスフレーズ')), { target: { value } })
+      expect(japaneseText(body)).toEqual(expected)
+      fireEvent.click(within(card).getByRole('button', { name: t('続ける') }))
+    }
+
+    // A short passphrase, then a wrong one.
+    fireEvent.click(within(card).getByRole('button', { name: t('オンにする') }))
+    fireEvent.change(within(card).getByLabelText(t('保管庫用パスフレーズ')), { target: { value: 'short' } })
+    fireEvent.click(within(card).getByRole('button', { name: t('続ける') }))
+    expect(await within(card).findByText(t('パスフレーズは12文字以上にしてください'))).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+    fireEvent.change(within(card).getByLabelText(t('保管庫用パスフレーズ')), { target: { value: 'another passphrase here' } })
+    fireEvent.click(within(card).getByRole('button', { name: t('続ける') }))
+    expect(await within(card).findByText(t('パスフレーズが正しくありません。'))).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+    fireEvent.click(within(card).getByRole('button', { name: t('キャンセル') }))
+
+    // Cancelled, then unsupported, then turned on.
+    await startAndCheck('correct horse battery staple')
+    fireEvent.click(await within(card).findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await within(card).findByText(t('パスキーの確認をキャンセルしました。'))).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+    await startAndCheck('correct horse battery staple')
+    expect(japaneseText(body)).toEqual(expected)
+    fireEvent.click(await within(card).findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await within(card).findByText(t('この端末やブラウザでは、パスキーで開けません。引き続きパスフレーズをお使いください。'))).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+    await startAndCheck('correct horse battery staple')
+    fireEvent.click(await within(card).findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await within(card).findByText(t('この端末でオンになっています'))).toBeInTheDocument()
+    expect(within(card).getByText(t('解錠用パスキー'))).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: t('別のパスキーを追加') })).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+
+    // The turn-off confirmation, a failed removal, then the removal.
+    fireEvent.click(within(card).getByRole('button', { name: turnOff }))
+    expect(await within(card).findByText(t('このパスキーを無効にしますか？'))).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+    vi.spyOn(client, 'removePasskey').mockRejectedValueOnce(new Error('disk full'))
+    fireEvent.click(within(card).getByRole('button', { name: t('はい、無効にします') }))
+    expect(await within(card).findByText(t('無効にできませんでした。もう一度お試しください。'))).toBeInTheDocument()
+    expect(japaneseText(body)).toEqual(expected)
+    fireEvent.click(await within(card).findByRole('button', { name: turnOff }))
+    fireEvent.click(within(card).getByRole('button', { name: t('はい、無効にします') }))
+    await waitFor(() => expect(within(card).queryByText(t('この端末でオンになっています'))).not.toBeInTheDocument())
+    expect(japaneseText(body)).toEqual(expected)
+  })
+
+  it('shows no Japanese on the quick unlock card at the passkey limit or after the passphrase check expires', async () => {
+    vi.stubGlobal('PublicKeyCredential', class {})
+    const client = await chartVault(locale)
+    const seed = fakePasskeyAuthenticator()
+    for (let index = 0; index < 3; index += 1) {
+      await client.verifyPassphrase('correct horse battery staple')
+      await client.enablePasskey('correct horse battery staple', seed)
+    }
+    localStorage.setItem('kakeflow.locale', locale)
+    render(<I18nProvider>
+      <SimpleShell client={client} household={household} usageKey="subset:household" onOpenPage={vi.fn()} onSwitchToClassic={vi.fn()} passkeyAuthenticator={fakePasskeyAuthenticator()} />
+    </I18nProvider>)
+    fireEvent.click(within(screen.getByRole('navigation', { name: t('主なページ') })).getByRole('button', { name: t('そのほか') }))
+    expect(await screen.findByText(t('パスキーの上限に達しました。新しく追加するには、先にどれかを無効にしてください。'))).toBeInTheDocument()
+    expect(japaneseText(document.body)).toEqual(['日本語'])
+
+    fireEvent.click(screen.getAllByRole('button', { name: turnOff })[0])
+    fireEvent.click(await screen.findByRole('button', { name: t('はい、無効にします') }))
+    await waitFor(() => expect(screen.queryByText(t('パスキーの上限に達しました。新しく追加するには、先にどれかを無効にしてください。'))).not.toBeInTheDocument())
+
+    vi.spyOn(client, 'enablePasskey').mockRejectedValueOnce(new Error('Passkey already enabled'))
+    fireEvent.click(screen.getByRole('button', { name: t('別のパスキーを追加') }))
+    fireEvent.change(screen.getByLabelText(t('保管庫用パスフレーズ')), { target: { value: 'correct horse battery staple' } })
+    fireEvent.click(screen.getByRole('button', { name: t('続ける') }))
+    fireEvent.click(await screen.findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await screen.findByText(t('この端末のパスキーはすでにオンになっています。'))).toBeInTheDocument()
+    expect(japaneseText(document.body)).toEqual(['日本語'])
+
+    vi.spyOn(client, 'enablePasskey').mockRejectedValueOnce(new Error('Passphrase not verified'))
+    fireEvent.click(screen.getByRole('button', { name: t('別のパスキーを追加') }))
+    fireEvent.change(screen.getByLabelText(t('保管庫用パスフレーズ')), { target: { value: 'correct horse battery staple' } })
+    fireEvent.click(screen.getByRole('button', { name: t('続ける') }))
+    fireEvent.click(await screen.findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await screen.findByText(t('パスフレーズの確認の有効期限が切れました。もう一度入力してください。'))).toBeInTheDocument()
+    expect(japaneseText(document.body)).toEqual(['日本語'])
   })
 })

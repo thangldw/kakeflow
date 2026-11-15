@@ -1,6 +1,6 @@
 # PWA passkey quick unlock: design
 
-Date: 2026-11-15. Status: draft for the owner's approval. The owner chose option A ("an optional quick unlock added after the vault exists; the passphrase stays mandatory and is the recovery path") on 2026-11-15. Parent specs: `2026-11-14-pwa-simple-mode-design.md` (which left passkey out as "a separate design") and `2026-08-24-kakeflow-pwa-foundation-design.md` (the vault).
+Date: 2026-11-15. Status: implemented (verified in Chromium with a virtual authenticator; see "Verified / not verified" under Verification). The owner chose option A ("an optional quick unlock added after the vault exists; the passphrase stays mandatory and is the recovery path") on 2026-11-15. Parent specs: `2026-11-14-pwa-simple-mode-design.md` (which left passkey out as "a separate design") and `2026-08-24-kakeflow-pwa-foundation-design.md` (the vault).
 
 ## Intent and why
 
@@ -72,7 +72,7 @@ The limit of three is for "this phone plus a second device or a security key", n
 
 ### WebAuthn ceremony (no server)
 
-- `rp.id` = `location.hostname`; random local challenge (it only has to be fresh); `userVerification: "required"`; `residentKey: "preferred"`; random 16-byte `user.id`; `excludeCredentials` = the stored ids; `extensions: { prf: { eval: { first: prfSalt } } }` on create (Chrome 116+ and Safari 18+ return the PRF result at creation; where only `prf.enabled` comes back, a follow-up `get` with the same eval is needed and costs the user a **second tap**, which is accepted).
+- `rp.id` = `location.hostname`; random local challenge (it only has to be fresh); `userVerification: "required"`; `residentKey: "preferred"`; random 16-byte `user.id`; `excludeCredentials` = the stored ids; `extensions: { prf: { eval: { first: prfSalt } } }` on create (Chrome 116+ and Safari 18+ return the PRF result at creation; where only `prf.enabled` comes back, the client runs a follow-up `get` with the same eval itself, inside the same Confirm tap; the card has no separate "tap again" step). Known limitation: if a browser returns PRF only on assertion and refuses that follow-up `get` without a fresh user gesture, enrolment fails with the standard "can't unlock with a passkey" message and stores nothing. A possible future fix is a `needsSecondTap` callback in `enablePasskey`, so the card can show one more Confirm button for the `get`.
 - Because WebKit requires a fresh user gesture for each WebAuthn call and Argon2id takes seconds on a phone, enrolment is split so that no WebAuthn call follows a long computation inside the same tap: (1) the user types the passphrase and taps Continue; the passphrase is verified against `metadata.keyCheck` (Argon2id) and discarded, no raw key bytes are kept between steps; (2) the screen shows a single "Confirm with fingerprint / face / PIN" button; that tap runs the create (and the follow-up get when needed); (3) the passphrase is re-derived (no gesture needed) to obtain the raw bytes, the KEK wraps them, the wrapper is decrypted once as a self-check, and only then is the row written. The re-derivation means a second Argon2id run; it is preferred over holding raw key bytes in memory between taps.
 - If PRF is not supported or the result is missing, enrolment stops with a plain message ("This browser or device can't unlock with a passkey. Keep using your passphrase.") and nothing is stored. The orphan credential cannot be removed from a web page.
 - Unlock uses `allowCredentials` of all stored ids, `userVerification: "required"` and PRF eval with the vault's shared salt; the credential id returned selects the entry. It requires a user gesture (button), never an automatic prompt, so iOS accepts it.
@@ -92,6 +92,25 @@ The limit of three is for "this phone plus a second device or a security key", n
 
 Unit tests with a fake PRF authenticator: enrol, unlock, wrong credential, missing PRF, cancelled ceremony, wrapper bound to its vault and credential id (moved wrapper fails), at most three, removal, passphrase still works after each, archive export does not contain the wrapper and a restored vault has none. Component tests in en/vi/ja for the unlock screen and the card. Playwright e2e in Chromium with the CDP WebAuthn virtual authenticator (`hasPrf: true`, `hasUserVerification: true`, `isUserVerified: true`): create vault, enable, reload, unlock with passkey, remove, reload, passphrase only; plus a negative run with an authenticator without PRF. `npm run build:pwa` with the contract test. Not verifiable here: Safari/iOS, real platform authenticators, security keys, cloud-keychain sync behaviour.
 
+#### Verified / not verified
+
+`e2e/pwa-passkey.spec.ts` runs at 360px in Chromium against the production PWA build, served on `localhost` (the app hides the passkey on IP-address hosts, which have no valid `rp.id`).
+
+Verified:
+
+- Chromium with the CDP virtual authenticator with PRF (`ctap2`, internal, resident key, user verification): turn on from More (passphrase, then Confirm), reload, unlock with the passkey button (shown above the passphrase field) into the same household, budget and spending; turn off from More with the confirmation, reload, only the passphrase form.
+- Chromium with the virtual authenticator without PRF: the card shows "This browser or device can't unlock with a passkey. Keep using your passphrase." and stores nothing (no passkey button after reload).
+- Offline unlock: with the network off, the service worker serves the app and the passkey opens the vault.
+- Passphrase fallback: the passphrase still unlocks after the passkey is turned off and after a failed (no PRF) enrolment.
+
+Not verified:
+
+- Safari/iOS (WebKit's user-gesture rule for each WebAuthn call).
+- Real platform authenticators (Touch ID, Windows Hello, Android).
+- Roaming security keys.
+- Cloud-keychain sync of the passkey to another device.
+- The second-tap path: Chromium's virtual authenticator returns the PRF result at creation, so the client's follow-up `get` (PRF only on assertion) never ran in a browser; it is covered by unit tests with a fake authenticator only.
+
 ## Security notes
 
 - The wrapper and credential id are plaintext in IndexedDB; they show that a passkey exists on this device, nothing else. Without the authenticator's PRF secret they are useless.
@@ -108,7 +127,7 @@ Option A: optional quick unlock added after the vault exists; the passphrase sta
 
 - Passkey is offered on all PWA vaults, in Simple and classic modes, under the vault section of More; not at vault creation.
 - Up to three passkeys per vault, one shared PRF salt per vault, random `user.id` per enrolment and `excludeCredentials`; the UI manages them as a list.
-- Enrolment is three steps (passphrase check, one tap for the passkey ceremony, then wrap) with a second Argon2id run instead of holding raw key bytes between taps; a second tap is accepted when the browser returns PRF only on `get`.
+- Enrolment is three steps (passphrase check, one tap for the passkey ceremony, then wrap) with a second Argon2id run instead of holding raw key bytes between taps; when the browser returns PRF only on `get`, the client runs the follow-up `get` itself in the same tap; if the browser refuses it without a fresh gesture, enrolment fails with the standard "can't unlock with a passkey" message and stores nothing (known limitation; possible future fix: a `needsSecondTap` callback in `enablePasskey`).
 - The wrapper record id is the base64url SHA-256 of the credential id.
 - The quick unlock card is trilingual; the classic receipt, ledger, evidence and backup screens stay English.
 - `userVerification: "required"` (a passkey that opens financial data must verify the person); `residentKey: "preferred"`.

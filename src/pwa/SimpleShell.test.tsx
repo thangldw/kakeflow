@@ -17,6 +17,8 @@ const argonMock = vi.hoisted(() => ({
 vi.mock('../platform/pwa/argonWorker', () => ({ deriveArgon2idInWorker: argonMock.derive }))
 
 import { I18nProvider, translateText } from '../i18n'
+import type { PasskeyAuthenticator } from '../platform/pwa/passkey'
+import { fakePasskeyAuthenticator } from '../test/fakePasskey'
 import { PwaLedgerClient } from '../platform/pwa/client'
 import type { Household } from '../platform/pwa/types'
 import { previousMonths } from '../features/simple/homeMath'
@@ -53,12 +55,12 @@ async function setupFormVault() {
   return client
 }
 
-function renderShell(client: PwaLedgerClient, locale: 'en' | 'vi') {
+function renderShell(client: PwaLedgerClient, locale: 'en' | 'vi' | 'ja', passkeyAuthenticator?: PasskeyAuthenticator) {
   localStorage.setItem('kakeflow.locale', locale)
   const onOpenPage = vi.fn()
   const onSwitchToClassic = vi.fn()
   const view = render(<I18nProvider>
-    <SimpleShell client={client} household={household} usageKey={`simple-shell:${household.id}`} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />
+    <SimpleShell client={client} household={household} usageKey={`simple-shell:${household.id}`} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} passkeyAuthenticator={passkeyAuthenticator} />
   </I18nProvider>)
   return { ...view, onOpenPage, onSwitchToClassic }
 }
@@ -90,6 +92,7 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   localStorage.clear()
+  Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
   // The active locale is module state; render once in Japanese so later files start from the default.
   render(<I18nProvider>{null}</I18nProvider>)
   cleanup()
@@ -310,6 +313,44 @@ describe.each(['en', 'vi'] as const)('SimpleShell in %s', (locale) => {
     expect(ids.filter((id) => id === 'income-salary')).toHaveLength(1)
     expect(ids.filter((id) => !id.startsWith('expense-'))).toEqual(['asset', 'expense', 'income-salary'])
     expect(ids).not.toEqual(expect.arrayContaining(['expense-groceries']))
+  })
+})
+
+describe.each(['en', 'vi', 'ja'] as const)('SimpleShell quick unlock card in %s', (locale) => {
+  const t = (source: string) => translateText(locale, source)
+
+  it('shows the quick unlock card under More and turns it on with the passphrase and one passkey prompt', async () => {
+    vi.stubGlobal('PublicKeyCredential', class {})
+    const client = await emptyVault()
+    const authenticator = fakePasskeyAuthenticator()
+    const { container } = renderShell(client, locale, authenticator)
+    fireEvent.click(within(tabBar()).getByRole('button', { name: t('そのほか') }))
+
+    const card = (await screen.findByRole('heading', { name: t('指紋・顔・PINですばやく開く') })).closest('section')!
+    expect(card).toHaveClass('simple-card')
+    // It sits with the other More cards: after the page list, before the mode and language switches.
+    expect(screen.getByRole('button', { name: t('バックアップと復元') }).compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(card.compareDocumentPosition(screen.getByRole('group', { name: t('言語') })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    if (locale !== 'ja') expect(lowerCaseStarts(container)).toEqual([])
+
+    fireEvent.click(within(card).getByRole('button', { name: t('オンにする') }))
+    fireEvent.change(within(card).getByLabelText(t('保管庫用パスフレーズ')), { target: { value: passphrase } })
+    fireEvent.click(within(card).getByRole('button', { name: t('続ける') }))
+    fireEvent.click(await within(card).findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await within(card).findByText(t('この端末でオンになっています'))).toBeInTheDocument()
+    expect(authenticator.create).toHaveBeenCalledTimes(1)
+    expect(await client.listPasskeys()).toHaveLength(1)
+  })
+
+  it('shows no quick unlock card where the browser cannot offer a passkey', async () => {
+    const client = await emptyVault()
+    const list = vi.spyOn(client, 'listPasskeys')
+    renderShell(client, locale, fakePasskeyAuthenticator())
+    fireEvent.click(within(tabBar()).getByRole('button', { name: t('そのほか') }))
+    expect(await screen.findByRole('group', { name: t('言語') })).toBeInTheDocument()
+    await waitFor(() => expect(list).toHaveBeenCalled())
+    await new Promise((done) => setTimeout(done, 20))
+    expect(screen.queryByRole('heading', { name: t('指紋・顔・PINですばやく開く') })).not.toBeInTheDocument()
   })
 })
 

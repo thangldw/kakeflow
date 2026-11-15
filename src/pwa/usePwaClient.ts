@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { PwaLedgerClient } from '../platform/pwa/client'
+import type { PasskeyAuthenticator } from '../platform/pwa/passkey'
 
 export type VaultMode = 'new' | 'locked' | 'unlocked'
 
@@ -11,6 +12,7 @@ export interface PwaClientSession {
   readonly error: string | null
   readonly createVault: (passphrase: string) => Promise<PwaLedgerClient>
   readonly unlockVault: (passphrase: string) => Promise<PwaLedgerClient>
+  readonly unlockVaultWithPasskey: (authenticator: PasskeyAuthenticator) => Promise<PwaLedgerClient>
   readonly restoreVault: (archive: Uint8Array, passphrase: string) => Promise<PwaLedgerClient>
   readonly lockVault: () => void
   readonly clearError: () => void
@@ -75,6 +77,10 @@ export function usePwaClient(databaseName: string): PwaClientSession {
     run(() => PwaLedgerClient.unlock(databaseName, passphrase))
   ), [databaseName, run])
 
+  const unlockVaultWithPasskey = useCallback((authenticator: PasskeyAuthenticator) => (
+    run(() => PwaLedgerClient.unlockWithPasskey(databaseName, authenticator))
+  ), [databaseName, run])
+
   const restoreVault = useCallback((archive: Uint8Array, passphrase: string) => (
     run(() => PwaLedgerClient.restoreVault(databaseName, archive, passphrase))
       .then((restored) => {
@@ -100,6 +106,7 @@ export function usePwaClient(databaseName: string): PwaClientSession {
     error,
     createVault,
     unlockVault,
+    unlockVaultWithPasskey,
     restoreVault,
     lockVault,
     clearError: useCallback(() => setError(null), []),

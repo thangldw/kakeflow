@@ -29,6 +29,8 @@ vi.mock('./serviceWorker', () => ({
 import { I18nProvider } from '../i18n'
 import { readUiMode, writeUiMode } from '../features/simple/uiMode'
 import { PwaLedgerClient } from '../platform/pwa/client'
+import { PasskeyCancelledError, type PasskeyAuthenticator } from '../platform/pwa/passkey'
+import { fakePasskeyAuthenticator } from '../test/fakePasskey'
 import type { Household } from '../platform/pwa/types'
 import type { PwaOcrDocument } from './PwaRoot'
 import PwaRoot, { BackupScreen } from './PwaRoot'
@@ -491,8 +493,8 @@ describe('PWA Simple mode and language', () => {
     Object.defineProperty(navigator, 'language', { configurable: true, get: () => language })
   }
 
-  async function createVault(databaseName: string) {
-    render(<PwaRoot databaseName={databaseName} ocrDocument={vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt)} />)
+  async function createVault(databaseName: string, authenticator?: PasskeyAuthenticator) {
+    render(<PwaRoot databaseName={databaseName} passkeyAuthenticator={authenticator} ocrDocument={vi.fn<PwaOcrDocument>().mockResolvedValue(recognizedReceipt)} />)
     // The create and unlock cards follow the language, so the helpers accept the English or the Vietnamese label.
     fireEvent.change(screen.getByLabelText(/^(?:Vault passphrase|Cụm mật khẩu của kho dữ liệu)$/), { target: { value: passphrase } })
     fireEvent.change(screen.getByLabelText(/^(?:Confirm passphrase|Xác nhận cụm mật khẩu)$/), { target: { value: passphrase } })
@@ -690,6 +692,60 @@ describe('PWA Simple mode and language', () => {
     expect(document.documentElement.lang).toBe('vi')
   })
 
+  it('offers the quick unlock card under More, and once it is on the unlock screen offers the passkey', async () => {
+    browserLanguage('en-US')
+    vi.stubGlobal('PublicKeyCredential', class {})
+    try {
+      const authenticator = fakePasskeyAuthenticator()
+      await createVault('pwa-quick-unlock-simple', authenticator)
+      await setUpHousehold()
+      fireEvent.click(within(await screen.findByRole('navigation', { name: 'Main pages' })).getByRole('button', { name: 'More' }))
+      const card = (await screen.findByRole('heading', { name: 'Quick unlock with fingerprint, face or PIN' })).closest('section')!
+      fireEvent.click(within(card).getByRole('button', { name: 'Turn on' }))
+      fireEvent.change(within(card).getByLabelText('Vault passphrase'), { target: { value: passphrase } })
+      fireEvent.click(within(card).getByRole('button', { name: 'Continue' }))
+      fireEvent.click(await within(card).findByRole('button', { name: 'Confirm with fingerprint, face or PIN' }))
+      expect(await within(card).findByText('On for this device')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Lock vault' }))
+      expect(await screen.findByRole('button', { name: 'Unlock with passkey' })).toBeInTheDocument()
+    } finally {
+      Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+    }
+  })
+
+  it('shows the quick unlock card on the classic overview in the page language, inside the English workspace', async () => {
+    browserLanguage('vi-VN')
+    vi.stubGlobal('PublicKeyCredential', class {})
+    try {
+      await createVault('pwa-quick-unlock-classic', fakePasskeyAuthenticator())
+      await setUpHousehold({ title: 'Thiết lập hộ gia đình', household: 'Tên hộ gia đình', money: 'Tài khoản tiền', expense: 'Tài khoản chi tiêu', save: 'Lưu thiết lập cục bộ' })
+      fireEvent.click(within(await screen.findByRole('navigation', { name: 'Trang chính' })).getByRole('button', { name: 'Thêm' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Sổ cái và chứng từ' }))
+      fireEvent.click(await screen.findByRole('button', { name: /Overview/u }))
+      await screen.findByRole('heading', { name: 'Household overview' })
+
+      const heading = await screen.findByRole('heading', { name: 'Mở nhanh bằng vân tay, khuôn mặt hoặc mã PIN' })
+      expect(document.querySelector('.pwa-workspace')).toHaveAttribute('lang', 'en')
+      expect(heading.closest('[lang]')).toHaveAttribute('lang', 'vi')
+      expect(screen.getByRole('button', { name: 'Bật' })).toHaveClass('primary-btn')
+    } finally {
+      Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+    }
+  })
+
+  it('shows no quick unlock card on the classic overview where the browser cannot offer a passkey', async () => {
+    browserLanguage('en-US')
+    await createVault('pwa-quick-unlock-unavailable', fakePasskeyAuthenticator())
+    await setUpHousehold()
+    fireEvent.click(await screen.findByRole('button', { name: 'More' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Full' }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+    await new Promise((done) => setTimeout(done, 30))
+    expect(screen.queryByRole('heading', { name: 'Quick unlock with fingerprint, face or PIN' })).not.toBeInTheDocument()
+    expect(document.querySelector('.pwa-mode-panel:empty')).not.toBeNull()
+  })
+
   it('keeps the English vault status pills and Lock vault text', async () => {
     browserLanguage('en-US')
     await createVault('pwa-simple-english-chrome')
@@ -697,5 +753,187 @@ describe('PWA Simple mode and language', () => {
     await screen.findByRole('navigation', { name: 'Main pages' })
     expect([...screen.getByLabelText('Runtime state').children].map((pill) => pill.textContent)).toEqual(['LOCAL', 'UNLOCKED', 'OFFLINE READY'])
     expect(screen.getByRole('button', { name: 'Lock vault' })).toBeInTheDocument()
+  })
+})
+
+describe('PWA passkey unlock', () => {
+  const originalLanguage = Object.getOwnPropertyDescriptor(navigator, 'language')
+  const labels = {
+    en: { passkey: 'Unlock with passkey', unlock: 'Unlock vault', passphrase: 'Vault passphrase', fallback: 'Could not use the passkey. Please unlock with your passphrase.' },
+    vi: { passkey: 'Mở khóa bằng khóa truy cập', unlock: 'Mở khóa kho dữ liệu', passphrase: 'Cụm mật khẩu của kho dữ liệu', fallback: 'Không dùng được khóa truy cập. Vui lòng mở khóa bằng cụm mật khẩu.' },
+    ja: { passkey: 'パスキーで開く', unlock: 'ロックを解除する', passphrase: '保管庫用パスフレーズ', fallback: 'パスキーを使えませんでした。パスフレーズで開いてください。' },
+  }
+
+  /** A deterministic PRF authenticator: the output depends on the credential id and the salt only. */
+  function passkeyAuthenticator(options: { get?: () => Promise<never> } = {}) {
+    const prf = async (id: Uint8Array, salt: Uint8Array) => {
+      const input = new Uint8Array(id.length + salt.length)
+      input.set(id)
+      input.set(salt, id.length)
+      return new Uint8Array(await crypto.subtle.digest('SHA-256', input))
+    }
+    const get = vi.fn(async (input: Parameters<PasskeyAuthenticator['get']>[0]) => {
+      await options.get?.()
+      const id = new Uint8Array(input.allowCredentialIds[0])
+      return { credentialId: id, prfOutput: await prf(id, input.prfSalt) }
+    })
+    const create = vi.fn(async (input: Parameters<PasskeyAuthenticator['create']>[0]) => {
+      const id = new Uint8Array(16).fill(7)
+      return { credentialId: id, prfOutput: await prf(id, input.prfSalt) }
+    })
+    return { create, get } satisfies PasskeyAuthenticator
+  }
+
+  async function lockedVault(databaseName: string, authenticator?: PasskeyAuthenticator) {
+    const client = await PwaLedgerClient.createVault(databaseName, passphrase, { evidence: { getDirectory: undefined } })
+    await client.createHousehold({ id: 'household', name: 'Home' })
+    if (authenticator) {
+      await client.verifyPassphrase(passphrase)
+      await client.enablePasskey(passphrase, authenticator)
+    }
+    client.lock()
+    client.close()
+    localStorage.setItem(`kakeflow.pwa.vault.${databaseName}`, '1')
+  }
+
+  function browserLanguage(language: string) {
+    Object.defineProperty(navigator, 'language', { configurable: true, get: () => language })
+  }
+
+  function withPasskeyCapability(available: boolean) {
+    if (available) vi.stubGlobal('PublicKeyCredential', class {})
+    else Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+  }
+
+  beforeEach(() => {
+    let queue = Promise.resolve()
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+      request: (_name: string, callback: () => unknown) => {
+        const result = queue.then(callback)
+        queue = result.then(() => undefined, () => undefined)
+        return result
+      },
+    } })
+    withPasskeyCapability(true)
+  })
+
+  beforeAll(() => {
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('kakeflow_core_bg.wasm')) {
+        const bytes = await readFile(resolve('src/platform/pwa/core-wasm/kakeflow_core_bg.wasm'))
+        return new Response(bytes, { headers: { 'Content-Type': 'application/wasm' } })
+      }
+      return originalFetch(input)
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks)
+    else Reflect.deleteProperty(navigator, 'locks')
+    if (originalLanguage) Object.defineProperty(navigator, 'language', originalLanguage)
+    else Reflect.deleteProperty(navigator, 'language')
+    Reflect.deleteProperty(globalThis, 'PublicKeyCredential')
+    localStorage.clear()
+    vi.restoreAllMocks()
+    // The active locale is module state; render once in Japanese so later files start from the default.
+    render(<I18nProvider>{null}</I18nProvider>)
+    cleanup()
+  })
+
+  afterAll(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it.each([
+    ['en', 'en-US'],
+    ['vi', 'vi-VN'],
+    ['ja', 'ja-JP'],
+  ] as const)('offers a primary passkey button above the passphrase field in %s and unlocks without typing', async (code, language) => {
+    const text = labels[code]
+    browserLanguage(language)
+    const authenticator = passkeyAuthenticator()
+    const database = `pwa-passkey-unlock-${code}`
+    await lockedVault(database, authenticator)
+
+    render(<PwaRoot databaseName={database} passkeyAuthenticator={authenticator} />)
+    const button = await screen.findByRole('button', { name: text.passkey })
+    expect(button).toHaveClass('pwa-primary')
+    expect(button).toHaveAttribute('type', 'button')
+    const field = screen.getByLabelText(text.passphrase)
+    expect(button.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Never an automatic prompt: the ceremony starts only from the tap.
+    expect(authenticator.get).not.toHaveBeenCalled()
+
+    fireEvent.click(button)
+    await screen.findByRole('heading', { name: 'Household overview' })
+    expect(authenticator.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the passphrase form usable and shows the inline message when the prompt is cancelled', async () => {
+    browserLanguage('en-US')
+    const authenticator = passkeyAuthenticator({ get: () => Promise.reject(new PasskeyCancelledError()) })
+    const database = 'pwa-passkey-cancelled'
+    await lockedVault(database, passkeyAuthenticator())
+
+    render(<PwaRoot databaseName={database} passkeyAuthenticator={authenticator} />)
+    fireEvent.click(await screen.findByRole('button', { name: labels.en.passkey }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(labels.en.fallback)
+    expect(screen.queryByText(/cancelled/iu)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: labels.en.passkey })).toBeEnabled()
+
+    fireEvent.change(screen.getByLabelText(labels.en.passphrase), { target: { value: passphrase } })
+    fireEvent.click(screen.getByRole('button', { name: labels.en.unlock }))
+    await screen.findByRole('heading', { name: 'Household overview' })
+  })
+
+  it('shows the same message and no detail for any other passkey failure', async () => {
+    browserLanguage('vi-VN')
+    const authenticator = passkeyAuthenticator({ get: () => Promise.reject(new Error('device exploded with secret detail')) })
+    const database = 'pwa-passkey-failed'
+    await lockedVault(database, passkeyAuthenticator())
+
+    render(<PwaRoot databaseName={database} passkeyAuthenticator={authenticator} />)
+    fireEvent.click(await screen.findByRole('button', { name: labels.vi.passkey }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(labels.vi.fallback)
+    expect(screen.queryByText(/Vault authentication failed|secret detail/u)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(labels.vi.passphrase)).toBeEnabled()
+  })
+
+  it('does not offer the button for a vault with no stored passkey', async () => {
+    browserLanguage('en-US')
+    const database = 'pwa-passkey-none'
+    await lockedVault(database)
+    const read = vi.spyOn(PwaLedgerClient, 'readPasskeyCount')
+
+    render(<PwaRoot databaseName={database} passkeyAuthenticator={passkeyAuthenticator()} />)
+    await waitFor(() => expect(read).toHaveBeenCalledWith(database))
+    await act(async () => { await read.mock.results[0].value })
+    expect(screen.getByLabelText(labels.en.passphrase)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: labels.en.passkey })).not.toBeInTheDocument()
+  })
+
+  it('does not offer the button when the browser cannot run the ceremony', async () => {
+    browserLanguage('en-US')
+    withPasskeyCapability(false)
+    const authenticator = passkeyAuthenticator()
+    const database = 'pwa-passkey-unavailable'
+    await lockedVault(database, authenticator)
+    const read = vi.spyOn(PwaLedgerClient, 'readPasskeyCount')
+
+    render(<PwaRoot databaseName={database} passkeyAuthenticator={authenticator} />)
+    await waitFor(() => expect(read).toHaveBeenCalledWith(database))
+    await act(async () => { await read.mock.results[0].value })
+    expect(screen.getByLabelText(labels.en.passphrase)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: labels.en.passkey })).not.toBeInTheDocument()
+  })
+
+  it('does not offer the button while creating a new vault', async () => {
+    browserLanguage('en-US')
+    const read = vi.spyOn(PwaLedgerClient, 'readPasskeyCount')
+    render(<PwaRoot databaseName="pwa-passkey-new" passkeyAuthenticator={passkeyAuthenticator()} />)
+    await screen.findByRole('button', { name: 'Create encrypted vault' })
+    expect(read).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: labels.en.passkey })).not.toBeInTheDocument()
   })
 })

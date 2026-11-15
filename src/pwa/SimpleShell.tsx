@@ -12,12 +12,14 @@ import { SimpleTabBar } from '../features/simple/SimpleTabBar'
 import type { SimpleTab } from '../features/simple/simpleNavigation'
 import { localize, useI18n } from '../i18n'
 import type { PwaLedgerClient } from '../platform/pwa/client'
+import type { PasskeyAuthenticator } from '../platform/pwa/passkey'
 import type { Account, Household, MonthlyBudgetRow, Transaction } from '../platform/pwa/types'
 import type { AccountDto, SavingsGoalDto } from '../platform/types'
 import { addQuickAddEssentials } from './defaultChart'
 import { formatJpy } from './formatJpy'
 import { LanguageSwitch } from './LanguageSwitch'
 import { PostedLedgerList } from './PostedLedgerList'
+import { QuickUnlockCard } from './QuickUnlockCard'
 import { createSimpleAdapter, type SimpleAdapter } from './simpleAdapter'
 
 export type PwaPage = 'import' | 'ledger' | 'backup'
@@ -32,6 +34,8 @@ interface SimpleShellProps {
   readonly onSwitchToClassic: () => void
   /** Called when the user moves on (another tab, accounts set up), so a notice shown around the shell can clear. */
   readonly onActivity?: () => void
+  /** The WebAuthn adapter for the quick unlock card; the card uses the browser's when omitted (tests inject a fake). */
+  readonly passkeyAuthenticator?: PasskeyAuthenticator
 }
 
 /** How long the "Saved ¥X · category" line stays after a quick add. */
@@ -47,7 +51,7 @@ function newId(prefix: string) {
  * Simple mode in the PWA: the five-tab bar (Today, History, Budget, Savings, More), the floating
  * "+ Add spending" button and the quick-add sheet, all served from the vault through the Simple adapter.
  */
-export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchToClassic, onActivity }: SimpleShellProps) {
+export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchToClassic, onActivity, passkeyAuthenticator }: SimpleShellProps) {
   // Subscribes the shell to the language, so every tab re-renders when it changes.
   const { text } = useI18n()
   const adapter = useMemo(() => createSimpleAdapter(client, household.id), [client, household.id])
@@ -114,7 +118,7 @@ export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchT
       {tab === 'transactions' && <HistoryTab client={client} householdId={household.id} revision={revision} />}
       {tab === 'budget' && <BudgetTab client={client} householdId={household.id} month={month} onChanged={changed} />}
       {tab === 'savings' && <SavingsTab adapter={adapter} client={client} householdId={household.id} revision={revision} onChanged={changed} />}
-      {tab === 'more' && <MoreTab onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />}
+      {tab === 'more' && <MoreTab client={client} passkeyAuthenticator={passkeyAuthenticator} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />}
     </main>
     {/* Always present so screen readers announce the text when it appears. */}
     <p className="pwa-simple-saved" role="status">{savedText}</p>
@@ -250,7 +254,12 @@ const MORE_ENTRIES: readonly { readonly page: PwaPage; readonly icon: LucideIcon
   { page: 'backup', icon: Archive },
 ]
 
-function MoreTab({ onOpenPage, onSwitchToClassic }: { readonly onOpenPage: (page: PwaPage) => void; readonly onSwitchToClassic: () => void }) {
+function MoreTab({ client, passkeyAuthenticator, onOpenPage, onSwitchToClassic }: {
+  readonly client: PwaLedgerClient
+  readonly passkeyAuthenticator?: PasskeyAuthenticator
+  readonly onOpenPage: (page: PwaPage) => void
+  readonly onSwitchToClassic: () => void
+}) {
   // Literal calls, so the PWA catalog generator collects these keys (it skips labels passed through a variable).
   const labels: Record<PwaPage, string> = {
     import: localize("レシートを取り込む"),
@@ -267,6 +276,7 @@ function MoreTab({ onOpenPage, onSwitchToClassic }: { readonly onOpenPage: (page
         </button>
       </li>)}
     </ul>
+    <QuickUnlockCard client={client} authenticator={passkeyAuthenticator} />
     <div className="simple-card"><UiModeSwitch mode="simple" onChange={(mode) => { if (mode === 'full') onSwitchToClassic() }} /></div>
     <div className="simple-card"><LanguageSwitch /></div>
   </div>
