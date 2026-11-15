@@ -188,19 +188,18 @@ function BudgetTab({ client, householdId, month, onChanged }: { readonly client:
 
   /**
    * Home budgets a month from the nearest earlier month until the month has rows of its own. The first save in such a
-   * month therefore writes all those rows for the month before the edit, so no other category drops out of "Left to spend".
+   * month therefore copies all those rows into the month before the edit, so no other category drops out of "Left to
+   * spend". The copy is one atomic write that never overwrites a row.
    */
   const carryOverOnce = (from: string) => {
     if (carryOver.current?.month !== month) {
       const categoryIds = new Set(data.categories.map((category) => category.id))
+      const copies = data.budgets.some((row) => row.month === from && categoryIds.has(row.categoryAccountId))
       const done = (async () => {
-        for (const row of data.budgets) {
-          if (row.month !== from || !categoryIds.has(row.categoryAccountId)) continue
-          await client.upsertBudget({ householdId, month, categoryAccountId: row.categoryAccountId, budgetJpy: row.budgetJpy })
-        }
+        if (copies) await client.copyBudgets({ householdId, fromMonth: from, toMonth: month })
       })()
       carryOver.current = { month, done }
-      // A failed copy is tried again by the next save (each write replaces the same row).
+      // A failed copy writes nothing and is tried again by the next save.
       done.catch(() => { if (carryOver.current?.done === done) carryOver.current = null })
     }
     return carryOver.current.done

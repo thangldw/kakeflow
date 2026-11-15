@@ -212,9 +212,12 @@ describe.each(['en', 'vi'] as const)('SimpleShell in %s', (locale) => {
     const label = screen.getByText(t('予算の引き継ぎ元'))
     expect(label.parentElement).toHaveTextContent(`${t('予算の引き継ぎ元')} ${formatMonthLabel(earlier, locale === 'en' ? 'en-US' : 'vi-VN')}`)
 
+    const copy = vi.spyOn(client, 'copyBudgets')
     fireEvent.change(within(groceries).getByLabelText(t('食料品の買い物')), { target: { value: '45000' } })
     fireEvent.click(within(groceries).getByRole('button', { name: t('予算を保存する') }))
     expect(await within(groceries).findByRole('status')).toHaveTextContent(t('予算を保存しました'))
+    // One atomic copy of the earlier month, then the edit.
+    expect(copy.mock.calls).toEqual([[{ householdId: household.id, fromMonth: earlier, toMonth: month }]])
     expect((await client.listBudgets(household.id, month)).map(({ categoryAccountId, budgetJpy }) => [categoryAccountId, budgetJpy]).sort())
       .toEqual([['expense-groceries', 45_000], ['expense-transport', 10_000]])
     // The month has its own rows now, so the label goes and the Saved note stays.
@@ -230,6 +233,34 @@ describe.each(['en', 'vi'] as const)('SimpleShell in %s', (locale) => {
 
     fireEvent.click(within(tabBar()).getByRole('button', { name: t('今日') }))
     await waitFor(() => expect(heroValue(container)).toBe('¥57,000'))
+  })
+
+  it('writes nothing when the carry-over copy fails and copies again on the next save', async () => {
+    const client = await chartVault(locale)
+    const month = currentMonth()
+    const earlier = previousMonths(month, 1)[0]
+    for (const [categoryAccountId, budgetJpy] of [['expense-groceries', 40_000], ['expense-transport', 10_000]] as const) {
+      await client.upsertBudget({ householdId: household.id, month: earlier, categoryAccountId, budgetJpy })
+    }
+    renderShell(client, locale)
+    fireEvent.click(within(tabBar()).getByRole('button', { name: t('予算管理') }))
+    const groceries = await screen.findByRole('form', { name: t('食料品の買い物') })
+    const copy = vi.spyOn(client, 'copyBudgets').mockRejectedValueOnce(new Error('disk full'))
+    const upsert = vi.spyOn(client, 'upsertBudget')
+
+    fireEvent.change(within(groceries).getByLabelText(t('食料品の買い物')), { target: { value: '45000' } })
+    fireEvent.click(within(groceries).getByRole('button', { name: t('予算を保存する') }))
+    expect(await within(groceries).findByRole('alert')).toHaveTextContent(t('予算を保存できませんでした'))
+    expect(upsert).not.toHaveBeenCalled()
+    await expect(client.listBudgets(household.id, month)).resolves.toEqual([])
+    expect(screen.getByText(t('予算の引き継ぎ元'))).toBeInTheDocument()
+
+    fireEvent.click(within(groceries).getByRole('button', { name: t('予算を保存する') }))
+    expect(await within(groceries).findByRole('status')).toHaveTextContent(t('予算を保存しました'))
+    expect(copy).toHaveBeenCalledTimes(2)
+    expect(upsert).toHaveBeenCalledTimes(1)
+    expect((await client.listBudgets(household.id, month)).map(({ categoryAccountId, budgetJpy }) => [categoryAccountId, budgetJpy]).sort())
+      .toEqual([['expense-groceries', 45_000], ['expense-transport', 10_000]])
   })
 
   it('keeps an empty editor without a carry-over label when no month has budgets', async () => {

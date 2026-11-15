@@ -248,8 +248,10 @@ describe('encrypted PWA archive and staged restore', () => {
       savedJpy: 12_000,
       targetDate: '2027-08-01',
     })
+    const copied = await client.copyBudgets({ householdId: 'household', fromMonth: '2026-08', toMonth: '2026-09' })
     const budgets = await client.listBudgets('household', '2026-08')
     const goals = await client.listSavingsGoals('household')
+    expect(copied).toEqual([expect.objectContaining({ month: '2026-09', categoryAccountId: 'food', budgetJpy: 30_000 })])
     expect(budgets).toHaveLength(1)
     expect(budgets[0]).toMatchObject({ actualJpy: 1_234 })
     const archive = await client.exportVault()
@@ -262,6 +264,7 @@ describe('encrypted PWA archive and staged restore', () => {
     )
 
     await expect(restored.listBudgets('household', '2026-08')).resolves.toEqual(budgets)
+    await expect(restored.listBudgets('household', '2026-09')).resolves.toEqual(copied)
     await expect(restored.listSavingsGoals('household')).resolves.toEqual(goals)
   })
 

@@ -2876,11 +2876,10 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged, focusG
     try {
       // Home budgets this month from an earlier month until it has rows of its own, so the first save copies all of
       // those rows here before the edit; otherwise every other category would drop out of "Left to spend".
-      // A failed copy leaves `carriedOver` in place, so the next save copies again (each write replaces the same row).
-      // That retry only works while this page stays mounted: the copy is not atomic, so if the page reloads after some
-      // rows were copied, the month has rows of its own and the rest are lost (the same limitation as the PWA).
-      for (const row of carryRows) {
-        await platformClient.upsertBudget({ householdId, month, categoryAccountId: row.categoryAccountId, budgetJpy: row.budgetJpy })
+      // The copy is one atomic operation that never overwrites a row: a failed copy writes nothing and leaves `carriedOver`
+      // in place, so the next save copies again.
+      if (carriedOver && carryRows.length > 0) {
+        await platformClient.copyBudgets({ householdId, fromMonth: carriedOver.month, toMonth: month })
       }
       await platformClient.upsertBudget({ householdId, month, categoryAccountId: budgetAccountId, budgetJpy: Number(budgetAmount) })
       // The month has rows now; cleared before the reload, so a failed reload cannot copy over this edit on a later save.

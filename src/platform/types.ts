@@ -895,6 +895,7 @@ export interface ImportRunCountsDto {
 
 export interface MonthlyCategoryBudgetDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly categoryName: string; readonly budgetJpy: number; readonly actualJpy: number; readonly remainingJpy: number }
 export interface UpsertMonthlyCategoryBudgetInputDto { readonly householdId: string; readonly month: string; readonly categoryAccountId: string; readonly budgetJpy: number }
+export interface CopyMonthlyBudgetsInputDto { readonly householdId: string; readonly fromMonth: string; readonly toMonth: string }
 export interface MoveMonthlyBudgetInputDto { readonly householdId: string; readonly month: string; readonly fromCategoryAccountId: string; readonly toCategoryAccountId: string; readonly amountJpy: number }
 
 export interface EnvelopeCardDto { readonly cardAccountId: string; readonly cardName: string; readonly owedJpy: number; readonly paymentsJpy: number }
@@ -1214,6 +1215,7 @@ export type AppCommand =
   | 'card_payment_link_confirm'
   | 'card_payment_link_unlink'
   | 'budget_move'
+  | 'budget_copy'
   | 'envelope_card_activity_query'
   | 'transfer_pair_decisions_list'
   | 'transfer_pair_decide'
@@ -1375,6 +1377,7 @@ export interface PlatformClient {
   listBudgets(householdId: string, month: string): Promise<readonly MonthlyCategoryBudgetDto[]>
   upsertBudget(input: UpsertMonthlyCategoryBudgetInputDto): Promise<MonthlyCategoryBudgetDto>
   moveBudget(input: MoveMonthlyBudgetInputDto): Promise<readonly MonthlyCategoryBudgetDto[]>
+  copyBudgets(input: CopyMonthlyBudgetsInputDto): Promise<readonly MonthlyCategoryBudgetDto[]>
   queryEnvelopeCardActivity(householdId: string, month: string): Promise<EnvelopeCardActivityDto>
   getMonthlyReviewMemo(householdId: string, month: string): Promise<MonthlyReviewMemoDto | null>
   upsertMonthlyReviewMemo(input: UpsertMonthlyReviewMemoInputDto): Promise<MonthlyReviewMemoDto | null>

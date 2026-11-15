@@ -57,6 +57,7 @@ const desktop = vi.hoisted(() => ({
   listTransferPairDecisions: vi.fn(),
   decideTransferPair: vi.fn(),
   upsertBudget: vi.fn(),
+  copyBudgets: vi.fn(),
   listSavingsGoals: vi.fn(),
   createSavingsGoal: vi.fn(),
   updateSavingsGoal: vi.fn(),
@@ -148,6 +149,7 @@ vi.mock('./platform', async () => {
       listTransferPairDecisions: desktop.listTransferPairDecisions,
       decideTransferPair: desktop.decideTransferPair,
       upsertBudget: desktop.upsertBudget,
+      copyBudgets: desktop.copyBudgets,
       listSavingsGoals: desktop.listSavingsGoals,
       createSavingsGoal: desktop.createSavingsGoal,
       updateSavingsGoal: desktop.updateSavingsGoal,
@@ -254,7 +256,7 @@ import { formatMonthLabel } from './monthLabel'
 import { PlatformIpcError } from './platform'
 import { previewImportFiles } from './features/import/importService'
 import type { StartImportRequest } from './features/import/importMapper'
-import type { ImportPreviewDto, MonthlyCategoryBudgetDto, PostingDecisionDto, UpsertMonthlyCategoryBudgetInputDto } from './platform/types'
+import type { CopyMonthlyBudgetsInputDto, ImportPreviewDto, MonthlyCategoryBudgetDto, PostingDecisionDto, UpsertMonthlyCategoryBudgetInputDto } from './platform/types'
 
 const dashboardLayouts = (overrides: Record<string, { widgetOrder: readonly string[]; hiddenWidgets: readonly string[] }> = {}) => ({
   FINANCIAL_OVERVIEW: { widgetOrder: ['TREND', 'SPENDING', 'RECENT', 'CARDS'], hiddenWidgets: [] },
@@ -4012,7 +4014,14 @@ describe('KakeFlow desktop read models', () => {
       table.set(`${month}|${categoryAccountId}`, { householdId: 'family', month, categoryAccountId, categoryName: categoryNames[categoryAccountId] ?? categoryAccountId, budgetJpy, actualJpy: 0, remainingJpy: budgetJpy })
     }
     const rowsOf = (month: string) => [...table.values()].filter((row) => row.month === month)
-    const writes = () => desktop.upsertBudget.mock.calls.map(([input]) => (input as UpsertMonthlyCategoryBudgetInputDto)).map((input) => [input.month, input.categoryAccountId, input.budgetJpy])
+    // Every write in call order: a copy as ['copy', fromMonth, toMonth], an upsert as [month, category, amount].
+    const writes = () => {
+      const copies = desktop.copyBudgets.mock.calls.map(([input]) => input as CopyMonthlyBudgetsInputDto)
+        .map((input, index) => [desktop.copyBudgets.mock.invocationCallOrder[index], ['copy', input.fromMonth, input.toMonth]] as const)
+      const upserts = desktop.upsertBudget.mock.calls.map(([input]) => input as UpsertMonthlyCategoryBudgetInputDto)
+        .map((input, index) => [desktop.upsertBudget.mock.invocationCallOrder[index], [input.month, input.categoryAccountId, input.budgetJpy]] as const)
+      return [...copies, ...upserts].sort(([left], [right]) => left - right).map(([, write]) => write)
+    }
     const label = (locale: AppLocale) => formatMonthLabel('2026-05', locale === 'ja' ? 'ja-JP' : locale === 'vi' ? 'vi-VN' : 'en-US')
 
     beforeEach(() => {
@@ -4022,6 +4031,14 @@ describe('KakeFlow desktop read models', () => {
       desktop.upsertBudget.mockImplementation(async (input: UpsertMonthlyCategoryBudgetInputDto) => {
         seed(input.month, input.categoryAccountId, input.budgetJpy)
         return table.get(`${input.month}|${input.categoryAccountId}`)
+      })
+      // Like the real command: one write that copies rows of current expense categories and keeps rows the month has.
+      desktop.copyBudgets.mockReset().mockImplementation(async (input: CopyMonthlyBudgetsInputDto) => {
+        const expenseIds = new Set(classificationAccounts.filter((account) => account.accountKind === 'EXPENSE').map((account) => account.id))
+        for (const row of rowsOf(input.fromMonth)) {
+          if (expenseIds.has(row.categoryAccountId) && !table.has(`${input.toMonth}|${row.categoryAccountId}`)) seed(input.toMonth, row.categoryAccountId, row.budgetJpy)
+        }
+        return rowsOf(input.toMonth)
       })
     })
 
@@ -4047,12 +4064,12 @@ describe('KakeFlow desktop read models', () => {
       const fromLabel = await screen.findByText(t('予算の引き継ぎ元'))
       expect(fromLabel.parentElement).toHaveTextContent(`${t('予算の引き継ぎ元')} ${label(locale)}`)
       expect(screen.getByText(t('この月の予算はまだありません。予算を保存すると、引き継ぎ元の月のカテゴリー予算をすべてこの月にコピーしてから、変更を反映します。'))).toBeInTheDocument()
-      expect(desktop.upsertBudget).not.toHaveBeenCalled()
+      expect(writes()).toEqual([])
 
       enterBudget(t, 'family-other-expense', '25000')
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
       expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
-      expect(writes()).toEqual([['2026-07', 'family-food-expense', 60000], ['2026-07', 'family-other-expense', 20000], ['2026-07', 'family-other-expense', 25000]])
+      expect(writes()).toEqual([['copy', '2026-05', '2026-07'], ['2026-07', 'family-other-expense', 25000]])
       expect(rowsOf('2026-07').map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([['family-food-expense', 60000], ['family-other-expense', 25000]])
       expect(screen.queryByText(t('予算の引き継ぎ元'))).not.toBeInTheDocument()
       await waitFor(() => expect(container.querySelectorAll('.budget-row')).toHaveLength(2))
@@ -4064,8 +4081,8 @@ describe('KakeFlow desktop read models', () => {
       // A later save in the same month is a single write.
       enterBudget(t, 'family-food-expense', '55000')
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
-      await waitFor(() => expect(desktop.upsertBudget).toHaveBeenCalledTimes(4))
-      expect(writes()[3]).toEqual(['2026-07', 'family-food-expense', 55000])
+      await waitFor(() => expect(desktop.upsertBudget).toHaveBeenCalledTimes(2))
+      expect(writes().slice(2)).toEqual([['2026-07', 'family-food-expense', 55000]])
     })
 
     it('writes only the edit in a month that already has budgets', async () => {
@@ -4092,26 +4109,26 @@ describe('KakeFlow desktop read models', () => {
       expect(writes()).toEqual([['2026-07', 'family-other-expense', 25000]])
     })
 
-    it('stops at a failed copy, keeps the edit and copies again on retry', async () => {
+    it('writes nothing when the copy fails, keeps the edit and copies again on retry', async () => {
       seed('2026-05', 'family-food-expense', 60000)
       seed('2026-05', 'family-other-expense', 20000)
-      const upsert = desktop.upsertBudget.getMockImplementation()!
-      desktop.upsertBudget.mockImplementationOnce(upsert).mockImplementationOnce(async () => { throw new Error('disk full') })
+      // The copy is atomic: a failed copy leaves the month without any rows.
+      desktop.copyBudgets.mockImplementationOnce(async () => { throw new Error('disk full') })
       const { t } = await openBudgets()
       await screen.findByText(t('予算の引き継ぎ元'))
 
       enterBudget(t, 'family-other-expense', '25000')
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
       expect(await screen.findByText(t('月間予算を保存できませんでした。'))).toBeInTheDocument()
-      expect(writes()).toEqual([['2026-07', 'family-food-expense', 60000], ['2026-07', 'family-other-expense', 20000]])
-      expect(rowsOf('2026-07').map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([['family-food-expense', 60000]])
+      expect(writes()).toEqual([['copy', '2026-05', '2026-07']])
+      expect(rowsOf('2026-07')).toEqual([])
       expect(screen.getByText(t('予算の引き継ぎ元'))).toBeInTheDocument()
       expect(screen.getByLabelText(t('予算カテゴリー'))).toHaveValue('family-other-expense')
       expect(screen.getByLabelText(t('月間予算'))).toHaveValue(25000)
 
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
       expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
-      expect(writes().slice(2)).toEqual([['2026-07', 'family-food-expense', 60000], ['2026-07', 'family-other-expense', 20000], ['2026-07', 'family-other-expense', 25000]])
+      expect(writes().slice(1)).toEqual([['copy', '2026-05', '2026-07'], ['2026-07', 'family-other-expense', 25000]])
       expect(rowsOf('2026-07').map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([['family-food-expense', 60000], ['family-other-expense', 25000]])
       expect(screen.queryByText(t('予算の引き継ぎ元'))).not.toBeInTheDocument()
     })
@@ -4121,6 +4138,8 @@ describe('KakeFlow desktop read models', () => {
       seed('2026-05', 'family-other-expense', 20000)
       let release: () => void = () => undefined
       const gate = new Promise<void>((resolve) => { release = resolve })
+      const copy = desktop.copyBudgets.getMockImplementation()!
+      desktop.copyBudgets.mockImplementation(async (input: CopyMonthlyBudgetsInputDto) => { await gate; return copy(input) })
       const upsert = desktop.upsertBudget.getMockImplementation()!
       desktop.upsertBudget.mockImplementation(async (input: UpsertMonthlyCategoryBudgetInputDto) => { await gate; return upsert(input) })
       const { t } = await openBudgets()
@@ -4132,7 +4151,7 @@ describe('KakeFlow desktop read models', () => {
       act(() => { save.click(); save.click() })
       await act(async () => { release() })
       expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
-      expect(writes()).toEqual([['2026-07', 'family-food-expense', 60000], ['2026-07', 'family-other-expense', 20000], ['2026-07', 'family-other-expense', 25000]])
+      expect(writes()).toEqual([['copy', '2026-05', '2026-07'], ['2026-07', 'family-other-expense', 25000]])
     })
 
     it('shows no note and writes only the edit when no earlier budget belongs to a current expense category', async () => {
@@ -4158,13 +4177,13 @@ describe('KakeFlow desktop read models', () => {
       enterBudget(t, 'family-other-expense', '25000')
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
       expect(await screen.findByText(t('月間予算を保存できませんでした。'))).toBeInTheDocument()
-      expect(writes()).toHaveLength(3)
+      expect(writes()).toHaveLength(2)
       desktop.listBudgets.mockImplementation(list)
 
       enterBudget(t, 'family-food-expense', '55000')
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
       expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
-      expect(writes().slice(3)).toEqual([['2026-07', 'family-food-expense', 55000]])
+      expect(writes().slice(2)).toEqual([['2026-07', 'family-food-expense', 55000]])
       expect(rowsOf('2026-07').map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([['family-food-expense', 55000], ['family-other-expense', 25000]])
     })
 
@@ -4178,7 +4197,8 @@ describe('KakeFlow desktop read models', () => {
       enterBudget(t, 'family-food-expense', '65000')
       fireEvent.click(screen.getByRole('button', { name: t('予算を保存') }))
       expect(await screen.findByText(t('月間予算を保存しました。'))).toBeInTheDocument()
-      expect(writes()).toEqual([['2026-07', 'family-food-expense', 60000], ['2026-07', 'family-other-expense', 0], ['2026-07', 'family-food-expense', 65000]])
+      expect(writes()).toEqual([['copy', '2026-05', '2026-07'], ['2026-07', 'family-food-expense', 65000]])
+      expect(rowsOf('2026-07').map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([['family-food-expense', 65000], ['family-other-expense', 0]])
     })
   })
 })
