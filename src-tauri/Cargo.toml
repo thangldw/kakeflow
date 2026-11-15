@@ -24,8 +24,8 @@ serde_json = "1.0"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2.4.2"
-rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }
-rusqlite_migration = "2.3"
+rusqlite = { version = "0.42", features = ["bundled-sqlcipher-vendored-openssl", "fallible_uint"] }
+rusqlite_migration = "2.7"
 sha2 = "0.10"
 unicode-normalization = "0.1"
 thiserror = "2"
@@ -73,3 +73,4 @@ zip = "9.0.5"
 # Backport the upstream GLib 0.20.0 mutable FFI out-pointer fix without changing GTK ABI.
 [patch.crates-io]
 glib = { path = "../vendor/glib-0.18.5" }
+rusqlite_migration = { path = "../vendor/rusqlite_migration-2.7.0" }
