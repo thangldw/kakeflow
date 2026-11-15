@@ -93,6 +93,8 @@ afterAll(() => {
 
 describe.each([['en', enSubset], ['vi', viSubset]] as const)('Simple screens on the %s PWA catalog subset', (locale, subset) => {
   const t = (source: string) => translateText(locale, source)
+  // Each Turn off button is named after its entry, so its accessible name starts with the visible text.
+  const turnOff = new RegExp(`^${t('無効にする')} `, 'u')
 
   it('serves every subset key in the language, never its Japanese source', () => {
     const fallbacks = Object.keys(subset).filter((source) => t(source) === source || japanese.test(t(source)))
@@ -211,17 +213,19 @@ describe.each([['en', enSubset], ['vi', viSubset]] as const)('Simple screens on 
     await startAndCheck('correct horse battery staple')
     fireEvent.click(await within(card).findByRole('button', { name: t('指紋・顔・PINで確認する') }))
     expect(await within(card).findByText(t('この端末でオンになっています'))).toBeInTheDocument()
+    expect(within(card).getByText(t('解錠用パスキー'))).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: t('別のパスキーを追加') })).toBeInTheDocument()
     expect(japaneseText(body)).toEqual(expected)
 
     // The turn-off confirmation, a failed removal, then the removal.
-    fireEvent.click(within(card).getByRole('button', { name: t('無効にする') }))
+    fireEvent.click(within(card).getByRole('button', { name: turnOff }))
     expect(await within(card).findByText(t('このパスキーを無効にしますか？'))).toBeInTheDocument()
     expect(japaneseText(body)).toEqual(expected)
     vi.spyOn(client, 'removePasskey').mockRejectedValueOnce(new Error('disk full'))
     fireEvent.click(within(card).getByRole('button', { name: t('はい、無効にします') }))
     expect(await within(card).findByText(t('無効にできませんでした。もう一度お試しください。'))).toBeInTheDocument()
     expect(japaneseText(body)).toEqual(expected)
-    fireEvent.click(await within(card).findByRole('button', { name: t('無効にする') }))
+    fireEvent.click(await within(card).findByRole('button', { name: turnOff }))
     fireEvent.click(within(card).getByRole('button', { name: t('はい、無効にします') }))
     await waitFor(() => expect(within(card).queryByText(t('この端末でオンになっています'))).not.toBeInTheDocument())
     expect(japaneseText(body)).toEqual(expected)
@@ -243,12 +247,20 @@ describe.each([['en', enSubset], ['vi', viSubset]] as const)('Simple screens on 
     expect(await screen.findByText(t('パスキーの上限に達しました。新しく追加するには、先にどれかを無効にしてください。'))).toBeInTheDocument()
     expect(japaneseText(document.body)).toEqual(['日本語'])
 
-    fireEvent.click(screen.getAllByRole('button', { name: t('無効にする') })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: turnOff })[0])
     fireEvent.click(await screen.findByRole('button', { name: t('はい、無効にします') }))
     await waitFor(() => expect(screen.queryByText(t('パスキーの上限に達しました。新しく追加するには、先にどれかを無効にしてください。'))).not.toBeInTheDocument())
 
+    vi.spyOn(client, 'enablePasskey').mockRejectedValueOnce(new Error('Passkey already enabled'))
+    fireEvent.click(screen.getByRole('button', { name: t('別のパスキーを追加') }))
+    fireEvent.change(screen.getByLabelText(t('保管庫用パスフレーズ')), { target: { value: 'correct horse battery staple' } })
+    fireEvent.click(screen.getByRole('button', { name: t('続ける') }))
+    fireEvent.click(await screen.findByRole('button', { name: t('指紋・顔・PINで確認する') }))
+    expect(await screen.findByText(t('この端末のパスキーはすでにオンになっています。'))).toBeInTheDocument()
+    expect(japaneseText(document.body)).toEqual(['日本語'])
+
     vi.spyOn(client, 'enablePasskey').mockRejectedValueOnce(new Error('Passphrase not verified'))
-    fireEvent.click(screen.getByRole('button', { name: t('オンにする') }))
+    fireEvent.click(screen.getByRole('button', { name: t('別のパスキーを追加') }))
     fireEvent.change(screen.getByLabelText(t('保管庫用パスフレーズ')), { target: { value: 'correct horse battery staple' } })
     fireEvent.click(screen.getByRole('button', { name: t('続ける') }))
     fireEvent.click(await screen.findByRole('button', { name: t('指紋・顔・PINで確認する') }))

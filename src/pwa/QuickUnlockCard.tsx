@@ -21,7 +21,10 @@ interface QuickUnlockCardProps {
  * confirm and enrolling: the single passkey button (second tap), so no ceremony follows a slow derivation in one gesture.
  */
 type Step = 'off' | 'passphrase' | 'checking' | 'confirm' | 'enrolling'
-type Notice = 'short' | 'wrong' | 'expired' | 'cancelled' | 'unsupported' | 'removeFailed'
+type Notice = 'short' | 'wrong' | 'expired' | 'cancelled' | 'already' | 'unsupported' | 'removeFailed'
+
+/** The label the client stores when the caller gives none; the card names such an entry in the screen language. */
+const DEFAULT_LABEL = /^Passkey \d{4}-\d{2}-\d{2}$/u
 
 /**
  * The quick unlock (passkey) card of the PWA: turn it on with the passphrase and one passkey prompt, see the
@@ -128,7 +131,7 @@ export function QuickUnlockCard({ client, authenticator }: QuickUnlockCardProps)
       }
       // A full list is already explained by the note under the disabled button.
       if (!(cause instanceof Error && cause.message === 'Passkey limit reached')) {
-        setNotice(cause instanceof PasskeyCancelledError ? 'cancelled' : 'unsupported')
+        setNotice(cause instanceof PasskeyCancelledError ? 'cancelled' : alreadyEnabled(cause) ? 'already' : 'unsupported')
       }
       await reload()
       if (mounted.current) setStep('off')
@@ -165,7 +168,8 @@ export function QuickUnlockCard({ client, authenticator }: QuickUnlockCardProps)
       : <>
         <p className="simple-card-label">{localize("この端末でオンになっています")}</p>
         <ul className="pwa-quick-unlock-list">
-          {entries.map((entry) => <PasskeyRow key={entry.credentialIdBase64Url} entry={entry} date={formatDate(entry.createdAt)}
+          {entries.map((entry, index) => <PasskeyRow key={entry.credentialIdBase64Url} date={formatDate(entry.createdAt)}
+            name={entryName(entry, index, entries.length)}
             confirming={removing === entry.credentialIdBase64Url} busy={removeBusy}
             onAsk={() => { setNotice(null); setRemoving(entry.credentialIdBase64Url) }}
             onCancel={() => setRemoving(null)}
@@ -175,7 +179,7 @@ export function QuickUnlockCard({ client, authenticator }: QuickUnlockCardProps)
     <p className="simple-note">{localize("パスキーをクラウドのキーチェーンに保存した場合、そのアカウントを管理できる人もこの保管庫を開けられます。パスフレーズが最も強い保護で、バックアップの復元にも必要です。")}</p>
 
     {step === 'off' && <>
-      <button ref={turnOnRef} type="button" className="primary-btn" disabled={atLimit} onClick={startTurnOn}>{localize("オンにする")}</button>
+      <button ref={turnOnRef} type="button" className="primary-btn" disabled={atLimit} onClick={startTurnOn}>{entries.length > 0 ? localize("別のパスキーを追加") : localize("オンにする")}</button>
       {atLimit && <p className="simple-note">{localize("パスキーの上限に達しました。新しく追加するには、先にどれかを無効にしてください。")}</p>}
     </>}
 
@@ -198,8 +202,28 @@ export function QuickUnlockCard({ client, authenticator }: QuickUnlockCardProps)
       </div>
     </div>}
 
-    {notice && <p className={notice === 'cancelled' ? 'simple-note' : 'simple-error-text'} role={notice === 'cancelled' ? 'status' : 'alert'}>{noticeText(notice)}</p>}
+    {notice && <p className={quietNotice(notice) ? 'simple-note' : 'simple-error-text'} role={quietNotice(notice) ? 'status' : 'alert'}>{noticeText(notice)}</p>}
   </section>
+}
+
+/**
+ * The browser's InvalidStateError (an excludeCredentials match) and the client's own duplicate check both mean
+ * this device's passkey is already enrolled; neither is an unsupported browser.
+ */
+function alreadyEnabled(cause: unknown): boolean {
+  if (typeof cause !== 'object' || cause === null) return false
+  const { name, message } = cause as { name?: unknown; message?: unknown }
+  return name === 'InvalidStateError' || message === 'Passkey already enabled'
+}
+
+function quietNotice(notice: Notice): boolean {
+  return notice === 'cancelled' || notice === 'already'
+}
+
+/** A default label becomes the localized word (numbered when several are listed; the date shows on its own line). */
+function entryName(entry: PasskeySummary, index: number, count: number): string {
+  if (!DEFAULT_LABEL.test(entry.label)) return entry.label
+  return count > 1 ? `${localize("解錠用パスキー")} ${index + 1}` : localize("解錠用パスキー")
 }
 
 function noticeText(notice: Notice): string {
@@ -208,13 +232,14 @@ function noticeText(notice: Notice): string {
     case 'wrong': return localize("パスフレーズが正しくありません。")
     case 'expired': return localize("パスフレーズの確認の有効期限が切れました。もう一度入力してください。")
     case 'cancelled': return localize("パスキーの確認をキャンセルしました。")
+    case 'already': return localize("この端末のパスキーはすでにオンになっています。")
     case 'unsupported': return localize("この端末やブラウザでは、パスキーで開けません。引き続きパスフレーズをお使いください。")
     case 'removeFailed': return localize("無効にできませんでした。もう一度お試しください。")
   }
 }
 
-function PasskeyRow({ entry, date, confirming, busy, onAsk, onCancel, onConfirm }: {
-  readonly entry: PasskeySummary
+function PasskeyRow({ name, date, confirming, busy, onAsk, onCancel, onConfirm }: {
+  readonly name: string
   readonly date: string
   readonly confirming: boolean
   readonly busy: boolean
@@ -222,13 +247,13 @@ function PasskeyRow({ entry, date, confirming, busy, onAsk, onCancel, onConfirm 
   readonly onCancel: () => void
   readonly onConfirm: () => void
 }) {
-  const labelId = useId()
   const warningId = useId()
+  const added = `${localize("登録日")} ${date}`
   return <li className="pwa-quick-unlock-entry">
-    <span id={labelId}>{entry.label}</span>
-    <span className="simple-note">{localize("登録日")} {date}</span>
+    <span>{name}</span>
+    <span className="simple-note">{added}</span>
     {!confirming
-      ? <button type="button" className="secondary-btn" aria-describedby={labelId} onClick={onAsk}>{localize("無効にする")}</button>
+      ? <button type="button" className="secondary-btn" aria-label={`${localize("無効にする")} ${name} (${added})`} onClick={onAsk}>{localize("無効にする")}</button>
       : <div role="group" aria-labelledby={warningId} className="pwa-quick-unlock-form">
         <p id={warningId} className="simple-note"><strong>{localize("このパスキーを無効にしますか？")}</strong> {localize("この操作で消えるのは、この端末に保存した解錠用のデータだけです。この端末のデータのコピーとパスキーをすでに持っている人のアクセスは取り消されません。完全に締め出すには、バックアップを新しい保管庫に復元してください。保管庫の鍵が新しくなります。")}</p>
         <div className="pwa-quick-unlock-actions">

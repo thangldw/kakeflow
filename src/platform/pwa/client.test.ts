@@ -853,6 +853,25 @@ describe('passkeys', () => {
     expect((await unlocked.listHouseholds())).toHaveLength(1)
   })
 
+  it.each([
+    ['a cancel', () => new PasskeyCancelledError()],
+    ['any other failure', () => new Error('follow-up refused')],
+  ])('ends with PasskeyUnsupportedError and stores nothing when the follow-up get fails with %s', async (label, failure) => {
+    const name = `passkey-follow-up-${label.replace(/\s+/gu, '-')}`
+    const client = await passkeyVault(name)
+    const authenticator = fakeAuthenticator({ createPrf: 'none' })
+    authenticator.get.mockImplementationOnce(async () => { throw failure() })
+
+    await client.verifyPassphrase(passphrase)
+    const result = client.enablePasskey(passphrase, authenticator)
+    await expect(result).rejects.toBeInstanceOf(PasskeyUnsupportedError)
+    await expect(result).rejects.not.toBeInstanceOf(PasskeyCancelledError)
+    expect(authenticator.create).toHaveBeenCalledTimes(1)
+    expect(authenticator.get).toHaveBeenCalledTimes(1)
+    expect(await client.listPasskeys()).toEqual([])
+    expect(await PwaLedgerClient.readPasskeyCount(name)).toBe(0)
+  })
+
   it('stores nothing when the ceremony is cancelled', async () => {
     const client = await passkeyVault('passkey-cancelled')
     const authenticator = fakeAuthenticator({ createError: new PasskeyCancelledError() })

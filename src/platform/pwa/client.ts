@@ -9,6 +9,7 @@ import {
   base64UrlToBytes,
   bytesToBase64Url,
   type PasskeyAuthenticator,
+  type PasskeyResult,
 } from './passkey'
 import { PASSKEY_LIMIT, unwrapVaultKey, wrapVaultKey } from './passkeyWrap'
 import { deriveRawVaultKey, importVaultKeyBytes, unlockVaultKey } from './vaultCrypto'
@@ -257,12 +258,19 @@ export class PwaLedgerClient {
       if (!prf) {
         const assertionChallenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
         secrets.push(assertionChallenge)
-        const asserted = await authenticator.get({
-          rpId,
-          challenge: assertionChallenge,
-          allowCredentialIds: [credentialId],
-          prfSalt: salt,
-        })
+        // The passkey already exists; a refused or cancelled follow-up (a browser that wants a fresh gesture)
+        // means this browser cannot enrol, so it ends like a missing PRF rather than as a cancel to retry.
+        let asserted: PasskeyResult
+        try {
+          asserted = await authenticator.get({
+            rpId,
+            challenge: assertionChallenge,
+            allowCredentialIds: [credentialId],
+            prfSalt: salt,
+          })
+        } catch {
+          throw new PasskeyUnsupportedError()
+        }
         if (asserted.prfOutput) secrets.push(asserted.prfOutput)
         if (!equalBytes(asserted.credentialId, credentialId)) throw new PasskeyUnsupportedError()
         prf = validPrfOutput(asserted.prfOutput)

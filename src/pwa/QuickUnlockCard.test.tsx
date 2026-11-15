@@ -46,6 +46,10 @@ const copy = {
     revoke: /does not revoke access for anyone who already has a copy of this device's data and the passkey/u,
     rekey: /restore a backup into a new vault, which re-keys the vault/u,
     limit: 'Limit reached. Turn one off before adding another.',
+    addAnother: 'Add another passkey',
+    already: "This device's passkey is already on.",
+    passkeyName: 'Passkey',
+    added: 'Added',
   },
   vi: {
     title: 'Mở nhanh bằng vân tay, khuôn mặt hoặc mã PIN',
@@ -61,11 +65,15 @@ const copy = {
     expired: 'Phiên kiểm tra cụm mật khẩu đã hết hạn. Vui lòng nhập lại.',
     on: 'Mở nhanh đang bật trên thiết bị này',
     turnOff: 'Tắt',
-    yes: 'Đúng, tắt',
+    yes: 'Có, tắt',
     ask: 'Tắt mở nhanh cho khóa truy cập này?',
     revoke: /Nó không thu hồi quyền truy cập của người đã có bản sao dữ liệu của thiết bị này cùng khóa truy cập/u,
     rekey: /khôi phục bản sao lưu vào một kho dữ liệu mới/u,
     limit: 'Đã đạt giới hạn. Hãy tắt một khóa trước khi thêm khóa khác.',
+    addAnother: 'Thêm khóa truy cập khác',
+    already: 'Khóa truy cập của thiết bị này đã được bật.',
+    passkeyName: 'Khóa truy cập',
+    added: 'Ngày thêm',
   },
   ja: {
     title: '指紋・顔・PINですばやく開く',
@@ -86,6 +94,10 @@ const copy = {
     revoke: /すでに持っている人のアクセスは取り消されません/u,
     rekey: /バックアップを新しい保管庫に復元してください/u,
     limit: 'パスキーの上限に達しました。新しく追加するには、先にどれかを無効にしてください。',
+    addAnother: '別のパスキーを追加',
+    already: 'この端末のパスキーはすでにオンになっています。',
+    passkeyName: '解錠用パスキー',
+    added: '登録日',
   },
 } as const
 
@@ -98,12 +110,16 @@ async function newVault() {
   })
 }
 
-async function seedPasskeys(client: PwaLedgerClient, count: number) {
+async function seedPasskeys(client: PwaLedgerClient, count: number, label?: string) {
   const seed = fakePasskeyAuthenticator()
   for (let index = 0; index < count; index += 1) {
     await client.verifyPassphrase(passphrase)
-    await client.enablePasskey(passphrase, seed)
+    await client.enablePasskey(passphrase, seed, label)
   }
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 }
 
 function renderCard(client: PwaLedgerClient, locale: 'en' | 'vi' | 'ja', authenticator: PasskeyAuthenticator) {
@@ -145,6 +161,8 @@ afterAll(() => {
 
 describe.each(['en', 'vi', 'ja'] as const)('QuickUnlockCard in %s', (locale) => {
   const text = copy[locale]
+  // Each Turn off button is named after its entry, so its accessible name starts with the visible text.
+  const turnOff = new RegExp(`^${escapeRegExp(text.turnOff)} `, 'u')
 
   it('turns on in two taps: the passphrase check first, then one passkey prompt, and lists the passkey', async () => {
     const client = await newVault()
@@ -173,8 +191,12 @@ describe.each(['en', 'vi', 'ja'] as const)('QuickUnlockCard in %s', (locale) => 
     expect(await client.listPasskeys()).toHaveLength(1)
     const entries = screen.getAllByRole('listitem')
     expect(entries).toHaveLength(1)
-    expect(entries[0]).toHaveTextContent(/Passkey \d{4}-\d{2}-\d{2}/u)
-    expect(within(entries[0]).getByRole('button', { name: text.turnOff })).toBeInTheDocument()
+    expect(entries[0]).not.toHaveTextContent(/Passkey \d{4}-\d{2}-\d{2}/u)
+    expect(entries[0]).toHaveTextContent(text.passkeyName)
+    expect(within(entries[0]).getByRole('button', { name: turnOff })).toHaveTextContent(text.turnOff)
+    // Once on, the action adds another passkey instead of offering to turn it on again.
+    expect(screen.getByRole('button', { name: text.addAnother })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: text.turnOn })).not.toBeInTheDocument()
     expect(screen.queryByLabelText(text.field)).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
@@ -277,7 +299,7 @@ describe.each(['en', 'vi', 'ja'] as const)('QuickUnlockCard in %s', (locale) => 
     renderCard(client, locale, fakePasskeyAuthenticator())
     expect(await screen.findByText(text.on)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: text.turnOff }))
+    fireEvent.click(screen.getByRole('button', { name: turnOff }))
     const group = await screen.findByRole('group', { name: new RegExp(text.ask, 'u') })
     expect(group).toHaveTextContent(text.revoke)
     expect(group).toHaveTextContent(text.rekey)
@@ -288,7 +310,7 @@ describe.each(['en', 'vi', 'ja'] as const)('QuickUnlockCard in %s', (locale) => 
     expect(screen.queryByRole('group')).not.toBeInTheDocument()
     expect(await client.listPasskeys()).toHaveLength(1)
 
-    fireEvent.click(screen.getByRole('button', { name: text.turnOff }))
+    fireEvent.click(screen.getByRole('button', { name: turnOff }))
     fireEvent.click(await screen.findByRole('button', { name: text.yes }))
     await waitFor(() => expect(screen.queryByText(text.on)).not.toBeInTheDocument())
     expect(remove).toHaveBeenCalledTimes(1)
@@ -302,14 +324,83 @@ describe.each(['en', 'vi', 'ja'] as const)('QuickUnlockCard in %s', (locale) => 
     renderCard(client, locale, fakePasskeyAuthenticator())
     expect(await screen.findByText(text.on)).toBeInTheDocument()
     expect(screen.getAllByRole('listitem')).toHaveLength(PASSKEY_LIMIT)
-    expect(screen.getByRole('button', { name: text.turnOn })).toBeDisabled()
+    expect(screen.getByRole('button', { name: text.addAnother })).toBeDisabled()
     expect(screen.getByText(text.limit)).toBeInTheDocument()
 
-    fireEvent.click(screen.getAllByRole('button', { name: text.turnOff })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: turnOff })[0])
     fireEvent.click(await screen.findByRole('button', { name: text.yes }))
     await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(PASSKEY_LIMIT - 1))
-    expect(screen.getByRole('button', { name: text.turnOn })).toBeEnabled()
+    expect(screen.getByRole('button', { name: text.addAnother })).toBeEnabled()
     expect(screen.queryByText(text.limit)).not.toBeInTheDocument()
+  })
+
+  it('says the passkey is already on when the browser finds this device already enrolled', async () => {
+    const client = await newVault()
+    await seedPasskeys(client, 1)
+    const authenticator = fakePasskeyAuthenticator({
+      create: () => Promise.reject(Object.assign(new Error('excluded credential'), { name: 'InvalidStateError' })),
+    })
+    renderCard(client, locale, authenticator)
+    fireEvent.click(await screen.findByRole('button', { name: text.addAnother }))
+    typePassphrase(text.field, passphrase)
+    fireEvent.click(screen.getByRole('button', { name: text.next }))
+    fireEvent.click(await screen.findByRole('button', { name: text.confirm }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(text.already)
+    expect(screen.queryByText(text.unsupported)).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('listitem')).toHaveLength(1)
+    expect(screen.getByRole('button', { name: text.addAnother })).toBeEnabled()
+    expect(await client.listPasskeys()).toHaveLength(1)
+  })
+
+  it('says the passkey is already on when the client finds the same credential stored', async () => {
+    const client = await newVault()
+    await seedPasskeys(client, 1)
+    // A fresh fake hands out the same first credential id as the one that seeded the vault.
+    renderCard(client, locale, fakePasskeyAuthenticator())
+    fireEvent.click(await screen.findByRole('button', { name: text.addAnother }))
+    typePassphrase(text.field, passphrase)
+    fireEvent.click(screen.getByRole('button', { name: text.next }))
+    fireEvent.click(await screen.findByRole('button', { name: text.confirm }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(text.already)
+    expect(screen.queryByText(text.unsupported)).not.toBeInTheDocument()
+    expect(await client.listPasskeys()).toHaveLength(1)
+  })
+
+  it('names a default entry in the screen language with its date once, and each Turn off after its entry', async () => {
+    const client = await newVault()
+    await seedPasskeys(client, 2)
+    renderCard(client, locale, fakePasskeyAuthenticator())
+    const entries = await screen.findAllByRole('listitem')
+    expect(entries).toHaveLength(2)
+    const [stored] = await client.listPasskeys()
+    const date = new Date(stored.createdAt).toLocaleDateString(
+      { en: 'en-US', vi: 'vi-VN', ja: 'ja-JP' }[locale],
+      { dateStyle: 'medium' },
+    )
+    for (const [index, entry] of entries.entries()) {
+      const name = `${text.passkeyName} ${index + 1}`
+      expect(entry).toHaveTextContent(name)
+      expect(entry).not.toHaveTextContent(/Passkey \d{4}-\d{2}-\d{2}/u)
+      expect(entry.textContent!.split(date)).toHaveLength(2)
+      expect(within(entry).getByRole('button', { name: `${text.turnOff} ${name} (${text.added} ${date})` }))
+        .toHaveTextContent(text.turnOff)
+    }
+    const names = screen.getAllByRole('button', { name: turnOff }).map((button) => button.getAttribute('aria-label'))
+    expect(new Set(names).size).toBe(2)
+  })
+
+  it('shows a stored custom label as is', async () => {
+    const client = await newVault()
+    await seedPasskeys(client, 1, 'Work phone')
+    renderCard(client, locale, fakePasskeyAuthenticator())
+    const [entry] = await screen.findAllByRole('listitem')
+    expect(entry).toHaveTextContent('Work phone')
+    expect(entry).not.toHaveTextContent(text.passkeyName)
+    expect(within(entry).getByRole('button', { name: new RegExp(`^${escapeRegExp(text.turnOff)} Work phone `, 'u') }))
+      .toBeInTheDocument()
   })
 
   it('offers every action as a Simple button with the 44px touch target class', async () => {

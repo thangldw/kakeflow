@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { unzipSync, zipSync } from 'fflate'
+import { openDB } from 'idb'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 const argonMock = vi.hoisted(() => ({
@@ -355,5 +356,40 @@ describe('passkey wrappers and archives', () => {
     expect((await restored.listHouseholds())[0].name).toBe('Archive household')
     expect(await restored.listPasskeys()).toEqual([])
     expect(await PwaLedgerClient.readPasskeyCount('archive-passkey-destination')).toBe(0)
+  })
+
+  it('removes passkey wrappers from every vault row when restoring into the same database', async () => {
+    const { client } = await sourceClient('archive-passkey-same-database')
+    const authenticator: PasskeyAuthenticator = {
+      create: async () => ({ credentialId: new Uint8Array(20).fill(6), prfOutput: new Uint8Array(32).fill(4) }),
+      get: async () => ({ credentialId: new Uint8Array(20).fill(6), prfOutput: new Uint8Array(32).fill(4) }),
+    }
+    await client.verifyPassphrase(sourcePassphrase)
+    await client.enablePasskey(sourcePassphrase, authenticator, 'Same database passkey')
+    expect((await PwaVaultDatabase.readVaultRow('archive-passkey-same-database'))?.passkeys?.entries)
+      .toHaveLength(1)
+    const archive = await client.exportVault()
+    client.close()
+
+    const restored = await PwaLedgerClient.restoreVault(
+      'archive-passkey-same-database',
+      archive,
+      sourcePassphrase,
+      { vaultId: 'restored-same-database-vault', evidence: { getDirectory: undefined } },
+    )
+    expect((await restored.listHouseholds())[0].name).toBe('Archive household')
+    restored.close()
+
+    const database = await openDB('archive-passkey-same-database')
+    const rows = await database.getAll('vaults')
+    database.close()
+    expect(rows.map((row) => row.vaultId).sort()).toEqual(
+      ['restored-same-database-vault', 'source-vault'],
+    )
+    for (const row of rows) {
+      expect(row).not.toHaveProperty('passkeys')
+      expect(JSON.stringify(row)).not.toContain('Same database passkey')
+    }
+    expect(await PwaLedgerClient.readPasskeyCount('archive-passkey-same-database')).toBe(0)
   })
 })

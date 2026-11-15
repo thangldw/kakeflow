@@ -34,6 +34,7 @@ const labels = {
   unlockWithPasskey: 'Unlock with passkey',
   quickUnlockTitle: 'Quick unlock with fingerprint, face or PIN',
   turnOn: 'Turn on',
+  addAnother: 'Add another passkey',
   continue: 'Continue',
   confirmWithPasskey: 'Confirm with fingerprint, face or PIN',
   passphraseConfirmed: 'Passphrase confirmed. Now confirm with your fingerprint, face or PIN.',
@@ -167,7 +168,7 @@ test.describe('PWA passkey quick unlock at phone size', () => {
     const card = await turnOnQuickUnlock(page, testInfo)
     await expect(card.getByText(labels.onForDevice)).toBeVisible()
     await expect(card.getByRole('listitem')).toHaveCount(1)
-    await expect(card.getByRole('button', { name: labels.turnOn })).toBeVisible()
+    await expect(card.getByRole('button', { name: labels.addAnother })).toBeVisible()
     await expect(card.getByRole('alert')).toHaveCount(0)
     await shoot(card, testInfo, '4-on')
     expect(await storedCredentialCount(cdp, authenticatorId)).toBe(1)

@@ -246,7 +246,15 @@ export class PwaVaultDatabase {
       'readwrite',
     )
     try {
-      await transaction.objectStore('vaults').add(state.vault)
+      const vaults = transaction.objectStore('vaults')
+      // The restored vault has a new key, so no passkey wrapper on this device may survive it.
+      for (const row of await vaults.getAll()) {
+        if (row.passkeys === undefined) continue
+        const { passkeys: _removed, ...withoutPasskeys } = row
+        void _removed
+        await vaults.put(withoutPasskeys)
+      }
+      await vaults.add(state.vault)
       for (const event of state.events) await transaction.objectStore('events').add(event)
       for (const projection of state.projections) {
         await transaction.objectStore('projections').add(projection)
