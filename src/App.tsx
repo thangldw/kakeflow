@@ -126,6 +126,7 @@ import { navigation, navigationSections } from './navigation'
 import { SIMPLE_TAB_ICONS, SIMPLE_TABS, tabForPage, type SimpleTab } from './features/simple/simpleNavigation'
 import { QuickAddSheet } from './features/simple/QuickAddSheet'
 import { SimpleHome } from './features/simple/SimpleHome'
+import { findBudgetMonth } from './features/simple/homeLoader'
 import { SimpleMorePage, UiModeSwitch } from './features/simple/SimpleMorePage'
 import { SimpleTabBar } from './features/simple/SimpleTabBar'
 import { readUiMode, writeUiMode, type UiMode } from './features/simple/uiMode'
@@ -2827,17 +2828,32 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged, focusG
   const [goalDrafts, setGoalDrafts] = useState<Record<string, string>>({})
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
+  // Set synchronously, so a second click or Enter before the disabled button renders cannot start a second save.
+  const savingBudget = useRef(false)
+  // The earlier month whose budgets the Simple Home uses while this month has none (null once the month has rows).
+  const [carriedOver, setCarriedOver] = useState<{ readonly householdId: string; readonly forMonth: string; readonly month: string; readonly budgets: readonly MonthlyCategoryBudgetDto[] } | null>(null)
+  const { localeCode } = useI18n()
   const expenseAccounts = accounts.filter((account) => account.accountKind === 'EXPENSE')
+  // The rows a save would copy into this month: only a lookup made for this household and month counts (one left from
+  // another month must not be copied here), and only rows for current expense categories. The note is shown only when
+  // at least one row would be copied, so it never promises a copy that will not happen.
+  const expenseIds = new Set(expenseAccounts.map((account) => account.id))
+  const carryRows = carriedOver && carriedOver.householdId === householdId && carriedOver.forMonth === month
+    ? carriedOver.budgets.filter((row) => expenseIds.has(row.categoryAccountId))
+    : []
 
   const reload = async () => {
     if (!desktop || !householdId) return
-    const [nextBudgets, nextGoals] = await Promise.all([platformClient.listBudgets(householdId, month), platformClient.listSavingsGoals(householdId)])
-    setBudgets(nextBudgets); setGoals(nextGoals)
+    // The same lookup as the Simple Home, so the page knows which month Home budgets this month from.
+    const [found, nextGoals] = await Promise.all([findBudgetMonth(month, (candidate) => platformClient.listBudgets(householdId, candidate)), platformClient.listSavingsGoals(householdId)])
+    const own = found.month === month
+    setBudgets(own ? found.budgets : []); setGoals(nextGoals)
+    setCarriedOver(!own && found.month !== null ? { householdId, forMonth: month, month: found.month, budgets: found.budgets } : null)
     setGoalDrafts(Object.fromEntries(nextGoals.map((goal) => [goal.id, String(goal.savedJpy)])))
     setBudgetAccountId((current) => current || expenseAccounts[0]?.id || '')
   }
 
-  useEffect(() => { void reload().catch(() => { setBudgets([]); setGoals([]); setNotice(localize("予算と目標を読み込めませんでした。")) }).finally(() => setLoaded(true)) }, [desktop, householdId, month, revision]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { void reload().catch(() => { setBudgets([]); setGoals([]); setCarriedOver(null); setNotice(localize("予算と目標を読み込めませんでした。")) }).finally(() => setLoaded(true)) }, [desktop, householdId, month, revision]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Each new request scrolls to the goals once, after the first load, so rows that load later cannot push the panel away.
   useEffect(() => {
@@ -2854,10 +2870,25 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged, focusG
 
   const saveBudget = async () => {
     if (!householdId || !budgetAccountId || !/^\d+$/.test(budgetAmount)) { setNotice(localize("カテゴリーと0円以上の予算を入力してください。")); return }
+    if (savingBudget.current) return
+    savingBudget.current = true
     setBusy(true); setNotice('')
-    try { await platformClient.upsertBudget({ householdId, month, categoryAccountId: budgetAccountId, budgetJpy: Number(budgetAmount) }); await reload(); onChanged(); setBudgetAmount(''); setNotice(localize("月間予算を保存しました。")) }
+    try {
+      // Home budgets this month from an earlier month until it has rows of its own, so the first save copies all of
+      // those rows here before the edit; otherwise every other category would drop out of "Left to spend".
+      // A failed copy leaves `carriedOver` in place, so the next save copies again (each write replaces the same row).
+      // That retry only works while this page stays mounted: the copy is not atomic, so if the page reloads after some
+      // rows were copied, the month has rows of its own and the rest are lost (the same limitation as the PWA).
+      for (const row of carryRows) {
+        await platformClient.upsertBudget({ householdId, month, categoryAccountId: row.categoryAccountId, budgetJpy: row.budgetJpy })
+      }
+      await platformClient.upsertBudget({ householdId, month, categoryAccountId: budgetAccountId, budgetJpy: Number(budgetAmount) })
+      // The month has rows now; cleared before the reload, so a failed reload cannot copy over this edit on a later save.
+      setCarriedOver(null)
+      await reload(); onChanged(); setBudgetAmount(''); setNotice(localize("月間予算を保存しました。"))
+    }
     catch { setNotice(localize("月間予算を保存できませんでした。")) }
-    finally { setBusy(false) }
+    finally { savingBudget.current = false; setBusy(false) }
   }
 
   const createGoal = async () => {
@@ -2896,7 +2927,7 @@ function BudgetsPage({ householdId, accounts, month, revision, onChanged, focusG
     <PageHeader eyebrow={localize(`${month.replace('-', localize("年"))}月`)} title={localize("予算・貯蓄目標")} description={localize("確定済み台帳の支出と月間予算を比較します。")}><button className="primary-btn" onClick={() => setShowGoalForm((value) => !value)}><Goal size={17} /> {localize("目標を追加")}</button></PageHeader>
     {notice && <div className="import-notice" role="status">{notice}</div>}
     {showGoalForm && <section className="panel planning-form"><input aria-label={localize("目標名")} value={goalName} onChange={(event) => setGoalName(event.target.value)} placeholder={localize("家族旅行")} /><input aria-label={localize("目標額")} type="number" min="1" value={goalTarget} onChange={(event) => setGoalTarget(event.target.value)} placeholder="1000000" /><input aria-label={localize("目標日")} type="date" value={goalDate} onChange={(event) => setGoalDate(event.target.value)} /><button className="primary-btn" disabled={busy} onClick={() => void createGoal()}>{localize("保存")}</button></section>}
-    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => { const used = budget.budgetJpy === 0 ? (budget.actualJpy > 0 ? Infinity : 0) : budget.actualJpy / budget.budgetJpy; const over = budget.remainingJpy < 0; return <div className={`budget-row${over ? ' budget-row-over' : used >= 0.9 ? ' budget-row-review' : ''}`} key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong>{over && Number.isFinite(used) && <small>{localize("⚠ 超過 ")}{Math.round((used - 1) * 100)}%</small>}</div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div> })}</article><article className="panel goal-panel" id="goals"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
+    <section className="budget-layout"><article className="panel budget-panel"><div className="panel-head"><div><h2>{localize("カテゴリー予算")}</h2><p>{budgets.length}{localize("カテゴリー")}</p></div><strong>{yen(totalActual)} / {yen(totalBudget)}</strong></div><div className="planning-form"><select aria-label={localize("予算カテゴリー")} value={budgetAccountId} onChange={(event) => setBudgetAccountId(event.target.value)}><option value="">{localize("カテゴリーを選択")}</option>{expenseAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select><input aria-label={localize("月間予算")} type="number" min="0" value={budgetAmount} onChange={(event) => setBudgetAmount(event.target.value)} placeholder="50000" /><button className="secondary-btn" disabled={busy || expenseAccounts.length === 0} onClick={() => void saveBudget()}>{localize("予算を保存")}</button></div>{budgets.length === 0 ? carriedOver && carryRows.length > 0 ? <p className="import-notice" role="note">{localize("この月の予算はまだありません。予算を保存すると、引き継ぎ元の月のカテゴリー予算をすべてこの月にコピーしてから、変更を反映します。")}<br /><span>{localize("予算の引き継ぎ元")}</span> <strong>{formatMonthLabel(carriedOver.month, localeCode)}</strong></p> : <p className="empty-state">{localize("カテゴリー予算はまだありません。")}</p> : budgets.map((budget, index) => { const used = budget.budgetJpy === 0 ? (budget.actualJpy > 0 ? Infinity : 0) : budget.actualJpy / budget.budgetJpy; const over = budget.remainingJpy < 0; return <div className={`budget-row${over ? ' budget-row-over' : used >= 0.9 ? ' budget-row-review' : ''}`} key={budget.categoryAccountId}><div><i style={{ background: palette[index % palette.length] }} /><strong>{budget.categoryName}</strong>{over && Number.isFinite(used) && <small>{localize("⚠ 超過 ")}{Math.round((used - 1) * 100)}%</small>}</div><span>{yen(budget.actualJpy)} <small>/ {yen(budget.budgetJpy)}</small></span><div className="progress"><span style={{ width: `${budget.budgetJpy === 0 ? 100 : Math.min(100, budget.actualJpy / budget.budgetJpy * 100)}%`, background: budget.remainingJpy < 0 ? '#c95b4c' : palette[index % palette.length] }} /></div></div> })}</article><article className="panel goal-panel" id="goals"><div className="panel-head"><div><h2>{localize("貯蓄目標")}</h2><p>{goals.filter((goal) => goal.status === 'ACTIVE').length}{localize("件進行中")}</p></div><Sparkles size={20} /></div>{goals.length === 0 ? <p className="empty-state">{localize("貯蓄目標はまだありません。")}</p> : goals.map((goal) => { const pace = goalPace(goal); return <div className={`goal-editor goal-editor-${pace.overdue ? 'overdue' : goal.status.toLowerCase()}`} key={goal.id}><strong>{goal.name}</strong><span>{yen(goal.savedJpy)} / {yen(goal.targetJpy)} {localize("・ 目標日")} {goal.targetDate}</span><div className="progress"><span style={{ width: `${Math.min(100, goal.savedJpy / goal.targetJpy * 100)}%` }} /></div><p className="goal-pace">{pace.remaining === 0 ? <b>{localize("目標達成")}</b> : pace.overdue ? <b>{localize("期限超過・残り")} {yen(pace.remaining)}</b> : <>{localize("必要ペース:")} <b>{yen(pace.monthly)} {localize("/ 月")}</b>{localize("・残り")} {pace.months}{localize("か月")}</>}</p><div><input aria-label={localize(`${goal.name}の貯蓄済み金額`)} type="number" min="0" value={goalDrafts[goal.id] ?? ''} onChange={(event) => setGoalDrafts((current) => ({ ...current, [goal.id]: event.target.value }))} /><button className="secondary-btn" disabled={busy} onClick={() => void updateGoal(goal)}>{localize("更新")}</button><button className="text-btn" disabled={busy} onClick={() => void deleteGoal(goal)}>{localize("削除")}</button></div></div> })}</article></section>
     <EnvelopeCarryPanel householdId={householdId} month={month} revision={revision} onChanged={onChanged} />
     <PlanningTools />
   </>
