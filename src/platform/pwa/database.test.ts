@@ -275,4 +275,22 @@ describe('passkey storage on the vault row', () => {
     opened.close()
     await expect(PwaVaultDatabase.openWithKey(name, key, 'another-vault')).rejects.toThrow()
   })
+
+  it('rejects a wrong key for the right vault id with the authentication error', async () => {
+    const name = 'passkeys-open-with-wrong-key'
+    const created = await PwaVaultDatabase.create(name, passphrase, 'vault-1')
+    created.close()
+    const wrongKey = await crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(32).fill(1),
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    )
+
+    await expect(PwaVaultDatabase.openWithKey(name, wrongKey, 'vault-1'))
+      .rejects.toThrow('Vault authentication failed')
+    const reopened = await PwaVaultDatabase.open(name, passphrase)
+    expect(await reopened.revision()).toBe(0)
+  })
 })

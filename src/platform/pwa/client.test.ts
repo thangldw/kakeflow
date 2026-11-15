@@ -676,6 +676,10 @@ interface FakeAuthenticatorOptions {
   createPrf?: 'ok' | 'none' | 'empty' | 'short'
   getPrf?: 'ok' | 'none' | 'empty' | 'short'
   idLength?: number
+  /** Always return this credential id from `create`. */
+  fixedId?: Uint8Array
+  /** Awaited inside `create` before it answers, to hold a ceremony open. */
+  createGate?: () => Promise<void>
   createError?: Error
   /** Chooses which allowed credential answers `get`; defaults to the first one. */
   pick?: (ids: readonly Uint8Array[]) => Uint8Array
@@ -703,9 +707,10 @@ function fakeAuthenticator(options: FakeAuthenticatorOptions = {}) {
   const create = vi.fn(async (input: Parameters<PasskeyAuthenticator['create']>[0]) => {
     seen.push({ userId: input.userId.slice(), challenge: input.challenge.slice(), prfSalt: input.prfSalt.slice() })
     if (options.createError) throw options.createError
+    await options.createGate?.()
     counter += 1
-    const id = new Uint8Array(options.idLength ?? 16).fill(counter)
-    id[id.length - 1] = counter * 7
+    const id = options.fixedId ? options.fixedId.slice() : new Uint8Array(options.idLength ?? 16).fill(counter)
+    if (!options.fixedId) id[id.length - 1] = counter * 7
     return { credentialId: id, prfOutput: await prf(options.createPrf ?? 'ok', id, input.prfSalt) }
   })
   const get = vi.fn(async (input: Parameters<PasskeyAuthenticator['get']>[0]) => {
@@ -947,7 +952,7 @@ describe('passkeys', () => {
       .rejects.toThrow('Vault authentication failed')
   })
 
-  it('fails with the same error for every unlock failure', async () => {
+  it('fails with the same error for every unlock failure except a cancel', async () => {
     const name = 'passkey-unlock-failures'
     const client = await passkeyVault(name)
     const authenticator = fakeAuthenticator()
@@ -970,7 +975,8 @@ describe('passkeys', () => {
       create: authenticator.create,
       get: async () => { throw new PasskeyCancelledError() },
     }
-    await expect(PwaLedgerClient.unlockWithPasskey(name, cancelling, { evidence })).rejects.toThrow(failed)
+    await expect(PwaLedgerClient.unlockWithPasskey(name, cancelling, { evidence }))
+      .rejects.toBeInstanceOf(PasskeyCancelledError)
     const unlocked = await PwaLedgerClient.unlockWithPasskey(name, authenticator, { evidence })
     expect(await unlocked.listHouseholds()).toHaveLength(1)
   })
@@ -1002,6 +1008,62 @@ describe('passkeys', () => {
     sourceDatabase.close()
     await expect(PwaLedgerClient.unlockWithPasskey('passkey-move-source', authenticator, { evidence }))
       .rejects.toThrow('Vault authentication failed')
+  })
+
+  it('rejects a credential that is already enrolled and stores nothing', async () => {
+    const client = await passkeyVault('passkey-duplicate')
+    const fixedId = new Uint8Array(24).fill(42)
+    const authenticator = fakeAuthenticator({ fixedId })
+    await enable(client, authenticator)
+    const before = await client.listPasskeys()
+
+    await client.verifyPassphrase(passphrase)
+    await expect(client.enablePasskey(passphrase, authenticator)).rejects.toThrow('Passkey already enabled')
+    expect(await client.listPasskeys()).toEqual(before)
+    expect(await PwaLedgerClient.readPasskeyCount('passkey-duplicate')).toBe(1)
+  })
+
+  it('spends the verified passphrase on the first of two concurrent enrolments', async () => {
+    const client = await passkeyVault('passkey-double-submit')
+    const authenticator = fakeAuthenticator()
+    await client.verifyPassphrase(passphrase)
+
+    const results = await Promise.allSettled([
+      client.enablePasskey(passphrase, authenticator),
+      client.enablePasskey(passphrase, authenticator),
+    ])
+    expect(results.map((result) => result.status).sort()).toEqual(['fulfilled', 'rejected'])
+    const rejected = results.find((result) => result.status === 'rejected') as PromiseRejectedResult
+    expect(rejected.reason).toEqual(new Error('Passphrase not verified'))
+    expect(authenticator.create).toHaveBeenCalledTimes(1)
+    expect(await client.listPasskeys()).toHaveLength(1)
+  })
+
+  it('does not bring back a passkey removed while an enrolment was in flight', async () => {
+    const client = await passkeyVault('passkey-enable-remove-race')
+    const authenticator = fakeAuthenticator()
+    await enable(client, authenticator, 'first')
+    await enable(client, authenticator, 'second')
+    const [first, second] = await client.listPasskeys()
+
+    let release!: () => void
+    const gate = new Promise<void>((resolveGate) => { release = resolveGate })
+    let entered!: () => void
+    const inCreate = new Promise<void>((resolveEntered) => { entered = resolveEntered })
+    authenticator.options.createGate = async () => {
+      entered()
+      await gate
+    }
+    await client.verifyPassphrase(passphrase)
+    const enrolment = client.enablePasskey(passphrase, authenticator, 'third')
+    await inCreate
+    const removal = client.removePasskey(first.credentialIdBase64Url)
+    release()
+    await Promise.all([enrolment, removal])
+
+    const labels = (await client.listPasskeys()).map((entry) => entry.label)
+    expect(labels).toEqual(['second', 'third'])
+    expect((await client.listPasskeys())[0]).toEqual(second)
   })
 
   it('reads a passkey count of zero for a vault without passkeys', async () => {

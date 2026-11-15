@@ -108,6 +108,16 @@ export async function importVaultKeyBytes(
   }
 }
 
+/** Verifies an already imported vault key against `metadata.keyCheck`; any failure is `Vault authentication failed`. */
+export async function verifyVaultKey(key: CryptoKey, metadata: VaultMetadata): Promise<void> {
+  try {
+    validateVaultMetadata(metadata)
+    await verifyKeyCheck(key, metadata)
+  } catch {
+    throw new Error(VAULT_AUTHENTICATION_FAILED)
+  }
+}
+
 export async function encryptRecord(
   key: CryptoKey,
   context: VaultRecordContext,

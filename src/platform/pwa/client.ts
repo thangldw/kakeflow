@@ -4,6 +4,7 @@ import type { PlainEventWrite, PlainProjectionWrite } from './database'
 import { PwaVaultDatabase } from './database'
 import { EvidenceStore, type EvidenceStoreOptions } from './evidenceStore'
 import {
+  PasskeyCancelledError,
   PasskeyUnsupportedError,
   base64UrlToBytes,
   bytesToBase64Url,
@@ -90,6 +91,8 @@ interface PassphraseMarker {
 export class PwaLedgerClient {
   /** SHA-256 of the passphrase last verified by `verifyPassphrase`; never the passphrase itself. */
   private passphraseMarker: PassphraseMarker | undefined
+  /** Serializes enrolment and removal so neither works on a stale passkey list. */
+  private passkeyQueue: Promise<void> = Promise.resolve()
 
   private constructor(
     private readonly database: PwaVaultDatabase,
@@ -133,8 +136,8 @@ export class PwaLedgerClient {
 
   /**
    * Unlocks the active vault with a passkey: one assertion over every stored credential with the
-   * vault's PRF salt, then the matching wrapper is decrypted and imported. Every failure, a
-   * cancelled prompt included, surfaces as `Vault authentication failed`.
+   * vault's PRF salt, then the matching wrapper is decrypted and imported. A cancelled prompt is
+   * rethrown as `PasskeyCancelledError`; every other failure surfaces as `Vault authentication failed`.
    */
   static async unlockWithPasskey(
     databaseName: string,
@@ -168,7 +171,10 @@ export class PwaLedgerClient {
       const key = await importVaultKeyBytes(raw, row.metadata)
       const database = await PwaVaultDatabase.openWithKey(databaseName, key, row.vaultId)
       return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
-    } catch {
+    } catch (error) {
+      if (error instanceof PasskeyCancelledError) throw error
+      // No cause on purpose: an unlock failure must not reveal which step failed.
+      // eslint-disable-next-line preserve-caught-error
       throw new Error(VAULT_AUTHENTICATION_FAILED)
     } finally {
       prfOutput?.fill(0)
@@ -204,12 +210,22 @@ export class PwaLedgerClient {
   /**
    * Enrols a passkey. Order is fixed: limit, verified-passphrase marker, `create` (then `get` when
    * PRF only comes back on assertion), raw key derivation, wrap, unwrap self-check, and the row is
-   * written last, so nothing is stored on any earlier failure. The marker is spent either way.
+   * written last, so nothing is stored on any earlier failure. The marker is spent when it is
+   * checked, and calls are serialized with `removePasskey`, so a double submit cannot start a second
+   * ceremony.
    */
-  async enablePasskey(
+  enablePasskey(
     passphrase: string,
     authenticator: PasskeyAuthenticator,
     label?: string,
+  ): Promise<void> {
+    return this.serializePasskeyChange(() => this.enrolPasskey(passphrase, authenticator, label))
+  }
+
+  private async enrolPasskey(
+    passphrase: string,
+    authenticator: PasskeyAuthenticator,
+    label: string | undefined,
   ): Promise<void> {
     const secrets: Uint8Array[] = []
     try {
@@ -268,7 +284,16 @@ export class PwaLedgerClient {
         label: passkeyLabel(label, createdAt),
         createdAt,
       }
-      await this.database.writePasskeys({ prfSaltBase64, entries: [...entries, entry] })
+      await this.database.updatePasskeys((current) => {
+        const stored = current?.entries ?? []
+        if (stored.length >= PASSKEY_LIMIT) throw new Error('Passkey limit reached')
+        if (stored.some((item) => item.credentialIdBase64Url === credentialIdBase64Url)) {
+          throw new Error('Passkey already enabled')
+        }
+        // The PRF output, and so the wrapper, is bound to the salt used in this ceremony.
+        if (current && current.prfSaltBase64 !== prfSaltBase64) throw new Error('Passkey settings changed')
+        return { prfSaltBase64, entries: [...stored, entry] }
+      })
     } finally {
       this.passphraseMarker = undefined
       for (const bytes of secrets) bytes.fill(0)
@@ -285,16 +310,25 @@ export class PwaLedgerClient {
   }
 
   /** Removes the wrapper stored on this device; it cannot revoke the credential itself. */
-  async removePasskey(credentialIdBase64Url: string): Promise<void> {
-    const config = await this.database.readPasskeys()
-    const entries = config?.entries ?? []
-    const remaining = entries.filter((entry) => entry.credentialIdBase64Url !== credentialIdBase64Url)
-    if (!config || remaining.length === entries.length) throw new Error('Passkey not found')
-    await this.database.writePasskeys(remaining.length > 0 ? { ...config, entries: remaining } : undefined)
+  removePasskey(credentialIdBase64Url: string): Promise<void> {
+    return this.serializePasskeyChange(() => this.database.updatePasskeys((current) => {
+      const entries = current?.entries ?? []
+      const remaining = entries.filter((entry) => entry.credentialIdBase64Url !== credentialIdBase64Url)
+      if (!current || remaining.length === entries.length) throw new Error('Passkey not found')
+      return remaining.length > 0 ? { ...current, entries: remaining } : undefined
+    }))
   }
 
+  private serializePasskeyChange<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.passkeyQueue.then(task, task)
+    this.passkeyQueue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  /** Checks and spends the marker in one step: it is cleared before anything is awaited. */
   private async requireVerifiedPassphrase(passphrase: string) {
     const marker = this.passphraseMarker
+    this.passphraseMarker = undefined
     if (!marker || this.now().getTime() > marker.expiresAt) throw new Error('Passphrase not verified')
     const digest = await passphraseDigest(passphrase)
     try {

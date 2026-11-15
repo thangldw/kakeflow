@@ -1,7 +1,13 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb'
 
 import { PASSKEY_LIMIT } from './passkeyWrap'
-import { decryptRecord, encryptRecord, createVaultKey, unlockVaultKey } from './vaultCrypto'
+import {
+  decryptRecord,
+  encryptRecord,
+  createVaultKey,
+  unlockVaultKey,
+  verifyVaultKey,
+} from './vaultCrypto'
 import {
   VAULT_SCHEMA_VERSION,
   type EncryptedEnvelope,
@@ -204,7 +210,10 @@ export class PwaVaultDatabase {
     }
   }
 
-  /** Opens the active vault with a key the caller has already verified against its key check. */
+  /**
+   * Opens the active vault with an imported key. The key is verified against the key check of the
+   * row read on this same connection; a wrong key throws `Vault authentication failed`.
+   */
   static async openWithKey(
     databaseName: string,
     key: CryptoKey,
@@ -214,7 +223,9 @@ export class PwaVaultDatabase {
     try {
       const activeVault = await database.get('meta', 'activeVaultId')
       if (!activeVault || activeVault.value !== vaultId) throw new Error('Active vault not found')
-      if (!(await database.get('vaults', vaultId))) throw new Error('Active vault metadata not found')
+      const vault = await database.get('vaults', vaultId)
+      if (!vault) throw new Error('Active vault metadata not found')
+      await verifyVaultKey(key, vault.metadata)
       return new PwaVaultDatabase(database, vaultId, key, {})
     } catch (error) {
       database.close()
@@ -477,13 +488,25 @@ export class PwaVaultDatabase {
 
   /** Replaces the passkey config in one read-modify-write; no entries removes the field. */
   async writePasskeys(config: PasskeyConfig | undefined): Promise<void> {
+    await this.updatePasskeys(() => config)
+  }
+
+  /**
+   * Read-modify-write of the passkey config inside one transaction, so the update always applies
+   * to the stored config rather than a stale snapshot. `update` must be synchronous; throwing from
+   * it aborts without a write. No entries removes the field.
+   */
+  async updatePasskeys(
+    update: (current: PasskeyConfig | undefined) => PasskeyConfig | undefined,
+  ): Promise<void> {
     this.requireKey()
-    if (config && config.entries.length > PASSKEY_LIMIT) throw new Error('Passkey limit reached')
     const transaction = this.database.transaction('vaults', 'readwrite')
     try {
       const store = transaction.objectStore('vaults')
       const row = await store.get(this.vaultId)
       if (!row) throw new Error('Vault metadata not found')
+      const config = update(row.passkeys)
+      if (config && config.entries.length > PASSKEY_LIMIT) throw new Error('Passkey limit reached')
       const next: VaultRow = { vaultId: row.vaultId, metadata: row.metadata }
       await store.put(config && config.entries.length > 0 ? { ...next, passkeys: config } : next)
       await transaction.done
