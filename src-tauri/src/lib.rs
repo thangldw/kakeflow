@@ -4007,6 +4007,16 @@ fn budget_move(
 }
 
 #[tauri::command]
+fn budget_copy(
+    state: tauri::State<'_, AppState>,
+    input: read_model::CopyMonthlyBudgetsInput,
+) -> Result<Vec<read_model::MonthlyCategoryBudgetDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::copy_monthly_budgets(connection, &input)
+    })
+}
+
+#[tauri::command]
 fn transfer_pair_decisions_list(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -5125,6 +5135,7 @@ pub fn run() {
             card_payment_link_unlink,
             envelope_card_activity_query,
             budget_move,
+            budget_copy,
             transfer_pair_decisions_list,
             transfer_pair_decide,
             card_statement_due_date_update,

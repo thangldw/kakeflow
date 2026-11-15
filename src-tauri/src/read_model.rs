@@ -2687,6 +2687,52 @@ pub fn move_monthly_budget(
     list_monthly_category_budgets(connection, &input.household_id, &input.month)
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopyMonthlyBudgetsInput {
+    pub household_id: String,
+    pub from_month: String,
+    pub to_month: String,
+}
+
+/// Copies one month's budget rows into another month in a single transaction
+/// (carrying earlier budgets into an empty month). Only active expense
+/// categories are copied and rows the target month already has are kept, so
+/// calling it twice is a no-op.
+pub fn copy_monthly_budgets(
+    connection: &Connection,
+    input: &CopyMonthlyBudgetsInput,
+) -> Result<Vec<MonthlyCategoryBudgetDto>, RepositoryError> {
+    validate_id(&input.household_id, MAX_LOOKUP_ID_LEN)?;
+    validate_month(connection, &input.from_month)?;
+    validate_month(connection, &input.to_month)?;
+    ensure_household_exists(connection, &input.household_id)?;
+    if input.from_month == input.to_month {
+        return Err(RepositoryError::InvalidInput("Choose two different months"));
+    }
+
+    let transaction = connection
+        .unchecked_transaction()
+        .map_err(map_database_error)?;
+    transaction
+        .execute(
+            "INSERT INTO monthly_category_budgets
+               (household_id, month, category_account_id, budget_jpy)
+             SELECT b.household_id, ?3, b.category_account_id, b.budget_jpy
+             FROM monthly_category_budgets b
+             JOIN accounts a
+               ON a.id = b.category_account_id AND a.household_id = b.household_id
+             WHERE b.household_id = ?1 AND b.month = ?2
+               AND a.account_kind = 'EXPENSE' AND a.is_archived = 0
+             ORDER BY b.category_account_id
+             ON CONFLICT(household_id, month, category_account_id) DO NOTHING",
+            params![input.household_id, input.from_month, input.to_month],
+        )
+        .map_err(map_database_error)?;
+    transaction.commit().map_err(map_database_error)?;
+    list_monthly_category_budgets(connection, &input.household_id, &input.to_month)
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvelopeCardDto {
@@ -6395,6 +6441,129 @@ mod tests {
         assert_eq!(
             list_monthly_category_budgets(&connection, "family", "2026-07").unwrap(),
             before
+        );
+    }
+
+    #[test]
+    fn budget_copy_inserts_missing_active_expense_rows_only_and_is_idempotent() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".to_owned(),
+                name: "Family".to_owned(),
+            },
+        )
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO accounts (id, household_id, name, account_kind, account_subtype, currency, is_archived)
+                   VALUES ('family-old', 'family', 'Old', 'EXPENSE', 'OTHER', 'JPY', 1);
+                 INSERT INTO monthly_category_budgets (household_id, month, category_account_id, budget_jpy)
+                   VALUES ('family', '2026-06', 'family-groceries', 30000),
+                          ('family', '2026-06', 'family-utilities', 0),
+                          ('family', '2026-06', 'family-housing', 80000),
+                          ('family', '2026-06', 'family-old', 5000),
+                          ('family', '2026-06', 'family-bank', 7000),
+                          ('family', '2026-07', 'family-housing', 90000);",
+            )
+            .unwrap();
+        let input = |from: &str, to: &str| CopyMonthlyBudgetsInput {
+            household_id: "family".into(),
+            from_month: from.into(),
+            to_month: to.into(),
+        };
+        let budgets = |rows: &[MonthlyCategoryBudgetDto]| {
+            let mut pairs = rows
+                .iter()
+                .map(|row| (row.category_account_id.clone(), row.budget_jpy))
+                .collect::<Vec<_>>();
+            pairs.sort();
+            pairs
+        };
+        let expected = vec![
+            ("family-groceries".to_owned(), 30000),
+            ("family-housing".to_owned(), 90000),
+            ("family-utilities".to_owned(), 0),
+        ];
+
+        // Copies active expense rows (zero included), skips archived and
+        // non-expense rows, and never overwrites a row the target already has.
+        let copied = copy_monthly_budgets(&connection, &input("2026-06", "2026-07")).unwrap();
+        assert_eq!(budgets(&copied), expected);
+        assert_eq!(
+            copied,
+            list_monthly_category_budgets(&connection, "family", "2026-07").unwrap()
+        );
+
+        // Calling it again is a no-op.
+        let again = copy_monthly_budgets(&connection, &input("2026-06", "2026-07")).unwrap();
+        assert_eq!(again, copied);
+
+        // Nothing to copy returns the (empty) target rows without error.
+        assert!(
+            copy_monthly_budgets(&connection, &input("2026-01", "2026-02"))
+                .unwrap()
+                .is_empty()
+        );
+
+        for bad in [
+            input("2026-07", "2026-07"),
+            input("2026-6", "2026-08"),
+            input("2026-06", "2026-13"),
+            CopyMonthlyBudgetsInput {
+                household_id: "nobody".into(),
+                ..input("2026-06", "2026-08")
+            },
+        ] {
+            assert!(copy_monthly_budgets(&connection, &bad).is_err());
+        }
+        assert!(
+            list_monthly_category_budgets(&connection, "family", "2026-08")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            budgets(&list_monthly_category_budgets(&connection, "family", "2026-07").unwrap()),
+            expected
+        );
+    }
+
+    #[test]
+    fn budget_copy_writes_nothing_when_the_insert_fails() {
+        let connection = database();
+        create_household(
+            &connection,
+            &CreateHouseholdInput {
+                id: "family".to_owned(),
+                name: "Family".to_owned(),
+            },
+        )
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO monthly_category_budgets (household_id, month, category_account_id, budget_jpy)
+                   VALUES ('family', '2026-06', 'family-groceries', 30000),
+                          ('family', '2026-06', 'family-housing', 80000);
+                 CREATE TEMP TRIGGER fail_second_copy BEFORE INSERT ON monthly_category_budgets
+                   WHEN NEW.category_account_id = 'family-housing'
+                   BEGIN SELECT RAISE(ABORT, 'disk full'); END;",
+            )
+            .unwrap();
+
+        assert!(copy_monthly_budgets(
+            &connection,
+            &CopyMonthlyBudgetsInput {
+                household_id: "family".into(),
+                from_month: "2026-06".into(),
+                to_month: "2026-07".into(),
+            },
+        )
+        .is_err());
+        assert!(
+            list_monthly_category_budgets(&connection, "family", "2026-07")
+                .unwrap()
+                .is_empty()
         );
     }
 
