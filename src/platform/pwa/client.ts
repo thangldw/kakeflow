@@ -3,6 +3,15 @@ import type { ConnectorSummaryDto } from '../types'
 import type { PlainEventWrite, PlainProjectionWrite } from './database'
 import { PwaVaultDatabase } from './database'
 import { EvidenceStore, type EvidenceStoreOptions } from './evidenceStore'
+import {
+  PasskeyUnsupportedError,
+  base64UrlToBytes,
+  bytesToBase64Url,
+  type PasskeyAuthenticator,
+} from './passkey'
+import { PASSKEY_LIMIT, unwrapVaultKey, wrapVaultKey } from './passkeyWrap'
+import { deriveRawVaultKey, importVaultKeyBytes, unlockVaultKey } from './vaultCrypto'
+import type { PasskeyConfig, PasskeyEntry } from './vaultTypes'
 import type {
   Account,
   AccountSubtype,
@@ -17,6 +26,7 @@ import type {
   MonthlyBudgetRow,
   MonthlyDashboard,
   MonthlyExpenseCategory,
+  PasskeySummary,
   PostingEntry,
   ReceiptCandidate,
   SaveSavingsGoalInput,
@@ -39,6 +49,14 @@ const ACCOUNT_SUBTYPES: readonly AccountSubtype[] = ['BANK', 'CASH', 'WALLET', '
 const SAVINGS_GOAL_STATUSES: readonly SavingsGoalStatus[] = ['ACTIVE', 'COMPLETED', 'CANCELLED']
 // Separates the parts of a budget projection id; household and account ids may not contain it.
 const BUDGET_ID_SEPARATOR = '~'
+const VAULT_AUTHENTICATION_FAILED = 'Vault authentication failed'
+const PASSPHRASE_MARKER_LIFETIME_MS = 5 * 60 * 1000
+const PRF_OUTPUT_BYTES = 32
+const PRF_SALT_BYTES = 32
+const PASSKEY_USER_ID_BYTES = 16
+const PASSKEY_CHALLENGE_BYTES = 32
+const MAX_CREDENTIAL_ID_BYTES = 1023
+const MAX_PASSKEY_LABEL_LENGTH = 64
 
 export interface ClientOptions {
   readonly vaultId?: string
@@ -64,7 +82,15 @@ interface SourceHashProjection {
 
 let corePromise: Promise<typeof import('./core-wasm/kakeflow_core.js')> | undefined
 
+interface PassphraseMarker {
+  readonly digest: Uint8Array
+  readonly expiresAt: number
+}
+
 export class PwaLedgerClient {
+  /** SHA-256 of the passphrase last verified by `verifyPassphrase`; never the passphrase itself. */
+  private passphraseMarker: PassphraseMarker | undefined
+
   private constructor(
     private readonly database: PwaVaultDatabase,
     private readonly evidence: EvidenceStore,
@@ -100,12 +126,182 @@ export class PwaLedgerClient {
     return new PwaLedgerClient(database, new EvidenceStore(database, evidence), now)
   }
 
+  static async readPasskeyCount(databaseName: string): Promise<number> {
+    const row = await PwaVaultDatabase.readVaultRow(databaseName)
+    return row?.passkeys?.entries.length ?? 0
+  }
+
+  /**
+   * Unlocks the active vault with a passkey: one assertion over every stored credential with the
+   * vault's PRF salt, then the matching wrapper is decrypted and imported. Every failure, a
+   * cancelled prompt included, surfaces as `Vault authentication failed`.
+   */
+  static async unlockWithPasskey(
+    databaseName: string,
+    authenticator: PasskeyAuthenticator,
+    options: Pick<ClientOptions, 'evidence' | 'now'> = {},
+  ): Promise<PwaLedgerClient> {
+    const scratch: Uint8Array[] = []
+    let prfOutput: Uint8Array | null = null
+    let raw: Uint8Array | undefined
+    try {
+      const row = await PwaVaultDatabase.readVaultRow(databaseName)
+      const config = row?.passkeys
+      if (!row || !config || config.entries.length === 0) throw new Error('No passkey enrolled')
+      const salt = passkeySalt(config)
+      const challenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
+      scratch.push(salt, challenge)
+      const result = await authenticator.get({
+        rpId: relyingPartyId(),
+        challenge,
+        allowCredentialIds: config.entries.map((entry) => base64UrlToBytes(entry.credentialIdBase64Url)),
+        prfSalt: salt,
+      })
+      prfOutput = result.prfOutput
+      const prf = validPrfOutput(prfOutput)
+      if (!prf) throw new Error('No PRF output')
+      const credentialId = validCredentialId(result.credentialId)
+      const credentialIdBase64Url = bytesToBase64Url(credentialId)
+      const entry = config.entries.find((item) => item.credentialIdBase64Url === credentialIdBase64Url)
+      if (!entry) throw new Error('Unknown passkey')
+      raw = await unwrapVaultKey(prf, entry.wrapped, row.vaultId, credentialId)
+      const key = await importVaultKeyBytes(raw, row.metadata)
+      const database = await PwaVaultDatabase.openWithKey(databaseName, key, row.vaultId)
+      return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
+    } catch {
+      throw new Error(VAULT_AUTHENTICATION_FAILED)
+    } finally {
+      prfOutput?.fill(0)
+      raw?.fill(0)
+      for (const bytes of scratch) bytes.fill(0)
+    }
+  }
+
   lock() {
+    this.passphraseMarker = undefined
     this.database.lock()
   }
 
   close() {
+    this.passphraseMarker = undefined
     this.database.close()
+  }
+
+  /**
+   * Checks the passphrase against the vault key check (Argon2id) and remembers, for five minutes,
+   * only its SHA-256 so that a later `enablePasskey` tap can start the ceremony without a slow
+   * derivation first. Throws `Vault authentication failed` on a wrong passphrase.
+   */
+  async verifyPassphrase(passphrase: string): Promise<void> {
+    this.passphraseMarker = undefined
+    await unlockVaultKey(passphrase, await this.database.readMetadata())
+    this.passphraseMarker = {
+      digest: await passphraseDigest(passphrase),
+      expiresAt: this.now().getTime() + PASSPHRASE_MARKER_LIFETIME_MS,
+    }
+  }
+
+  /**
+   * Enrols a passkey. Order is fixed: limit, verified-passphrase marker, `create` (then `get` when
+   * PRF only comes back on assertion), raw key derivation, wrap, unwrap self-check, and the row is
+   * written last, so nothing is stored on any earlier failure. The marker is spent either way.
+   */
+  async enablePasskey(
+    passphrase: string,
+    authenticator: PasskeyAuthenticator,
+    label?: string,
+  ): Promise<void> {
+    const secrets: Uint8Array[] = []
+    try {
+      const config = await this.database.readPasskeys()
+      const entries = config?.entries ?? []
+      if (entries.length >= PASSKEY_LIMIT) throw new Error('Passkey limit reached')
+      await this.requireVerifiedPassphrase(passphrase)
+
+      const salt = config ? passkeySalt(config) : randomBytes(PRF_SALT_BYTES)
+      const prfSaltBase64 = config?.prfSaltBase64 ?? bytesToBase64(salt)
+      const userId = randomBytes(PASSKEY_USER_ID_BYTES)
+      const challenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
+      secrets.push(salt, userId, challenge)
+      const rpId = relyingPartyId()
+      const created = await authenticator.create({
+        rpId,
+        userId,
+        challenge,
+        excludeCredentialIds: entries.map((entry) => base64UrlToBytes(entry.credentialIdBase64Url)),
+        prfSalt: salt,
+      })
+      if (created.prfOutput) secrets.push(created.prfOutput)
+      const credentialId = validCredentialId(created.credentialId)
+      const credentialIdBase64Url = bytesToBase64Url(credentialId)
+      if (entries.some((entry) => entry.credentialIdBase64Url === credentialIdBase64Url)) {
+        throw new Error('Passkey already enabled')
+      }
+      let prf = validPrfOutput(created.prfOutput)
+      if (!prf) {
+        const assertionChallenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
+        secrets.push(assertionChallenge)
+        const asserted = await authenticator.get({
+          rpId,
+          challenge: assertionChallenge,
+          allowCredentialIds: [credentialId],
+          prfSalt: salt,
+        })
+        if (asserted.prfOutput) secrets.push(asserted.prfOutput)
+        if (!equalBytes(asserted.credentialId, credentialId)) throw new PasskeyUnsupportedError()
+        prf = validPrfOutput(asserted.prfOutput)
+        if (!prf) throw new PasskeyUnsupportedError()
+      }
+
+      const metadata = await this.database.readMetadata()
+      const raw = await deriveRawVaultKey(passphrase, metadata)
+      secrets.push(raw)
+      const wrapped = await wrapVaultKey(prf, raw, metadata.vaultId, credentialId)
+      const unwrapped = await unwrapVaultKey(prf, wrapped, metadata.vaultId, credentialId)
+      secrets.push(unwrapped)
+      if (!equalBytes(unwrapped, raw)) throw new Error('Passkey self-check failed')
+
+      const createdAt = this.now().toISOString()
+      const entry: PasskeyEntry = {
+        credentialIdBase64Url,
+        wrapped,
+        label: passkeyLabel(label, createdAt),
+        createdAt,
+      }
+      await this.database.writePasskeys({ prfSaltBase64, entries: [...entries, entry] })
+    } finally {
+      this.passphraseMarker = undefined
+      for (const bytes of secrets) bytes.fill(0)
+    }
+  }
+
+  async listPasskeys(): Promise<readonly PasskeySummary[]> {
+    const config = await this.database.readPasskeys()
+    return (config?.entries ?? []).map((entry) => ({
+      credentialIdBase64Url: entry.credentialIdBase64Url,
+      label: entry.label,
+      createdAt: entry.createdAt,
+    }))
+  }
+
+  /** Removes the wrapper stored on this device; it cannot revoke the credential itself. */
+  async removePasskey(credentialIdBase64Url: string): Promise<void> {
+    const config = await this.database.readPasskeys()
+    const entries = config?.entries ?? []
+    const remaining = entries.filter((entry) => entry.credentialIdBase64Url !== credentialIdBase64Url)
+    if (!config || remaining.length === entries.length) throw new Error('Passkey not found')
+    await this.database.writePasskeys(remaining.length > 0 ? { ...config, entries: remaining } : undefined)
+  }
+
+  private async requireVerifiedPassphrase(passphrase: string) {
+    const marker = this.passphraseMarker
+    if (!marker || this.now().getTime() > marker.expiresAt) throw new Error('Passphrase not verified')
+    const digest = await passphraseDigest(passphrase)
+    try {
+      if (!equalBytes(digest, marker.digest)) throw new Error('Passphrase not verified')
+    } finally {
+      digest.fill(0)
+    }
   }
 
   revision() {
@@ -824,4 +1020,60 @@ function checkedAdd(left: number, right: number) {
 
 function eventId() {
   return `event-${crypto.randomUUID()}`
+}
+
+function relyingPartyId(): string {
+  const hostname = globalThis.location?.hostname
+  if (!hostname) throw new PasskeyUnsupportedError()
+  return hostname
+}
+
+function randomBytes(length: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(length))
+}
+
+/** A PRF result counts only when it is exactly 32 bytes; anything else is treated as no PRF. */
+function validPrfOutput(output: Uint8Array | null): Uint8Array | null {
+  return output && output.length === PRF_OUTPUT_BYTES ? output : null
+}
+
+function validCredentialId(id: Uint8Array): Uint8Array {
+  if (id.length === 0 || id.length > MAX_CREDENTIAL_ID_BYTES) throw new PasskeyUnsupportedError()
+  return id
+}
+
+function passkeySalt(config: PasskeyConfig): Uint8Array {
+  const salt = Uint8Array.from(atob(config.prfSaltBase64), (character) => character.charCodeAt(0))
+  if (salt.length !== PRF_SALT_BYTES) throw new Error('Invalid passkey salt')
+  return salt
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+function passkeyLabel(label: string | undefined, createdAt: string): string {
+  const trimmed = label?.trim().replace(/\p{Cc}/gu, '') ?? ''
+  return (trimmed || `Passkey ${createdAt.slice(0, 10)}`).slice(0, MAX_PASSKEY_LABEL_LENGTH)
+}
+
+async function passphraseDigest(passphrase: string): Promise<Uint8Array> {
+  const bytes = encoder.encode(passphrase)
+  try {
+    return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+  } finally {
+    bytes.fill(0)
+  }
+}
+
+/** Constant-time over the longer input. */
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  let difference = left.length ^ right.length
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left[index] ?? 0) ^ (right[index] ?? 0)
+  }
+  return difference === 0
 }
