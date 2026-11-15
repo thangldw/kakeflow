@@ -26,6 +26,8 @@
   "カード照合": "Xác minh thẻ",
   "クレジットカード": "thẻ tín dụng",
   "バックアップと復元": "Sao lưu và khôi phục",
+  "パスキーで開く": "Mở khóa bằng khóa truy cập",
+  "パスキーを使えませんでした。パスフレーズで開いてください。": "Không dùng được khóa truy cập. Vui lòng mở khóa bằng cụm mật khẩu.",
   "パスフレーズは12文字以上にしてください": "Hãy dùng cụm mật khẩu dài ít nhất 12 ký tự",
   "パスフレーズを確認": "Xác nhận cụm mật khẩu",
   "ホーム": "Trang chủ",

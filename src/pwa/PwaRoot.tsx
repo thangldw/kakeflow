@@ -10,7 +10,8 @@ import { parseReceiptText, type ReceiptTextFields } from '../features/import/rec
 import { UiModeSwitch } from '../features/simple/SimpleMorePage'
 import { readUiMode, writeUiMode, type UiMode } from '../features/simple/uiMode'
 import { I18nProvider, localize, useI18n, type AppLocale } from '../i18n'
-import type { PwaLedgerClient } from '../platform/pwa/client'
+import { PwaLedgerClient } from '../platform/pwa/client'
+import { browserPasskeyAuthenticator, passkeyAvailable, type PasskeyAuthenticator } from '../platform/pwa/passkey'
 import type {
   Account,
   DashboardSummary,
@@ -40,6 +41,8 @@ export type PwaOcrDocument = (
 interface PwaRootProps {
   readonly databaseName?: string
   readonly ocrDocument?: PwaOcrDocument
+  /** The WebAuthn adapter for the passkey unlock; tests inject a fake, the app uses the browser one. */
+  readonly passkeyAuthenticator?: PasskeyAuthenticator
 }
 
 type Screen = 'overview' | 'sources' | 'import' | 'review' | 'ledger' | 'evidence' | 'backup'
@@ -221,6 +224,7 @@ export default function PwaRoot(props: PwaRootProps) {
 function PwaVaultRoot({
   databaseName = 'kakeflow-pwa-v1',
   ocrDocument = defaultOcrDocument,
+  passkeyAuthenticator,
   vaults, directoryError, onSelectVault, onCreateNewVault,
 }: PwaRootProps & {
   vaults: VaultEntry[]; directoryError: string;
@@ -236,6 +240,9 @@ function PwaVaultRoot({
   // In Simple mode, a classic page opened from More is shown with the classic navigation and a way back.
   const [classicVisit, setClassicVisit] = useState(false)
   const [passphrase, setPassphrase] = useState('')
+  // Whether a locked vault has a stored passkey and this browser can run the ceremony; the button shows only then.
+  const [passkeyReady, setPasskeyReady] = useState(false)
+  const [passkeyFailed, setPasskeyFailed] = useState(false)
   const [confirmation, setConfirmation] = useState('')
   const [screen, setScreen] = useState<Screen>('overview')
   const [household, setHousehold] = useState<Household | null>(null)
@@ -291,8 +298,22 @@ function PwaVaultRoot({
     }
   }, [databaseName])
 
+  const locked = session.mode === 'locked'
+  useEffect(() => {
+    if (!locked) {
+      setPasskeyReady(false)
+      return
+    }
+    let current = true
+    Promise.all([PwaLedgerClient.readPasskeyCount(databaseName), passkeyAvailable()])
+      .then(([count, available]) => { if (current) setPasskeyReady(count > 0 && available) })
+      .catch(() => { if (current) setPasskeyReady(false) })
+    return () => { current = false }
+  }, [locked, databaseName])
+
   const submitVault = async (create: boolean) => {
     setError(null)
+    setPasskeyFailed(false)
     if (passphrase.length < 12) {
       setError(localize("パスフレーズは12文字以上にしてください"))
       return
@@ -311,6 +332,26 @@ function PwaVaultRoot({
       await loadVault(client)
     } catch (cause) {
       if (!isPwaClientOperationSuperseded(cause)) setError(messageOf(cause))
+    }
+  }
+
+  // A cancelled prompt and every other failure show the same plain message; the passphrase form stays usable.
+  const unlockWithPasskey = async () => {
+    setError(null)
+    setPasskeyFailed(false)
+    let client: PwaLedgerClient
+    try {
+      client = await session.unlockVaultWithPasskey(passkeyAuthenticator ?? browserPasskeyAuthenticator())
+    } catch (cause) {
+      if (!isPwaClientOperationSuperseded(cause)) setPasskeyFailed(true)
+      return
+    }
+    try {
+      setPassphrase('')
+      setScreen('overview')
+      await loadVault(client)
+    } catch (cause) {
+      setError(messageOf(cause))
     }
   }
 
@@ -464,6 +505,7 @@ function PwaVaultRoot({
     setClassicVisit(false)
     setBusy(false)
     setError(null)
+    setPasskeyFailed(false)
     setPassphrase('')
     setDraft(null)
     setPosted(null)
@@ -505,7 +547,10 @@ function PwaVaultRoot({
 
   const status = session.mode === 'unlocked' ? localize("解錠中") : localize("施錠中")
   const showSimple = session.mode === 'unlocked' && household !== null && uiMode === 'simple' && !classicVisit
-  const effectiveError = error ?? session.error
+  // The passkey failure message replaces the raw session error, so no detail of the failed step reaches the screen.
+  const effectiveError = passkeyFailed
+    ? localize("パスキーを使えませんでした。パスフレーズで開いてください。")
+    : error ?? session.error
   const canActivateUpdate = canActivatePwaUpdate({
     vaultUnlocked: session.mode === 'unlocked',
     activeOperation: busy || Boolean(draft?.candidate && !posted),
@@ -541,6 +586,7 @@ function PwaVaultRoot({
         </select></label>}
         {vaults.length > 1 && <p>{localize("保管庫ごとにパスフレーズが異なります。ほかの保管庫とそのデータはこの端末に残ります。")}</p>}
         {directoryError && <p className="pwa-error" role="alert">{directoryError}</p>}
+        {session.mode === 'locked' && passkeyReady && <button className="pwa-primary pwa-passkey-unlock" type="button" disabled={session.busy} onClick={() => void unlockWithPasskey()}>{localize("パスキーで開く")}</button>}
         <label>{localize("保管庫用パスフレーズ")}<input type="password" autoComplete="current-password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></label>
         {session.mode === 'new' && <label>{localize("パスフレーズを確認")}<input type="password" autoComplete="new-password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>}
         {effectiveError && <p className="pwa-error" role="alert">{effectiveError}</p>}

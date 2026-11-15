@@ -498,6 +498,7 @@ body {
 }
 
 .pwa-new-vault { display: block; margin-top: 12px; }
+.pwa-passkey-unlock { display: block; width: 100%; }
 
 @media (pointer: coarse) {
   .pwa-navigation button, .pwa-brand { min-height: 44px; }

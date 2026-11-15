@@ -26,6 +26,8 @@
   "カード照合": "Card verification",
   "クレジットカード": "credit card",
   "バックアップと復元": "Backup and recovery",
+  "パスキーで開く": "Unlock with passkey",
+  "パスキーを使えませんでした。パスフレーズで開いてください。": "Could not use the passkey. Please unlock with your passphrase.",
   "パスフレーズは12文字以上にしてください": "Use a passphrase of at least 12 characters",
   "パスフレーズを確認": "Confirm passphrase",
   "ホーム": "Home",
