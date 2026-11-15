@@ -15,7 +15,7 @@ The people this product is for mostly use a phone. The mobile build is the PWA (
 
 ## Non-goals
 
-- No passkey or unlock changes (security-sensitive, separate design). The vault keeps its passphrase unlock.
+- No passkey or unlock changes (security-sensitive, separate design). The vault keeps its passphrase unlock. Update 2026-11-15: a passkey is now available as an optional quick unlock under More (`2026-11-15-pwa-passkey-unlock-design.md`); the passphrase stays mandatory.
 - No device-to-device sync, no server, no new network access.
 - No bank import, no CSV import in the PWA, no multi-currency.
 - No redesign of the existing receipt flow screens.
