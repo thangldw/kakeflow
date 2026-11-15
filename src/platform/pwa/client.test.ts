@@ -533,6 +533,29 @@ describe('authoritative PWA ledger client', () => {
       }
     })
 
+    it('does not overwrite a row another write adds to the target month while it copies', async () => {
+      const client = await simpleClient('client-budget-copy-race')
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'groceries', budgetJpy: 5_000 })
+      await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'utilities', budgetJpy: 2_000 })
+      const listAccounts = client.listAccounts.bind(client)
+      // The competing write lands after the copy has looked at the target month but before it writes.
+      vi.spyOn(client, 'listAccounts').mockImplementationOnce(async (householdId) => {
+        await client.upsertBudget({ householdId: 'household-1', month: '2026-11', categoryAccountId: 'groceries', budgetJpy: 9_000 })
+        return listAccounts(householdId)
+      })
+      await expect(client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' }))
+        .rejects.toThrow('Projection revision conflict')
+      await expect(client.listBudgets('household-1', '2026-11')).resolves.toEqual([
+        expect.objectContaining({ categoryAccountId: 'groceries', budgetJpy: 9_000 }),
+      ])
+      // The next attempt copies only what is still missing and keeps the other writer's value.
+      const copied = await client.copyBudgets({ householdId: 'household-1', fromMonth: '2026-10', toMonth: '2026-11' })
+      expect(copied.map((row) => [row.categoryAccountId, row.budgetJpy])).toEqual([
+        ['groceries', 9_000],
+        ['utilities', 2_000],
+      ])
+    })
+
     it('rejects invalid copies and writes nothing when the single write fails', async () => {
       const client = await simpleClient('client-budget-copy-invalid')
       await client.upsertBudget({ householdId: 'household-1', month: '2026-10', categoryAccountId: 'groceries', budgetJpy: 5_000 })

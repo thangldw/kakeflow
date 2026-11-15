@@ -455,6 +455,9 @@ export class PwaLedgerClient {
     validateMonth(input.toMonth)
     if (input.fromMonth === input.toMonth) throw new Error('Choose two different months')
     await this.requireHousehold(input.householdId)
+    // Read the revision before anything the write depends on: a write that lands later (another tab
+    // adding a row to `toMonth`) then fails with a revision conflict instead of being overwritten.
+    const expectedRevision = await this.database.revision()
     const sourcePrefix = budgetProjectionId(input.householdId, input.fromMonth, '')
     const ids = await this.database.listProjectionIds('BUDGET')
     const existing = new Set(ids)
@@ -476,6 +479,7 @@ export class PwaLedgerClient {
             id: budgetProjectionId(budget.householdId, budget.month, budget.categoryAccountId),
             payload: encodeJson(budget),
           })),
+          expectedRevision,
         )
       }
     }
@@ -648,8 +652,9 @@ export class PwaLedgerClient {
   private async appendDomainChange(
     events: readonly PlainEventWrite[],
     projections: readonly PlainProjectionWrite[],
+    knownRevision?: number,
   ) {
-    const expectedRevision = await this.database.revision()
+    const expectedRevision = knownRevision ?? await this.database.revision()
     return this.database.appendPostingAtomically({ expectedRevision, events, projections })
   }
 
