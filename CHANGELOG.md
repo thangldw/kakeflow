@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add tax return support (確定申告) to the account-free PWA, under More: pick a year (this year and the two before) and list medical-expense, hometown-tax and other donation candidates from the encrypted vault, with the 医療費控除 reference amount when the annual income is typed, and download the CSV (BOM, formula-safe). It reuses the desktop report, so the same candidate rules apply; candidates only, nothing is filed. The PWA catalog generator now also scans the shared tax panel so the strings appear in en/vi.
 - Upgrade the React stack to React 19.3 (react, react-dom, types, testing-library). No production code changed; five tests that raced React 18's eager state flushing now wait for the state they assert on (stored dashboard layout, async checkbox state, quick-add sheet fields). Typecheck, lint, build and the full suite pass three runs in a row.
 - Add "Verify a backup" to desktop Settings: choose a backup file and its passphrase and KakeFlow unpacks it into a private scratch copy, then runs the checks a real restore would (SQLCipher integrity, foreign keys, schema, every stored source document) plus the double-entry ledger audit for every household, and reports counts. Nothing live is touched or staged, the scratch copy is always removed (stale ones from a crash are cleaned on the next run), and a wrong passphrase or corrupted archive is rejected.
 - Raise the Vitest default timeout to 20s: the synthetic source-to-provenance journey timed out at 5s under coverage on a shared CI runner and failed an unrelated PR.

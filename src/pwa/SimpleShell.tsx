@@ -20,6 +20,7 @@ import { backupReminderDue } from './backupReminder'
 import { formatJpy } from './formatJpy'
 import { LanguageSwitch } from './LanguageSwitch'
 import { PostedLedgerList } from './PostedLedgerList'
+import { PwaTaxCard } from './PwaTaxCard'
 import { QuickUnlockCard } from './QuickUnlockCard'
 import { createSimpleAdapter, type SimpleAdapter } from './simpleAdapter'
 
@@ -127,7 +128,7 @@ export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchT
       {tab === 'transactions' && <HistoryTab client={client} householdId={household.id} revision={revision} />}
       {tab === 'budget' && <BudgetTab client={client} householdId={household.id} month={month} onChanged={changed} />}
       {tab === 'savings' && <SavingsTab adapter={adapter} client={client} householdId={household.id} revision={revision} onChanged={changed} />}
-      {tab === 'more' && <MoreTab client={client} passkeyAuthenticator={passkeyAuthenticator} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />}
+      {tab === 'more' && <MoreTab client={client} householdId={household.id} passkeyAuthenticator={passkeyAuthenticator} onOpenPage={onOpenPage} onSwitchToClassic={onSwitchToClassic} />}
     </main>
     {/* Always present so screen readers announce the text when it appears. */}
     <p className="pwa-simple-saved" role="status">{savedText}</p>
@@ -263,8 +264,9 @@ const MORE_ENTRIES: readonly { readonly page: PwaPage; readonly icon: LucideIcon
   { page: 'backup', icon: Archive },
 ]
 
-function MoreTab({ client, passkeyAuthenticator, onOpenPage, onSwitchToClassic }: {
+function MoreTab({ client, householdId, passkeyAuthenticator, onOpenPage, onSwitchToClassic }: {
   readonly client: PwaLedgerClient
+  readonly householdId: string
   readonly passkeyAuthenticator?: PasskeyAuthenticator
   readonly onOpenPage: (page: PwaPage) => void
   readonly onSwitchToClassic: () => void
@@ -286,6 +288,7 @@ function MoreTab({ client, passkeyAuthenticator, onOpenPage, onSwitchToClassic }
       </li>)}
     </ul>
     <QuickUnlockCard client={client} authenticator={passkeyAuthenticator} />
+    <PwaTaxCard client={client} householdId={householdId} />
     <div className="simple-card"><UiModeSwitch mode="simple" onChange={(mode) => { if (mode === 'full') onSwitchToClassic() }} /></div>
     <div className="simple-card"><LanguageSwitch /></div>
   </div>

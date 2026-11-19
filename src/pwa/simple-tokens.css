@@ -107,3 +107,11 @@ html body .pwa-shell--simple .yen-field--suffix::after { content: '円'; positio
 html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .yen-field input[aria-invalid='true'], html body :is(.pwa-shell--simple, .pwa-mode-panel, .pwa-auth-card) .simple-field input[aria-invalid='true'] { border-color: var(--err); }
 
 .pwa-shell--simple .skeleton { border: 1px solid var(--hairline); border-radius: 12px; background: var(--surface2); }
+
+/* The shared tax-support panel (src/features/reports) is written for the desktop theme; inside the PWA's More tab it
+   takes the Simple shell's tokens so its text keeps its contrast in dark mode and it sits flat inside its card. */
+html body .pwa-tax-card .tax-support-panel { margin-top: 0; padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--text); }
+html body .pwa-tax-card :is(.panel-head h2, .tax-support-group h3) { color: var(--text); }
+html body .pwa-tax-card :is(.panel-head p, .tax-support-note, .empty-state) { color: var(--text2); }
+html body .pwa-tax-card .tax-support-group li { border-top-color: var(--hairline); }
+html body .pwa-tax-card .tax-support-controls label { color: var(--text2); }

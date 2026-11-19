@@ -6,12 +6,15 @@
 // - Japanese string literals in src/features/simple (label sources such as SIMPLE_TABS and the More entries,
 //   which reach localize() through a variable);
 // - the page labels of the `navigation` array in src/navigation.ts, which the More page lists.
+// Individual shared components listed in PWA_CATALOG_FILES are scanned the same way.
 // Test files are skipped. A key missing from a full catalog is an error, never silently dropped.
 import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const PWA_CATALOG_ROOTS = ['src/features/simple', 'src/ui', 'src/pwa']
+// Individual shared components the PWA mounts (the tax-support panel is reused from the desktop reports).
+export const PWA_CATALOG_FILES = ['src/features/reports/TaxSupportPanel.tsx']
 export const LABEL_SOURCE_ROOT = 'src/features/simple'
 export const NAVIGATION_SOURCE = 'src/navigation.ts'
 export const FULL_CATALOG_PATHS = { en: 'src/locales/en.generated.json', vi: 'src/locales/vi.generated.json' }
@@ -122,7 +125,7 @@ export async function listPwaCatalogSources(rootDir) {
     .flat()
     .map((file) => toPosix(relative(root, file)))
     .filter((path) => sourceFilePattern.test(path) && !testFilePattern.test(path))
-  paths.push(NAVIGATION_SOURCE)
+  paths.push(NAVIGATION_SOURCE, ...PWA_CATALOG_FILES)
   const unique = [...new Set(paths)].sort()
   return Promise.all(unique.map(async (path) => ({ path, source: await readFile(join(root, path), 'utf8') })))
 }
