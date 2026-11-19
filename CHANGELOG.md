@@ -2,7 +2,10 @@
 
 ## Unreleased
 
+- Raise the Vitest default timeout to 20s: the synthetic source-to-provenance journey timed out at 5s under coverage on a shared CI runner and failed an unrelated PR.
 - Make CI survive Ubuntu mirror outages: Rust and Poppler jobs install apt packages through `scripts/ci-apt-install.sh` (IPv4, per-request retries, up to four attempts with backoff) instead of a single `apt-get install` that failed three PRs at once.
+- Add a Cmd/Ctrl+K command palette: jump to any page or find a transaction by typing (debounced, desktop ledger); arrow keys, Enter and Esc, ARIA combobox/listbox, en/vi.
+- Add a PWA UI contract test (Playwright + axe-core): every Simple tab, at 375/768/1440 px in light and dark, must not scroll sideways and must have no serious or critical WCAG A/AA violation. It found one real defect, fixed here: the header logo link's accessible name did not contain its visible text.
 - Measure frontend coverage in CI (`npm run test:coverage`, V8): 81.4% statements, 75.9% branches, 81.9% functions and 88.4% lines today, with floors just below so it cannot quietly erode.
 - Fuzz all 24 import adapters with fast-check (random text, random delimited rows, corrupted real fixtures, empty/BOM/200k-character input): none may throw, and every result keeps its shape. A one-off run of 1,500 cases per adapter found no failures.
 - Add a month-end close checklist to the Calendar report (imports waiting, failed or in progress, stale data, budget set, overspent categories, with progress and a link to fix each) and the next yearly tax and filing dates (確定申告, 予定納税, ふるさと納税 cutoff; municipality- or employer-dependent dates are marked as a guide) to the Annual report.
