@@ -66,7 +66,21 @@
     'created household selection',
   )
   await invoke('packaged_smoke_progress', { stage: 'household-selected' })
-  const navigationButtons = Array.from(sidebar.querySelectorAll('button.nav-item'))
+  // Households created through onboarding start in Simple mode; this smoke walks the full navigation, so switch to the detailed view first.
+  const navButtons = () => Array.from(sidebar.querySelectorAll('button.nav-item'))
+  const navLabel = (button) => button.querySelector('span')?.textContent?.trim() ?? ''
+  const moreButton = navButtons().find((button) => navLabel(button) === 'そのほか')
+  if (moreButton instanceof HTMLButtonElement) {
+    moreButton.click()
+    const fullModeButton = await waitFor(
+      () => Array.from(document.querySelectorAll('.simple-mode-switch-options button')).find((button) => button.textContent?.trim() === '詳細') ?? null,
+      'detailed display mode switch',
+    )
+    fullModeButton.click()
+    await waitFor(() => navButtons().some((button) => navLabel(button) === 'インポート'), 'detailed navigation')
+    await invoke('packaged_smoke_progress', { stage: 'full-mode-selected' })
+  }
+  const navigationButtons = navButtons()
   const navigationLabels = navigationButtons.map((button) => button.querySelector('span')?.textContent?.trim() ?? '')
   const main = document.querySelector('main')
   const expectedPages = navigationLabels.map((navigationLabel) => [navigationLabel, navigationLabel])
