@@ -3220,5 +3220,7 @@
   "接続解除": "Disconnect",
   "更新の進行: {completed} / {total}": "Refresh progress: {completed} / {total}",
   "更新を完了できませんでした。項目ごとの対応を確認してください。": "Refresh could not be completed. Check each item for next steps.",
-  "設定を確認してください": "Check settings"
+  "設定を確認してください": "Check settings",
+  "最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。": "It has been over a week since your last backup. Browser storage can be cleared, so save an encrypted archive.",
+  "バックアップを開く": "Open backup"
 }
