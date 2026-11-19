@@ -3282,5 +3282,14 @@
   "予算が未設定です": "Chưa đặt ngân sách",
   "予算超過のカテゴリーはありません": "Không có danh mục nào vượt ngân sách",
   "予算を超過したカテゴリー": "Danh mục vượt ngân sách",
-  "開く": "Mở"
+  "開く": "Mở",
+  "バックアップの検証": "Kiểm tra bản sao lưu",
+  "選んだバックアップを一時的な場所で復元できるか確認します。現在のデータは変更されません。": "Kiểm tra bản sao lưu bạn chọn có khôi phục được không, trên một bản sao tạm. Dữ liệu hiện tại không bị thay đổi.",
+  "バックアップを選んで検証": "Chọn bản sao lưu và kiểm tra",
+  "検証はデスクトップ版で利用できます。": "Tính năng kiểm tra chỉ có trên bản máy tính.",
+  "バックアップを検証できませんでした。ファイルとパスフレーズを確認してください。": "Không thể kiểm tra bản sao lưu. Hãy kiểm tra tệp và cụm mật khẩu.",
+  "このバックアップは復元できます。": "Bản sao lưu này có thể khôi phục.",
+  "復元はできますが、帳簿に確認が必要な取引があります。": "Có thể khôi phục, nhưng một số giao dịch trong sổ cần được kiểm tra.",
+  "件の原本を確認": "tài liệu gốc đã kiểm tra",
+  "件の要確認": "cần kiểm tra"
 }

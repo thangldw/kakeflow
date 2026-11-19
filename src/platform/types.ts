@@ -184,6 +184,10 @@ export interface ReceiptMatchConfirmationDto {
   readonly runId: string; readonly candidateId: string; readonly transactionId: string
   readonly resolutionStatus: 'LINKED'; readonly evidenceCount: number; readonly runStatus: string
 }
+export interface BackupVerificationDto {
+  readonly entryCount: number; readonly plaintextBytes: number; readonly schemaVersion: number; readonly householdCount: number
+  readonly documentsChecked: number; readonly postedTransactions: number; readonly journalEntries: number; readonly ledgerFindings: number; readonly ok: boolean
+}
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
 export interface EvidenceBundleSummaryDto {
   readonly bundleId: string
@@ -1208,6 +1212,7 @@ export type AppCommand =
   | 'import_rollback'
   | 'backup_create'
   | 'backup_restore_stage'
+  | 'backup_verify'
   | 'app_restart_for_restore'
   | 'document_extract'
   | 'document_ocr'
@@ -1421,6 +1426,8 @@ export interface PlatformClient {
   rollbackImport(runId: string): Promise<void>
   createBackup(passphrase: string): Promise<BackupSummaryDto | null>
   stageBackupRestore(passphrase: string): Promise<BackupSummaryDto | null>
+  /** Decrypts a chosen backup into a private scratch copy and proves it restores; nothing live is touched. */
+  verifyBackup(passphrase: string): Promise<BackupVerificationDto | null>
   restartForRestore(): Promise<void>
   extractDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
   ocrDocument(fileBytes: Uint8Array, mediaType: string): Promise<ExtractedDocumentDto>
