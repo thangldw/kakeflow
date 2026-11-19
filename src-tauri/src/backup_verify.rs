@@ -95,8 +95,8 @@ pub fn verify_portable_backup(
     let info = persistence::validate_existing_database(&database, key.as_slice())
         .map_err(|_| BackupVerifyError::Invalid)?;
 
-    let vault = DocumentVault::new(unpacked.join("vault"), &key)
-        .map_err(|_| BackupVerifyError::Invalid)?;
+    let vault =
+        DocumentVault::new(unpacked.join("vault"), &key).map_err(|_| BackupVerifyError::Invalid)?;
     let mut documents_checked = 0_u64;
     for expected in &info.source_documents {
         let document = vault
@@ -197,7 +197,12 @@ mod tests {
             .map(|entries| {
                 entries
                     .flatten()
-                    .filter(|entry| entry.file_name().to_string_lossy().starts_with(SCRATCH_PREFIX))
+                    .filter(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .starts_with(SCRATCH_PREFIX)
+                    })
                     .count()
             })
             .unwrap_or(0)
@@ -226,7 +231,8 @@ mod tests {
         let archive = archive_fixture(root.path());
         let scratch_parent = root.path().join("app-data");
 
-        let result = verify_portable_backup(&scratch_parent, &archive, "not the right passphrase!!");
+        let result =
+            verify_portable_backup(&scratch_parent, &archive, "not the right passphrase!!");
 
         assert_eq!(result, Err(BackupVerifyError::Backup));
         assert_eq!(scratch_leftovers(&scratch_parent), 0);
