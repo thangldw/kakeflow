@@ -21,6 +21,7 @@ import type {
   ExtractedDocumentDto,
   HouseholdDto,
   HouseholdMemberDto,
+  LedgerAuditReportDto,
   LocalSyncFoundationStatusDto,
   DesktopRelayStatusDto,
   DesktopRelayPreparedDeliveryDto,
@@ -132,6 +133,22 @@ export function parseHouseholdMember(value: unknown): HouseholdMemberDto {
     relationshipLabel: record.relationshipLabel, status: record.status, sortOrder: asSafeInteger(record.sortOrder),
     createdAt: asRequiredString(record.createdAt), updatedAt: asRequiredString(record.updatedAt),
   }
+}
+
+export function parseLedgerAuditReport(value: unknown): LedgerAuditReportDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.findings) || typeof record.truncated !== 'boolean' || typeof record.ok !== 'boolean') throw new TypeError('ledger audit')
+  const kinds = ['UNBALANCED_JOURNAL', 'TOO_FEW_ENTRIES', 'CROSS_HOUSEHOLD_ACCOUNT']
+  const findings = record.findings.map((item) => {
+    const finding = asRecord(item)
+    if (!kinds.includes(String(finding.kind))) throw new TypeError('ledger audit finding')
+    return {
+      kind: finding.kind as LedgerAuditReportDto['findings'][number]['kind'], transactionId: asRequiredString(finding.transactionId),
+      occurredOn: asRequiredString(finding.occurredOn), debitTotalJpy: asSafeInteger(finding.debitTotalJpy), creditTotalJpy: asSafeInteger(finding.creditTotalJpy),
+    }
+  })
+  if (record.ok !== (findings.length === 0)) throw new TypeError('ledger audit consistency')
+  return { postedTransactions: asSafeInteger(record.postedTransactions), journalEntries: asSafeInteger(record.journalEntries), findings, truncated: record.truncated, ok: record.ok }
 }
 
 export function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStatusDto {
