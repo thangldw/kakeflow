@@ -112,3 +112,12 @@ button.calendar-event { cursor: pointer; }
 .tax-support-group ul { list-style: none; margin: 0; padding: 0; }
 .tax-support-group li { display: grid; font-size: 13px; gap: 12px; grid-template-columns: 96px 1fr auto; padding: 6px 0; border-top: 1px solid rgba(0, 0, 0, .06); }
 .tax-support-deduction { font-size: 13px; margin: 8px 0 0; }
+
+.command-palette-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: start center; padding-top: 12vh; background: rgb(0 0 0 / 0.4); }
+.command-palette { width: min(560px, calc(100vw - 32px)); background: var(--surface, #fff); color: inherit; border-radius: 12px; box-shadow: 0 20px 50px rgb(0 0 0 / 0.3); overflow: hidden; }
+.command-palette input { width: 100%; box-sizing: border-box; padding: 14px 16px; font: inherit; border: 0; border-bottom: 1px solid rgb(128 128 128 / 0.3); background: transparent; color: inherit; }
+.command-palette ul { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow: auto; }
+.command-palette li { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; border-radius: 8px; cursor: pointer; }
+.command-palette li.command-palette-active { background: rgb(80 120 220 / 0.18); }
+.command-palette li small { opacity: 0.65; }
+.command-palette-empty { cursor: default; opacity: 0.7; }

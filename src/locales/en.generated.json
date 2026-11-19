@@ -3236,5 +3236,9 @@
   "該当する取引はありません。": "No matching transactions.",
   "取引を読み込めませんでした。": "Could not load transactions.",
   "CSVをクリップボードにコピーしました。": "CSV copied to the clipboard.",
-  "CSVを書き出せませんでした。": "Could not export the CSV."
+  "CSVを書き出せませんでした。": "Could not export the CSV.",
+  "コマンドパレット": "Command palette",
+  "ページや取引を検索": "Search pages and transactions",
+  "検索結果": "Search results",
+  "一致する結果はありません。": "No matching results."
 }

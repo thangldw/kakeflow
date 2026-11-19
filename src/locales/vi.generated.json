@@ -3236,5 +3236,9 @@
   "該当する取引はありません。": "Không có giao dịch phù hợp.",
   "取引を読み込めませんでした。": "Không tải được giao dịch.",
   "CSVをクリップボードにコピーしました。": "Đã sao chép CSV vào clipboard.",
-  "CSVを書き出せませんでした。": "Không xuất được CSV."
+  "CSVを書き出せませんでした。": "Không xuất được CSV.",
+  "コマンドパレット": "Bảng lệnh",
+  "ページや取引を検索": "Tìm trang và giao dịch",
+  "検索結果": "Kết quả tìm kiếm",
+  "一致する結果はありません。": "Không có kết quả phù hợp."
 }

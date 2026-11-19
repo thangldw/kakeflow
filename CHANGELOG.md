@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a Cmd/Ctrl+K command palette: jump to any page or find a transaction by typing (debounced, desktop ledger); arrow keys, Enter and Esc, ARIA combobox/listbox, en/vi.
 - Add tax return support (確定申告) to the desktop Annual page: posted transactions of the selected year that look like medical expenses, hometown-tax donations (ふるさと納税) or other donations, with a reference 医療費控除 amount when the annual income is typed, and a CSV (BOM, formula-safe) to copy out. Candidates only: insurance reimbursements and eligibility are for the user to check.
 - Forbid `unwrap()` and `expect()` in production Rust (`clippy::unwrap_used`/`expect_used` denied outside tests). The 23 existing sites became error handling or carry a stated invariant; a connector page with a zero limit can no longer panic.
 - Remind PWA users on Today, after a week without a downloaded encrypted archive, to back up because browser storage can be cleared. A new vault is counted from its first use, downloading an archive restarts the clock, and the reminder opens the Backup page. Stored per vault in localStorage and best effort.
