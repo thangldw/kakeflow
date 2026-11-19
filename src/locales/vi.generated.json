@@ -3222,5 +3222,19 @@
   "更新を完了できませんでした。項目ごとの対応を確認してください。": "Không thể hoàn tất việc làm mới. Hãy kiểm tra cách xử lý cho từng mục.",
   "設定を確認してください": "Kiểm tra cài đặt",
   "最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。": "Đã hơn một tuần kể từ lần sao lưu cuối. Bộ nhớ trình duyệt có thể bị xóa, hãy lưu một bản lưu trữ mã hóa.",
-  "バックアップを開く": "Mở sao lưu"
+  "バックアップを開く": "Mở sao lưu",
+  "確定申告サポート": "Hỗ trợ khai thuế",
+  "年の医療費・寄附金の候補（確認用）": " — các khoản chi y tế và quyên góp ứng viên (để kiểm tra)",
+  "候補の一覧です。保険金などで補填された額や対象外の支出は、申告前にご確認ください。": "Đây chỉ là danh sách ứng viên. Hãy kiểm tra các khoản đã được bảo hiểm hoàn trả và chi tiêu không đủ điều kiện trước khi khai.",
+  "年間の総所得（任意）": "Tổng thu nhập năm (tùy chọn)",
+  "候補を表示": "Hiện danh sách ứng viên",
+  "CSVを書き出す": "Xuất CSV",
+  "医療費": "Chi phí y tế",
+  "医療費控除額（参考）": "Mức khấu trừ chi phí y tế (tham khảo)",
+  "ふるさと納税": "Quyên góp quê hương (furusato nozei)",
+  "その他の寄附金": "Quyên góp khác",
+  "該当する取引はありません。": "Không có giao dịch phù hợp.",
+  "取引を読み込めませんでした。": "Không tải được giao dịch.",
+  "CSVをクリップボードにコピーしました。": "Đã sao chép CSV vào clipboard.",
+  "CSVを書き出せませんでした。": "Không xuất được CSV."
 }
