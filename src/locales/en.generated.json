@@ -3222,5 +3222,19 @@
   "更新を完了できませんでした。項目ごとの対応を確認してください。": "Refresh could not be completed. Check each item for next steps.",
   "設定を確認してください": "Check settings",
   "最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。": "It has been over a week since your last backup. Browser storage can be cleared, so save an encrypted archive.",
-  "バックアップを開く": "Open backup"
+  "バックアップを開く": "Open backup",
+  "確定申告サポート": "Tax return support",
+  "年の医療費・寄附金の候補（確認用）": " medical expense and donation candidates (for review)",
+  "候補の一覧です。保険金などで補填された額や対象外の支出は、申告前にご確認ください。": "This is a list of candidates. Check amounts reimbursed by insurance and ineligible spending before filing.",
+  "年間の総所得（任意）": "Annual total income (optional)",
+  "候補を表示": "Show candidates",
+  "CSVを書き出す": "Export CSV",
+  "医療費": "Medical expenses",
+  "医療費控除額（参考）": "Medical expense deduction (reference)",
+  "ふるさと納税": "Hometown tax donations (furusato nozei)",
+  "その他の寄附金": "Other donations",
+  "該当する取引はありません。": "No matching transactions.",
+  "取引を読み込めませんでした。": "Could not load transactions.",
+  "CSVをクリップボードにコピーしました。": "CSV copied to the clipboard.",
+  "CSVを書き出せませんでした。": "Could not export the CSV."
 }

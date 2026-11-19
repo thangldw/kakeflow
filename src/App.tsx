@@ -76,6 +76,8 @@ import { createFinancialCalendarPlatform } from './features/calendar/financialCa
 import type { FinancialCalendarDto, MonthlyFinancialReportDto, YearlyFinancialReportDto } from './features/calendar/financialCalendarPlatform'
 import { FinancialCalendarView, MonthlyReportView } from './features/reports/ReportViews'
 import { AnnualReviewView } from './features/reports/AnnualReviewView'
+import { TaxSupportPanel } from './features/reports/TaxSupportPanel'
+import type { TaxTransaction } from './features/reports/taxSupport'
 import { createForecastActionPlatform } from './features/forecast/forecastActionPlatform'
 import type { ActionItemDto, ForecastActionDto } from './features/forecast/forecastActionPlatform'
 import { ForecastActionViews } from './features/forecast/ForecastActionViews'
@@ -2769,6 +2771,16 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
       .catch(() => { if (active) setAnnualNotice(localize("年次レビューを読み込めませんでした。対象年と確定取引を確認してください。")) })
     return () => { active = false }
   }, [accountGroupId, attributionScope, householdId, month, revision, view])
+  const loadTaxYear = async (year: string): Promise<readonly TaxTransaction[]> => {
+    if (!householdId) return []
+    const collected: TaxTransaction[] = []
+    for (let page = 1; page <= 200; page += 1) {
+      const result = await platformClient.queryTransactions({ householdId, accountGroupId, attributionScope, accountingBasis: 'CASH', calculationTargetFilter: 'INCLUDED', fromDate: `${year}-01-01`, toDate: `${year}-12-31`, page, pageSize: 100 })
+      for (const row of result.items) collected.push({ id: row.id, occurredOn: row.occurredOn, transactionType: row.transactionType, payee: row.payee, description: row.description, amountJpy: row.amountJpy, status: row.status, calculationTarget: row.calculationTarget, categoryName: row.categoryName })
+      if (page >= result.totalPages) break
+    }
+    return collected
+  }
   const saveAnnualCsv = async () => {
     if (!householdId) return
     setAnnualCsvSaving(true); setAnnualNotice('')
@@ -2803,7 +2815,7 @@ function ReportsPage({ householdId, accountGroupId, attributionScope, accountGro
     ? calendar ? <FinancialCalendarView data={calendar} basis={basis} onBasisChange={setBasis} onSelectDate={() => openPage('transactions')} onSelectEvent={() => openPage('transactions')} onOpenImports={() => openPage('import')} /> : <section className="panel report-loading"><CalendarDays size={28} /><p>{notice || localize("日次カレンダーを読み込んでいます…")}</p></section>
     : view === 'MONTHLY'
       ? monthlyReport ? <><MonthlyReportView data={monthlyReport} comparison={comparison} savingCsv={monthlyCsvSaving} savingXlsx={monthlyXlsxSaving} savingPdf={monthlyPdfSaving} onComparisonChange={setComparison} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenGoals={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveMonthlyCsv()} onSaveXlsx={() => void saveMonthlyXlsx()} onSavePdf={() => void saveMonthlyPdf()} /><MonthlyReviewMemo householdId={householdId} month={month} />{monthlyExportNotice && <p role="status">{monthlyExportNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{notice || localize("月次比較レポートを読み込んでいます…")}</p></section>
-      : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} savingCsv={annualCsvSaving} savingXlsx={annualXlsxSaving} savingPdf={annualPdfSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} onSaveXlsx={() => void saveAnnualXlsx()} onSavePdf={() => void saveAnnualPdf()} />{annualNotice && <p role="status">{annualNotice}</p>}</> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || localize("前年同期間と年次推移を比較しています…")}</p></section>
+      : view === 'ANNUAL' ? annualReport ? <><AnnualReviewView data={annualReport} savingCsv={annualCsvSaving} savingXlsx={annualXlsxSaving} savingPdf={annualPdfSaving} onSelectDriver={() => openPage('transactions')} onOpenBudget={() => openPage('budgets')} onOpenImports={() => openPage('import')} onOpenReconciliation={() => openPage('cards')} onSaveCsv={() => void saveAnnualCsv()} onSaveXlsx={() => void saveAnnualXlsx()} onSavePdf={() => void saveAnnualPdf()} />{annualNotice && <p role="status">{annualNotice}</p>}<TaxSupportPanel year={month.slice(0, 4)} loadYear={loadTaxYear} /></> : <section className="panel report-loading"><FileText size={28} /><p>{annualNotice || localize("前年同期間と年次推移を比較しています…")}</p></section>
       : view === 'FORECAST' ? forecast ? <ForecastActionViews data={forecast} onAction={(action: ActionItemDto) => openPage(pageForAction(action))} /> : <section className="panel report-loading"><TrendingUp size={28} /><p>{notice || localize("予測とアクションを読み込んでいます…")}</p></section>
         : view === 'INTELLIGENCE' ? <FinancialIntelligencePanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} preferenceRevision={recurringPreferenceRevision} openTransactions={() => openPage('transactions')} onDecisionChanged={() => setRecurringPreferenceRevision((value) => value + 1)} />
           : view === 'FIXED_COST' ? <FixedCostReviewPanel householdId={householdId} accountGroupId={accountGroupId} attributionScope={attributionScope} month={month} revision={revision} preferenceRevision={recurringPreferenceRevision} openTransactions={() => openPage('transactions')} />

@@ -103,3 +103,12 @@ button.calendar-event { cursor: pointer; }
   .financial-calendar-table { min-width: 720px; }
   .calendar-day { height: 112px; padding: 6px; }
 }
+
+.tax-support-panel { margin-top: 20px; }
+.tax-support-note { color: #6b7f76; font-size: 13px; margin: 0 0 12px; }
+.tax-support-controls { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.tax-support-controls label { display: grid; font-size: 12px; gap: 4px; }
+.tax-support-group h3 { display: flex; font-size: 14px; justify-content: space-between; margin: 16px 0 6px; }
+.tax-support-group ul { list-style: none; margin: 0; padding: 0; }
+.tax-support-group li { display: grid; font-size: 13px; gap: 12px; grid-template-columns: 96px 1fr auto; padding: 6px 0; border-top: 1px solid rgba(0, 0, 0, .06); }
+.tax-support-deduction { font-size: 13px; margin: 8px 0 0; }
