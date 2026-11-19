@@ -5,6 +5,7 @@ pub mod aggregate_asset_history;
 pub mod annual_review_pdf;
 pub mod annual_review_xlsx;
 pub mod backup;
+pub mod backup_verify;
 pub mod brokerage;
 pub mod card_settlement_mapping;
 pub mod change_package;
@@ -4321,6 +4322,45 @@ async fn backup_restore_stage(
 }
 
 #[tauri::command]
+async fn backup_verify(
+    app: tauri::AppHandle,
+    paths: tauri::State<'_, BackupPaths>,
+    authorization: tauri::State<'_, RestoreCommandAuthorization>,
+    passphrase: String,
+) -> Result<Option<backup_verify::BackupVerificationDto>, String> {
+    // Shares the restore gate so a verification never overlaps a staged restore, and
+    // stale scratch copies from a crashed earlier run are removed first.
+    let _operation = authorization
+        .operation_gate
+        .lock()
+        .map_err(|_| "Backup verification is unavailable".to_owned())?;
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("KakeFlow Backup", &["kakeflow-backup"])
+        .blocking_pick_file()
+    else {
+        return Ok(None);
+    };
+    let archive_path = selected
+        .into_path()
+        .map_err(|_| "Selected backup is unavailable".to_owned())?;
+    let passphrase = Zeroizing::new(passphrase);
+    backup_verify::remove_stale_scratch(&paths.app_data_root);
+    let report = backup_verify::verify_portable_backup(
+        &paths.app_data_root,
+        &archive_path,
+        passphrase.as_str(),
+    )
+    .map_err(|error| match error {
+        backup_verify::BackupVerifyError::Backup => "Backup authentication or format is invalid",
+        backup_verify::BackupVerifyError::Invalid => "Backup contents are invalid",
+        backup_verify::BackupVerifyError::Io => "Backup could not be verified",
+    })?;
+    Ok(Some(report))
+}
+
+#[tauri::command]
 fn app_restart_for_restore(
     app: tauri::AppHandle,
     paths: tauri::State<'_, BackupPaths>,
@@ -5174,6 +5214,7 @@ pub fn run() {
             import_rollback,
             backup_create,
             backup_restore_stage,
+            backup_verify,
             app_restart_for_restore,
             document_extract,
             document_extract_attempt,

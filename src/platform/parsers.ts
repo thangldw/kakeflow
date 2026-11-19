@@ -6,6 +6,7 @@ import type {
   AppStatusDto,
   AccountDto,
   BackupSummaryDto,
+  BackupVerificationDto,
   CommitSummaryDto,
   CardMatchConfirmationDto,
   CardReconciliationStatusDto,
@@ -953,6 +954,19 @@ export function parseBackupSummary(value: unknown): BackupSummaryDto {
   const record = asRecord(value)
   if (record.formatVersion !== 2) throw new TypeError('backup version')
   return { formatVersion: record.formatVersion, entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes) }
+}
+
+export function parseNullableBackupVerification(value: unknown): BackupVerificationDto | null {
+  if (value == null) return null
+  const record = asRecord(value)
+  if (typeof record.ok !== 'boolean') throw new TypeError('backup verification')
+  const ledgerFindings = asSafeInteger(record.ledgerFindings)
+  if (record.ok !== (ledgerFindings === 0)) throw new TypeError('backup verification consistency')
+  return {
+    entryCount: asSafeInteger(record.entryCount), plaintextBytes: asSafeInteger(record.plaintextBytes), schemaVersion: asSafeInteger(record.schemaVersion),
+    householdCount: asSafeInteger(record.householdCount), documentsChecked: asSafeInteger(record.documentsChecked), postedTransactions: asSafeInteger(record.postedTransactions),
+    journalEntries: asSafeInteger(record.journalEntries), ledgerFindings, ok: record.ok,
+  }
 }
 
 export function parseNullableBackupSummary(value: unknown): BackupSummaryDto | null {
