@@ -126,7 +126,7 @@ describe('FamilyDeliveryPanel', () => {
     expect(screen.getAllByText('一部保留')).toHaveLength(2)
     expect(screen.getByText(/家族へ送らず、この端末に保留/)).toBeInTheDocument()
     const checkboxes = screen.getAllByRole('checkbox').slice(-2)
-    expect(checkboxes[0]).toBeChecked(); expect(checkboxes[1]).toBeDisabled()
+    await waitFor(() => expect(checkboxes[0]).toBeChecked()); expect(checkboxes[1]).toBeDisabled()
     fireEvent.change(screen.getByLabelText('接続トークン（この画面のみ）'), { target: { value: 'session-secret' } })
     fireEvent.click(screen.getByRole('button', { name: '選択した範囲を送信' }))
     await waitFor(() => expect(family.prepare).toHaveBeenCalledWith({ householdId: 'family', audienceKeys: ['SHARED'] }))

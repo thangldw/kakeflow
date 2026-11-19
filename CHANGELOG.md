@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Upgrade the React stack to React 19.3 (react, react-dom, types, testing-library). No production code changed; five tests that raced React 18's eager state flushing now wait for the state they assert on (stored dashboard layout, async checkbox state, quick-add sheet fields). Typecheck, lint, build and the full suite pass three runs in a row.
 - Add "Verify a backup" to desktop Settings: choose a backup file and its passphrase and KakeFlow unpacks it into a private scratch copy, then runs the checks a real restore would (SQLCipher integrity, foreign keys, schema, every stored source document) plus the double-entry ledger audit for every household, and reports counts. Nothing live is touched or staged, the scratch copy is always removed (stale ones from a crash are cleaned on the next run), and a wrong passphrase or corrupted archive is rejected.
 - Raise the Vitest default timeout to 20s: the synthetic source-to-provenance journey timed out at 5s under coverage on a shared CI runner and failed an unrelated PR.
 - Make CI survive Ubuntu mirror outages: Rust and Poppler jobs install apt packages through `scripts/ci-apt-install.sh` (IPv4, per-request retries, up to four attempts with backoff) instead of a single `apt-get install` that failed three PRs at once.
