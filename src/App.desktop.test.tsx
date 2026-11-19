@@ -686,12 +686,14 @@ describe('KakeFlow desktop read models', () => {
     let editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
     fireEvent.click(within(editor).getByRole('button', { name: 'カテゴリ別支出を非表示' }))
     await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledTimes(1))
+    await act(async () => {}) // the save must settle first: preference changes are ignored while one is in flight
 
     fireEvent.change(screen.getByLabelText('ホームの表示テンプレート'), { target: { value: 'CARD_RECONCILIATION' } })
     await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('CARD_RECONCILIATION'))
     editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
     fireEvent.click(within(editor).getByRole('button', { name: '最近の取引を非表示' }))
     await waitFor(() => expect(desktop.upsertDashboardPreferences).toHaveBeenCalledTimes(3))
+    await act(async () => {})
 
     fireEvent.change(screen.getByLabelText('ホームの表示テンプレート'), { target: { value: 'FINANCIAL_OVERVIEW' } })
     await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW'))
