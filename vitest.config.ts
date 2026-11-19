@@ -8,6 +8,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    // Long end-to-end journeys in App.desktop.test.tsx exceed the 5s default on shared CI runners, especially under V8 coverage.
+    testTimeout: 20000,
     exclude: [...configDefaults.exclude, 'relay-service/**', 'e2e/**'],
     coverage: {
       provider: 'v8',
