@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Measure frontend coverage in CI (`npm run test:coverage`, V8): 81.4% statements, 75.9% branches, 81.9% functions and 88.4% lines today, with floors just below so it cannot quietly erode.
+- Fuzz all 24 import adapters with fast-check (random text, random delimited rows, corrupted real fixtures, empty/BOM/200k-character input): none may throw, and every result keeps its shape. A one-off run of 1,500 cases per adapter found no failures.
 - Add a month-end close checklist to the Calendar report (imports waiting, failed or in progress, stale data, budget set, overspent categories, with progress and a link to fix each) and the next yearly tax and filing dates (確定申告, 予定納税, ふるさと納税 cutoff; municipality- or employer-dependent dates are marked as a guide) to the Annual report.
 - Add tax return support (確定申告) to the desktop Annual page: posted transactions of the selected year that look like medical expenses, hometown-tax donations (ふるさと納税) or other donations, with a reference 医療費控除 amount when the annual income is typed, and a CSV (BOM, formula-safe) to copy out. Candidates only: insurance reimbursements and eligibility are for the user to check.
 - Forbid `unwrap()` and `expect()` in production Rust (`clippy::unwrap_used`/`expect_used` denied outside tests). The 23 existing sites became error handling or carry a stated invariant; a connector page with a zero limit can no longer panic.
