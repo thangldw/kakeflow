@@ -596,8 +596,8 @@ describe('PWA Simple mode and language', () => {
     async function quickAdd(category: string) {
       fireEvent.click(await screen.findByRole('button', { name: '+ Add spending' }))
       const sheet = await screen.findByRole('dialog', { name: 'Add spending' })
-      fireEvent.change(within(sheet).getByLabelText('Amount'), { target: { value: '1200' } })
-      fireEvent.click(within(sheet).getByRole('button', { name: category }))
+      fireEvent.change(await within(sheet).findByLabelText('Amount'), { target: { value: '1200' } })
+      fireEvent.click(await within(sheet).findByRole('button', { name: category }))
       fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }))
       await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     }

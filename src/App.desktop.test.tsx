@@ -665,6 +665,9 @@ describe('KakeFlow desktop read models', () => {
     render(<App />)
 
     await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW'))
+    // The default template matches immediately; wait for the stored layout to be applied before asserting on it.
+    await waitFor(() => expect(desktop.getDashboardPreferences).toHaveBeenCalled())
+    await waitFor(() => expect(document.querySelectorAll('.dashboard-grid > *')).toHaveLength(3))
     expect(Array.from(document.querySelector('.dashboard-grid')!.children).map((element) => element.className)).toEqual(['dashboard-widget dashboard-widget--cards', expect.stringContaining('dashboard-widget--trend'), expect.stringContaining('dashboard-widget--recent')])
     expect(screen.queryByRole('heading', { name: '支出の内訳' })).not.toBeInTheDocument()
 
@@ -677,6 +680,8 @@ describe('KakeFlow desktop read models', () => {
   it('persists independent layouts for each dashboard template', async () => {
     render(<App />)
     await waitFor(() => expect(screen.getByLabelText('ホームの表示テンプレート')).toHaveValue('FINANCIAL_OVERVIEW'))
+    await waitFor(() => expect(desktop.getDashboardPreferences).toHaveBeenCalled())
+    await act(async () => {}) // let the stored dashboard preferences resolve before interacting
     fireEvent.click(screen.getByRole('button', { name: /レイアウト/ }))
     let editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
     fireEvent.click(within(editor).getByRole('button', { name: 'カテゴリ別支出を非表示' }))
@@ -699,6 +704,8 @@ describe('KakeFlow desktop read models', () => {
 
   it('persists native drag-and-drop widget order and renders the same DOM order', async () => {
     render(<App />)
+    await waitFor(() => expect(desktop.getDashboardPreferences).toHaveBeenCalled())
+    await act(async () => {}) // let the stored dashboard preferences resolve before interacting
     fireEvent.click(await screen.findByRole('button', { name: /レイアウト/ }))
     const editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
     const trendRow = within(editor).getByText('収支の推移').closest<HTMLElement>('.dashboard-layout-row')!
@@ -718,6 +725,8 @@ describe('KakeFlow desktop read models', () => {
     desktop.getDashboardPreferences.mockResolvedValue({ householdId: 'family', template: 'CASH_FLOW', theme: 'LIGHT', density: 'COMFORTABLE', templateLayouts: dashboardLayouts({ CASH_FLOW: { widgetOrder: ['TREND', 'RECENT', 'CARDS', 'SPENDING'], hiddenWidgets: ['RECENT', 'CARDS'] } }), updatedAt: '2026-07-13T00:00:00Z' })
     render(<App />)
 
+    await waitFor(() => expect(desktop.getDashboardPreferences).toHaveBeenCalled())
+    await act(async () => {}) // let the stored dashboard preferences resolve before interacting
     fireEvent.click(await screen.findByRole('button', { name: /レイアウト/ }))
     const editor = screen.getByRole('region', { name: 'ウィジェットの並びと表示' })
     const trendRow = within(editor).getByText('収支の推移').closest<HTMLElement>('.dashboard-layout-row')!
