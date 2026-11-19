@@ -19,7 +19,9 @@ vi.mock('./argonWorker', () => ({
 import {
   createVaultKey,
   decryptRecord,
+  deriveRawVaultKey,
   encryptRecord,
+  importVaultKeyBytes,
   unlockVaultKey,
 } from './vaultCrypto'
 import type { EncryptedEnvelope, VaultRecordContext } from './vaultTypes'
@@ -126,6 +128,51 @@ describe('PWA vault crypto', () => {
     } finally {
       randomSpy.mockRestore()
     }
+  })
+
+  it('derives raw key bytes that import to the same vault key', async () => {
+    const material = await createVaultKey('correct horse battery staple', 'vault-1')
+    const envelope = await encryptRecord(material.key, context, plaintext)
+
+    const raw = await deriveRawVaultKey('correct horse battery staple', material.metadata)
+    expect(raw).toHaveLength(32)
+    const imported = await importVaultKeyBytes(raw, material.metadata)
+
+    expect([...(await decryptRecord(imported, context, envelope))]).toEqual([...plaintext])
+    await expect(crypto.subtle.exportKey('raw', imported)).rejects.toThrow()
+    expect([...argonMock.inputs.at(-1)!]).toEqual(Array(argonMock.inputs.at(-1)!.length).fill(0))
+  })
+
+  it('rejects a wrong passphrase when deriving raw key bytes', async () => {
+    const material = await createVaultKey('correct horse battery staple', 'vault-1')
+
+    await expect(deriveRawVaultKey('wrong passphrase', material.metadata)).rejects.toThrow(
+      'Vault authentication failed',
+    )
+  })
+
+  it('rejects wrong raw key bytes', async () => {
+    const material = await createVaultKey('correct horse battery staple', 'vault-1')
+
+    await expect(importVaultKeyBytes(new Uint8Array(32).fill(9), material.metadata)).rejects.toThrow(
+      'Vault authentication failed',
+    )
+    await expect(importVaultKeyBytes(new Uint8Array(16), material.metadata)).rejects.toThrow(
+      'Vault authentication failed',
+    )
+  })
+
+  it('does not retain the raw key bytes and leaves zeroing returned bytes to the caller', async () => {
+    const material = await createVaultKey('correct horse battery staple', 'vault-1')
+    const envelope = await encryptRecord(material.key, context, plaintext)
+    const raw = await deriveRawVaultKey('correct horse battery staple', material.metadata)
+    const before = [...raw]
+
+    const imported = await importVaultKeyBytes(raw, material.metadata)
+    expect([...raw]).toEqual(before)
+    raw.fill(0)
+
+    expect([...(await decryptRecord(imported, context, envelope))]).toEqual([...plaintext])
   })
 
   it('never serializes the passphrase or plaintext into metadata or envelopes', async () => {

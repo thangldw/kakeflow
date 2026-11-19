@@ -23,7 +23,7 @@ export interface ReconciliationResult {
   reasons: readonly string[]
 }
 
-function dateToEpochDay(date: IsoDate): number {
+export function dateToEpochDay(date: IsoDate): number {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
   if (!match) throw new RangeError(`Expected ISO date YYYY-MM-DD, received ${date}`)
   const year = Number(match[1])

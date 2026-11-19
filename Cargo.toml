@@ -1,5 +1,5 @@
 [workspace]
 members = ["crates/kakeflow-core"]
-exclude = ["src-tauri", "vendor/glib-0.18.5"]
+exclude = ["src-tauri", "vendor/glib-0.18.5", "vendor/rusqlite_migration-2.7.0"]
 resolver = "2"
 

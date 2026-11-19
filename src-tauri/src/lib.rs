@@ -87,6 +87,7 @@ mod source_viewer;
 pub mod sync_foundation;
 pub mod transaction_ledger_pdf;
 pub mod transaction_ledger_xlsx;
+pub mod transfer_pairs;
 pub mod watched_file_inbox;
 pub mod watched_folders;
 
@@ -3985,6 +3986,57 @@ fn card_payment_link_unlink(
 }
 
 #[tauri::command]
+fn envelope_card_activity_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+) -> Result<read_model::EnvelopeCardActivityDto, String> {
+    repository_result(&state, |connection| {
+        read_model::envelope_card_activity(connection, &household_id, &month)
+    })
+}
+
+#[tauri::command]
+fn budget_move(
+    state: tauri::State<'_, AppState>,
+    input: read_model::MoveMonthlyBudgetInput,
+) -> Result<Vec<read_model::MonthlyCategoryBudgetDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::move_monthly_budget(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn budget_copy(
+    state: tauri::State<'_, AppState>,
+    input: read_model::CopyMonthlyBudgetsInput,
+) -> Result<Vec<read_model::MonthlyCategoryBudgetDto>, String> {
+    repository_result(&state, |connection| {
+        read_model::copy_monthly_budgets(connection, &input)
+    })
+}
+
+#[tauri::command]
+fn transfer_pair_decisions_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<transfer_pairs::TransferPairDecisionDto>, String> {
+    repository_result(&state, |connection| {
+        transfer_pairs::list_decisions(connection, &household_id)
+    })
+}
+
+#[tauri::command]
+fn transfer_pair_decide(
+    state: tauri::State<'_, AppState>,
+    input: transfer_pairs::TransferPairDecisionInput,
+) -> Result<Vec<transfer_pairs::TransferPairDecisionDto>, String> {
+    repository_result(&state, |connection| {
+        transfer_pairs::decide(connection, &input)
+    })
+}
+
+#[tauri::command]
 fn card_statement_due_date_update(
     state: tauri::State<'_, AppState>,
     input: UpdateCardStatementDueDateInput,
@@ -5081,6 +5133,11 @@ pub fn run() {
             card_match_confirm,
             card_payment_link_confirm,
             card_payment_link_unlink,
+            envelope_card_activity_query,
+            budget_move,
+            budget_copy,
+            transfer_pair_decisions_list,
+            transfer_pair_decide,
             card_statement_due_date_update,
             import_start,
             import_preview,

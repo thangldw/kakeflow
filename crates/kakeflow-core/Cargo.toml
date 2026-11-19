@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.97"
 description = "Deterministic posting and key-derivation core for KakeFlow runtimes"
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/thangldw/kakeflow"
 
 [lib]

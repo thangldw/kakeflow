@@ -1425,3 +1425,82 @@ describe('platform client', () => {
     await expect(client.getSourceDocument('family', 'doc')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'source_document_get' })
   })
 })
+
+describe('transfer pair decision commands', () => {
+  const decision = { pairKey: 'in-1|out-1', outTransactionId: 'out-1', inTransactionId: 'in-1', state: 'LINKED', decidedAt: '2026-07-01T00:00:00.000Z' }
+
+  it('lists and records decisions through validated commands with the Rust argument shapes', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return [decision] as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.listTransferPairDecisions('family')).resolves.toEqual([decision])
+    const input = { householdId: 'family', outTransactionId: 'out-1', inTransactionId: 'in-1', action: 'LINK' as const }
+    await expect(client.decideTransferPair(input)).resolves.toEqual([decision])
+    expect(calls).toEqual([['transfer_pair_decisions_list', { householdId: 'family' }], ['transfer_pair_decide', { input }]])
+  })
+
+  it('rejects malformed responses and is unavailable outside Tauri', async () => {
+    const merged = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...decision, state: 'MERGED' }] as T })
+    await expect(merged.listTransferPairDecisions('family')).resolves.toEqual([{ ...decision, state: 'MERGED' }])
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...decision, state: 'CLEARED' }] as T })
+    await expect(bad.listTransferPairDecisions('family')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'transfer_pair_decisions_list' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.listTransferPairDecisions('family')).rejects.toMatchObject({ command: 'transfer_pair_decisions_list' })
+    await expect(demo.decideTransferPair({ householdId: 'family', outTransactionId: 'a', inTransactionId: 'b', action: 'REJECT' })).rejects.toMatchObject({ command: 'transfer_pair_decide' })
+  })
+})
+
+describe('budget move command', () => {
+  const row = { householdId: 'family', month: '2026-07', categoryAccountId: 'food', categoryName: '食費', budgetJpy: 1200, actualJpy: 1200, remainingJpy: 0 }
+
+  it('sends the Rust argument shape and validates the returned month', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return [row] as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    const input = { householdId: 'family', month: '2026-07', fromCategoryAccountId: 'util', toCategoryAccountId: 'food', amountJpy: 200 }
+    await expect(client.moveBudget(input)).resolves.toEqual([row])
+    expect(calls).toEqual([['budget_move', { input }]])
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...row, budgetJpy: 1.5 }] as T })
+    await expect(bad.moveBudget(input)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'budget_move' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.moveBudget(input)).rejects.toMatchObject({ command: 'budget_move' })
+  })
+})
+
+describe('budget copy command', () => {
+  const row = { householdId: 'family', month: '2026-07', categoryAccountId: 'food', categoryName: '食費', budgetJpy: 1200, actualJpy: 0, remainingJpy: 1200 }
+
+  it('sends the Rust argument shape and validates the returned month', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return [row] as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    const input = { householdId: 'family', fromMonth: '2026-06', toMonth: '2026-07' }
+    await expect(client.copyBudgets(input)).resolves.toEqual([row])
+    expect(calls).toEqual([['budget_copy', { input }]])
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => [{ ...row, budgetJpy: 1.5 }] as T })
+    await expect(bad.copyBudgets(input)).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'budget_copy' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.copyBudgets(input)).rejects.toMatchObject({ command: 'budget_copy' })
+  })
+})
+
+describe('envelope card activity command', () => {
+  const dto = { month: '2026-07', cards: [{ cardAccountId: 'visa', cardName: 'Visa', owedJpy: -3000, paymentsJpy: 1200 }], activities: [{ categoryAccountId: 'food', cardAccountId: 'visa', amountJpy: -500 }] }
+
+  it('queries by household and month and accepts signed whole yen', async () => {
+    const calls: [AppCommand, Record<string, unknown> | undefined][] = []
+    const invoke = async <T,>(command: AppCommand, args?: Record<string, unknown>): Promise<T> => { calls.push([command, args]); return dto as T }
+    const client = createPlatformClient({ tauri: true, invoke })
+    await expect(client.queryEnvelopeCardActivity('family', '2026-07')).resolves.toEqual(dto)
+    expect(calls).toEqual([['envelope_card_activity_query', { householdId: 'family', month: '2026-07' }]])
+  })
+
+  it('rejects fractional yen and malformed payloads, and is unavailable outside Tauri', async () => {
+    const bad = createPlatformClient({ tauri: true, invoke: async <T,>() => ({ ...dto, cards: [{ ...dto.cards[0], owedJpy: 1.5 }] }) as T })
+    await expect(bad.queryEnvelopeCardActivity('family', '2026-07')).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'envelope_card_activity_query' })
+    const malformed = createPlatformClient({ tauri: true, invoke: async <T,>() => ({ month: '2026-07' }) as T })
+    await expect(malformed.queryEnvelopeCardActivity('family', '2026-07')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    const demo = createPlatformClient({ tauri: false, invoke: async <T,>(): Promise<T> => { throw new Error('unused') } })
+    await expect(demo.queryEnvelopeCardActivity('family', '2026-07')).rejects.toMatchObject({ command: 'envelope_card_activity_query' })
+  })
+})

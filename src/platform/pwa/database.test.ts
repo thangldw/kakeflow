@@ -18,7 +18,8 @@ import {
   storagePersistenceStatus,
   type AtomicPostingWrite,
 } from './database'
-import { createVaultKey } from './vaultCrypto'
+import { createVaultKey, unlockVaultKey } from './vaultCrypto'
+import type { PasskeyConfig, PasskeyEntry } from './vaultTypes'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -187,5 +188,109 @@ describe('encrypted PWA database', () => {
       'Projection revision conflict',
     )
     expect(await database.readEvents()).toHaveLength(1)
+  })
+})
+
+describe('passkey storage on the vault row', () => {
+  const entry = (credentialIdBase64Url: string): PasskeyEntry => ({
+    credentialIdBase64Url,
+    label: `Passkey ${credentialIdBase64Url}`,
+    createdAt: '2026-11-15T00:00:00.000Z',
+    wrapped: {
+      vaultId: 'vault-1',
+      recordType: 'PASSKEY_WRAP',
+      recordId: `record-${credentialIdBase64Url}`,
+      schemaVersion: 1,
+      algorithm: 'AES-GCM',
+      nonceBase64: 'AAAAAAAAAAAAAAAA',
+      ciphertextBase64: 'AAAA',
+    },
+  })
+  const config: PasskeyConfig = {
+    prfSaltBase64: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))),
+    entries: [entry('cred-a'), entry('cred-b')],
+  }
+
+  it('treats a vault row without passkeys as valid', async () => {
+    const name = 'passkeys-absent'
+    const database = await PwaVaultDatabase.create(name, passphrase, 'vault-1')
+
+    expect(await database.readPasskeys()).toBeUndefined()
+    const row = await PwaVaultDatabase.readVaultRow(name)
+    expect(row?.vaultId).toBe('vault-1')
+    expect(row && 'passkeys' in row).toBe(false)
+    database.close()
+    const reopened = await PwaVaultDatabase.open(name, passphrase)
+    expect(await reopened.readPasskeys()).toBeUndefined()
+  })
+
+  it('returns null when there is no active vault', async () => {
+    expect(await PwaVaultDatabase.readVaultRow('passkeys-no-vault')).toBeNull()
+  })
+
+  it('writes passkeys next to the metadata and removes the field again', async () => {
+    const name = 'passkeys-write'
+    const database = await PwaVaultDatabase.create(name, passphrase, 'vault-1')
+    const metadata = (await PwaVaultDatabase.readVaultRow(name))?.metadata
+
+    await database.writePasskeys(config)
+    expect(await database.readPasskeys()).toEqual(config)
+    const row = await PwaVaultDatabase.readVaultRow(name)
+    expect(row?.passkeys).toEqual(config)
+    expect(row?.metadata).toEqual(metadata)
+
+    await database.writePasskeys({ ...config, entries: [config.entries[1]] })
+    expect((await database.readPasskeys())?.entries).toEqual([config.entries[1]])
+
+    await database.writePasskeys({ ...config, entries: [] })
+    const emptied = await PwaVaultDatabase.readVaultRow(name)
+    expect(emptied && 'passkeys' in emptied).toBe(false)
+
+    await database.writePasskeys(config)
+    await database.writePasskeys(undefined)
+    const removed = await PwaVaultDatabase.readVaultRow(name)
+    expect(removed && 'passkeys' in removed).toBe(false)
+    expect(removed?.metadata).toEqual(metadata)
+  })
+
+  it('refuses more than three entries', async () => {
+    const database = await PwaVaultDatabase.create('passkeys-too-many', passphrase, 'vault-1')
+    await expect(database.writePasskeys({
+      ...config,
+      entries: ['a', 'b', 'c', 'd'].map(entry),
+    })).rejects.toThrow('Passkey limit reached')
+    expect(await database.readPasskeys()).toBeUndefined()
+  })
+
+  it('opens the active vault with an already verified key', async () => {
+    const name = 'passkeys-open-with-key'
+    const created = await PwaVaultDatabase.create(name, passphrase, 'vault-1')
+    await created.appendPostingAtomically(write())
+    created.close()
+    const metadata = (await PwaVaultDatabase.readVaultRow(name))!.metadata
+    const key = await unlockVaultKey(passphrase, metadata)
+
+    const opened = await PwaVaultDatabase.openWithKey(name, key, 'vault-1')
+    expect(await opened.readEvents()).toHaveLength(1)
+    opened.close()
+    await expect(PwaVaultDatabase.openWithKey(name, key, 'another-vault')).rejects.toThrow()
+  })
+
+  it('rejects a wrong key for the right vault id with the authentication error', async () => {
+    const name = 'passkeys-open-with-wrong-key'
+    const created = await PwaVaultDatabase.create(name, passphrase, 'vault-1')
+    created.close()
+    const wrongKey = await crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(32).fill(1),
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    )
+
+    await expect(PwaVaultDatabase.openWithKey(name, wrongKey, 'vault-1'))
+      .rejects.toThrow('Vault authentication failed')
+    const reopened = await PwaVaultDatabase.open(name, passphrase)
+    expect(await reopened.revision()).toBe(0)
   })
 })

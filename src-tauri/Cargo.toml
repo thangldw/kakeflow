@@ -3,7 +3,7 @@ name = "kakeflow"
 version = "1.3.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
-license = "MIT"
+license = "Apache-2.0"
 repository = "https://github.com/thangldw/kakeflow"
 edition = "2021"
 rust-version = "1.97"
@@ -24,8 +24,8 @@ serde_json = "1.0"
 tauri = { version = "2.11.3", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2.4.2"
-rusqlite = { version = "0.37", features = ["bundled-sqlcipher-vendored-openssl"] }
-rusqlite_migration = "2.3"
+rusqlite = { version = "0.42", features = ["bundled-sqlcipher-vendored-openssl", "fallible_uint"] }
+rusqlite_migration = "2.7"
 sha2 = "0.10"
 unicode-normalization = "0.1"
 thiserror = "2"
@@ -41,8 +41,8 @@ encoding_rs = "0.8"
 notify = "8.2.0"
 hayro = "0.7.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
-rust_xlsxwriter = "0.96.0"
-printpdf = { version = "0.9.1", default-features = false, features = ["text_layout"] }
+rust_xlsxwriter = "0.100.0"
+printpdf = { version = "0.12.8", default-features = false, features = ["text_layout"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -64,15 +64,16 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.0"
+tauri-plugin-updater = "2.14.1"
 
 [dev-dependencies]
 tempfile = "3"
-zip = "8.6.0"
+zip = "9.0.5"
 
 # Backport the upstream GLib 0.20.0 mutable FFI out-pointer fix without changing GTK ABI.
 [patch.crates-io]
 glib = { path = "../vendor/glib-0.18.5" }
+rusqlite_migration = { path = "../vendor/rusqlite_migration-2.7.0" }
 
 # Keep build-time proc-macros loadable on macOS 27 (rust-lang/rust#157750).
 # These host libraries are not included in the packaged application.

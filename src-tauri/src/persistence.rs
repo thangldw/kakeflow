@@ -179,6 +179,10 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!(
         "../migrations/0072_connector_binding_generations.sql"
     )),
+    M::up(include_str!(
+        "../migrations/0073_transfer_pair_decisions.sql"
+    )),
+    M::up(include_str!("../migrations/0074_transfer_pair_merges.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
@@ -2412,7 +2416,11 @@ mod tests {
                 .unwrap(),
             4
         );
-        assert_eq!(schema_version(&connection).unwrap(), 72);
+        // The released database must end at the newest schema, whatever that is.
+        assert_eq!(
+            schema_version(&connection).unwrap(),
+            i64::try_from(MIGRATIONS.len()).unwrap()
+        );
         assert!(integrity_check(&connection).unwrap());
     }
 
@@ -4149,6 +4157,141 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn migration_73_installs_append_only_transfer_pair_decisions_without_sync_capture() {
+        let state = AppState::in_memory(TEST_KEY).expect("migrations should apply");
+        state
+            .with_connection(|connection| {
+                let objects: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_master
+                     WHERE (type='table' AND name='transfer_pair_decisions')
+                        OR (type='trigger' AND name IN (
+                          'transfer_pair_decisions_immutable_update',
+                          'transfer_pair_decisions_immutable_delete'))",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(objects, 3);
+                // Device-local by design: no sync capture trigger may reference the table.
+                let captured: i64 = connection.query_row(
+                    "SELECT count(*) FROM sqlite_master
+                     WHERE type='trigger' AND tbl_name='transfer_pair_decisions'
+                       AND name NOT LIKE 'transfer_pair_decisions_immutable_%'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(captured, 0);
+                connection.execute(
+                    "INSERT INTO transfer_pair_decisions(
+                       id,household_id,out_transaction_id,in_transaction_id,pair_key,decision)
+                     VALUES('0123456789abcdef0123456789abcdef','family','out','in','in|out','REJECTED')",
+                    [],
+                )?;
+                assert!(connection
+                    .execute(
+                        "INSERT INTO transfer_pair_decisions(
+                           id,household_id,out_transaction_id,in_transaction_id,pair_key,decision)
+                         VALUES('fedcba9876543210fedcba9876543210','family','x','x','x|x','REJECTED')",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute(
+                        "INSERT INTO transfer_pair_decisions(
+                           id,household_id,out_transaction_id,in_transaction_id,pair_key,decision)
+                         VALUES('fedcba9876543210fedcba9876543211','family','out','in','in|out','LINKED')",
+                        [],
+                    )
+                    .is_err());
+                assert!(connection
+                    .execute("UPDATE transfer_pair_decisions SET decision='CLEARED'", [])
+                    .is_err());
+                assert!(connection
+                    .execute("DELETE FROM transfer_pair_decisions", [])
+                    .is_err());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn migration_74_rebuilds_the_decision_log_keeping_history_and_adding_merged() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        apply_key(&connection, TEST_KEY).expect("SQLCipher key");
+        configure_connection(&connection).expect("connection configuration");
+        Migrations::new(MIGRATIONS[..73].to_vec())
+            .to_latest(&mut connection)
+            .expect("schema 73");
+        connection
+            .execute_batch(
+                "INSERT INTO transfer_pair_decisions(
+                   id,household_id,out_transaction_id,in_transaction_id,pair_key,decision,decided_at)
+                 VALUES('00000000000000000000000000000001','family','out','in','in|out','REJECTED','2026-07-01T00:00:00.000Z');
+                 INSERT INTO transfer_pair_decisions(
+                   id,household_id,out_transaction_id,in_transaction_id,pair_key,decision,decided_at)
+                 VALUES('00000000000000000000000000000002','family','out','in','in|out','CLEARED','2026-07-02T00:00:00.000Z');",
+            )
+            .unwrap();
+        Migrations::new(MIGRATIONS.to_vec())
+            .to_latest(&mut connection)
+            .expect("migrate to latest");
+
+        let history: Vec<(String, String)> = {
+            let mut statement = connection
+                .prepare("SELECT id, decision FROM transfer_pair_decisions ORDER BY rowid")
+                .unwrap();
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(
+            history,
+            vec![
+                (
+                    "00000000000000000000000000000001".to_owned(),
+                    "REJECTED".to_owned()
+                ),
+                (
+                    "00000000000000000000000000000002".to_owned(),
+                    "CLEARED".to_owned()
+                )
+            ],
+            "history and its order survive the rebuild"
+        );
+        let insert = |id: &str, decision: &str, snapshot: &str| {
+            connection.execute(
+                &format!(
+                    "INSERT INTO transfer_pair_decisions(
+                       id,household_id,out_transaction_id,in_transaction_id,pair_key,decision,
+                       previous_out_type,previous_out_calculation_target,
+                       previous_in_type,previous_in_calculation_target,snapshot_json)
+                     VALUES('{id}','family','out','in','in|out','{decision}',
+                       'EXPENSE',1,'INCOME',1,{snapshot})"
+                ),
+                [],
+            )
+        };
+        assert!(
+            insert("00000000000000000000000000000003", "MERGED", "NULL").is_err(),
+            "MERGED needs a snapshot"
+        );
+        assert!(insert("00000000000000000000000000000003", "MERGED", "'not json'").is_err());
+        assert!(insert("00000000000000000000000000000003", "MERGED", "'{\"a\":1}'").is_ok());
+        assert!(connection
+            .execute("UPDATE transfer_pair_decisions SET decision='CLEARED'", [])
+            .is_err());
+        assert!(connection
+            .execute("DELETE FROM transfer_pair_decisions", [])
+            .is_err());
+        assert_eq!(
+            schema_version(&connection).unwrap(),
+            i64::try_from(MIGRATIONS.len()).unwrap()
+        );
+        assert!(integrity_check(&connection).unwrap());
     }
 
     #[test]

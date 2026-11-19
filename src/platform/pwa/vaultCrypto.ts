@@ -12,6 +12,7 @@ const AES_GCM_TAG_BITS = 128
 const NONCE_BYTES = 12
 const SALT_BYTES = 16
 const KEY_CHECK_TEXT = 'KAKEFLOW_VAULT_KEY_CHECK_V1'
+const VAULT_AUTHENTICATION_FAILED = 'Vault authentication failed'
 const DEFAULT_KDF_PARAMETERS = {
   algorithm: 'ARGON2ID',
   memoryKib: 65_536,
@@ -57,17 +58,63 @@ export async function unlockVaultKey(
   try {
     validateVaultMetadata(metadata)
     const key = await deriveAesKey(passphrase, metadata.kdf)
-    const decrypted = await decryptRecord(key, vaultKeyCheckContext(metadata.vaultId), metadata.keyCheck)
-    const expected = new TextEncoder().encode(KEY_CHECK_TEXT)
-    try {
-      if (!constantTimeEqual(decrypted, expected)) throw new Error('key check mismatch')
-    } finally {
-      decrypted.fill(0)
-      expected.fill(0)
-    }
+    await verifyKeyCheck(key, metadata)
     return key
   } catch {
-    throw new Error('Vault authentication failed')
+    throw new Error(VAULT_AUTHENTICATION_FAILED)
+  }
+}
+
+/**
+ * Derives the 32 raw vault key bytes from the passphrase and verifies them against
+ * `metadata.keyCheck`. The caller owns the returned bytes and must zero them after use.
+ */
+export async function deriveRawVaultKey(
+  passphrase: string,
+  metadata: VaultMetadata,
+): Promise<Uint8Array> {
+  let raw: Uint8Array | undefined
+  try {
+    validateVaultMetadata(metadata)
+    raw = await deriveRawKeyBytes(passphrase, metadata.kdf)
+    const key = await importAesKey(raw)
+    await verifyKeyCheck(key, metadata)
+    return raw
+  } catch {
+    raw?.fill(0)
+    throw new Error(VAULT_AUTHENTICATION_FAILED)
+  }
+}
+
+/**
+ * Imports 32 raw vault key bytes as a non-extractable AES-GCM key and verifies it against
+ * `metadata.keyCheck`. The input is copied and only that copy is zeroed; the caller zeroes its own bytes.
+ */
+export async function importVaultKeyBytes(
+  raw: Uint8Array,
+  metadata: VaultMetadata,
+): Promise<CryptoKey> {
+  const copy = new Uint8Array(raw)
+  try {
+    validateVaultMetadata(metadata)
+    if (copy.length !== metadata.kdf.outputBytes) throw new Error('Invalid raw key length')
+    const key = await importAesKey(copy)
+    await verifyKeyCheck(key, metadata)
+    return key
+  } catch {
+    throw new Error(VAULT_AUTHENTICATION_FAILED)
+  } finally {
+    copy.fill(0)
+  }
+}
+
+/** Verifies an already imported vault key against `metadata.keyCheck`; any failure is `Vault authentication failed`. */
+export async function verifyVaultKey(key: CryptoKey, metadata: VaultMetadata): Promise<void> {
+  try {
+    validateVaultMetadata(metadata)
+    await verifyKeyCheck(key, metadata)
+  } catch {
+    throw new Error(VAULT_AUTHENTICATION_FAILED)
   }
 }
 
@@ -137,6 +184,15 @@ export async function decryptRecord(
 }
 
 async function deriveAesKey(passphrase: string, parameters: VaultKdfParameters): Promise<CryptoKey> {
+  const derivedBytes = await deriveRawKeyBytes(passphrase, parameters)
+  try {
+    return await importAesKey(derivedBytes)
+  } finally {
+    derivedBytes.fill(0)
+  }
+}
+
+async function deriveRawKeyBytes(passphrase: string, parameters: VaultKdfParameters): Promise<Uint8Array> {
   if (passphrase.length === 0 || passphrase.length > 4_096) {
     throw new Error('Invalid vault passphrase')
   }
@@ -147,16 +203,33 @@ async function deriveAesKey(passphrase: string, parameters: VaultKdfParameters):
   try {
     derivedBytes = await deriveArgon2idInWorker(passphraseBytes, salt, parameters)
     if (derivedBytes.length !== parameters.outputBytes) throw new Error('Invalid derived key length')
-    return await crypto.subtle.importKey(
-      'raw',
-      webCryptoBytes(derivedBytes),
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt'],
-    )
+    return derivedBytes
+  } catch (error) {
+    derivedBytes?.fill(0)
+    throw error
   } finally {
     passphraseBytes.fill(0)
-    derivedBytes?.fill(0)
+  }
+}
+
+function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    'raw',
+    webCryptoBytes(raw),
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  )
+}
+
+async function verifyKeyCheck(key: CryptoKey, metadata: VaultMetadata): Promise<void> {
+  const decrypted = await decryptRecord(key, vaultKeyCheckContext(metadata.vaultId), metadata.keyCheck)
+  const expected = new TextEncoder().encode(KEY_CHECK_TEXT)
+  try {
+    if (!constantTimeEqual(decrypted, expected)) throw new Error('key check mismatch')
+  } finally {
+    decrypted.fill(0)
+    expected.fill(0)
   }
 }
 

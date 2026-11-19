@@ -3,30 +3,68 @@ import type { ConnectorSummaryDto } from '../types'
 import type { PlainEventWrite, PlainProjectionWrite } from './database'
 import { PwaVaultDatabase } from './database'
 import { EvidenceStore, type EvidenceStoreOptions } from './evidenceStore'
+import {
+  PasskeyCancelledError,
+  PasskeyUnsupportedError,
+  base64UrlToBytes,
+  bytesToBase64Url,
+  type PasskeyAuthenticator,
+  type PasskeyResult,
+} from './passkey'
+import { PASSKEY_LIMIT, unwrapVaultKey, wrapVaultKey } from './passkeyWrap'
+import { deriveRawVaultKey, importVaultKeyBytes, unlockVaultKey } from './vaultCrypto'
+import type { PasskeyConfig, PasskeyEntry } from './vaultTypes'
 import type {
   Account,
+  AccountSubtype,
   ApproveCandidateInput,
+  Budget,
+  CopyBudgetsInput,
   CreateAccountInput,
   CreateHouseholdInput,
   DashboardSummary,
   Household,
   ManualTransactionInput,
+  MonthlyBudgetRow,
+  MonthlyDashboard,
+  MonthlyExpenseCategory,
+  PasskeySummary,
   PostingEntry,
   ReceiptCandidate,
+  SaveSavingsGoalInput,
+  SavingsGoal,
+  SavingsGoalStatus,
   SourceEvidence,
   SourceRecord,
   StageReceiptInput,
   Transaction,
   TransactionDetail,
   TransactionProvenance,
+  TransactionType,
+  UpsertBudgetInput,
 } from './types'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
 
+const ACCOUNT_SUBTYPES: readonly AccountSubtype[] = ['BANK', 'CASH', 'WALLET', 'CREDIT_CARD', 'OTHER']
+const SAVINGS_GOAL_STATUSES: readonly SavingsGoalStatus[] = ['ACTIVE', 'COMPLETED', 'CANCELLED']
+// Separates the parts of a budget projection id; household and account ids may not contain it.
+const BUDGET_ID_SEPARATOR = '~'
+const VAULT_AUTHENTICATION_FAILED = 'Vault authentication failed'
+const PASSPHRASE_MARKER_LIFETIME_MS = 5 * 60 * 1000
+const PRF_OUTPUT_BYTES = 32
+const PRF_SALT_BYTES = 32
+const PASSKEY_USER_ID_BYTES = 16
+const PASSKEY_CHALLENGE_BYTES = 32
+const MAX_CREDENTIAL_ID_BYTES = 1023
+const MAX_PASSKEY_LABEL_LENGTH = 64
+
 export interface ClientOptions {
   readonly vaultId?: string
   readonly evidence?: EvidenceStoreOptions
+  /** Clock for record timestamps such as savings goal createdAt/updatedAt. Defaults to the system clock. */
+  readonly now?: () => Date
 }
 
 export interface RestoreClientOptions extends ClientOptions, RestorePwaArchiveOptions {}
@@ -46,10 +84,21 @@ interface SourceHashProjection {
 
 let corePromise: Promise<typeof import('./core-wasm/kakeflow_core.js')> | undefined
 
+interface PassphraseMarker {
+  readonly digest: Uint8Array
+  readonly expiresAt: number
+}
+
 export class PwaLedgerClient {
+  /** SHA-256 of the passphrase last verified by `verifyPassphrase`; never the passphrase itself. */
+  private passphraseMarker: PassphraseMarker | undefined
+  /** Serializes enrolment and removal so neither works on a stale passkey list. */
+  private passkeyQueue: Promise<void> = Promise.resolve()
+
   private constructor(
     private readonly database: PwaVaultDatabase,
     private readonly evidence: EvidenceStore,
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   static async createVault(
@@ -58,16 +107,16 @@ export class PwaLedgerClient {
     options: ClientOptions = {},
   ) {
     const database = await PwaVaultDatabase.create(databaseName, passphrase, options.vaultId)
-    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence))
+    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
   }
 
   static async unlock(
     databaseName: string,
     passphrase: string,
-    options: Pick<ClientOptions, 'evidence'> = {},
+    options: Pick<ClientOptions, 'evidence' | 'now'> = {},
   ) {
     const database = await PwaVaultDatabase.open(databaseName, passphrase)
-    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence))
+    return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
   }
 
   static async restoreVault(
@@ -76,17 +125,225 @@ export class PwaLedgerClient {
     passphrase: string,
     options: RestoreClientOptions = {},
   ) {
-    const { evidence, ...restoreOptions } = options
+    const { evidence, now, ...restoreOptions } = options
     const database = await restorePwaArchive(databaseName, archive, passphrase, restoreOptions)
-    return new PwaLedgerClient(database, new EvidenceStore(database, evidence))
+    return new PwaLedgerClient(database, new EvidenceStore(database, evidence), now)
+  }
+
+  static async readPasskeyCount(databaseName: string): Promise<number> {
+    const row = await PwaVaultDatabase.readVaultRow(databaseName)
+    return row?.passkeys?.entries.length ?? 0
+  }
+
+  /**
+   * Unlocks the active vault with a passkey: one assertion over every stored credential with the
+   * vault's PRF salt, then the matching wrapper is decrypted and imported. A cancelled prompt is
+   * rethrown as `PasskeyCancelledError`; every other failure surfaces as `Vault authentication failed`.
+   */
+  static async unlockWithPasskey(
+    databaseName: string,
+    authenticator: PasskeyAuthenticator,
+    options: Pick<ClientOptions, 'evidence' | 'now'> = {},
+  ): Promise<PwaLedgerClient> {
+    const scratch: Uint8Array[] = []
+    let prfOutput: Uint8Array | null = null
+    let raw: Uint8Array | undefined
+    try {
+      const row = await PwaVaultDatabase.readVaultRow(databaseName)
+      const config = row?.passkeys
+      if (!row || !config || config.entries.length === 0) throw new Error('No passkey enrolled')
+      const salt = passkeySalt(config)
+      const challenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
+      scratch.push(salt, challenge)
+      const result = await authenticator.get({
+        rpId: relyingPartyId(),
+        challenge,
+        allowCredentialIds: config.entries.map((entry) => base64UrlToBytes(entry.credentialIdBase64Url)),
+        prfSalt: salt,
+      })
+      prfOutput = result.prfOutput
+      const prf = validPrfOutput(prfOutput)
+      if (!prf) throw new Error('No PRF output')
+      const credentialId = validCredentialId(result.credentialId)
+      const credentialIdBase64Url = bytesToBase64Url(credentialId)
+      const entry = config.entries.find((item) => item.credentialIdBase64Url === credentialIdBase64Url)
+      if (!entry) throw new Error('Unknown passkey')
+      raw = await unwrapVaultKey(prf, entry.wrapped, row.vaultId, credentialId)
+      const key = await importVaultKeyBytes(raw, row.metadata)
+      const database = await PwaVaultDatabase.openWithKey(databaseName, key, row.vaultId)
+      return new PwaLedgerClient(database, new EvidenceStore(database, options.evidence), options.now)
+    } catch (error) {
+      if (error instanceof PasskeyCancelledError) throw error
+      // No cause on purpose: an unlock failure must not reveal which step failed.
+      // eslint-disable-next-line preserve-caught-error
+      throw new Error(VAULT_AUTHENTICATION_FAILED)
+    } finally {
+      prfOutput?.fill(0)
+      raw?.fill(0)
+      for (const bytes of scratch) bytes.fill(0)
+    }
   }
 
   lock() {
+    this.passphraseMarker = undefined
     this.database.lock()
   }
 
   close() {
+    this.passphraseMarker = undefined
     this.database.close()
+  }
+
+  /**
+   * Checks the passphrase against the vault key check (Argon2id) and remembers, for five minutes,
+   * only its SHA-256 so that a later `enablePasskey` tap can start the ceremony without a slow
+   * derivation first. Throws `Vault authentication failed` on a wrong passphrase.
+   */
+  async verifyPassphrase(passphrase: string): Promise<void> {
+    this.passphraseMarker = undefined
+    await unlockVaultKey(passphrase, await this.database.readMetadata())
+    this.passphraseMarker = {
+      digest: await passphraseDigest(passphrase),
+      expiresAt: this.now().getTime() + PASSPHRASE_MARKER_LIFETIME_MS,
+    }
+  }
+
+  /**
+   * Enrols a passkey. Order is fixed: limit, verified-passphrase marker, `create` (then `get` when
+   * PRF only comes back on assertion), raw key derivation, wrap, unwrap self-check, and the row is
+   * written last, so nothing is stored on any earlier failure. The marker is spent when it is
+   * checked, and calls are serialized with `removePasskey`, so a double submit cannot start a second
+   * ceremony.
+   */
+  enablePasskey(
+    passphrase: string,
+    authenticator: PasskeyAuthenticator,
+    label?: string,
+  ): Promise<void> {
+    return this.serializePasskeyChange(() => this.enrolPasskey(passphrase, authenticator, label))
+  }
+
+  private async enrolPasskey(
+    passphrase: string,
+    authenticator: PasskeyAuthenticator,
+    label: string | undefined,
+  ): Promise<void> {
+    const secrets: Uint8Array[] = []
+    try {
+      const config = await this.database.readPasskeys()
+      const entries = config?.entries ?? []
+      if (entries.length >= PASSKEY_LIMIT) throw new Error('Passkey limit reached')
+      await this.requireVerifiedPassphrase(passphrase)
+
+      const salt = config ? passkeySalt(config) : randomBytes(PRF_SALT_BYTES)
+      const prfSaltBase64 = config?.prfSaltBase64 ?? bytesToBase64(salt)
+      const userId = randomBytes(PASSKEY_USER_ID_BYTES)
+      const challenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
+      secrets.push(salt, userId, challenge)
+      const rpId = relyingPartyId()
+      const created = await authenticator.create({
+        rpId,
+        userId,
+        challenge,
+        excludeCredentialIds: entries.map((entry) => base64UrlToBytes(entry.credentialIdBase64Url)),
+        prfSalt: salt,
+      })
+      if (created.prfOutput) secrets.push(created.prfOutput)
+      const credentialId = validCredentialId(created.credentialId)
+      const credentialIdBase64Url = bytesToBase64Url(credentialId)
+      if (entries.some((entry) => entry.credentialIdBase64Url === credentialIdBase64Url)) {
+        throw new Error('Passkey already enabled')
+      }
+      let prf = validPrfOutput(created.prfOutput)
+      if (!prf) {
+        const assertionChallenge = randomBytes(PASSKEY_CHALLENGE_BYTES)
+        secrets.push(assertionChallenge)
+        // The passkey already exists; a refused or cancelled follow-up (a browser that wants a fresh gesture)
+        // means this browser cannot enrol, so it ends like a missing PRF rather than as a cancel to retry.
+        let asserted: PasskeyResult
+        try {
+          asserted = await authenticator.get({
+            rpId,
+            challenge: assertionChallenge,
+            allowCredentialIds: [credentialId],
+            prfSalt: salt,
+          })
+        } catch {
+          throw new PasskeyUnsupportedError()
+        }
+        if (asserted.prfOutput) secrets.push(asserted.prfOutput)
+        if (!equalBytes(asserted.credentialId, credentialId)) throw new PasskeyUnsupportedError()
+        prf = validPrfOutput(asserted.prfOutput)
+        if (!prf) throw new PasskeyUnsupportedError()
+      }
+
+      const metadata = await this.database.readMetadata()
+      const raw = await deriveRawVaultKey(passphrase, metadata)
+      secrets.push(raw)
+      const wrapped = await wrapVaultKey(prf, raw, metadata.vaultId, credentialId)
+      const unwrapped = await unwrapVaultKey(prf, wrapped, metadata.vaultId, credentialId)
+      secrets.push(unwrapped)
+      if (!equalBytes(unwrapped, raw)) throw new Error('Passkey self-check failed')
+
+      const createdAt = this.now().toISOString()
+      const entry: PasskeyEntry = {
+        credentialIdBase64Url,
+        wrapped,
+        label: passkeyLabel(label, createdAt),
+        createdAt,
+      }
+      await this.database.updatePasskeys((current) => {
+        const stored = current?.entries ?? []
+        if (stored.length >= PASSKEY_LIMIT) throw new Error('Passkey limit reached')
+        if (stored.some((item) => item.credentialIdBase64Url === credentialIdBase64Url)) {
+          throw new Error('Passkey already enabled')
+        }
+        // The PRF output, and so the wrapper, is bound to the salt used in this ceremony.
+        if (current && current.prfSaltBase64 !== prfSaltBase64) throw new Error('Passkey settings changed')
+        return { prfSaltBase64, entries: [...stored, entry] }
+      })
+    } finally {
+      this.passphraseMarker = undefined
+      for (const bytes of secrets) bytes.fill(0)
+    }
+  }
+
+  async listPasskeys(): Promise<readonly PasskeySummary[]> {
+    const config = await this.database.readPasskeys()
+    return (config?.entries ?? []).map((entry) => ({
+      credentialIdBase64Url: entry.credentialIdBase64Url,
+      label: entry.label,
+      createdAt: entry.createdAt,
+    }))
+  }
+
+  /** Removes the wrapper stored on this device; it cannot revoke the credential itself. */
+  removePasskey(credentialIdBase64Url: string): Promise<void> {
+    return this.serializePasskeyChange(() => this.database.updatePasskeys((current) => {
+      const entries = current?.entries ?? []
+      const remaining = entries.filter((entry) => entry.credentialIdBase64Url !== credentialIdBase64Url)
+      if (!current || remaining.length === entries.length) throw new Error('Passkey not found')
+      return remaining.length > 0 ? { ...current, entries: remaining } : undefined
+    }))
+  }
+
+  private serializePasskeyChange<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.passkeyQueue.then(task, task)
+    this.passkeyQueue = run.then(() => undefined, () => undefined)
+    return run
+  }
+
+  /** Checks and spends the marker in one step: it is cleared before anything is awaited. */
+  private async requireVerifiedPassphrase(passphrase: string) {
+    const marker = this.passphraseMarker
+    this.passphraseMarker = undefined
+    if (!marker || this.now().getTime() > marker.expiresAt) throw new Error('Passphrase not verified')
+    const digest = await passphraseDigest(passphrase)
+    try {
+      if (!equalBytes(digest, marker.digest)) throw new Error('Passphrase not verified')
+    } finally {
+      digest.fill(0)
+    }
   }
 
   revision() {
@@ -116,6 +373,9 @@ export class PwaLedgerClient {
     if (!['ASSET', 'LIABILITY', 'INCOME', 'EXPENSE'].includes(input.kind)) {
       throw new Error('Invalid account kind')
     }
+    if (input.subtype !== undefined && !ACCOUNT_SUBTYPES.includes(input.subtype)) {
+      throw new Error('Invalid account subtype')
+    }
     if (await this.hasProjection('ACCOUNT', input.id)) throw new Error('Account already exists')
     const account: Account = {
       id: input.id,
@@ -123,6 +383,7 @@ export class PwaLedgerClient {
       name: input.name.trim(),
       kind: input.kind,
       currency: 'JPY',
+      ...(input.subtype === undefined ? {} : { subtype: input.subtype }),
     }
     await this.appendDomainChange(
       [{ id: eventId(), eventType: 'ACCOUNT_CREATED', payload: encodeJson(account) }],
@@ -350,11 +611,12 @@ export class PwaLedgerClient {
     let incomeJpy = 0
     let expenseJpy = 0
     for (const transaction of transactions) {
-      if (['INCOME', 'INTEREST'].includes(transaction.transactionType)) {
+      const accrual = accrualOf(transaction.transactionType)
+      if (accrual === 'INCOME') {
         incomeJpy = checkedAdd(incomeJpy, transaction.amountJpy)
-      } else if (['EXPENSE', 'CARD_PURCHASE', 'FEE'].includes(transaction.transactionType)) {
+      } else if (accrual === 'EXPENSE') {
         expenseJpy = checkedAdd(expenseJpy, transaction.amountJpy)
-      } else if (transaction.transactionType === 'REFUND') {
+      } else if (accrual === 'REFUND') {
         expenseJpy = checkedAdd(expenseJpy, -transaction.amountJpy)
       }
     }
@@ -365,6 +627,188 @@ export class PwaLedgerClient {
       netJpy: incomeJpy - expenseJpy,
       transactionCount: transactions.length,
     }
+  }
+
+  async monthlyDashboard(householdId: string, month: string): Promise<MonthlyDashboard> {
+    validateIdentifier('household ID', householdId)
+    validateMonth(month)
+    await this.requireHousehold(householdId)
+    const totals = await this.monthTotals(householdId, month)
+    const expenseCategories: MonthlyExpenseCategory[] = [...totals.categoryJpy]
+      .filter(([, amountJpy]) => amountJpy > 0)
+      .map(([accountId, amountJpy]) => ({
+        accountId,
+        name: totals.expenseAccounts.get(accountId)?.name ?? accountId,
+        amountJpy,
+      }))
+      // Largest spending first; ties by name, then id, so the order is stable.
+      .sort((left, right) => (
+        right.amountJpy - left.amountJpy
+        || left.name.localeCompare(right.name)
+        || left.accountId.localeCompare(right.accountId)
+      ))
+    return {
+      householdId,
+      month,
+      incomeJpy: totals.incomeJpy,
+      expenseJpy: totals.expenseJpy,
+      expenseCategories,
+    }
+  }
+
+  async upsertBudget(input: UpsertBudgetInput): Promise<Budget> {
+    validateBudgetKeyPart('household ID', input.householdId)
+    validateMonth(input.month)
+    validateBudgetKeyPart('category account ID', input.categoryAccountId)
+    validateNonNegativeJpy(input.budgetJpy)
+    const id = budgetProjectionId(input.householdId, input.month, input.categoryAccountId)
+    validateIdentifier('budget ID', id)
+    await this.requireHousehold(input.householdId)
+    const account = await this.optionalModel<Account>('ACCOUNT', input.categoryAccountId)
+    if (!account || account.householdId !== input.householdId) {
+      throw new Error('Unknown category account')
+    }
+    if (account.kind !== 'EXPENSE') throw new Error('Category account must be an EXPENSE account')
+    const budget: Budget = {
+      householdId: input.householdId,
+      month: input.month,
+      categoryAccountId: input.categoryAccountId,
+      budgetJpy: input.budgetJpy,
+    }
+    // Last write wins: the projection for this household, month and category is replaced.
+    await this.appendDomainChange(
+      [{ id: eventId(), eventType: 'BUDGET_SET', payload: encodeJson(budget) }],
+      [{ projectionType: 'BUDGET', id, payload: encodeJson(budget) }],
+    )
+    return budget
+  }
+
+  /**
+   * Copies `fromMonth`'s budgets of existing expense categories into `toMonth` in one atomic write.
+   * Rows `toMonth` already has are kept, so a second call is a no-op.
+   */
+  async copyBudgets(input: CopyBudgetsInput): Promise<MonthlyBudgetRow[]> {
+    validateBudgetKeyPart('household ID', input.householdId)
+    validateMonth(input.fromMonth)
+    validateMonth(input.toMonth)
+    if (input.fromMonth === input.toMonth) throw new Error('Choose two different months')
+    await this.requireHousehold(input.householdId)
+    // Read the revision before anything the write depends on: a write that lands later (another tab
+    // adding a row to `toMonth`) then fails with a revision conflict instead of being overwritten.
+    const expectedRevision = await this.database.revision()
+    const sourcePrefix = budgetProjectionId(input.householdId, input.fromMonth, '')
+    const ids = await this.database.listProjectionIds('BUDGET')
+    const existing = new Set(ids)
+    const sourceIds = ids.filter((id) => id.startsWith(sourcePrefix))
+    if (sourceIds.length > 0) {
+      const expenseAccountIds = new Set((await this.listAccounts(input.householdId))
+        .filter((account) => account.kind === 'EXPENSE')
+        .map((account) => account.id))
+      const copies = (await Promise.all(sourceIds.map((id) => this.model<Budget>('BUDGET', id))))
+        .filter((budget) => expenseAccountIds.has(budget.categoryAccountId))
+        .map((budget): Budget => ({ ...budget, month: input.toMonth }))
+        .filter((budget) => !existing.has(budgetProjectionId(budget.householdId, budget.month, budget.categoryAccountId)))
+        .sort((left, right) => left.categoryAccountId.localeCompare(right.categoryAccountId))
+      if (copies.length > 0) {
+        await this.appendDomainChange(
+          copies.map((budget) => ({ id: eventId(), eventType: 'BUDGET_SET', payload: encodeJson(budget) })),
+          copies.map((budget) => ({
+            projectionType: 'BUDGET',
+            id: budgetProjectionId(budget.householdId, budget.month, budget.categoryAccountId),
+            payload: encodeJson(budget),
+          })),
+          expectedRevision,
+        )
+      }
+    }
+    return this.listBudgets(input.householdId, input.toMonth)
+  }
+
+  async listBudgets(householdId: string, month: string): Promise<MonthlyBudgetRow[]> {
+    validateBudgetKeyPart('household ID', householdId)
+    validateMonth(month)
+    await this.requireHousehold(householdId)
+    const prefix = budgetProjectionId(householdId, month, '')
+    const ids = (await this.database.listProjectionIds('BUDGET')).filter((id) => id.startsWith(prefix))
+    // Callers look back month by month for budgets, so an empty month must not pay for a full ledger scan.
+    if (ids.length === 0) return []
+    const budgets = await Promise.all(ids.map((id) => this.model<Budget>('BUDGET', id)))
+    const totals = await this.monthTotals(householdId, month)
+    return budgets
+      .map((budget) => {
+        const actualJpy = totals.categoryJpy.get(budget.categoryAccountId) ?? 0
+        return {
+          ...budget,
+          categoryName: totals.expenseAccounts.get(budget.categoryAccountId)?.name ?? budget.categoryAccountId,
+          actualJpy,
+          remainingJpy: budget.budgetJpy - actualJpy,
+        }
+      })
+      .sort((left, right) => (
+        left.categoryName.localeCompare(right.categoryName)
+        || left.categoryAccountId.localeCompare(right.categoryAccountId)
+      ))
+  }
+
+  async createSavingsGoal(input: SaveSavingsGoalInput): Promise<SavingsGoal> {
+    validateSavingsGoalInput(input)
+    if (input.status !== undefined && input.status !== 'ACTIVE') {
+      throw new Error('New savings goals start ACTIVE')
+    }
+    await this.requireHousehold(input.householdId)
+    if (await this.hasProjection('SAVINGS_GOAL', input.id)) throw new Error('Savings goal already exists')
+    const timestamp = this.now().toISOString()
+    const goal: SavingsGoal = {
+      id: input.id,
+      householdId: input.householdId,
+      name: input.name.trim(),
+      targetJpy: input.targetJpy,
+      savedJpy: input.savedJpy,
+      targetDate: input.targetDate,
+      status: 'ACTIVE',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }
+    await this.appendDomainChange(
+      [{ id: eventId(), eventType: 'SAVINGS_GOAL_CREATED', payload: encodeJson(goal) }],
+      [{ projectionType: 'SAVINGS_GOAL', id: goal.id, payload: encodeJson(goal) }],
+    )
+    return goal
+  }
+
+  async updateSavingsGoal(input: SaveSavingsGoalInput): Promise<SavingsGoal> {
+    validateSavingsGoalInput(input)
+    const existing = await this.optionalModel<SavingsGoal>('SAVINGS_GOAL', input.id)
+    if (!existing || existing.householdId !== input.householdId) throw new Error('Savings goal not found')
+    // An explicit status wins; otherwise reaching the target completes the goal,
+    // and anything else keeps the stored status.
+    const status = input.status
+      ?? (input.savedJpy >= input.targetJpy ? 'COMPLETED' : existing.status)
+    const goal: SavingsGoal = {
+      ...existing,
+      name: input.name.trim(),
+      targetJpy: input.targetJpy,
+      savedJpy: input.savedJpy,
+      targetDate: input.targetDate,
+      status,
+      updatedAt: this.now().toISOString(),
+    }
+    await this.appendDomainChange(
+      [{ id: eventId(), eventType: 'SAVINGS_GOAL_UPDATED', payload: encodeJson(goal) }],
+      [{ projectionType: 'SAVINGS_GOAL', id: goal.id, payload: encodeJson(goal) }],
+    )
+    return goal
+  }
+
+  async listSavingsGoals(householdId: string): Promise<SavingsGoal[]> {
+    return (await this.listModels<SavingsGoal>('SAVINGS_GOAL'))
+      .filter((goal) => goal.householdId === householdId)
+      // Nearest target date first; ties by name, then id.
+      .sort((left, right) => (
+        left.targetDate.localeCompare(right.targetDate)
+        || left.name.localeCompare(right.name)
+        || left.id.localeCompare(right.id)
+      ))
   }
 
   async exportVault(): Promise<Uint8Array> {
@@ -380,6 +824,61 @@ export class PwaLedgerClient {
     return { source, bytes }
   }
 
+  private async requireHousehold(householdId: string) {
+    if (!(await this.hasProjection('HOUSEHOLD', householdId))) throw new Error('Unknown household')
+  }
+
+  /**
+   * Accrual totals for one calendar month. The month is the first seven characters
+   * of `occurredOn`, which is already a Tokyo calendar date, so no timezone conversion
+   * happens here. Per-category amounts are the DEBIT entries on EXPENSE accounts of
+   * expense-type transactions minus the CREDIT entries on EXPENSE accounts of refunds.
+   */
+  private async monthTotals(householdId: string, month: string) {
+    const [transactions, accounts] = await Promise.all([
+      this.listTransactions(householdId),
+      this.listAccounts(householdId),
+    ])
+    const expenseAccounts = new Map(
+      accounts.filter((account) => account.kind === 'EXPENSE').map((account) => [account.id, account]),
+    )
+    let incomeJpy = 0
+    let expenseJpy = 0
+    const netByCategory = new Map<string, number>()
+    const addEntries = (transaction: Transaction, side: PostingEntry['side'], sign: 1 | -1) => {
+      for (const entry of transaction.entries) {
+        if (entry.side !== side || !expenseAccounts.has(entry.accountId)) continue
+        netByCategory.set(
+          entry.accountId,
+          checkedAdd(netByCategory.get(entry.accountId) ?? 0, sign * entry.amountJpy),
+        )
+      }
+    }
+    for (const transaction of transactions) {
+      if (transaction.occurredOn.slice(0, 7) !== month) continue
+      const accrual = accrualOf(transaction.transactionType)
+      if (accrual === 'INCOME') {
+        incomeJpy = checkedAdd(incomeJpy, transaction.amountJpy)
+      } else if (accrual === 'EXPENSE') {
+        // A malformed expense without EXPENSE-account entries still counts in
+        // expenseJpy, but in no category.
+        expenseJpy = checkedAdd(expenseJpy, transaction.amountJpy)
+        addEntries(transaction, 'DEBIT', 1)
+      } else if (accrual === 'REFUND') {
+        expenseJpy = checkedAdd(expenseJpy, -transaction.amountJpy)
+        addEntries(transaction, 'CREDIT', -1)
+      }
+    }
+    // A refund can exceed the same month's spending in a category (for example a
+    // refund of last month's purchase). Category amounts never go below zero, so such
+    // a category is clamped to 0; expenseJpy keeps the unclamped accrual total, like
+    // dashboard(), and then no longer equals the category sum for that month.
+    const categoryJpy = new Map(
+      [...netByCategory].map(([accountId, amountJpy]) => [accountId, Math.max(0, amountJpy)] as const),
+    )
+    return { incomeJpy, expenseJpy, categoryJpy, expenseAccounts }
+  }
+
   private async validatePostingAccounts(householdId: string, entries: readonly PostingEntry[]) {
     await this.model<Household>('HOUSEHOLD', householdId)
     const accounts = new Map((await this.listAccounts(householdId)).map((account) => [account.id, account]))
@@ -391,8 +890,9 @@ export class PwaLedgerClient {
   private async appendDomainChange(
     events: readonly PlainEventWrite[],
     projections: readonly PlainProjectionWrite[],
+    knownRevision?: number,
   ) {
-    const expectedRevision = await this.database.revision()
+    const expectedRevision = knownRevision ?? await this.database.revision()
     return this.database.appendPostingAtomically({ expectedRevision, events, projections })
   }
 
@@ -461,6 +961,39 @@ function validateReceiptInput(input: StageReceiptInput) {
   }
 }
 
+function validateSavingsGoalInput(input: SaveSavingsGoalInput) {
+  validateIdentifier('savings goal ID', input.id)
+  validateIdentifier('household ID', input.householdId)
+  validateName('goal name', input.name)
+  validatePositiveJpy(input.targetJpy)
+  validateNonNegativeJpy(input.savedJpy)
+  validateCalendarDate(input.targetDate)
+  if (input.status !== undefined && !SAVINGS_GOAL_STATUSES.includes(input.status)) {
+    throw new Error('Invalid goal status')
+  }
+}
+
+function validateBudgetKeyPart(name: string, value: string) {
+  validateIdentifier(name, value)
+  if (value.includes(BUDGET_ID_SEPARATOR)) throw new Error(`Invalid ${name}`)
+}
+
+function budgetProjectionId(householdId: string, month: string, categoryAccountId: string) {
+  return [householdId, month, categoryAccountId].join(BUDGET_ID_SEPARATOR)
+}
+
+type Accrual = 'INCOME' | 'EXPENSE' | 'REFUND' | null
+
+// TRANSFER, CARD_PAYMENT and ADJUSTMENT are neither income nor expense.
+function accrualOf(transactionType: TransactionType): Accrual {
+  if (transactionType === 'INCOME' || transactionType === 'INTEREST') return 'INCOME'
+  if (transactionType === 'EXPENSE' || transactionType === 'CARD_PURCHASE' || transactionType === 'FEE') {
+    return 'EXPENSE'
+  }
+  if (transactionType === 'REFUND') return 'REFUND'
+  return null
+}
+
 function validateIdentifier(name: string, value: string) {
   const hasControl = [...value].some((character) => {
     const code = character.charCodeAt(0)
@@ -487,8 +1020,22 @@ function validateDate(value: string) {
   }
 }
 
+function validateMonth(value: string) {
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/u.test(value)) throw new Error('Invalid month')
+}
+
+// Stricter than validateDate: also rejects dates such as 2027-02-30 that Date.parse rolls over.
+function validateCalendarDate(value: string) {
+  validateDate(value)
+  if (new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) throw new Error('Invalid date')
+}
+
 function validatePositiveJpy(value: number) {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid JPY amount')
+}
+
+function validateNonNegativeJpy(value: number) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('Invalid JPY amount')
 }
 
 function encodeJson(value: unknown) {
@@ -515,4 +1062,60 @@ function checkedAdd(left: number, right: number) {
 
 function eventId() {
   return `event-${crypto.randomUUID()}`
+}
+
+function relyingPartyId(): string {
+  const hostname = globalThis.location?.hostname
+  if (!hostname) throw new PasskeyUnsupportedError()
+  return hostname
+}
+
+function randomBytes(length: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(length))
+}
+
+/** A PRF result counts only when it is exactly 32 bytes; anything else is treated as no PRF. */
+function validPrfOutput(output: Uint8Array | null): Uint8Array | null {
+  return output && output.length === PRF_OUTPUT_BYTES ? output : null
+}
+
+function validCredentialId(id: Uint8Array): Uint8Array {
+  if (id.length === 0 || id.length > MAX_CREDENTIAL_ID_BYTES) throw new PasskeyUnsupportedError()
+  return id
+}
+
+function passkeySalt(config: PasskeyConfig): Uint8Array {
+  const salt = Uint8Array.from(atob(config.prfSaltBase64), (character) => character.charCodeAt(0))
+  if (salt.length !== PRF_SALT_BYTES) throw new Error('Invalid passkey salt')
+  return salt
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary)
+}
+
+function passkeyLabel(label: string | undefined, createdAt: string): string {
+  const trimmed = label?.trim().replace(/\p{Cc}/gu, '') ?? ''
+  return (trimmed || `Passkey ${createdAt.slice(0, 10)}`).slice(0, MAX_PASSKEY_LABEL_LENGTH)
+}
+
+async function passphraseDigest(passphrase: string): Promise<Uint8Array> {
+  const bytes = encoder.encode(passphrase)
+  try {
+    return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+  } finally {
+    bytes.fill(0)
+  }
+}
+
+/** Constant-time over the longer input. */
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  let difference = left.length ^ right.length
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index += 1) {
+    difference |= (left[index] ?? 0) ^ (right[index] ?? 0)
+  }
+  return difference === 0
 }

@@ -2,6 +2,7 @@ import type { ActionItemDto, ActionKind, ActionPriority, ForecastActionDto } fro
 import { orderActions } from './actionCenterModel'
 import './forecastActionViews.css'
 import { localize, useI18n } from '../../i18n'
+import { ScenarioSimulator } from './ScenarioSimulator'
 
 export interface ForecastActionViewsProps {
   readonly data: ForecastActionDto
@@ -59,5 +60,5 @@ export function CashSavingsForecast({ data }: { readonly data: ForecastActionDto
 }
 
 export function ForecastActionViews({ data, onAction }: ForecastActionViewsProps) {
-  return <div className="forecast-action-layout"><ActionCenter actions={data.actions} onAction={onAction} /><CashSavingsForecast data={data} /></div>
+  return <div className="forecast-action-layout"><ActionCenter actions={data.actions} onAction={onAction} /><CashSavingsForecast data={data} /><ScenarioSimulator months={data.months} /></div>
 }
