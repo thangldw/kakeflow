@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add tax return support (確定申告) to the account-free PWA, under More: pick a year (this year and the two before) and list medical-expense, hometown-tax and other donation candidates from the encrypted vault, with the 医療費控除 reference amount when the annual income is typed, and download the CSV (BOM, formula-safe). It reuses the desktop report, so the same candidate rules apply; candidates only, nothing is filed. The PWA catalog generator now also scans the shared tax panel so the strings appear in en/vi.
 - Raise the Vitest default timeout to 20s: the synthetic source-to-provenance journey timed out at 5s under coverage on a shared CI runner and failed an unrelated PR.
 - Make CI survive Ubuntu mirror outages: Rust and Poppler jobs install apt packages through `scripts/ci-apt-install.sh` (IPv4, per-request retries, up to four attempts with backoff) instead of a single `apt-get install` that failed three PRs at once.
 - Add a read-only ledger integrity check to desktop Settings (`ledger_audit_run`): every posted transaction must balance, have at least two journal lines and use only accounts of its own household; findings are capped and listed with their totals. SQLite's integrity check only proves the file is not corrupt; this proves the books still make sense.

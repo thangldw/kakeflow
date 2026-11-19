@@ -3224,7 +3224,7 @@
   "最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。": "It has been over a week since your last backup. Browser storage can be cleared, so save an encrypted archive.",
   "バックアップを開く": "Open backup",
   "確定申告サポート": "Tax return support",
-  "年の医療費・寄附金の候補（確認用）": " medical expense and donation candidates (for review)",
+  "年の医療費・寄附金の候補（確認用）": " — medical expense and donation candidates (for review)",
   "候補の一覧です。保険金などで補填された額や対象外の支出は、申告前にご確認ください。": "This is a list of candidates. Check amounts reimbursed by insurance and ineligible spending before filing.",
   "年間の総所得（任意）": "Annual total income (optional)",
   "候補を表示": "Show candidates",
@@ -3282,5 +3282,6 @@
   "予算が未設定です": "No budget is set",
   "予算超過のカテゴリーはありません": "No category is over budget",
   "予算を超過したカテゴリー": "Categories over budget",
-  "開く": "Open"
+  "開く": "Open",
+  "対象の年": "Tax year"
 }
