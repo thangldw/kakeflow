@@ -1,6 +1,6 @@
 [package]
 name = "kakeflow"
-version = "1.2.1"
+version = "1.3.0"
 description = "Local-first household finance desktop application"
 authors = ["KakeFlow contributors"]
 license = "Apache-2.0"
@@ -74,3 +74,8 @@ zip = "9.0.5"
 [patch.crates-io]
 glib = { path = "../vendor/glib-0.18.5" }
 rusqlite_migration = { path = "../vendor/rusqlite_migration-2.7.0" }
+
+# Keep build-time proc-macros loadable on macOS 27 (rust-lang/rust#157750).
+# These host libraries are not included in the packaged application.
+[profile.release.build-override]
+strip = "none"
