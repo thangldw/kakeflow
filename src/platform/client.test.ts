@@ -39,6 +39,7 @@ describe('platform client', () => {
       householdId: 'family', templateLayouts: dashboardLayouts(),
     })
     await expect(client.getLocalSyncFoundationStatus('family')).rejects.toMatchObject({ command: 'local_sync_foundation_status' })
+    await expect(client.runLedgerAudit('family')).rejects.toMatchObject({ command: 'ledger_audit_run' })
     await expect(client.getDesktopRelayStatus('family')).rejects.toMatchObject({ command: 'relay_status' })
     await expect(client.listHouseholds()).resolves.toEqual([{
       id: 'demo-tanaka-family', name: '田中家', baseCurrency: 'JPY', createdAt: '2025-07-31T00:00:00.000Z',
@@ -419,11 +420,18 @@ describe('platform client', () => {
     })).rejects.toMatchObject({ code: 'INVALID_RESPONSE', command: 'connector_binding_upsert' })
   })
 
+  it('rejects a ledger audit whose ok flag contradicts its findings', async () => {
+    const bad = { postedTransactions: 1, journalEntries: 2, findings: [], truncated: false, ok: false }
+    const client = createPlatformClient({ tauri: true, invoke: (async () => bad) as never })
+    await expect(client.runLedgerAudit('family')).rejects.toBeTruthy()
+  })
+
   it('invokes each desktop command and returns validated camelCase DTOs', async () => {
     const responses: Record<string, unknown> = {
       app_bootstrap: { application: 'KakeFlow', database: { healthy: true, schemaVersion: 5 } },
       app_health: { status: 'ok', database: { healthy: true, schemaVersion: 5 } },
       app_status: { schemaVersion: 5, integrity: 'ok' },
+      ledger_audit_run: { postedTransactions: 2, journalEntries: 4, findings: [{ kind: 'UNBALANCED_JOURNAL', transactionId: 't1', occurredOn: '2026-11-01', debitTotalJpy: 1000, creditTotalJpy: 900 }], truncated: false, ok: false },
       local_sync_foundation_status: { device: { id: 'device-1', displayName: 'Desktop', createdAt: '2026-07-13T00:00:00Z' }, platform: 'MACOS', principal: { id: 'principal-1', displayName: 'Local principal', createdAt: '2026-07-13T00:00:00Z' }, binding: { householdId: 'family', principalId: 'principal-1', memberId: 'member-1', memberName: 'Taro', updatedAt: '2026-07-13T00:00:00Z' }, outbox: { envelopeCount: 0, latestSequence: 0, latestRecordedAt: null }, remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED' },
       principal_member_binding_update: { device: { id: 'device-1', displayName: 'Desktop', createdAt: '2026-07-13T00:00:00Z' }, platform: 'MACOS', principal: { id: 'principal-1', displayName: 'Local principal', createdAt: '2026-07-13T00:00:00Z' }, binding: { householdId: 'family', principalId: 'principal-1', memberId: null, memberName: null, updatedAt: '2026-07-13T00:00:00Z' }, outbox: { envelopeCount: 1, latestSequence: 1, latestRecordedAt: '2026-07-13T00:00:00Z' }, remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED' },
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
@@ -611,6 +619,7 @@ describe('platform client', () => {
     await expect(client.health()).resolves.toEqual(responses.app_health)
     await expect(client.status()).resolves.toEqual(responses.app_status)
     await expect(client.getLocalSyncFoundationStatus('family')).resolves.toEqual(responses.local_sync_foundation_status)
+    await expect(client.runLedgerAudit('family')).resolves.toEqual(responses.ledger_audit_run)
     const bindingInput = { householdId: 'family', principalId: 'principal-1', memberId: null, mutationId: 'binding-1' }
     await expect(client.updatePrincipalMemberBinding(bindingInput)).resolves.toEqual(responses.principal_member_binding_update)
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
@@ -681,6 +690,7 @@ describe('platform client', () => {
     await expect(client.queryCardSettlementBalanceCoverage(coverageRequest)).resolves.toEqual(responses.card_settlement_balance_coverage_query)
     expect(invokeSpy).toHaveBeenCalledWith('household_create', { input: { id: 'family', name: 'Family' } })
     expect(invokeSpy).toHaveBeenCalledWith('local_sync_foundation_status', { householdId: 'family' })
+    expect(invokeSpy).toHaveBeenCalledWith('ledger_audit_run', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('principal_member_binding_update', { input: bindingInput })
     expect(invokeSpy).toHaveBeenCalledWith('household_members_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('household_member_create', { input: memberCreate })
@@ -731,7 +741,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(59)
+    expect(invokeSpy).toHaveBeenCalledTimes(60)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {

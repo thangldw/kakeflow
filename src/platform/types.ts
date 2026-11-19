@@ -1044,6 +1044,7 @@ export type AppCommand =
   | 'app_health'
   | 'app_status'
   | 'local_sync_foundation_status'
+  | 'ledger_audit_run'
   | 'principal_member_binding_update'
   | 'relay_status'
   | 'relay_connection_save'
@@ -1227,6 +1228,24 @@ export type AppCommand =
   | 'receipt_match_suggestions'
   | 'receipt_match_confirm'
 
+export type LedgerAuditFindingKindDto = 'UNBALANCED_JOURNAL' | 'TOO_FEW_ENTRIES' | 'CROSS_HOUSEHOLD_ACCOUNT'
+
+export interface LedgerAuditFindingDto {
+  readonly kind: LedgerAuditFindingKindDto
+  readonly transactionId: string
+  readonly occurredOn: string
+  readonly debitTotalJpy: number
+  readonly creditTotalJpy: number
+}
+
+export interface LedgerAuditReportDto {
+  readonly postedTransactions: number
+  readonly journalEntries: number
+  readonly findings: readonly LedgerAuditFindingDto[]
+  readonly truncated: boolean
+  readonly ok: boolean
+}
+
 export type Invoke = <T>(command: AppCommand, args?: Record<string, unknown>) => Promise<T>
 
 export interface PlatformClient {
@@ -1235,6 +1254,7 @@ export interface PlatformClient {
   health(): Promise<AppHealthDto>
   status(): Promise<AppStatusDto>
   getLocalSyncFoundationStatus(householdId: string): Promise<LocalSyncFoundationStatusDto>
+  runLedgerAudit(householdId: string): Promise<LedgerAuditReportDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>
   saveDesktopRelayConnection(input: SaveDesktopRelayConnectionInputDto): Promise<DesktopRelayStatusDto>

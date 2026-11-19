@@ -3236,5 +3236,17 @@
   "該当する取引はありません。": "No matching transactions.",
   "取引を読み込めませんでした。": "Could not load transactions.",
   "CSVをクリップボードにコピーしました。": "CSV copied to the clipboard.",
-  "CSVを書き出せませんでした。": "Could not export the CSV."
+  "CSVを書き出せませんでした。": "Could not export the CSV.",
+  "帳簿の整合性チェック": "Ledger integrity check",
+  "確定済みの取引がすべて複式簿記のルールを満たしているか、読み取り専用で確認します。": "Checks, read-only, that every posted transaction follows the double-entry rules.",
+  "チェックを実行": "Run check",
+  "チェックを実行できませんでした。": "The check could not be run.",
+  "問題は見つかりませんでした。": "No problems found.",
+  "確認が必要な取引があります。": "Some transactions need attention.",
+  "仕訳行": "journal lines",
+  "見つかった問題が多いため、一部のみ表示しています。": "There are many findings, so only some are shown.",
+  "借方と貸方が一致しません": "Debits and credits do not match",
+  "仕訳行が2行未満です": "Fewer than two journal lines",
+  "別の世帯の口座が使われています": "An account of another household is used",
+  "取引を開く": "Open transactions"
 }
