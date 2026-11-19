@@ -49,8 +49,7 @@ jobs:
       - run: npm ci
       - name: Install Poppler
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y poppler-utils
+          scripts/ci-apt-install.sh poppler-utils
           command -v pdfinfo
           command -v pdftoppm
       - name: Render PDF visual evidence
@@ -133,8 +132,7 @@ jobs:
           persist-credentials: false
       - name: Install Tauri system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
+          scripts/ci-apt-install.sh \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
