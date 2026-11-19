@@ -562,7 +562,7 @@ function PwaVaultRoot({
   // backup/restore screens stay English in this phase (see the PWA Simple spec).
   return <div className={`pwa-shell${showSimple ? ' pwa-shell--simple' : ''}`}>
     <header className="pwa-header">
-      <a className="pwa-brand" href="/kakeflow/" aria-label="KakeFlow home">
+      <a className="pwa-brand" href="/kakeflow/">
         <span className="pwa-mark" aria-hidden="true">K</span>
         <span>KakeFlow <small>Local Ledger</small></span>
       </a>
