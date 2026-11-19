@@ -116,7 +116,11 @@ pub fn generate_investment_performance_pdf_from_report(
     {
         return Err(InvestmentPerformancePdfError::Invalid);
     }
-    let year = &request.date_from.as_deref().expect("validated dateFrom")[0..4];
+    let year = request
+        .date_from
+        .as_deref()
+        .and_then(|date| date.get(0..4))
+        .ok_or(InvestmentPerformancePdfError::Invalid)?;
     Ok(InvestmentPerformancePdfDocument {
         file_name: format!("kakeflow-investment-performance-{year}.pdf"),
         media_type: "application/pdf",

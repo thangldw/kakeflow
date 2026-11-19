@@ -329,8 +329,7 @@ pub fn list_transaction_source_records(
             params![
                 transaction_id,
                 household_id,
-                i64::try_from(MAX_TRANSACTION_RECORDS + 1)
-                    .expect("transaction source record limit fits SQLite")
+                i64::try_from(MAX_TRANSACTION_RECORDS + 1).unwrap_or(i64::MAX)
             ],
             |row| {
                 Ok(SourceRecordViewDto {

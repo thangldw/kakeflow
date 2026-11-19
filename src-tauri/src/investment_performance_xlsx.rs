@@ -126,7 +126,11 @@ pub fn generate_investment_performance_xlsx_from_report(
     if bytes.len() > MAX_XLSX_BYTES || bytes.len() > u32::MAX as usize {
         return Err(InvestmentPerformanceXlsxError::Invalid);
     }
-    let year = &request.date_from.as_deref().expect("validated dateFrom")[0..4];
+    let year = request
+        .date_from
+        .as_deref()
+        .and_then(|date| date.get(0..4))
+        .ok_or(InvestmentPerformanceXlsxError::Invalid)?;
     Ok(InvestmentPerformanceXlsxDocument {
         file_name: format!("kakeflow-investment-performance-{year}.xlsx"),
         media_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -172,11 +176,11 @@ fn write_summary_sheet(
         ("世帯ID", request.household_id.as_str()),
         (
             "対象期間（開始）",
-            request.date_from.as_deref().expect("validated dateFrom"),
+            request.date_from.as_deref().unwrap_or_default(),
         ),
         (
             "対象期間（終了）",
-            request.date_to.as_deref().expect("validated dateTo"),
+            request.date_to.as_deref().unwrap_or_default(),
         ),
         (
             "証券口座ID",

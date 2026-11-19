@@ -220,7 +220,11 @@ pub fn generate_investment_performance_csv_from_report(
     if output.len() > MAX_CSV_BYTES || output.len() > u32::MAX as usize {
         return Err(InvestmentPerformanceCsvError::Invalid);
     }
-    let year = &request.date_from.as_deref().expect("validated dateFrom")[0..4];
+    let year = request
+        .date_from
+        .as_deref()
+        .and_then(|date| date.get(0..4))
+        .ok_or(InvestmentPerformanceCsvError::Invalid)?;
     Ok(InvestmentPerformanceCsvDocument {
         file_name: format!("kakeflow-investment-performance-{year}.csv"),
         media_type: "text/csv;charset=utf-8",

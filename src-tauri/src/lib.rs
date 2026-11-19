@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod account_groups_export;
 pub mod aggregate_asset_history;
 pub mod annual_review_pdf;
@@ -4730,6 +4732,10 @@ fn create_ocr_temporary_file(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[allow(
+    clippy::expect_used,
+    reason = "failing fast at startup on an invalid smoke configuration or a Tauri runtime error is intended"
+)]
 pub fn run() {
     let smoke_config = PackagedSmokeConfig::from_environment()
         .expect("KakeFlow packaged smoke configuration is invalid");

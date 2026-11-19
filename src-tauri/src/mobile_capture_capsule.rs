@@ -78,8 +78,7 @@ pub fn parse(bytes: &[u8]) -> Result<ParsedMobileCapture, CapsuleError> {
     if !bytes.starts_with(MAGIC) {
         return Err(CapsuleError::Invalid);
     }
-    let manifest_len =
-        u32::from_be_bytes(bytes[MAGIC.len()..prefix_len].try_into().unwrap()) as usize;
+    let manifest_len = be_u32(&bytes[MAGIC.len()..prefix_len]) as usize;
     if manifest_len == 0
         || manifest_len > MAX_MANIFEST_BYTES
         || prefix_len + manifest_len >= bytes.len()
@@ -136,16 +135,17 @@ fn validate(manifest: &MobileCaptureManifest, image: &[u8]) -> Result<(), Capsul
     Ok(())
 }
 
+/// Reads four big-endian bytes; callers pass a slice they have already length-checked.
+fn be_u32(bytes: &[u8]) -> u32 {
+    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
 fn image_dimensions(bytes: &[u8]) -> Result<(u32, u32, &'static str), CapsuleError> {
     if bytes.len() >= 24
         && bytes[..8] == [137, 80, 78, 71, 13, 10, 26, 10]
         && &bytes[12..16] == b"IHDR"
     {
-        return Ok((
-            u32::from_be_bytes(bytes[16..20].try_into().unwrap()),
-            u32::from_be_bytes(bytes[20..24].try_into().unwrap()),
-            "image/png",
-        ));
+        return Ok((be_u32(&bytes[16..20]), be_u32(&bytes[20..24]), "image/png"));
     }
     if bytes.len() < 4 || bytes[..2] != [0xff, 0xd8] {
         return Err(CapsuleError::UnsupportedImage);

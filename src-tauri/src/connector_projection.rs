@@ -226,13 +226,14 @@ fn finalize_page(
 
     let has_more = summaries.len() > usize::from(limit);
     summaries.truncate(usize::from(limit));
-    let next_cursor = has_more.then(|| {
-        let last = summaries.last().expect("a non-empty bounded page");
-        ConnectorCursorDto {
+    let next_cursor = if has_more {
+        summaries.last().map(|last| ConnectorCursorDto {
             connector_kind: last.connector_kind,
             connection_key: last.connection_key.clone(),
-        }
-    });
+        })
+    } else {
+        None
+    };
     Ok(ConnectorSummaryPageDto {
         schema_version: 1,
         items: summaries,
@@ -843,6 +844,10 @@ fn project_binding_summary(
     }))
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "the closed registry holds a descriptor for every ConnectorKind variant"
+)]
 fn capabilities(kind: ConnectorKind, lifecycle: ConnectorLifecycle) -> Vec<ConnectorCapability> {
     let descriptor = ConnectorRegistry
         .descriptor(kind)

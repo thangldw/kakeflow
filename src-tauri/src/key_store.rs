@@ -218,6 +218,10 @@ impl OsDatabaseKeyProvider {
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "the output buffer is sized from base64::encoded_len, so encoding cannot run out of space"
+)]
 fn encode_key(key: &[u8]) -> Zeroizing<Vec<u8>> {
     let payload_len = base64::encoded_len(key.len(), false).unwrap_or(44);
     let mut encoded = Zeroizing::new(vec![0_u8; ENCODING_PREFIX.len() + payload_len]);

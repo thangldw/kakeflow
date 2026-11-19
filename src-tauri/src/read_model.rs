@@ -1626,7 +1626,7 @@ pub fn get_transaction_detail(
             params![
                 transaction_id,
                 household_id,
-                i64::try_from(MAX_MANUAL_ENTRIES + 1).expect("entry limit fits SQLite integer")
+                i64::try_from(MAX_MANUAL_ENTRIES + 1).unwrap_or(i64::MAX)
             ],
             |row| {
                 Ok(TransactionJournalEntryDto {
@@ -1708,8 +1708,7 @@ pub fn get_transaction_detail(
             params![
                 transaction_id,
                 household_id,
-                i64::try_from(MAX_TRANSACTION_EVIDENCE + 1)
-                    .expect("evidence limit fits SQLite integer")
+                i64::try_from(MAX_TRANSACTION_EVIDENCE + 1).unwrap_or(i64::MAX)
             ],
             |row| {
                 Ok(TransactionSourceEvidenceDto {
