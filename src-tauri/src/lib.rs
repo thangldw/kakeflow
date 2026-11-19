@@ -63,6 +63,7 @@ pub mod investment_performance_csv;
 pub mod investment_performance_pdf;
 pub mod investment_performance_xlsx;
 mod key_store;
+pub mod ledger_audit;
 mod mobile_capture_background;
 pub mod mobile_capture_capsule;
 pub mod mobile_capture_inbox;
@@ -563,6 +564,25 @@ fn app_status(state: tauri::State<'_, AppState>) -> Result<StatusResponse, Strin
             })
         })
         .map_err(|_| "Database status is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn ledger_audit_run(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<ledger_audit::LedgerAuditReportDto, String> {
+    state
+        .with_connection(|connection| {
+            ledger_audit::audit_household(connection, &household_id).map_err(|error| match error {
+                ledger_audit::LedgerAuditError::Database(source) => {
+                    persistence::PersistenceError::Database(source)
+                }
+                ledger_audit::LedgerAuditError::InvalidHousehold => {
+                    persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery)
+                }
+            })
+        })
+        .map_err(|_| "Ledger audit is unavailable".to_owned())
 }
 
 #[tauri::command]
@@ -4923,6 +4943,7 @@ pub fn run() {
             connector_commands::connector_refresh_all,
             connector_commands::connector_refresh_active_batch_get,
             connector_commands::connector_refresh_batch_get,
+            ledger_audit_run,
             local_sync_foundation_status,
             principal_member_binding_update,
             relay_status,
