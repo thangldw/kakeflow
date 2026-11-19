@@ -225,7 +225,10 @@ impl<T: GoogleOAuthTransport> GoogleDriveOAuthClient<T> {
         validate_access_response(&wire, true)?;
         Ok(TokenSet {
             access_token: Zeroizing::new(wire.access_token),
-            refresh_token: Zeroizing::new(wire.refresh_token.unwrap()),
+            refresh_token: Zeroizing::new(
+                wire.refresh_token
+                    .ok_or(GoogleDriveOAuthError::InvalidResponse)?,
+            ),
             expires_in_seconds: wire.expires_in,
         })
     }

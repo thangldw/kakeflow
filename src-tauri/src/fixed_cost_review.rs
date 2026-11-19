@@ -360,7 +360,9 @@ fn detect_recurring_payees(
     for (normalized_payee, group) in groups {
         let days = group.iter().map(|item| item.day).collect::<Vec<_>>();
         let amounts = group.iter().map(|item| item.amount_jpy).collect::<Vec<_>>();
-        let latest = *group.last().unwrap();
+        let Some(&latest) = group.last() else {
+            continue;
+        };
         let category_names = group
             .iter()
             .flat_map(|item| item.category_names.iter().cloned())

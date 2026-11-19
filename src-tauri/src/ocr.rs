@@ -243,8 +243,8 @@ fn read_image_dimensions(reader: &mut File) -> Result<(u32, u32), OcrError> {
         .map_err(|_| OcrError::UnsupportedImage)?;
     if prefix[..8] == [137, 80, 78, 71, 13, 10, 26, 10] && &prefix[12..16] == b"IHDR" {
         return Ok((
-            u32::from_be_bytes(prefix[16..20].try_into().unwrap()),
-            u32::from_be_bytes(prefix[20..24].try_into().unwrap()),
+            u32::from_be_bytes([prefix[16], prefix[17], prefix[18], prefix[19]]),
+            u32::from_be_bytes([prefix[20], prefix[21], prefix[22], prefix[23]]),
         ));
     }
     if prefix[0..2] != [0xff, 0xd8] {

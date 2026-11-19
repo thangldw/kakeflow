@@ -299,6 +299,7 @@ pub(crate) fn open_keyed_container_database_read_only(
     Ok(connection)
 }
 
+#[allow(clippy::expect_used, reason = "writing to a String cannot fail")]
 fn apply_key(connection: &Connection, key_material: &[u8]) -> Result<(), PersistenceError> {
     // Hashing produces a fixed-size SQLCipher raw key and avoids embedding an
     // arbitrary passphrase in SQL syntax. This string is intentionally never logged.

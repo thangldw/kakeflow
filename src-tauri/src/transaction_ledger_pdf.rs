@@ -258,7 +258,9 @@ fn paginate_rows(rows: Vec<RenderedRow>) -> Result<Vec<Vec<RenderedRow>>, Accoun
                 if right_height + candidate_height > DETAIL_TOP_MM - DETAIL_BOTTOM_MM {
                     break;
                 }
-                let candidate = pages[left_index].pop().expect("row exists");
+                let Some(candidate) = pages[left_index].pop() else {
+                    break;
+                };
                 pages[right_index].insert(0, candidate);
             }
         }
