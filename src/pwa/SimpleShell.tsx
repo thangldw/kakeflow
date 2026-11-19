@@ -16,6 +16,7 @@ import type { PasskeyAuthenticator } from '../platform/pwa/passkey'
 import type { Account, Household, MonthlyBudgetRow, Transaction } from '../platform/pwa/types'
 import type { AccountDto, SavingsGoalDto } from '../platform/types'
 import { addQuickAddEssentials } from './defaultChart'
+import { backupReminderDue } from './backupReminder'
 import { formatJpy } from './formatJpy'
 import { LanguageSwitch } from './LanguageSwitch'
 import { PostedLedgerList } from './PostedLedgerList'
@@ -76,6 +77,10 @@ export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchT
 
   useEffect(() => () => { if (savedTimer.current) clearTimeout(savedTimer.current) }, [])
 
+  // Checked on mount and whenever the user comes back to Today, so downloading an archive clears it.
+  const [backupDue, setBackupDue] = useState(false)
+  useEffect(() => { setBackupDue(backupReminderDue(usageKey)) }, [usageKey, tab])
+
   const selectTab = (next: SimpleTab) => {
     setTab(next)
     setSetupFailed(false)
@@ -109,6 +114,10 @@ export function SimpleShell({ client, household, usageKey, onOpenPage, onSwitchT
 
   return <div className="pwa-simple">
     <main className="pwa-simple-main">
+      {backupDue && tab === 'today' && <p className="pwa-simple-backup-reminder" role="status">
+        <span>{localize("最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。")}</span>
+        <button type="button" className="secondary-btn" onClick={() => onOpenPage('backup')}>{localize("バックアップを開く")}</button>
+      </p>}
       {setupFailed && <p className="pwa-error pwa-simple-page" role="alert">{localize("既定の口座を追加できませんでした")}</p>}
       {tab === 'today' && <SimpleHome
         householdId={household.id} householdName={household.name} month={month} revision={revision} client={adapter}

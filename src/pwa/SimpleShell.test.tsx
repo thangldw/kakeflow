@@ -357,3 +357,30 @@ describe.each(['en', 'vi', 'ja'] as const)('SimpleShell quick unlock card in %s'
 function currentMonth() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' }).format(new Date()).slice(0, 7)
 }
+
+describe('weekly backup reminder', () => {
+  const key = `simple-shell:${household.id}`
+  const reminder = translateText('en', '最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。')
+
+  it('stays quiet on a new vault and shows after a week without a backup, opening the backup page', async () => {
+    const client = await chartVault('en')
+    const first = renderShell(client, 'en')
+    await screen.findByRole('navigation', { name: /./u })
+    expect(screen.queryByText(reminder)).toBeNull()
+    first.unmount()
+
+    localStorage.setItem(`${key}:backup-first-seen-at`, String(Date.now() - 8 * 24 * 60 * 60 * 1000))
+    const second = renderShell(client, 'en')
+    expect(await screen.findByText(reminder)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: translateText('en', 'バックアップを開く') }))
+    expect(second.onOpenPage).toHaveBeenCalledWith('backup')
+  })
+
+  it('does not show when an archive was downloaded recently', async () => {
+    localStorage.setItem(`${key}:backup-first-seen-at`, String(Date.now() - 30 * 24 * 60 * 60 * 1000))
+    localStorage.setItem(`${key}:backup-exported-at`, String(Date.now() - 24 * 60 * 60 * 1000))
+    renderShell(await chartVault('en'), 'en')
+    await screen.findByRole('navigation', { name: /./u })
+    expect(screen.queryByText(reminder)).toBeNull()
+  })
+})

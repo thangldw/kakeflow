@@ -3220,5 +3220,7 @@
   "接続解除": "Ngắt kết nối",
   "更新の進行: {completed} / {total}": "Tiến trình làm mới: {completed} / {total}",
   "更新を完了できませんでした。項目ごとの対応を確認してください。": "Không thể hoàn tất việc làm mới. Hãy kiểm tra cách xử lý cho từng mục.",
-  "設定を確認してください": "Kiểm tra cài đặt"
+  "設定を確認してください": "Kiểm tra cài đặt",
+  "最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。": "Đã hơn một tuần kể từ lần sao lưu cuối. Bộ nhớ trình duyệt có thể bị xóa, hãy lưu một bản lưu trữ mã hóa.",
+  "バックアップを開く": "Mở sao lưu"
 }
