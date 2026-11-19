@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a Cmd/Ctrl+K command palette: jump to any page or find a transaction by typing (debounced, desktop ledger); arrow keys, Enter and Esc, ARIA combobox/listbox, en/vi.
 - Add a PWA UI contract test (Playwright + axe-core): every Simple tab, at 375/768/1440 px in light and dark, must not scroll sideways and must have no serious or critical WCAG A/AA violation. It found one real defect, fixed here: the header logo link's accessible name did not contain its visible text.
 - Measure frontend coverage in CI (`npm run test:coverage`, V8): 81.4% statements, 75.9% branches, 81.9% functions and 88.4% lines today, with floors just below so it cannot quietly erode.
 - Fuzz all 24 import adapters with fast-check (random text, random delimited rows, corrupted real fixtures, empty/BOM/200k-character input): none may throw, and every result keeps its shape. A one-off run of 1,500 cases per adapter found no failures.
