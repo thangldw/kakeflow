@@ -3236,5 +3236,18 @@
   "該当する取引はありません。": "No matching transactions.",
   "取引を読み込めませんでした。": "Could not load transactions.",
   "CSVをクリップボードにコピーしました。": "CSV copied to the clipboard.",
-  "CSVを書き出せませんでした。": "Could not export the CSV."
+  "CSVを書き出せませんでした。": "Could not export the CSV.",
+  "確定申告の受付開始": "Tax return filing opens",
+  "確定申告・所得税の納付期限": "Tax return and income tax payment deadline",
+  "住民税（第1期）の納付目安": "Resident tax, 1st installment (guide)",
+  "所得税の予定納税（第1期）": "Income tax prepayment, 1st installment",
+  "住民税（第2期）の納付目安": "Resident tax, 2nd installment (guide)",
+  "住民税（第3期）の納付目安": "Resident tax, 3rd installment (guide)",
+  "所得税の予定納税（第2期）": "Income tax prepayment, 2nd installment",
+  "年末調整の書類提出目安（勤務先による）": "Year-end adjustment paperwork (depends on your employer)",
+  "ふるさと納税・寄附・医療費の年内締め": "Year-end cutoff for hometown tax, donations and medical expenses",
+  "今後の税金・申告の節目": "Upcoming tax and filing dates",
+  "国の定めのない日付は目安です。自治体・勤務先でご確認ください。": "Dates not set nationally are a guide. Check with your municipality or employer.",
+  "（目安）": "(guide)",
+  "あと": "In "
 }
