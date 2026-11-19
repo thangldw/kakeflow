@@ -360,6 +360,21 @@ pub struct RestoredSourceDocument {
     pub storage_path: String,
 }
 
+/// Opens an existing database read-only with `key_material` and runs `inspect` on it.
+/// Used to examine a restored copy (for example a backup being verified) without any write.
+pub fn inspect_existing_database<T>(
+    database_path: &std::path::Path,
+    key_material: &[u8],
+    inspect: impl FnOnce(&Connection) -> Result<T, PersistenceError>,
+) -> Result<T, PersistenceError> {
+    let connection = Connection::open_with_flags(
+        database_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    apply_key(&connection, key_material)?;
+    inspect(&connection)
+}
+
 pub fn validate_existing_database(
     database_path: &std::path::Path,
     key_material: &[u8],
