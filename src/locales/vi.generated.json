@@ -3222,5 +3222,22 @@
   "更新を完了できませんでした。項目ごとの対応を確認してください。": "Không thể hoàn tất việc làm mới. Hãy kiểm tra cách xử lý cho từng mục.",
   "設定を確認してください": "Kiểm tra cài đặt",
   "最後のバックアップから1週間以上たちました。ブラウザの保存領域は消えることがあるため、暗号化アーカイブを保存してください。": "Đã hơn một tuần kể từ lần sao lưu cuối. Bộ nhớ trình duyệt có thể bị xóa, hãy lưu một bản lưu trữ mã hóa.",
-  "バックアップを開く": "Mở sao lưu"
+  "バックアップを開く": "Mở sao lưu",
+  "月次の締めチェック": "Danh sách việc đóng sổ cuối tháng",
+  "締めチェックの進み具合": "Tiến độ danh sách đóng sổ",
+  "すべて完了しています。": "Mọi việc đã hoàn tất.",
+  "確認待ちの取り込みはありません": "Không có lần nhập nào chờ duyệt",
+  "確認待ちの取り込みがあります": "Có lần nhập đang chờ duyệt",
+  "失敗した取り込みはありません": "Không có lần nhập nào thất bại",
+  "失敗した取り込みがあります": "Có lần nhập thất bại",
+  "処理中の取り込みはありません": "Không có lần nhập nào đang xử lý",
+  "処理中の取り込みがあります": "Có lần nhập đang xử lý",
+  "取り込みデータは最新です": "Dữ liệu nhập đã mới nhất",
+  "まだ取り込みがありません": "Chưa nhập dữ liệu nào",
+  "最後の取り込みから日数が経っています": "Số ngày kể từ lần nhập cuối",
+  "予算が設定されています": "Đã đặt ngân sách",
+  "予算が未設定です": "Chưa đặt ngân sách",
+  "予算超過のカテゴリーはありません": "Không có danh mục nào vượt ngân sách",
+  "予算を超過したカテゴリー": "Danh mục vượt ngân sách",
+  "開く": "Mở"
 }
