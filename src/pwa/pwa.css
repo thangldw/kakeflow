@@ -628,3 +628,19 @@ body {
 .pwa-quick-unlock-form { display: grid; gap: 10px; }
 .pwa-quick-unlock-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pwa-quick-unlock-actions > button { flex: 1 1 140px; }
+
+.pwa-simple-backup-reminder {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--simple-border, #d0d5dd);
+  border-radius: 12px;
+  background: var(--simple-surface, #fff);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.pwa-simple-backup-reminder span { flex: 1 1 220px; }
+.pwa-simple-backup-reminder button { min-height: 44px; }

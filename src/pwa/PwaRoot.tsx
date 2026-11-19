@@ -28,6 +28,7 @@ import { LanguageSwitch } from './LanguageSwitch'
 import { PostedLedgerList } from './PostedLedgerList'
 import { QuickUnlockCard } from './QuickUnlockCard'
 import { canActivatePwaUpdate, usePwaServiceWorker } from './serviceWorker'
+import { recordBackupExport } from './backupReminder'
 import { SimpleShell, type PwaPage } from './SimpleShell'
 import { isPwaClientOperationSuperseded, usePwaClient } from './usePwaClient'
 import '../features/simple/simpleMode.css'
@@ -656,6 +657,7 @@ function PwaVaultRoot({
         {screen === 'evidence' && <EvidenceScreen detail={detail} evidence={evidence} />}
         {screen === 'backup' && session.client && <BackupScreen
           client={session.client}
+          reminderKey={uiModeKey(databaseName, household.id)}
           busy={busy || session.busy}
           onRestore={restoreArchive}
         />}
@@ -789,8 +791,10 @@ function EvidenceScreen({ detail, evidence }: {
   return <section><div className="pwa-page-head"><div><p className="pwa-eyebrow">SOURCE → CANDIDATE → POSTING</p><h1>Transaction provenance</h1></div><span className="pwa-chip">VERIFIED LOCAL</span></div><div className="pwa-provenance"><article className="pwa-panel"><span>01 · encrypted source</span><h2>{evidence.source.originalFilename}</h2><p>{evidence.source.mediaType} · {evidence.source.byteSize} bytes</p><code>SHA-256 {evidence.source.sha256}</code></article><article className="pwa-panel"><span>02 · approved candidate</span><h2>{detail.payee}</h2><p>{detail.occurredOn} · {formatJpy(detail.amountJpy)}</p><code>{detail.candidateId}</code></article><article className="pwa-panel"><span>03 · balanced posting</span><h2>{detail.entries.length} ledger entries</h2>{detail.entries.map((entry) => <p key={entry.id}>{entry.side} · {formatJpy(entry.amountJpy)}</p>)}<code>{detail.canonicalPostingHash}</code></article></div></section>
 }
 
-export function BackupScreen({ client, busy, onRestore }: {
+export function BackupScreen({ client, busy, onRestore, reminderKey }: {
   readonly client: PwaLedgerClient
+  /** Names this vault on the device, so a download restarts its weekly backup reminder. */
+  readonly reminderKey?: string
   readonly busy: boolean
   readonly onRestore: (archive: Uint8Array, passphrase: string) => Promise<void>
 }) {
@@ -816,6 +820,7 @@ export function BackupScreen({ client, busy, onRestore }: {
       } finally {
         URL.revokeObjectURL(url)
       }
+      if (reminderKey) recordBackupExport(reminderKey)
       setStatus('Encrypted archive downloaded')
     } catch (cause) {
       setStatus(`Export failed: ${messageOf(cause)}`)
