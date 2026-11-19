@@ -121,3 +121,9 @@ button.calendar-event { cursor: pointer; }
 .command-palette li.command-palette-active { background: rgb(80 120 220 / 0.18); }
 .command-palette li small { opacity: 0.65; }
 .command-palette-empty { cursor: default; opacity: 0.7; }
+.month-close-panel { margin-top: 20px; }
+.month-close-panel progress { width: 100%; height: 8px; margin: 8px 0 12px; }
+.month-close-panel ul { list-style: none; margin: 0; padding: 0; }
+.month-close-panel li { align-items: center; display: grid; font-size: 13px; gap: 10px; grid-template-columns: 20px 1fr auto; padding: 7px 0; border-top: 1px solid rgba(0, 0, 0, .06); }
+.month-close-done { color: #6b7f76; }
+.month-close-open { font-weight: 600; }
