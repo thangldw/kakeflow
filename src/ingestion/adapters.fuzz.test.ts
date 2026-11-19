@@ -35,7 +35,7 @@ const mutatedFixture = fc.tuple(
   fc.constantFrom(...fixtures),
   fc.array(fc.tuple(fc.constantFrom('drop', 'dup', 'swap', 'cut', 'garble'), fc.nat(), fc.string({ maxLength: 6 })), { maxLength: 6 }),
 ).map(([text, edits]) => {
-  let lines = text.split('\n')
+  const lines = text.split('\n')
   for (const [kind, seed, noise] of edits) {
     if (lines.length === 0) break
     const index = seed % lines.length
