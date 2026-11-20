@@ -3357,5 +3357,15 @@
   "カードの支払い": "Card payments",
   "二重請求の可能性": "Possible duplicate charges",
   "同じ支払先・同じ金額の支出が数日以内に2回あります。本当に2回の買い物なら問題ありません。": "The same payee and amount appear twice within a few days. If they were really two purchases, there is nothing to fix.",
-  "取引を確認する": "Review transactions"
+  "取引を確認する": "Review transactions",
+  "バックアップファイルの点検": "Backup file check",
+  "作成したバックアップのファイルが、今も存在し作成時のままかを確認します。パスフレーズは不要ですが、中身を開いて確かめるものではありません。1週間に1回、自動でも確認します。": "Checks that the backup files you created still exist and are unchanged since they were written. No passphrase is needed, but it does not open the backup; it also runs automatically once a week.",
+  "ファイルが見つかりません": "File not found",
+  "作成時から変わっています": "Changed since it was created",
+  "読み取れません": "Cannot be read",
+  "今すぐ点検": "Check now",
+  "点検はデスクトップ版で利用できます。": "The check is available in the desktop app.",
+  "点検できませんでした。": "Could not run the check.",
+  "点検できるバックアップはまだありません。バックアップを作成すると記録されます。": "There are no backups to check yet. They are recorded when you create one.",
+  "バックアップファイルに確認が必要なものがあります。": "A backup file needs attention."
 }

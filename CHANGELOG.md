@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Check that backup files are still intact without a passphrase (desktop): each backup's SHA-256 and size are remembered when it is created, Settings can re-read them on demand (unchanged, missing, changed, unreadable), and the app does so quietly once a week, speaking up only about a problem. This proves the file is intact, not that the passphrase is remembered; "Verify backup" still does that.
+
 - Flag possible duplicate charges in the monthly report (desktop): two posted spending entries with the same payee and amount (¥1,000 or more) within 3 days. It only points them out; nothing is changed or merged.
 
 - Add a self-prepared income and spending summary PDF to Settings (desktop): income and spending by month for the last 3, 6 or 12 months, and the largest income entries each with the original file name and SHA-256 when one is linked. The document states it is the household's own record, not a third-party certificate.

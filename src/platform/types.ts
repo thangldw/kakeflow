@@ -188,6 +188,7 @@ export interface BackupVerificationDto {
   readonly entryCount: number; readonly plaintextBytes: number; readonly schemaVersion: number; readonly householdCount: number
   readonly documentsChecked: number; readonly postedTransactions: number; readonly journalEntries: number; readonly ledgerFindings: number; readonly ok: boolean
 }
+export interface BackupFileCheckDto { readonly path: string; readonly fileName: string; readonly recordedAt: string; readonly byteSize: number; readonly status: 'OK' | 'MISSING' | 'CHANGED' | 'UNREADABLE' }
 export interface BackupSummaryDto { readonly formatVersion: 2; readonly entryCount: number; readonly plaintextBytes: number }
 export interface EvidenceBundleSummaryDto {
   readonly bundleId: string
@@ -1221,6 +1222,7 @@ export type AppCommand =
   | 'backup_create'
   | 'backup_restore_stage'
   | 'backup_verify'
+  | 'backup_files_check'
   | 'app_restart_for_restore'
   | 'document_extract'
   | 'document_ocr'
@@ -1457,6 +1459,7 @@ export interface PlatformClient {
   setImportDuplicateResolution(runId: string, candidateId: string, resolution: 'LINK' | 'KEEP_BOTH' | 'EXCLUDE'): Promise<ImportPreviewDto>
   commitImport(runId: string, decisions: readonly PostingDecisionDto[], expectedConnectorBinding: ImportBindingExpectationDto | null): Promise<CommitSummaryDto>
   rollbackImport(runId: string): Promise<void>
+  checkBackupFiles(): Promise<readonly BackupFileCheckDto[]>
   createBackup(passphrase: string): Promise<BackupSummaryDto | null>
   stageBackupRestore(passphrase: string): Promise<BackupSummaryDto | null>
   /** Decrypts a chosen backup into a private scratch copy and proves it restores; nothing live is touched. */
