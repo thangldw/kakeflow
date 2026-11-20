@@ -1055,6 +1055,10 @@ export type AppCommand =
   | 'payment_reminder_create'
   | 'payment_reminder_set_done'
   | 'payment_reminder_delete'
+  | 'decision_journal_list'
+  | 'decision_journal_create'
+  | 'decision_journal_record_outcome'
+  | 'decision_journal_delete'
   | 'data_confidence_query'
   | 'data_confidence_missing_receipts'
   | 'duplicate_charges_query'
@@ -1258,6 +1262,8 @@ export interface PaymentReminderDto {
   readonly id: string; readonly householdId: string; readonly dueOn: string; readonly label: string
   readonly amountJpy: number | null; readonly done: boolean
 }
+export interface DecisionDto { readonly id: string; readonly householdId: string; readonly decidedOn: string; readonly title: string; readonly amountJpy: number | null; readonly reason: string; readonly expectation: string; readonly reviewOn: string; readonly outcome: string | null }
+export interface DecisionInputDto { readonly householdId: string; readonly decidedOn: string; readonly title: string; readonly amountJpy: number | null; readonly reason: string; readonly expectation: string; readonly reviewOn: string }
 export interface PaymentReminderInputDto { readonly householdId: string; readonly dueOn: string; readonly label: string; readonly amountJpy: number | null }
 export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
 export interface AccountBalanceDto { readonly accountId: string; readonly name: string; readonly subtype: string; readonly balanceJpy: number }
@@ -1293,6 +1299,10 @@ export interface PlatformClient {
   createPaymentReminder(input: PaymentReminderInputDto): Promise<PaymentReminderDto>
   setPaymentReminderDone(householdId: string, id: string, done: boolean): Promise<void>
   deletePaymentReminder(householdId: string, id: string): Promise<void>
+  listDecisions(householdId: string): Promise<readonly DecisionDto[]>
+  createDecision(input: DecisionInputDto): Promise<DecisionDto>
+  recordDecisionOutcome(householdId: string, id: string, outcome: string): Promise<void>
+  deleteDecision(householdId: string, id: string): Promise<void>
   queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
   queryAccountLedgerBalances(householdId: string, asOf: string): Promise<readonly AccountBalanceDto[]>
   queryDuplicateCharges(householdId: string, month: string, minAmountJpy: number, windowDays: number, limit: number): Promise<readonly DuplicateChargeDto[]>

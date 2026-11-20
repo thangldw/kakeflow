@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a big-decisions journal to the Calendar report (desktop): write down a decision with its reason, expectation and a review date (six months by default), then record how it turned out once the date has come. Stored only on this device (migration 0077) and never touches the ledger.
 - Remind you to test-restore a backup (desktop): if this device has written backups but none has been proven restorable with "Verify backup" for 90 days, a quiet toast points to Settings, then waits two weeks before asking again. It never asks for or stores a passphrase.
 
 - Add "Check against the real balance" to the monthly report (desktop): type the balance your bank app or purse shows today and see whether KakeFlow's ledger agrees, and if not, by how much and which way. Nothing typed is saved and the ledger is never changed.
