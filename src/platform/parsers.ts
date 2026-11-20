@@ -28,6 +28,7 @@ import type {
   DataConfidenceDto,
   MissingReceiptDto,
   DuplicateChargeDto,
+  AccountBalanceDto,
   CategoryHistoryDto,
   EvidenceLevelDto,
   LocalSyncFoundationStatusDto,
@@ -185,6 +186,14 @@ export function parseCategoryHistory(value: unknown): CategoryHistoryDto {
     return { accountId: asRequiredString(row.accountId), name: asRequiredString(row.name), monthlyJpy, totalJpy }
   })
   return { months, categories }
+}
+
+export function parseAccountBalances(value: unknown): readonly AccountBalanceDto[] {
+  if (!Array.isArray(value)) throw new TypeError('account balances')
+  return value.map((item) => {
+    const row = asRecord(item)
+    return { accountId: asRequiredString(row.accountId), name: asRequiredString(row.name), subtype: asRequiredString(row.subtype), balanceJpy: asSafeInteger(row.balanceJpy) }
+  })
 }
 
 export function parseDuplicateCharges(value: unknown): readonly DuplicateChargeDto[] {

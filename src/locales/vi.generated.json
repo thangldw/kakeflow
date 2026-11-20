@@ -3375,5 +3375,13 @@
   "点検はデスクトップ版で利用できます。": "Việc kiểm tra dùng được trên bản desktop.",
   "点検できませんでした。": "Không thể kiểm tra.",
   "点検できるバックアップはまだありません。バックアップを作成すると記録されます。": "Chưa có bản sao lưu nào để kiểm tra. Chúng được ghi lại khi bạn tạo bản sao lưu.",
-  "バックアップファイルに確認が必要なものがあります。": "Có tệp sao lưu cần được kiểm tra."
+  "バックアップファイルに確認が必要なものがあります。": "Có tệp sao lưu cần được kiểm tra.",
+  "実際の残高との照合": "Đối chiếu với số dư thực tế",
+  "口座アプリや通帳に表示されている今日の残高を入力すると、KakeFlow の帳簿と合っているか確認できます。入力した値は保存されません。": "Nhập số dư hôm nay hiển thị trong ứng dụng ngân hàng hoặc sổ tiết kiệm để xem có khớp với sổ KakeFlow không. Số bạn nhập không được lưu.",
+  "帳簿": "Sổ",
+  "一致しています。": "Khớp nhau.",
+  "実際のほうが多い": "Số dư thực cao hơn",
+  "記録していない収入や入金がないか確認してください。": "Hãy kiểm tra xem có khoản thu hoặc tiền gửi nào chưa ghi lại không.",
+  "実際のほうが少ない": "Số dư thực thấp hơn",
+  "記録していない支出や引き出し、二重の記録がないか確認してください。": "Hãy kiểm tra xem có khoản chi, rút tiền chưa ghi lại hoặc bản ghi bị trùng không."
 }

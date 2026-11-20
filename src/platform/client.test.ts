@@ -47,6 +47,7 @@ describe('platform client', () => {
     await expect(client.queryDataConfidence('family', '2026-11')).rejects.toMatchObject({ command: 'data_confidence_query' })
     await expect(client.queryMissingReceipts('family', '2026-11', 3000, 5)).rejects.toMatchObject({ command: 'data_confidence_missing_receipts' })
     await expect(client.queryDuplicateCharges('family', '2026-11', 1000, 3, 8)).rejects.toMatchObject({ command: 'duplicate_charges_query' })
+    await expect(client.queryAccountLedgerBalances('family', '2026-11-20')).rejects.toMatchObject({ command: 'account_ledger_balances_query' })
     await expect(client.queryCategoryHistory('family', '2026-11', 12)).rejects.toMatchObject({ command: 'category_history_query' })
     await expect(client.getDesktopRelayStatus('family')).rejects.toMatchObject({ command: 'relay_status' })
     await expect(client.listHouseholds()).resolves.toEqual([{
@@ -447,6 +448,7 @@ describe('platform client', () => {
       payment_reminder_set_done: null,
       payment_reminder_delete: null,
       data_confidence_query: { month: '2026-11', buckets: [{ level: 'DOCUMENT_AND_IMPORT', transactions: 1, amountJpy: 4000 }, { level: 'DOCUMENT', transactions: 0, amountJpy: 0 }, { level: 'IMPORT', transactions: 0, amountJpy: 0 }, { level: 'MANUAL', transactions: 1, amountJpy: 1000 }], totalTransactions: 2, totalAmountJpy: 5000, evidencedShareBps: 8000 },
+      account_ledger_balances_query: [{ accountId: 'bank', name: '銀行', subtype: 'BANK', balanceJpy: 100000 }],
       duplicate_charges_query: [{ firstTransactionId: 'a', secondTransactionId: 'b', firstOn: '2026-11-02', secondOn: '2026-11-04', payee: 'Amazon', amountJpy: 4980, daysApart: 2 }],
       data_confidence_missing_receipts: [{ transactionId: 'tx1', occurredOn: '2026-11-02', payee: 'ホームセンター', amountJpy: 5000, hasImport: false }],
       category_history_query: { months: ['2026-10', '2026-11'], categories: [{ accountId: 'food', name: '食費', monthlyJpy: [1000, 2000], totalJpy: 3000 }] },
@@ -647,6 +649,7 @@ describe('platform client', () => {
     await expect(client.queryDataConfidence('family', '2026-11')).resolves.toEqual(responses.data_confidence_query)
     await expect(client.queryMissingReceipts('family', '2026-11', 3000, 5)).resolves.toEqual(responses.data_confidence_missing_receipts)
     await expect(client.queryDuplicateCharges('family', '2026-11', 1000, 3, 8)).resolves.toEqual(responses.duplicate_charges_query)
+    await expect(client.queryAccountLedgerBalances('family', '2026-11-20')).resolves.toEqual(responses.account_ledger_balances_query)
     await expect(client.queryCategoryHistory('family', '2026-11', 12)).resolves.toEqual(responses.category_history_query)
     const bindingInput = { householdId: 'family', principalId: 'principal-1', memberId: null, mutationId: 'binding-1' }
     await expect(client.updatePrincipalMemberBinding(bindingInput)).resolves.toEqual(responses.principal_member_binding_update)
@@ -726,6 +729,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('payment_reminder_set_done', { householdId: 'family', id: 'a'.repeat(32), done: true })
     expect(invokeSpy).toHaveBeenCalledWith('payment_reminder_delete', { householdId: 'family', id: 'a'.repeat(32) })
     expect(invokeSpy).toHaveBeenCalledWith('data_confidence_query', { householdId: 'family', month: '2026-11' })
+    expect(invokeSpy).toHaveBeenCalledWith('account_ledger_balances_query', { householdId: 'family', asOf: '2026-11-20' })
     expect(invokeSpy).toHaveBeenCalledWith('duplicate_charges_query', { householdId: 'family', month: '2026-11', minAmountJpy: 1000, windowDays: 3, limit: 8 })
     expect(invokeSpy).toHaveBeenCalledWith('data_confidence_missing_receipts', { householdId: 'family', month: '2026-11', minAmountJpy: 3000, limit: 5 })
     expect(invokeSpy).toHaveBeenCalledWith('category_history_query', { householdId: 'family', throughMonth: '2026-11', months: 12 })
@@ -781,7 +785,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(70)
+    expect(invokeSpy).toHaveBeenCalledTimes(71)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {

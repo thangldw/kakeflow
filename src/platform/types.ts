@@ -1058,6 +1058,7 @@ export type AppCommand =
   | 'data_confidence_query'
   | 'data_confidence_missing_receipts'
   | 'duplicate_charges_query'
+  | 'account_ledger_balances_query'
   | 'principal_member_binding_update'
   | 'relay_status'
   | 'relay_connection_save'
@@ -1259,6 +1260,7 @@ export interface PaymentReminderDto {
 }
 export interface PaymentReminderInputDto { readonly householdId: string; readonly dueOn: string; readonly label: string; readonly amountJpy: number | null }
 export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
+export interface AccountBalanceDto { readonly accountId: string; readonly name: string; readonly subtype: string; readonly balanceJpy: number }
 export interface DuplicateChargeDto { readonly firstTransactionId: string; readonly secondTransactionId: string; readonly firstOn: string; readonly secondOn: string; readonly payee: string; readonly amountJpy: number; readonly daysApart: number }
 export interface MissingReceiptDto { readonly transactionId: string; readonly occurredOn: string; readonly payee: string | null; readonly amountJpy: number; readonly hasImport: boolean }
 export interface DataConfidenceDto {
@@ -1292,6 +1294,7 @@ export interface PlatformClient {
   setPaymentReminderDone(householdId: string, id: string, done: boolean): Promise<void>
   deletePaymentReminder(householdId: string, id: string): Promise<void>
   queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
+  queryAccountLedgerBalances(householdId: string, asOf: string): Promise<readonly AccountBalanceDto[]>
   queryDuplicateCharges(householdId: string, month: string, minAmountJpy: number, windowDays: number, limit: number): Promise<readonly DuplicateChargeDto[]>
   queryMissingReceipts(householdId: string, month: string, minAmountJpy: number, limit: number): Promise<readonly MissingReceiptDto[]>
   queryCategoryHistory(householdId: string, throughMonth: string, months: number): Promise<CategoryHistoryDto>
