@@ -1049,6 +1049,10 @@ export type AppCommand =
   | 'app_status'
   | 'local_sync_foundation_status'
   | 'ledger_audit_run'
+  | 'payment_reminders_list'
+  | 'payment_reminder_create'
+  | 'payment_reminder_set_done'
+  | 'payment_reminder_delete'
   | 'data_confidence_query'
   | 'principal_member_binding_update'
   | 'relay_status'
@@ -1244,6 +1248,11 @@ export interface LedgerAuditFindingDto {
   readonly creditTotalJpy: number
 }
 
+export interface PaymentReminderDto {
+  readonly id: string; readonly householdId: string; readonly dueOn: string; readonly label: string
+  readonly amountJpy: number | null; readonly done: boolean
+}
+export interface PaymentReminderInputDto { readonly householdId: string; readonly dueOn: string; readonly label: string; readonly amountJpy: number | null }
 export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
 export interface DataConfidenceDto {
   readonly month: string
@@ -1269,6 +1278,10 @@ export interface PlatformClient {
   status(): Promise<AppStatusDto>
   getLocalSyncFoundationStatus(householdId: string): Promise<LocalSyncFoundationStatusDto>
   runLedgerAudit(householdId: string): Promise<LedgerAuditReportDto>
+  listPaymentReminders(householdId: string): Promise<readonly PaymentReminderDto[]>
+  createPaymentReminder(input: PaymentReminderInputDto): Promise<PaymentReminderDto>
+  setPaymentReminderDone(householdId: string, id: string, done: boolean): Promise<void>
+  deletePaymentReminder(householdId: string, id: string): Promise<void>
   queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>
