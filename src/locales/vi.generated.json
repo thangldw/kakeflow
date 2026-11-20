@@ -3292,5 +3292,14 @@
   "このバックアップは復元できます。": "Bản sao lưu này có thể khôi phục.",
   "復元はできますが、帳簿に確認が必要な取引があります。": "Có thể khôi phục, nhưng một số giao dịch trong sổ cần được kiểm tra.",
   "件の原本を確認": "tài liệu gốc đã kiểm tra",
-  "件の要確認": "cần kiểm tra"
+  "件の要確認": "cần kiểm tra",
+  "支出の根拠": "Căn cứ của khoản chi",
+  "今月の支出に、原本や取り込み明細がどれだけ紐づいているかを示します。金額が正しいことの証明ではありません。": "Cho biết khoản chi trong tháng có bao nhiêu phần gắn với chứng từ gốc hoặc dòng sao kê đã nhập. Đây không phải bằng chứng số tiền là đúng.",
+  "原本と取り込みの両方あり": "Có cả chứng từ và dòng sao kê",
+  "原本（レシート・スキャン）あり": "Có chứng từ (biên lai, bản quét)",
+  "取り込み明細あり": "Có dòng sao kê đã nhập",
+  "手入力のみ": "Chỉ nhập tay",
+  "の支出に根拠があります": "chi tiêu có căn cứ",
+  "この月の支出はまだありません。": "Tháng này chưa có khoản chi.",
+  "読み込めませんでした。": "Không tải được."
 }
