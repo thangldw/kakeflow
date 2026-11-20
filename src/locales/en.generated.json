@@ -3398,5 +3398,19 @@
   "実際はどうだったか": "How it actually turned out",
   "振り返りを保存": "Save the review",
   "振り返り済み": "Reviewed",
-  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "You have not test-restored a backup in a while. Try \"Verify a chosen backup\" in Settings."
+  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "You have not test-restored a backup in a while. Try \"Verify a chosen backup\" in Settings.",
+  "保証期間の一覧": "Warranty list",
+  "買ったものの保証が切れる日を記録します。この端末にだけ保存され、台帳は変更しません。": "Record when the warranty on things you bought runs out. Stored only on this device; the ledger is never changed.",
+  "品名": "Item",
+  "購入した店（任意）": "Store (optional)",
+  "購入日": "Purchase date",
+  "保証期間（月）": "Warranty length (months)",
+  "購入金額（任意）": "Price (optional)",
+  "追加する": "Add",
+  "保証の一覧を読み込めない、または保存できませんでした。": "The warranty list could not be loaded or saved.",
+  "保証中のもの": "Items with warranty",
+  "保証期限": "Warranty ends",
+  "保証は終了しています。": "The warranty has ended.",
+  "保証期限が近づいています。": "The warranty is ending soon.",
+  "期限までの日数": "Days until it ends"
 }

@@ -104,6 +104,7 @@ mod synthetic_profiles;
 pub mod transaction_ledger_pdf;
 pub mod transaction_ledger_xlsx;
 pub mod transfer_pairs;
+pub mod warranties;
 pub mod watched_file_inbox;
 pub mod watched_folders;
 
@@ -745,6 +746,52 @@ fn decision_journal_delete(
             decision_journal::delete(connection, &household_id, &id).map_err(decision_error)
         })
         .map_err(|_| "The decision could not be deleted".to_owned())
+}
+
+fn warranty_error(error: warranties::WarrantyError) -> persistence::PersistenceError {
+    match error {
+        warranties::WarrantyError::Database(source) => {
+            persistence::PersistenceError::Database(source)
+        }
+        _ => persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery),
+    }
+}
+
+#[tauri::command]
+fn warranty_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<warranties::WarrantyDto>, String> {
+    state
+        .with_connection(|connection| {
+            warranties::list(connection, &household_id).map_err(warranty_error)
+        })
+        .map_err(|_| "The warranty list is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn warranty_create(
+    state: tauri::State<'_, AppState>,
+    input: warranties::WarrantyInput,
+) -> Result<warranties::WarrantyDto, String> {
+    state
+        .with_connection(|connection| {
+            warranties::create(connection, &input).map_err(warranty_error)
+        })
+        .map_err(|_| "The warranty could not be saved".to_owned())
+}
+
+#[tauri::command]
+fn warranty_delete(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    id: String,
+) -> Result<(), String> {
+    state
+        .with_connection(|connection| {
+            warranties::delete(connection, &household_id, &id).map_err(warranty_error)
+        })
+        .map_err(|_| "The warranty could not be deleted".to_owned())
 }
 
 #[tauri::command]
@@ -5392,6 +5439,9 @@ pub fn run() {
             decision_journal_create,
             decision_journal_record_outcome,
             decision_journal_delete,
+            warranty_list,
+            warranty_create,
+            warranty_delete,
             data_confidence_query,
             duplicate_charges_query,
             account_ledger_balances_query,

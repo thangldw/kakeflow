@@ -3398,5 +3398,19 @@
   "実際はどうだったか": "Thực tế diễn ra thế nào",
   "振り返りを保存": "Lưu bản xem lại",
   "振り返り済み": "Đã xem lại",
-  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "Đã lâu bạn chưa thử khôi phục một bản sao lưu. Hãy thử \"Chọn bản sao lưu để kiểm tra\" trong Cài đặt."
+  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "Đã lâu bạn chưa thử khôi phục một bản sao lưu. Hãy thử \"Chọn bản sao lưu để kiểm tra\" trong Cài đặt.",
+  "保証期間の一覧": "Danh sách bảo hành",
+  "買ったものの保証が切れる日を記録します。この端末にだけ保存され、台帳は変更しません。": "Ghi lại ngày hết bảo hành của đồ đã mua. Chỉ lưu trên thiết bị này, không thay đổi sổ cái.",
+  "品名": "Tên món đồ",
+  "購入した店（任意）": "Cửa hàng (không bắt buộc)",
+  "購入日": "Ngày mua",
+  "保証期間（月）": "Thời hạn bảo hành (tháng)",
+  "購入金額（任意）": "Giá mua (không bắt buộc)",
+  "追加する": "Thêm",
+  "保証の一覧を読み込めない、または保存できませんでした。": "Không thể tải hoặc lưu danh sách bảo hành.",
+  "保証中のもの": "Đồ còn bảo hành",
+  "保証期限": "Hết bảo hành",
+  "保証は終了しています。": "Đã hết bảo hành.",
+  "保証期限が近づいています。": "Sắp hết bảo hành.",
+  "期限までの日数": "Số ngày đến hạn"
 }
