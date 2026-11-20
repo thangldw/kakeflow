@@ -3398,5 +3398,18 @@
   "実際はどうだったか": "Thực tế diễn ra thế nào",
   "振り返りを保存": "Lưu bản xem lại",
   "振り返り済み": "Đã xem lại",
-  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "Đã lâu bạn chưa thử khôi phục một bản sao lưu. Hãy thử \"Chọn bản sao lưu để kiểm tra\" trong Cài đặt."
+  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "Đã lâu bạn chưa thử khôi phục một bản sao lưu. Hãy thử \"Chọn bản sao lưu để kiểm tra\" trong Cài đặt.",
+  "高額療養費の目安": "Ước tính chi phí y tế cao",
+  "1か月に病院や薬局で払った自己負担額から、高額療養費で戻る可能性がある額を概算します。70歳未満・3割負担を前提にした目安です。入力した内容は保存されません。": "Ước tính số tiền có thể được hoàn lại theo chế độ chi phí y tế cao, dựa trên số tiền bạn đã trả ở bệnh viện và hiệu thuốc trong một tháng. Giả định dưới 70 tuổi, đồng chi trả 30%. Nội dung nhập không được lưu.",
+  "所得区分": "Mức thu nhập",
+  "年収 約1,160万円以上": "Thu nhập khoảng 11,6 triệu yên trở lên",
+  "年収 約770万〜1,160万円": "Thu nhập khoảng 7,7–11,6 triệu yên",
+  "年収 約370万〜770万円": "Thu nhập khoảng 3,7–7,7 triệu yên",
+  "年収 約370万円以下": "Thu nhập khoảng 3,7 triệu yên trở xuống",
+  "住民税非課税": "Miễn thuế cư trú",
+  "その月に払った自己負担額": "Số tiền bạn đã tự trả trong tháng",
+  "過去12か月で3回以上、上限に達している": "Đã chạm mức trần từ 3 lần trở lên trong 12 tháng qua",
+  "自己負担の上限の目安": "Mức trần tự chi trả (ước tính)",
+  "戻る可能性がある額の目安": "Số tiền có thể được hoàn lại (ước tính)",
+  "食事代・差額ベッド代・保険外の費用は対象外です。目安であり、確定額ではありません。加入先の健康保険に必ず確認してください。": "Tiền ăn, phí chênh lệch giường bệnh và điều trị ngoài bảo hiểm không được tính. Đây là ước tính, không phải số tiền chính thức. Hãy luôn xác nhận với cơ quan bảo hiểm y tế của bạn."
 }
