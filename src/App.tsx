@@ -78,6 +78,7 @@ import { FinancialCalendarView, MonthlyReportView } from './features/reports/Rep
 import { AnnualReviewView } from './features/reports/AnnualReviewView'
 import { TaxSupportPanel } from './features/reports/TaxSupportPanel'
 import { LedgerAuditPanel } from './features/ledger-audit/LedgerAuditPanel'
+import { useBackgroundLedgerAudit } from './features/ledger-audit/useBackgroundLedgerAudit'
 import { BillRemindersPanel } from './features/reminders/BillRemindersPanel'
 import { suggestBillDeadline, type BillDeadlineSuggestion } from './features/reminders/billDeadline'
 import { DataConfidencePanel } from './features/data-confidence/DataConfidencePanel'
@@ -3488,6 +3489,12 @@ function App() {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
   const simple = uiMode === 'simple'
+  // Quiet weekly ledger check: nothing is shown unless it finds a problem, and then only a way to the details.
+  const runBackgroundAudit = useCallback((id: string) => platformClient.runLedgerAudit(id), [])
+  const reportBackgroundAudit = useCallback(() => {
+    showToast(localize("台帳の自動チェックで確認が必要な点が見つかりました。"), 'info', { label: localize("詳細を見る"), onAction: () => setPage('settings') })
+  }, [])
+  useBackgroundLedgerAudit(activeHouseholdId ?? null, platformClient.runtime === 'tauri', { run: runBackgroundAudit, onFindings: reportBackgroundAudit })
   // More belongs to Simple mode; in Full mode it renders as the Home, so the More list never shows there, even for one frame.
   const page: PageId = requestedPage === 'more' && !simple ? 'overview' : requestedPage
   // Simple mode always reads the whole household; the saved scope stays untouched and applies again in Full.

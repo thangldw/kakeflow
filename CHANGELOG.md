@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Check the ledger quietly in the background (desktop, at most once a week while the app is open) using the existing read-only ledger audit. Nothing is shown when it is clean; if it finds a problem a notice links to Settings. Backup verification is not run in the background because it needs your passphrase.
+
 - Add payment reminders to the Calendar report: confirm a bill's deadline (and optional amount) and see days left or overdue. When a scanned bill's text has a deadline such as お支払期限 or 振替日 (including Reiwa dates), the import row offers to add it; nothing is added automatically. Reminders are stored on this device only and never change the ledger.
 
 - Add "Evidence behind spending" to the desktop monthly report: for the month's posted spending (expenses, card purchases, fees) it shows how much, by count and yen, has a receipt or scan (image/PDF) linked, an imported statement row linked, both, or nothing (typed by hand), and the share that has any evidence. It reports provenance only: a linked document is not proof an amount is right, and nothing claims a transaction was matched to a bank statement. Read-only (`data_confidence_query`).

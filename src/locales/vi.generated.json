@@ -3315,5 +3315,6 @@
   "手入力のみ": "Chỉ nhập tay",
   "の支出に根拠があります": "chi tiêu có căn cứ",
   "この月の支出はまだありません。": "Tháng này chưa có khoản chi.",
-  "読み込めませんでした。": "Không tải được."
+  "読み込めませんでした。": "Không tải được.",
+  "台帳の自動チェックで確認が必要な点が見つかりました。": "Kiểm tra sổ cái tự động phát hiện điểm cần xem lại."
 }

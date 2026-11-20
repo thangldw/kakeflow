@@ -3315,5 +3315,6 @@
   "手入力のみ": "Typed by hand only",
   "の支出に根拠があります": "of spending has evidence",
   "この月の支出はまだありません。": "No spending in this month yet.",
-  "読み込めませんでした。": "Could not load."
+  "読み込めませんでした。": "Could not load.",
+  "台帳の自動チェックで確認が必要な点が見つかりました。": "The automatic ledger check found something to review."
 }
