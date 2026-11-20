@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an emergency sheet to Settings (desktop): a one-page PDF listing the household's accounts and confirmed regular payments, how to restore a backup, and blank handwritten fields for contacts and where the backup and passphrase are kept. It never contains a passphrase or key.
 - Add "What you can spend from today to month end" to the Calendar report (desktop): cash on hand minus the card payments and amounted payment reminders already on record, spread over the days left (or the shortfall when they exceed cash). It counts known commitments only — not income still to come or bills with no amount — and says so.
 
 - Add synthetic household profiles (single, family, freelancer; two years each, with refunds, transfers, drafts, voids and receipts) to the Rust test suite. Each is generated deterministically into the real migrated schema and checked against an independent in-memory oracle: the ledger audit, the category history and the evidence summary must match it to the yen. Test-only; no shipped behaviour changes.
