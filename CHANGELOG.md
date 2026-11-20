@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a furusato nozei limit estimator to the Annual report: enter the taxable income and the resident tax income portion and get a rough yearly limit (and what is left after donations already made). It is labelled an estimate throughout and tells you to confirm with a simulator before donating.
+
 - Flag possible duplicate charges in the monthly report (desktop): two posted spending entries with the same payee and amount (¥1,000 or more) within 3 days. It only points them out; nothing is changed or merged.
 
 - Add a self-prepared income and spending summary PDF to Settings (desktop): income and spending by month for the last 3, 6 or 12 months, and the largest income entries each with the original file name and SHA-256 when one is linked. The document states it is the household's own record, not a third-party certificate.
