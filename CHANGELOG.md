@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a self-prepared income and spending summary PDF to Settings (desktop): income and spending by month for the last 3, 6 or 12 months, and the largest income entries each with the original file name and SHA-256 when one is linked. The document states it is the household's own record, not a third-party certificate.
+
 - Add an emergency sheet to Settings (desktop): a one-page PDF listing the household's accounts and confirmed regular payments, how to restore a backup, and blank handwritten fields for contacts and where the backup and passphrase are kept. It never contains a passphrase or key.
 - Add "What you can spend from today to month end" to the Calendar report (desktop): cash on hand minus the card payments and amounted payment reminders already on record, spread over the days left (or the shortfall when they exceed cash). It counts known commitments only — not income still to come or bills with no amount — and says so.
 
