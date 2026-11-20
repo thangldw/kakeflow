@@ -24,6 +24,8 @@ import type {
   HouseholdMemberDto,
   LedgerAuditReportDto,
   PaymentReminderDto,
+  DataConfidenceDto,
+  EvidenceLevelDto,
   LocalSyncFoundationStatusDto,
   DesktopRelayStatusDto,
   DesktopRelayPreparedDeliveryDto,
@@ -164,6 +166,23 @@ export function parsePaymentReminder(value: unknown): PaymentReminderDto {
 export function parsePaymentReminders(value: unknown): readonly PaymentReminderDto[] {
   if (!Array.isArray(value)) throw new TypeError('payment reminders')
   return value.map(parsePaymentReminder)
+}
+
+export function parseDataConfidence(value: unknown): DataConfidenceDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.buckets)) throw new TypeError('data confidence')
+  const levels = ['DOCUMENT_AND_IMPORT', 'DOCUMENT', 'IMPORT', 'MANUAL']
+  const buckets = record.buckets.map((item) => {
+    const bucket = asRecord(item)
+    if (!levels.includes(String(bucket.level))) throw new TypeError('data confidence level')
+    return { level: bucket.level as EvidenceLevelDto, transactions: asSafeInteger(bucket.transactions), amountJpy: asSafeInteger(bucket.amountJpy) }
+  })
+  if (buckets.length !== 4 || buckets.some((bucket, index) => bucket.level !== levels[index])) throw new TypeError('data confidence shape')
+  const totalTransactions = asSafeInteger(record.totalTransactions)
+  const totalAmountJpy = asSafeInteger(record.totalAmountJpy)
+  const evidencedShareBps = asBoundedInteger(record.evidencedShareBps, 10_000)
+  if (totalTransactions !== buckets.reduce((sum, bucket) => sum + bucket.transactions, 0) || totalAmountJpy !== buckets.reduce((sum, bucket) => sum + bucket.amountJpy, 0)) throw new TypeError('data confidence totals')
+  return { month: asRequiredString(record.month), buckets, totalTransactions, totalAmountJpy, evidencedShareBps }
 }
 
 export function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStatusDto {

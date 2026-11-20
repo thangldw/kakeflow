@@ -127,3 +127,7 @@ button.calendar-event { cursor: pointer; }
 .month-close-panel li { align-items: center; display: grid; font-size: 13px; gap: 10px; grid-template-columns: 20px 1fr auto; padding: 7px 0; border-top: 1px solid rgba(0, 0, 0, .06); }
 .month-close-done { color: #6b7f76; }
 .month-close-open { font-weight: 600; }
+.data-confidence-panel { margin-top: 20px; }
+.data-confidence-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.data-confidence-list li { align-items: center; display: grid; font-size: 13px; gap: 12px; grid-template-columns: 1fr auto auto; padding: 7px 0; border-top: 1px solid rgba(0, 0, 0, .06); }
+.data-confidence-manual strong { color: #9a4a1b; }

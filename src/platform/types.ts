@@ -1053,6 +1053,7 @@ export type AppCommand =
   | 'payment_reminder_create'
   | 'payment_reminder_set_done'
   | 'payment_reminder_delete'
+  | 'data_confidence_query'
   | 'principal_member_binding_update'
   | 'relay_status'
   | 'relay_connection_save'
@@ -1252,6 +1253,14 @@ export interface PaymentReminderDto {
   readonly amountJpy: number | null; readonly done: boolean
 }
 export interface PaymentReminderInputDto { readonly householdId: string; readonly dueOn: string; readonly label: string; readonly amountJpy: number | null }
+export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
+export interface DataConfidenceDto {
+  readonly month: string
+  readonly buckets: readonly { readonly level: EvidenceLevelDto; readonly transactions: number; readonly amountJpy: number }[]
+  readonly totalTransactions: number
+  readonly totalAmountJpy: number
+  readonly evidencedShareBps: number
+}
 export interface LedgerAuditReportDto {
   readonly postedTransactions: number
   readonly journalEntries: number
@@ -1273,6 +1282,7 @@ export interface PlatformClient {
   createPaymentReminder(input: PaymentReminderInputDto): Promise<PaymentReminderDto>
   setPaymentReminderDone(householdId: string, id: string, done: boolean): Promise<void>
   deletePaymentReminder(householdId: string, id: string): Promise<void>
+  queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>
   saveDesktopRelayConnection(input: SaveDesktopRelayConnectionInputDto): Promise<DesktopRelayStatusDto>

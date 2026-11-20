@@ -3306,5 +3306,14 @@
   "金額（任意）": "Số tiền (tùy chọn)",
   "請求書": "Hóa đơn",
   "支払いリマインダーを追加しました。": "Đã thêm nhắc thanh toán.",
-  "支払いリマインダーを追加できませんでした。": "Không thể thêm nhắc thanh toán."
+  "支払いリマインダーを追加できませんでした。": "Không thể thêm nhắc thanh toán.",
+  "支出の根拠": "Căn cứ của khoản chi",
+  "今月の支出に、原本や取り込み明細がどれだけ紐づいているかを示します。金額が正しいことの証明ではありません。": "Cho biết khoản chi trong tháng có bao nhiêu phần gắn với chứng từ gốc hoặc dòng sao kê đã nhập. Đây không phải bằng chứng số tiền là đúng.",
+  "原本と取り込みの両方あり": "Có cả chứng từ và dòng sao kê",
+  "原本（レシート・スキャン）あり": "Có chứng từ (biên lai, bản quét)",
+  "取り込み明細あり": "Có dòng sao kê đã nhập",
+  "手入力のみ": "Chỉ nhập tay",
+  "の支出に根拠があります": "chi tiêu có căn cứ",
+  "この月の支出はまだありません。": "Tháng này chưa có khoản chi.",
+  "読み込めませんでした。": "Không tải được."
 }
