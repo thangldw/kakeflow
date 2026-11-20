@@ -3397,5 +3397,6 @@
   "振り返りの時期です。": "It is time to look back.",
   "実際はどうだったか": "How it actually turned out",
   "振り返りを保存": "Save the review",
-  "振り返り済み": "Reviewed"
+  "振り返り済み": "Reviewed",
+  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "You have not test-restored a backup in a while. Try \"Verify a chosen backup\" in Settings."
 }
