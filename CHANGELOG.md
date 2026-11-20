@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Flag possible duplicate charges in the monthly report (desktop): two posted spending entries with the same payee and amount (¥1,000 or more) within 3 days. It only points them out; nothing is changed or merged.
+
 - Add a self-prepared income and spending summary PDF to Settings (desktop): income and spending by month for the last 3, 6 or 12 months, and the largest income entries each with the original file name and SHA-256 when one is linked. The document states it is the household's own record, not a third-party certificate.
 
 - Add an emergency sheet to Settings (desktop): a one-page PDF listing the household's accounts and confirmed regular payments, how to restore a backup, and blank handwritten fields for contacts and where the backup and passphrase are kept. It never contains a passphrase or key.

@@ -3354,5 +3354,8 @@
   "月末までに決まっている支払いが、手元の現金を上回っています。": "Các khoản phải trả đến cuối tháng vượt quá tiền mặt hiện có.",
   "／日": "/ ngày",
   "手元の現金": "Tiền mặt hiện có",
-  "カードの支払い": "Thanh toán thẻ"
+  "カードの支払い": "Thanh toán thẻ",
+  "二重請求の可能性": "Có thể bị trừ tiền trùng",
+  "同じ支払先・同じ金額の支出が数日以内に2回あります。本当に2回の買い物なら問題ありません。": "Cùng nơi nhận và cùng số tiền xuất hiện hai lần trong vài ngày. Nếu thật sự là hai lần mua thì không sao.",
+  "取引を確認する": "Xem giao dịch"
 }
