@@ -20,7 +20,7 @@ try {
   db.exec("INSERT INTO households(id,name) VALUES('rotation-fixture','Upgrade fixture'); INSERT INTO accounts(id,household_id,name,account_kind,account_subtype) VALUES('rotation-account','rotation-fixture','Fixture bank','ASSET','BANK')")
   const before = JSON.stringify({ households: db.prepare('SELECT * FROM households ORDER BY id').all(), accounts: db.prepare('SELECT * FROM accounts ORDER BY id').all() })
   const additions = readdirSync('src-tauri/migrations').filter(p => p.endsWith('.sql') && Number(p.slice(0,4)) > 69).sort()
-  assert.equal(additions.length, 3)
+  assert.equal(additions.length, 9)
   for (const file of additions) db.exec(readFileSync(`src-tauri/migrations/${file}`, 'utf8'))
   const after = JSON.stringify({ households: db.prepare('SELECT * FROM households ORDER BY id').all(), accounts: db.prepare('SELECT * FROM accounts ORDER BY id').all() })
   assert.equal(after, before, 'Existing household/account rows changed')
@@ -29,8 +29,10 @@ try {
   const oldConfig = JSON.parse(git('show', 'v1.2.1:src-tauri/tauri.conf.json'))
   const newConfig = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'))
   assert.equal(newConfig.identifier, oldConfig.identifier)
-  assert.equal(readFileSync('src-tauri/src/key_store.rs', 'utf8'), git('show', 'v1.2.1:src-tauri/src/key_store.rs'))
-  console.log('PASS: unchanged 69 historical migrations; 70–72 preserve synthetic household/account rows; integrity and foreign keys valid; app identifier and key-store source unchanged.')
+  // Lint attributes (added when unwrap/expect were forbidden) do not change behaviour; everything else must match.
+  const withoutLintAttributes = (source) => source.replace(/#\[allow\([\s\S]*?\)\]\n/gu, '')
+  assert.equal(withoutLintAttributes(readFileSync('src-tauri/src/key_store.rs', 'utf8')), withoutLintAttributes(git('show', 'v1.2.1:src-tauri/src/key_store.rs')))
+  console.log('PASS: unchanged 69 historical migrations; 70–78 preserve synthetic household/account rows; integrity and foreign keys valid; app identifier unchanged and key-store source unchanged apart from lint attributes.')
   console.log('LIMIT: SQL fixture test, not SQLCipher, OS Keychain, document vault, or full installer upgrade proof.')
 } finally {
   db.close()
