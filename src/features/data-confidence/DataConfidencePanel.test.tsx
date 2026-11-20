@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DataConfidenceDto } from '../../platform/types'
 import { DataConfidencePanel } from './DataConfidencePanel'
@@ -34,5 +34,22 @@ describe('DataConfidencePanel', () => {
     rerender(<DataConfidencePanel month="2026-10" load={load} />)
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('lists large spending without a receipt and opens the transactions page', async () => {
+    const onOpen = vi.fn()
+    render(<DataConfidencePanel month="2026-11" load={async () => data} onOpenTransactions={onOpen}
+      loadMissing={async () => [{ transactionId: 't1', occurredOn: '2026-11-02', payee: 'ホームセンター', amountJpy: 5000, hasImport: false }, { transactionId: 't2', occurredOn: '2026-11-03', payee: null, amountJpy: 4000, hasImport: true }]} />)
+    expect(await screen.findByText('ホームセンター')).toBeTruthy()
+    expect(screen.getByText('取り込み明細のみ')).toBeTruthy()
+    expect(screen.getByText('¥5,000')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '取引を開く' }))
+    expect(onOpen).toHaveBeenCalled()
+  })
+
+  it('still shows the summary when the missing-receipt list cannot load', async () => {
+    render(<DataConfidencePanel month="2026-11" load={async () => data} loadMissing={async () => { throw new Error('x') }} />)
+    expect(await screen.findByText('70%')).toBeTruthy()
+    expect(screen.queryByText('レシートを添付したい支出')).toBeNull()
   })
 })

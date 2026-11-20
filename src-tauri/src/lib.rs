@@ -701,6 +701,35 @@ fn data_confidence_query(
 }
 
 #[tauri::command]
+fn data_confidence_missing_receipts(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+    min_amount_jpy: i64,
+    limit: u32,
+) -> Result<Vec<data_confidence::MissingReceiptDto>, String> {
+    state
+        .with_connection(|connection| {
+            data_confidence::missing_receipts(
+                connection,
+                &household_id,
+                &month,
+                min_amount_jpy,
+                limit,
+            )
+            .map_err(|error| match error {
+                data_confidence::DataConfidenceError::Database(source) => {
+                    persistence::PersistenceError::Database(source)
+                }
+                data_confidence::DataConfidenceError::InvalidRequest => {
+                    persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery)
+                }
+            })
+        })
+        .map_err(|_| "Receipt check is unavailable".to_owned())
+}
+
+#[tauri::command]
 fn local_sync_foundation_status(
     state: tauri::State<'_, AppState>,
     household_id: String,
@@ -5142,6 +5171,7 @@ pub fn run() {
             payment_reminder_set_done,
             payment_reminder_delete,
             data_confidence_query,
+            data_confidence_missing_receipts,
             local_sync_foundation_status,
             principal_member_binding_update,
             relay_status,

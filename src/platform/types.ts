@@ -1055,6 +1055,7 @@ export type AppCommand =
   | 'payment_reminder_set_done'
   | 'payment_reminder_delete'
   | 'data_confidence_query'
+  | 'data_confidence_missing_receipts'
   | 'principal_member_binding_update'
   | 'relay_status'
   | 'relay_connection_save'
@@ -1255,6 +1256,7 @@ export interface PaymentReminderDto {
 }
 export interface PaymentReminderInputDto { readonly householdId: string; readonly dueOn: string; readonly label: string; readonly amountJpy: number | null }
 export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
+export interface MissingReceiptDto { readonly transactionId: string; readonly occurredOn: string; readonly payee: string | null; readonly amountJpy: number; readonly hasImport: boolean }
 export interface DataConfidenceDto {
   readonly month: string
   readonly buckets: readonly { readonly level: EvidenceLevelDto; readonly transactions: number; readonly amountJpy: number }[]
@@ -1286,6 +1288,7 @@ export interface PlatformClient {
   setPaymentReminderDone(householdId: string, id: string, done: boolean): Promise<void>
   deletePaymentReminder(householdId: string, id: string): Promise<void>
   queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
+  queryMissingReceipts(householdId: string, month: string, minAmountJpy: number, limit: number): Promise<readonly MissingReceiptDto[]>
   queryCategoryHistory(householdId: string, throughMonth: string, months: number): Promise<CategoryHistoryDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>

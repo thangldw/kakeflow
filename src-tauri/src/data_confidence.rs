@@ -148,6 +148,74 @@ pub fn confidence_for_month(
     })
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MissingReceiptDto {
+    pub transaction_id: String,
+    pub occurred_on: String,
+    pub payee: Option<String>,
+    pub amount_jpy: i64,
+    /// True when an imported statement row is linked even though no receipt or scan is.
+    pub has_import: bool,
+}
+
+const MAX_LISTED: u32 = 50;
+const MAX_MIN_AMOUNT_JPY: i64 = 100_000_000;
+
+const MISSING_SQL: &str = "
+SELECT t.id, t.occurred_on, t.payee,
+       COALESCE((SELECT SUM(je.amount_jpy) FROM journal_entries je
+                  WHERE je.transaction_id = t.id AND je.entry_side = 'DEBIT'), 0) AS amount_jpy,
+       EXISTS (SELECT 1 FROM transaction_sources ts
+                 JOIN source_records sr ON sr.id = ts.source_record_id
+                 JOIN source_documents sd ON sd.id = sr.source_document_id
+                WHERE ts.transaction_id = t.id
+                  AND NOT (sd.media_type LIKE 'image/%' OR sd.media_type = 'application/pdf')) AS has_import
+  FROM transactions t
+ WHERE t.household_id = ?1 AND t.status = 'POSTED'
+   AND t.transaction_type IN ('EXPENSE', 'CARD_PURCHASE', 'FEE')
+   AND substr(t.occurred_on, 1, 7) = ?2
+   AND NOT EXISTS (SELECT 1 FROM transaction_sources ts
+                     JOIN source_records sr ON sr.id = ts.source_record_id
+                     JOIN source_documents sd ON sd.id = sr.source_document_id
+                    WHERE ts.transaction_id = t.id
+                      AND (sd.media_type LIKE 'image/%' OR sd.media_type = 'application/pdf'))
+   AND amount_jpy >= ?3
+ ORDER BY amount_jpy DESC, t.occurred_on, t.id
+ LIMIT ?4";
+
+/// The month's largest posted spending that has no receipt or scan linked (it may still have an imported row),
+/// largest first — what is worth attaching a receipt to. Only amounts at or above `min_amount_jpy` are listed.
+pub fn missing_receipts(
+    connection: &Connection,
+    household_id: &str,
+    month: &str,
+    min_amount_jpy: i64,
+    limit: u32,
+) -> Result<Vec<MissingReceiptDto>, DataConfidenceError> {
+    if household_id.trim().is_empty()
+        || household_id.len() > 128
+        || !valid_month(month)
+        || !(0..=MAX_MIN_AMOUNT_JPY).contains(&min_amount_jpy)
+        || !(1..=MAX_LISTED).contains(&limit)
+    {
+        return Err(DataConfidenceError::InvalidRequest);
+    }
+    let mut statement = connection.prepare(MISSING_SQL)?;
+    let rows = statement
+        .query_map(params![household_id, month, min_amount_jpy, limit], |row| {
+            Ok(MissingReceiptDto {
+                transaction_id: row.get(0)?,
+                occurred_on: row.get(1)?,
+                payee: row.get(2)?,
+                amount_jpy: row.get(3)?,
+                has_import: row.get::<_, i64>(4)? != 0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,7 +225,7 @@ mod tests {
         connection
             .execute_batch(
                 "CREATE TABLE transactions(id TEXT PRIMARY KEY, household_id TEXT NOT NULL,
-                   occurred_on TEXT NOT NULL, status TEXT NOT NULL, transaction_type TEXT NOT NULL);
+                   occurred_on TEXT NOT NULL, status TEXT NOT NULL, transaction_type TEXT NOT NULL, payee TEXT);
                  CREATE TABLE journal_entries(id TEXT PRIMARY KEY, transaction_id TEXT NOT NULL,
                    entry_side TEXT NOT NULL, amount_jpy INTEGER NOT NULL);
                  CREATE TABLE source_documents(id TEXT PRIMARY KEY, media_type TEXT NOT NULL);
@@ -181,7 +249,7 @@ mod tests {
     ) {
         connection
             .execute(
-                "INSERT INTO transactions VALUES (?1, 'h1', ?2, ?3, ?4)",
+                "INSERT INTO transactions(id, household_id, occurred_on, status, transaction_type) VALUES (?1, 'h1', ?2, ?3, ?4)",
                 params![id, on, status, kind],
             )
             .unwrap();
@@ -307,5 +375,76 @@ mod tests {
             .unwrap();
         assert_eq!(report.total_transactions, 0);
         assert_eq!(report.buckets.len(), 4);
+    }
+
+    #[test]
+    fn lists_large_spending_without_a_receipt_largest_first() {
+        let c = database();
+        spend(
+            &c,
+            "big",
+            "EXPENSE",
+            "POSTED",
+            "2026-11-02",
+            9000,
+            &["r-stmt"],
+        );
+        spend(&c, "hand", "EXPENSE", "POSTED", "2026-11-03", 5000, &[]);
+        spend(&c, "small", "EXPENSE", "POSTED", "2026-11-04", 500, &[]);
+        spend(
+            &c,
+            "has",
+            "EXPENSE",
+            "POSTED",
+            "2026-11-05",
+            7000,
+            &["r-receipt"],
+        );
+        spend(
+            &c,
+            "scan",
+            "CARD_PURCHASE",
+            "POSTED",
+            "2026-11-06",
+            8000,
+            &["r-scan", "r-stmt"],
+        );
+        spend(&c, "draft", "EXPENSE", "DRAFT", "2026-11-07", 6000, &[]);
+        spend(
+            &c,
+            "other-month",
+            "EXPENSE",
+            "POSTED",
+            "2026-10-07",
+            6000,
+            &[],
+        );
+        c.execute(
+            "UPDATE transactions SET payee = 'ホームセンター' WHERE id = 'hand'",
+            [],
+        )
+        .unwrap();
+        let listed = missing_receipts(&c, "h1", "2026-11", 3000, 10).unwrap();
+        let ids: Vec<_> = listed
+            .iter()
+            .map(|item| item.transaction_id.as_str())
+            .collect();
+        assert_eq!(ids, ["big", "hand"]);
+        assert!(listed[0].has_import && !listed[1].has_import);
+        assert_eq!(listed[1].payee.as_deref(), Some("ホームセンター"));
+        assert_eq!(
+            missing_receipts(&c, "h1", "2026-11", 0, 1).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn missing_receipts_validates_input() {
+        let c = database();
+        assert!(missing_receipts(&c, "h1", "2026-13", 0, 5).is_err());
+        assert!(missing_receipts(&c, " ", "2026-11", 0, 5).is_err());
+        assert!(missing_receipts(&c, "h1", "2026-11", -1, 5).is_err());
+        assert!(missing_receipts(&c, "h1", "2026-11", 0, 0).is_err());
+        assert!(missing_receipts(&c, "h1", "2026-11", 0, 51).is_err());
     }
 }

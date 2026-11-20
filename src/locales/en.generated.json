@@ -3335,5 +3335,7 @@
   "が手元に残っていました（月平均": "would have stayed with you (average per month",
   "）。": ").",
   "割合を選ぶと、実際の履歴にもとづく差額が表示されます。": "Pick a percentage to see the difference based on your real history.",
-  "この期間の支出はまだありません。": "There is no spending in this period yet."
+  "この期間の支出はまだありません。": "There is no spending in this period yet.",
+  "レシートを添付したい支出": "Spending worth attaching a receipt to",
+  "取り込み明細のみ": "Imported statement row only"
 }
