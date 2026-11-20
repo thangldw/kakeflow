@@ -1059,6 +1059,9 @@ export type AppCommand =
   | 'decision_journal_create'
   | 'decision_journal_record_outcome'
   | 'decision_journal_delete'
+  | 'warranty_list'
+  | 'warranty_create'
+  | 'warranty_delete'
   | 'data_confidence_query'
   | 'data_confidence_missing_receipts'
   | 'duplicate_charges_query'
@@ -1264,6 +1267,8 @@ export interface PaymentReminderDto {
 }
 export interface DecisionDto { readonly id: string; readonly householdId: string; readonly decidedOn: string; readonly title: string; readonly amountJpy: number | null; readonly reason: string; readonly expectation: string; readonly reviewOn: string; readonly outcome: string | null }
 export interface DecisionInputDto { readonly householdId: string; readonly decidedOn: string; readonly title: string; readonly amountJpy: number | null; readonly reason: string; readonly expectation: string; readonly reviewOn: string }
+export interface WarrantyDto { readonly id: string; readonly householdId: string; readonly item: string; readonly store: string; readonly purchasedOn: string; readonly warrantyMonths: number; readonly expiresOn: string; readonly amountJpy: number | null; readonly note: string }
+export interface WarrantyInputDto { readonly householdId: string; readonly item: string; readonly store: string; readonly purchasedOn: string; readonly warrantyMonths: number; readonly amountJpy: number | null; readonly note: string }
 export interface PaymentReminderInputDto { readonly householdId: string; readonly dueOn: string; readonly label: string; readonly amountJpy: number | null }
 export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
 export interface AccountBalanceDto { readonly accountId: string; readonly name: string; readonly subtype: string; readonly balanceJpy: number }
@@ -1301,6 +1306,9 @@ export interface PlatformClient {
   deletePaymentReminder(householdId: string, id: string): Promise<void>
   listDecisions(householdId: string): Promise<readonly DecisionDto[]>
   createDecision(input: DecisionInputDto): Promise<DecisionDto>
+  listWarranties(householdId: string): Promise<readonly WarrantyDto[]>
+  createWarranty(input: WarrantyInputDto): Promise<WarrantyDto>
+  deleteWarranty(householdId: string, id: string): Promise<void>
   recordDecisionOutcome(householdId: string, id: string, outcome: string): Promise<void>
   deleteDecision(householdId: string, id: string): Promise<void>
   queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>

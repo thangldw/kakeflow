@@ -202,6 +202,7 @@ vi.mock('./platform', async () => {
       stageBackupRestore: desktop.stageBackupRestore,
       listPaymentReminders: vi.fn(async () => []),
       listDecisions: vi.fn(async () => []),
+      listWarranties: vi.fn(async () => []),
       queryCategoryHistory: vi.fn(async () => ({ months: [], categories: [] })),
       queryMissingReceipts: vi.fn(async () => []),
       checkBackupFiles: vi.fn(async () => []),

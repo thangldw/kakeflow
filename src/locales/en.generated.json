@@ -3411,5 +3411,19 @@
   "過去12か月で3回以上、上限に達している": "Already reached the cap 3 or more times in the past 12 months",
   "自己負担の上限の目安": "Estimated self-pay cap",
   "戻る可能性がある額の目安": "Estimated amount that may come back",
-  "食事代・差額ベッド代・保険外の費用は対象外です。目安であり、確定額ではありません。加入先の健康保険に必ず確認してください。": "Meals, bed-difference charges and uninsured treatment are excluded. This is an estimate, not a final amount. Always confirm with your health insurer."
+  "食事代・差額ベッド代・保険外の費用は対象外です。目安であり、確定額ではありません。加入先の健康保険に必ず確認してください。": "Meals, bed-difference charges and uninsured treatment are excluded. This is an estimate, not a final amount. Always confirm with your health insurer.",
+  "保証期間の一覧": "Warranty list",
+  "買ったものの保証が切れる日を記録します。この端末にだけ保存され、台帳は変更しません。": "Record when the warranty on things you bought runs out. Stored only on this device; the ledger is never changed.",
+  "品名": "Item",
+  "購入した店（任意）": "Store (optional)",
+  "購入日": "Purchase date",
+  "保証期間（月）": "Warranty length (months)",
+  "購入金額（任意）": "Price (optional)",
+  "追加する": "Add",
+  "保証の一覧を読み込めない、または保存できませんでした。": "The warranty list could not be loaded or saved.",
+  "保証中のもの": "Items with warranty",
+  "保証期限": "Warranty ends",
+  "保証は終了しています。": "The warranty has ended.",
+  "保証期限が近づいています。": "The warranty is ending soon.",
+  "期限までの日数": "Days until it ends"
 }
