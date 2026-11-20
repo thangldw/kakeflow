@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a 高額療養費 estimate to the Annual report: pick an income band, type what you paid at the counter in a month, and see the monthly self-pay cap and the amount that may come back (under 70, 30% copay). It is labelled an estimate to confirm with your health insurer, and nothing typed is saved.
 - Add a warranty list to the Calendar report (desktop): record an item, where and when you bought it and the warranty length in months; KakeFlow works out the last day of cover and flags cover that has ended or ends within 60 days. Stored only on this device (migration 0078) and never touches the ledger.
 - Add a big-decisions journal to the Calendar report (desktop): write down a decision with its reason, expectation and a review date (six months by default), then record how it turned out once the date has come. Stored only on this device (migration 0077) and never touches the ledger.
 - Remind you to test-restore a backup (desktop): if this device has written backups but none has been proven restorable with "Verify backup" for 90 days, a quiet toast points to Settings, then waits two weeks before asking again. It never asks for or stores a passphrase.
