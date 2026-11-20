@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod account_balances;
 pub mod account_groups_export;
 pub mod aggregate_asset_history;
 pub mod annual_review_pdf;
@@ -762,6 +763,31 @@ fn duplicate_charges_query(
             }
             duplicate_charges::DuplicateChargeError::Database(_) => {
                 "Duplicate check is unavailable".to_owned()
+            }
+        })
+}
+
+#[tauri::command]
+fn account_ledger_balances_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    as_of: String,
+) -> Result<Vec<account_balances::AccountBalanceDto>, String> {
+    state
+        .with_connection(|connection| {
+            Ok(account_balances::ledger_balances(
+                connection,
+                &household_id,
+                &as_of,
+            ))
+        })
+        .map_err(|_| "Account balances are unavailable".to_owned())?
+        .map_err(|error| match error {
+            account_balances::AccountBalanceError::InvalidRequest => {
+                "The balance request is invalid".to_owned()
+            }
+            account_balances::AccountBalanceError::Database(_) => {
+                "Account balances are unavailable".to_owned()
             }
         })
 }
@@ -5302,6 +5328,7 @@ pub fn run() {
             payment_reminder_delete,
             data_confidence_query,
             duplicate_charges_query,
+            account_ledger_balances_query,
             data_confidence_missing_receipts,
             local_sync_foundation_status,
             principal_member_binding_update,

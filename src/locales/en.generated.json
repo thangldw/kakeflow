@@ -3375,5 +3375,13 @@
   "点検はデスクトップ版で利用できます。": "The check is available in the desktop app.",
   "点検できませんでした。": "Could not run the check.",
   "点検できるバックアップはまだありません。バックアップを作成すると記録されます。": "There are no backups to check yet. They are recorded when you create one.",
-  "バックアップファイルに確認が必要なものがあります。": "A backup file needs attention."
+  "バックアップファイルに確認が必要なものがあります。": "A backup file needs attention.",
+  "実際の残高との照合": "Check against the real balance",
+  "口座アプリや通帳に表示されている今日の残高を入力すると、KakeFlow の帳簿と合っているか確認できます。入力した値は保存されません。": "Enter today's balance shown in your bank app or passbook to see whether it agrees with KakeFlow's ledger. What you type is not saved.",
+  "帳簿": "Ledger",
+  "一致しています。": "They agree.",
+  "実際のほうが多い": "Real balance is higher by",
+  "記録していない収入や入金がないか確認してください。": "Check for income or deposits you have not recorded.",
+  "実際のほうが少ない": "Real balance is lower by",
+  "記録していない支出や引き出し、二重の記録がないか確認してください。": "Check for spending or withdrawals you have not recorded, or a duplicated entry."
 }
