@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add "What if…? A look back" to the monthly report (desktop): pick a percentage to spend less on a category and see, from your real posted history over the last 3, 6 or 12 months, how much would have stayed with you. Plain arithmetic on actual transactions, not a forecast; refunds count as no spending and amounts are floored to whole yen.
+
 - Add "This month's to-do" to the Calendar report (desktop): up to three actions, most urgent first — overdue or soon-due bills and card payments (with their amounts), imports waiting for review, categories already over budget, a clearly labelled straight-line spending pace once the month is under way, and goals due soon. Every figure comes from data already on the page.
 - Check the ledger quietly in the background (desktop, at most once a week while the app is open) using the existing read-only ledger audit. Nothing is shown when it is clean; if it finds a problem a notice links to Settings. Backup verification is not run in the background because it needs your passphrase.
 

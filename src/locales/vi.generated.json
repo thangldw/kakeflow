@@ -3326,5 +3326,14 @@
   "このペースだと月末の支出は": "Với tốc độ này, chi tiêu cuối tháng sẽ là",
   "になり、予算": "so với ngân sách",
   "を超える見込みです（日割りの単純な見通し）。": "(dự báo đơn giản theo ngày).",
-  "期限が近い目標があります": "Có mục tiêu sắp đến hạn"
+  "期限が近い目標があります": "Có mục tiêu sắp đến hạn",
+  "もしも…の振り返り": "Nếu như… nhìn lại",
+  "実際の履歴に当てはめた単純な計算です。将来の予測ではありません。": "Phép tính đơn giản trên lịch sử thật của bạn, không phải dự báo.",
+  "減らす割合": "Giảm bớt",
+  "この削減を続けていれば、直近": "Nếu duy trì mức giảm này, trong",
+  "か月で": "tháng gần nhất",
+  "が手元に残っていました（月平均": "bạn đã giữ lại được (trung bình mỗi tháng",
+  "）。": ").",
+  "割合を選ぶと、実際の履歴にもとづく差額が表示されます。": "Chọn một tỷ lệ để xem chênh lệch dựa trên lịch sử thật.",
+  "この期間の支出はまだありません。": "Chưa có chi tiêu trong giai đoạn này."
 }

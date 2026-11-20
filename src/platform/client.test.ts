@@ -45,6 +45,7 @@ describe('platform client', () => {
     await expect(client.setPaymentReminderDone('family', 'a'.repeat(32), true)).rejects.toMatchObject({ command: 'payment_reminder_set_done' })
     await expect(client.deletePaymentReminder('family', 'a'.repeat(32))).rejects.toMatchObject({ command: 'payment_reminder_delete' })
     await expect(client.queryDataConfidence('family', '2026-11')).rejects.toMatchObject({ command: 'data_confidence_query' })
+    await expect(client.queryCategoryHistory('family', '2026-11', 12)).rejects.toMatchObject({ command: 'category_history_query' })
     await expect(client.getDesktopRelayStatus('family')).rejects.toMatchObject({ command: 'relay_status' })
     await expect(client.listHouseholds()).resolves.toEqual([{
       id: 'demo-tanaka-family', name: '田中家', baseCurrency: 'JPY', createdAt: '2025-07-31T00:00:00.000Z',
@@ -443,6 +444,7 @@ describe('platform client', () => {
       payment_reminder_set_done: null,
       payment_reminder_delete: null,
       data_confidence_query: { month: '2026-11', buckets: [{ level: 'DOCUMENT_AND_IMPORT', transactions: 1, amountJpy: 4000 }, { level: 'DOCUMENT', transactions: 0, amountJpy: 0 }, { level: 'IMPORT', transactions: 0, amountJpy: 0 }, { level: 'MANUAL', transactions: 1, amountJpy: 1000 }], totalTransactions: 2, totalAmountJpy: 5000, evidencedShareBps: 8000 },
+      category_history_query: { months: ['2026-10', '2026-11'], categories: [{ accountId: 'food', name: '食費', monthlyJpy: [1000, 2000], totalJpy: 3000 }] },
       local_sync_foundation_status: { device: { id: 'device-1', displayName: 'Desktop', createdAt: '2026-07-13T00:00:00Z' }, platform: 'MACOS', principal: { id: 'principal-1', displayName: 'Local principal', createdAt: '2026-07-13T00:00:00Z' }, binding: { householdId: 'family', principalId: 'principal-1', memberId: 'member-1', memberName: 'Taro', updatedAt: '2026-07-13T00:00:00Z' }, outbox: { envelopeCount: 0, latestSequence: 0, latestRecordedAt: null }, remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED' },
       principal_member_binding_update: { device: { id: 'device-1', displayName: 'Desktop', createdAt: '2026-07-13T00:00:00Z' }, platform: 'MACOS', principal: { id: 'principal-1', displayName: 'Local principal', createdAt: '2026-07-13T00:00:00Z' }, binding: { householdId: 'family', principalId: 'principal-1', memberId: null, memberName: null, updatedAt: '2026-07-13T00:00:00Z' }, outbox: { envelopeCount: 1, latestSequence: 1, latestRecordedAt: '2026-07-13T00:00:00Z' }, remoteTransport: 'NOT_CONFIGURED', restoreValidation: 'ENABLED' },
       households_list: [{ id: 'family', name: 'Family', baseCurrency: 'JPY', createdAt: '2026-07-12T00:00:00Z' }],
@@ -637,6 +639,7 @@ describe('platform client', () => {
     await expect(client.setPaymentReminderDone('family', 'a'.repeat(32), true)).resolves.toBeUndefined()
     await expect(client.deletePaymentReminder('family', 'a'.repeat(32))).resolves.toBeUndefined()
     await expect(client.queryDataConfidence('family', '2026-11')).resolves.toEqual(responses.data_confidence_query)
+    await expect(client.queryCategoryHistory('family', '2026-11', 12)).resolves.toEqual(responses.category_history_query)
     const bindingInput = { householdId: 'family', principalId: 'principal-1', memberId: null, mutationId: 'binding-1' }
     await expect(client.updatePrincipalMemberBinding(bindingInput)).resolves.toEqual(responses.principal_member_binding_update)
     await expect(client.listHouseholds()).resolves.toEqual(responses.households_list)
@@ -714,6 +717,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('payment_reminder_set_done', { householdId: 'family', id: 'a'.repeat(32), done: true })
     expect(invokeSpy).toHaveBeenCalledWith('payment_reminder_delete', { householdId: 'family', id: 'a'.repeat(32) })
     expect(invokeSpy).toHaveBeenCalledWith('data_confidence_query', { householdId: 'family', month: '2026-11' })
+    expect(invokeSpy).toHaveBeenCalledWith('category_history_query', { householdId: 'family', throughMonth: '2026-11', months: 12 })
     expect(invokeSpy).toHaveBeenCalledWith('principal_member_binding_update', { input: bindingInput })
     expect(invokeSpy).toHaveBeenCalledWith('household_members_list', { householdId: 'family' })
     expect(invokeSpy).toHaveBeenCalledWith('household_member_create', { input: memberCreate })
@@ -765,8 +769,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(66)
-    expect(invokeSpy).toHaveBeenCalledTimes(66)
+    expect(invokeSpy).toHaveBeenCalledTimes(67)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {
