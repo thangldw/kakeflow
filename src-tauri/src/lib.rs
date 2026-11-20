@@ -93,6 +93,8 @@ pub mod source_pdf_preview;
 pub mod source_preview;
 mod source_viewer;
 pub mod sync_foundation;
+#[cfg(test)]
+mod synthetic_profiles;
 pub mod transaction_ledger_pdf;
 pub mod transaction_ledger_xlsx;
 pub mod transfer_pairs;

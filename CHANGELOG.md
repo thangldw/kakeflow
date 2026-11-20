@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add synthetic household profiles (single, family, freelancer; two years each, with refunds, transfers, drafts, voids and receipts) to the Rust test suite. Each is generated deterministically into the real migrated schema and checked against an independent in-memory oracle: the ledger audit, the category history and the evidence summary must match it to the yen. Test-only; no shipped behaviour changes.
+
 - List, under "Evidence behind spending" in the monthly report (desktop), the month's largest posted spending (¥3,000 and over, up to eight) that has no receipt or scan linked, marking whether an imported statement row is linked, so you know which receipts to attach. Read-only; it reports what is linked, not whether the amount is right.
 
 - Add "What if…? A look back" to the monthly report (desktop): pick a percentage to spend less on a category and see, from your real posted history over the last 3, 6 or 12 months, how much would have stayed with you. Plain arithmetic on actual transactions, not a forecast; refunds count as no spending and amounts are floored to whole yen.
