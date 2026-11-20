@@ -73,6 +73,7 @@ pub mod monthly_review_pdf;
 pub mod monthly_review_xlsx;
 pub mod ocr;
 mod parser_profiles;
+pub mod payment_reminders;
 pub mod pending_import_bundle;
 mod persistence;
 pub mod portfolio;
@@ -585,6 +586,67 @@ fn ledger_audit_run(
             })
         })
         .map_err(|_| "Ledger audit is unavailable".to_owned())
+}
+
+fn reminder_error(error: payment_reminders::PaymentReminderError) -> persistence::PersistenceError {
+    match error {
+        payment_reminders::PaymentReminderError::Database(source) => {
+            persistence::PersistenceError::Database(source)
+        }
+        _ => persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery),
+    }
+}
+
+#[tauri::command]
+fn payment_reminders_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<payment_reminders::PaymentReminderDto>, String> {
+    state
+        .with_connection(|connection| {
+            payment_reminders::list(connection, &household_id).map_err(reminder_error)
+        })
+        .map_err(|_| "Payment reminders are unavailable".to_owned())
+}
+
+#[tauri::command]
+fn payment_reminder_create(
+    state: tauri::State<'_, AppState>,
+    input: payment_reminders::PaymentReminderInput,
+) -> Result<payment_reminders::PaymentReminderDto, String> {
+    state
+        .with_connection(|connection| {
+            payment_reminders::create(connection, &input).map_err(reminder_error)
+        })
+        .map_err(|_| "Payment reminder could not be saved".to_owned())
+}
+
+#[tauri::command]
+fn payment_reminder_set_done(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    id: String,
+    done: bool,
+) -> Result<(), String> {
+    state
+        .with_connection(|connection| {
+            payment_reminders::set_done(connection, &household_id, &id, done)
+                .map_err(reminder_error)
+        })
+        .map_err(|_| "Payment reminder could not be updated".to_owned())
+}
+
+#[tauri::command]
+fn payment_reminder_delete(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    id: String,
+) -> Result<(), String> {
+    state
+        .with_connection(|connection| {
+            payment_reminders::delete(connection, &household_id, &id).map_err(reminder_error)
+        })
+        .map_err(|_| "Payment reminder could not be deleted".to_owned())
 }
 
 #[tauri::command]
@@ -5007,6 +5069,10 @@ pub fn run() {
             connector_commands::connector_refresh_active_batch_get,
             connector_commands::connector_refresh_batch_get,
             ledger_audit_run,
+            payment_reminders_list,
+            payment_reminder_create,
+            payment_reminder_set_done,
+            payment_reminder_delete,
             data_confidence_query,
             local_sync_foundation_status,
             principal_member_binding_update,
