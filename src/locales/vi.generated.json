@@ -3365,5 +3365,15 @@
   "今年すでに寄附した額（任意）": "Đã quyên góp trong năm nay (tùy chọn)",
   "上限額の目安": "Hạn mức ước tính",
   "あと寄附できる目安": "Số tiền ước tính còn có thể quyên góp",
-  "目安であり、確定額ではありません。": "Đây là ước tính, không phải số tiền chính thức."
+  "目安であり、確定額ではありません。": "Đây là ước tính, không phải số tiền chính thức.",
+  "バックアップファイルの点検": "Kiểm tra tệp sao lưu",
+  "作成したバックアップのファイルが、今も存在し作成時のままかを確認します。パスフレーズは不要ですが、中身を開いて確かめるものではありません。1週間に1回、自動でも確認します。": "Kiểm tra các tệp sao lưu đã tạo còn tồn tại và không thay đổi so với lúc tạo. Không cần mật khẩu nhưng không mở nội dung sao lưu; cũng tự chạy mỗi tuần một lần.",
+  "ファイルが見つかりません": "Không tìm thấy tệp",
+  "作成時から変わっています": "Đã thay đổi so với lúc tạo",
+  "読み取れません": "Không đọc được",
+  "今すぐ点検": "Kiểm tra ngay",
+  "点検はデスクトップ版で利用できます。": "Việc kiểm tra dùng được trên bản desktop.",
+  "点検できませんでした。": "Không thể kiểm tra.",
+  "点検できるバックアップはまだありません。バックアップを作成すると記録されます。": "Chưa có bản sao lưu nào để kiểm tra. Chúng được ghi lại khi bạn tạo bản sao lưu.",
+  "バックアップファイルに確認が必要なものがあります。": "Có tệp sao lưu cần được kiểm tra."
 }
