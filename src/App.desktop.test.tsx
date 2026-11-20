@@ -203,6 +203,7 @@ vi.mock('./platform', async () => {
       listPaymentReminders: vi.fn(async () => []),
       queryCategoryHistory: vi.fn(async () => ({ months: [], categories: [] })),
       queryMissingReceipts: vi.fn(async () => []),
+      queryDuplicateCharges: vi.fn(async () => []),
       queryDataConfidence: vi.fn(async () => ({ month: '2026-11', totalTransactions: 0, totalAmountJpy: 0, evidencedShareBps: 0, buckets: (['DOCUMENT_AND_IMPORT', 'DOCUMENT', 'IMPORT', 'MANUAL'] as const).map((level) => ({ level, transactions: 0, amountJpy: 0 })) })),
       restartForRestore: desktop.restartForRestore,
       extractDocument: vi.fn(),

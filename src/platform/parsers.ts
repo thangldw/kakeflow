@@ -26,6 +26,7 @@ import type {
   PaymentReminderDto,
   DataConfidenceDto,
   MissingReceiptDto,
+  DuplicateChargeDto,
   CategoryHistoryDto,
   EvidenceLevelDto,
   LocalSyncFoundationStatusDto,
@@ -183,6 +184,19 @@ export function parseCategoryHistory(value: unknown): CategoryHistoryDto {
     return { accountId: asRequiredString(row.accountId), name: asRequiredString(row.name), monthlyJpy, totalJpy }
   })
   return { months, categories }
+}
+
+export function parseDuplicateCharges(value: unknown): readonly DuplicateChargeDto[] {
+  if (!Array.isArray(value)) throw new TypeError('duplicate charges')
+  return value.map((item) => {
+    const row = asRecord(item)
+    const firstOn = asRequiredString(row.firstOn)
+    const secondOn = asRequiredString(row.secondOn)
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(firstOn) || !/^\d{4}-\d{2}-\d{2}$/u.test(secondOn)) throw new TypeError('duplicate charge date')
+    const daysApart = asSafeInteger(row.daysApart)
+    if (daysApart < 0) throw new TypeError('duplicate charge gap')
+    return { firstTransactionId: asRequiredString(row.firstTransactionId), secondTransactionId: asRequiredString(row.secondTransactionId), firstOn, secondOn, payee: asRequiredString(row.payee), amountJpy: asSafeInteger(row.amountJpy), daysApart }
+  })
 }
 
 export function parseMissingReceipts(value: unknown): readonly MissingReceiptDto[] {

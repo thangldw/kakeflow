@@ -21,6 +21,7 @@ pub mod data_confidence;
 pub mod document_extract;
 pub mod document_pdf_ocr;
 pub mod document_vault;
+pub mod duplicate_charges;
 pub mod evidence_bundle;
 pub mod evidence_dossier;
 pub mod family_delivery_credentials;
@@ -729,6 +730,37 @@ fn data_confidence_missing_receipts(
             })
         })
         .map_err(|_| "Receipt check is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn duplicate_charges_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+    min_amount_jpy: i64,
+    window_days: i64,
+    limit: u32,
+) -> Result<Vec<duplicate_charges::DuplicateChargeDto>, String> {
+    state
+        .with_connection(|connection| {
+            Ok(duplicate_charges::possible_duplicate_charges(
+                connection,
+                &household_id,
+                &month,
+                min_amount_jpy,
+                window_days,
+                limit,
+            ))
+        })
+        .map_err(|_| "Duplicate check is unavailable".to_owned())?
+        .map_err(|error| match error {
+            duplicate_charges::DuplicateChargeError::InvalidRequest => {
+                "The duplicate check request is invalid".to_owned()
+            }
+            duplicate_charges::DuplicateChargeError::Database(_) => {
+                "Duplicate check is unavailable".to_owned()
+            }
+        })
 }
 
 #[tauri::command]
@@ -5173,6 +5205,7 @@ pub fn run() {
             payment_reminder_set_done,
             payment_reminder_delete,
             data_confidence_query,
+            duplicate_charges_query,
             data_confidence_missing_receipts,
             local_sync_foundation_status,
             principal_member_binding_update,

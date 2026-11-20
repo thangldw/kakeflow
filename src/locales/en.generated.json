@@ -3343,5 +3343,8 @@
   "月末までに決まっている支払いが、手元の現金を上回っています。": "Payments already due by month end exceed the cash on hand.",
   "／日": "/ day",
   "手元の現金": "Cash on hand",
-  "カードの支払い": "Card payments"
+  "カードの支払い": "Card payments",
+  "二重請求の可能性": "Possible duplicate charges",
+  "同じ支払先・同じ金額の支出が数日以内に2回あります。本当に2回の買い物なら問題ありません。": "The same payee and amount appear twice within a few days. If they were really two purchases, there is nothing to fix.",
+  "取引を確認する": "Review transactions"
 }
