@@ -469,7 +469,7 @@ fn add_footer(ops: &mut Vec<Op>, page: usize, total: usize, font_id: &FontId) {
     );
 }
 
-fn wrap_text(value: &str, max_units: usize) -> Vec<String> {
+pub(crate) fn wrap_text(value: &str, max_units: usize) -> Vec<String> {
     let normalized = value
         .chars()
         .map(|character| {

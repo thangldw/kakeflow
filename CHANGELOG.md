@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an evidence dossier PDF to the transaction detail (desktop): the entry, its journal lines and, for every linked source, the original file's name, type, size, SHA-256, import time and the source row's hash, so the original can be re-hashed and compared. States provenance only; it does not vouch for the amount.
 - Add payment reminders to the Calendar report: confirm a bill's deadline (and optional amount) and see days left or overdue. When a scanned bill's text has a deadline such as お支払期限 or 振替日 (including Reiwa dates), the import row offers to add it; nothing is added automatically. Reminders are stored on this device only and never change the ledger.
 
 - Add "Evidence behind spending" to the desktop monthly report: for the month's posted spending (expenses, card purchases, fees) it shows how much, by count and yen, has a receipt or scan (image/PDF) linked, an imported statement row linked, both, or nothing (typed by hand), and the share that has any evidence. It reports provenance only: a linked document is not proof an amount is right, and nothing claims a transaction was matched to a bank statement. Read-only (`data_confidence_query`).
