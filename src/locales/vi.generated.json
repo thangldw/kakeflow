@@ -3348,5 +3348,11 @@
   "月ごとの収入と支出を、主な収入の原本ファイルのハッシュ付きでPDFにします。世帯自身が作成した記録であり、第三者の証明書ではありません。": "Tạo PDF thu chi theo tháng, kèm hash tệp gốc cho các khoản thu lớn. Đây là bản ghi hộ gia đình tự lập, không phải giấy chứng nhận của bên thứ ba.",
   "収支のまとめをPDFで保存": "Lưu bản tổng hợp dạng PDF",
   "収支のまとめはデスクトップ版で作成できます。": "Bản tổng hợp được tạo trên bản desktop.",
-  "収支のまとめを作成できませんでした。": "Không thể tạo bản tổng hợp."
+  "収支のまとめを作成できませんでした。": "Không thể tạo bản tổng hợp.",
+  "今日から月末まで使える額": "Số tiền có thể tiêu từ hôm nay đến cuối tháng",
+  "手元の現金から、支払いが決まっているものを引いた金額です。これから入る収入や、金額が未入力の請求は含みません。": "Tiền mặt hiện có trừ các khoản đã ghi nhận phải trả. Không tính thu nhập sắp có hay hóa đơn chưa nhập số tiền.",
+  "月末までに決まっている支払いが、手元の現金を上回っています。": "Các khoản phải trả đến cuối tháng vượt quá tiền mặt hiện có.",
+  "／日": "/ ngày",
+  "手元の現金": "Tiền mặt hiện có",
+  "カードの支払い": "Thanh toán thẻ"
 }
