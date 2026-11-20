@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add "This month's to-do" to the Calendar report (desktop): up to three actions, most urgent first — overdue or soon-due bills and card payments (with their amounts), imports waiting for review, categories already over budget, a clearly labelled straight-line spending pace once the month is under way, and goals due soon. Every figure comes from data already on the page.
+- Check the ledger quietly in the background (desktop, at most once a week while the app is open) using the existing read-only ledger audit. Nothing is shown when it is clean; if it finds a problem a notice links to Settings. Backup verification is not run in the background because it needs your passphrase.
 
 - Add an evidence dossier PDF to the transaction detail (desktop): the entry, its journal lines and, for every linked source, the original file's name, type, size, SHA-256, import time and the source row's hash, so the original can be re-hashed and compared. States provenance only; it does not vouch for the amount.
 - Add payment reminders to the Calendar report: confirm a bill's deadline (and optional amount) and see days left or overdue. When a scanned bill's text has a deadline such as お支払期限 or 振替日 (including Reiwa dates), the import row offers to add it; nothing is added automatically. Reminders are stored on this device only and never change the ledger.
