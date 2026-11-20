@@ -3318,5 +3318,12 @@
   "読み込めませんでした。": "Không tải được.",
   "証拠書類PDFを保存しました。": "Đã lưu PDF hồ sơ bằng chứng.",
   "証拠書類PDFを作成できませんでした。": "Không thể tạo PDF hồ sơ bằng chứng.",
-  "証拠書類PDF": "PDF hồ sơ bằng chứng"
+  "証拠書類PDF": "PDF hồ sơ bằng chứng",
+  "今月やること": "Việc cần làm tháng này",
+  "今、急いでやることはありません。": "Hiện không có việc gấp.",
+  "優先度の高い順に最大3件です。": "Tối đa ba việc, việc gấp nhất lên đầu.",
+  "このペースだと月末の支出は": "Với tốc độ này, chi tiêu cuối tháng sẽ là",
+  "になり、予算": "so với ngân sách",
+  "を超える見込みです（日割りの単純な見通し）。": "(dự báo đơn giản theo ngày).",
+  "期限が近い目標があります": "Có mục tiêu sắp đến hạn"
 }

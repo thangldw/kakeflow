@@ -3318,5 +3318,12 @@
   "読み込めませんでした。": "Could not load.",
   "証拠書類PDFを保存しました。": "Evidence dossier PDF saved.",
   "証拠書類PDFを作成できませんでした。": "Could not create the evidence dossier PDF.",
-  "証拠書類PDF": "Evidence dossier PDF"
+  "証拠書類PDF": "Evidence dossier PDF",
+  "今月やること": "This month's to-do",
+  "今、急いでやることはありません。": "Nothing urgent right now.",
+  "優先度の高い順に最大3件です。": "Up to three, most urgent first.",
+  "このペースだと月末の支出は": "At this pace, month-end spending will be",
+  "になり、予算": "against a budget of",
+  "を超える見込みです（日割りの単純な見通し）。": "(a simple day-by-day projection).",
+  "期限が近い目標があります": "Goals with a deadline soon"
 }
