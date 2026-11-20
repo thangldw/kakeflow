@@ -3326,5 +3326,14 @@
   "このペースだと月末の支出は": "At this pace, month-end spending will be",
   "になり、予算": "against a budget of",
   "を超える見込みです（日割りの単純な見通し）。": "(a simple day-by-day projection).",
-  "期限が近い目標があります": "Goals with a deadline soon"
+  "期限が近い目標があります": "Goals with a deadline soon",
+  "もしも…の振り返り": "What if…? A look back",
+  "実際の履歴に当てはめた単純な計算です。将来の予測ではありません。": "A simple calculation on your real history. It is not a forecast.",
+  "減らす割合": "Spend less by",
+  "この削減を続けていれば、直近": "Had you kept this up, over the last",
+  "か月で": "months",
+  "が手元に残っていました（月平均": "would have stayed with you (average per month",
+  "）。": ").",
+  "割合を選ぶと、実際の履歴にもとづく差額が表示されます。": "Pick a percentage to see the difference based on your real history.",
+  "この期間の支出はまだありません。": "There is no spending in this period yet."
 }

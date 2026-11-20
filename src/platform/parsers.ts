@@ -25,6 +25,7 @@ import type {
   LedgerAuditReportDto,
   PaymentReminderDto,
   DataConfidenceDto,
+  CategoryHistoryDto,
   EvidenceLevelDto,
   LocalSyncFoundationStatusDto,
   DesktopRelayStatusDto,
@@ -166,6 +167,21 @@ export function parsePaymentReminder(value: unknown): PaymentReminderDto {
 export function parsePaymentReminders(value: unknown): readonly PaymentReminderDto[] {
   if (!Array.isArray(value)) throw new TypeError('payment reminders')
   return value.map(parsePaymentReminder)
+}
+
+export function parseCategoryHistory(value: unknown): CategoryHistoryDto {
+  const record = asRecord(value)
+  if (!Array.isArray(record.months) || !Array.isArray(record.categories)) throw new TypeError('category history')
+  const months = record.months.map((month) => { const text = asRequiredString(month); if (!/^\d{4}-\d{2}$/u.test(text)) throw new TypeError('category history month'); return text })
+  const categories = record.categories.map((item) => {
+    const row = asRecord(item)
+    if (!Array.isArray(row.monthlyJpy) || row.monthlyJpy.length !== months.length) throw new TypeError('category history row')
+    const monthlyJpy = row.monthlyJpy.map(asSafeInteger)
+    const totalJpy = asSafeInteger(row.totalJpy)
+    if (monthlyJpy.reduce((sum, amount) => sum + amount, 0) !== totalJpy) throw new TypeError('category history total')
+    return { accountId: asRequiredString(row.accountId), name: asRequiredString(row.name), monthlyJpy, totalJpy }
+  })
+  return { months, categories }
 }
 
 export function parseDataConfidence(value: unknown): DataConfidenceDto {

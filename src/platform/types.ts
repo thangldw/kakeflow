@@ -1049,6 +1049,7 @@ export type AppCommand =
   | 'app_status'
   | 'local_sync_foundation_status'
   | 'ledger_audit_run'
+  | 'category_history_query'
   | 'payment_reminders_list'
   | 'payment_reminder_create'
   | 'payment_reminder_set_done'
@@ -1261,6 +1262,8 @@ export interface DataConfidenceDto {
   readonly totalAmountJpy: number
   readonly evidencedShareBps: number
 }
+export interface CategoryHistoryRowDto { readonly accountId: string; readonly name: string; readonly monthlyJpy: readonly number[]; readonly totalJpy: number }
+export interface CategoryHistoryDto { readonly months: readonly string[]; readonly categories: readonly CategoryHistoryRowDto[] }
 export interface LedgerAuditReportDto {
   readonly postedTransactions: number
   readonly journalEntries: number
@@ -1283,6 +1286,7 @@ export interface PlatformClient {
   setPaymentReminderDone(householdId: string, id: string, done: boolean): Promise<void>
   deletePaymentReminder(householdId: string, id: string): Promise<void>
   queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
+  queryCategoryHistory(householdId: string, throughMonth: string, months: number): Promise<CategoryHistoryDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>
   saveDesktopRelayConnection(input: SaveDesktopRelayConnectionInputDto): Promise<DesktopRelayStatusDto>

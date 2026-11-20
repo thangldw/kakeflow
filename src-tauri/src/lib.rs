@@ -8,6 +8,7 @@ pub mod backup;
 pub mod backup_verify;
 pub mod brokerage;
 pub mod card_settlement_mapping;
+pub mod category_history;
 pub mod change_package;
 pub mod connector_binding;
 pub mod connector_commands;
@@ -596,6 +597,33 @@ fn reminder_error(error: payment_reminders::PaymentReminderError) -> persistence
         }
         _ => persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery),
     }
+}
+
+#[tauri::command]
+fn category_history_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    through_month: String,
+    months: u32,
+) -> Result<category_history::CategoryHistoryDto, String> {
+    state
+        .with_connection(|connection| {
+            Ok(category_history::category_history(
+                connection,
+                &household_id,
+                &through_month,
+                months,
+            ))
+        })
+        .map_err(|_| "Spending history is unavailable".to_owned())?
+        .map_err(|error| match error {
+            category_history::CategoryHistoryError::InvalidRequest => {
+                "The spending history request is invalid".to_owned()
+            }
+            category_history::CategoryHistoryError::Database(_) => {
+                "Spending history is unavailable".to_owned()
+            }
+        })
 }
 
 #[tauri::command]
@@ -5108,6 +5136,7 @@ pub fn run() {
             connector_commands::connector_refresh_active_batch_get,
             connector_commands::connector_refresh_batch_get,
             ledger_audit_run,
+            category_history_query,
             payment_reminders_list,
             payment_reminder_create,
             payment_reminder_set_done,
