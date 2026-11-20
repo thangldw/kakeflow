@@ -21,6 +21,7 @@ pub mod document_extract;
 pub mod document_pdf_ocr;
 pub mod document_vault;
 pub mod evidence_bundle;
+pub mod evidence_dossier;
 pub mod family_delivery_credentials;
 pub mod family_delivery_http;
 pub mod family_delivery_schedule;
@@ -3232,6 +3233,44 @@ async fn transaction_ledger_pdf_save(
 }
 
 #[tauri::command]
+async fn evidence_dossier_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    transaction_id: String,
+    generated_on: String,
+) -> Result<Option<evidence_dossier::EvidenceDossierSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(evidence_dossier::generate_evidence_dossier(
+            connection,
+            &household_id,
+            &transaction_id,
+            &generated_on,
+        ))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("The evidence dossier is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected evidence dossier destination is unavailable".to_owned())?;
+    evidence_dossier::save_evidence_dossier(&document, &destination)
+        .map(Some)
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn annual_household_review_csv_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -5152,6 +5191,7 @@ pub fn run() {
             export_csv_save,
             transaction_ledger_xlsx_save,
             transaction_ledger_pdf_save,
+            evidence_dossier_save,
             annual_household_review_csv_save,
             monthly_household_review_csv_save,
             annual_household_review_xlsx_save,

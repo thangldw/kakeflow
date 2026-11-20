@@ -78,6 +78,12 @@ export interface TransactionLedgerPdfSavedDto {
   readonly byteSize: number
 }
 
+export interface EvidenceDossierSavedDto {
+  readonly fileName: string
+  readonly sourceCount: number
+  readonly byteSize: number
+}
+
 export type AccountGroupExportInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvoke = tauriInvoke) {
@@ -113,6 +119,10 @@ export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvok
     saveTransactionLedgerPdf: async (request: ExportCsvRequestDto): Promise<TransactionLedgerPdfSavedDto | null> => {
       const value = await invoke('transaction_ledger_pdf_save', { request })
       return value === null ? null : parseTransactionLedgerPdfSaved(value)
+    },
+    saveEvidenceDossier: async (householdId: string, transactionId: string, generatedOn: string): Promise<EvidenceDossierSavedDto | null> => {
+      const value = await invoke('evidence_dossier_save', { householdId, transactionId, generatedOn })
+      return value === null ? null : parseEvidenceDossierSaved(value)
     },
   }
 }
@@ -174,6 +184,15 @@ function parseTransactionLedgerPdfSaved(value: unknown): TransactionLedgerPdfSav
   const byteSize = positiveInteger(item.byteSize, 'saved transaction ledger PDF')
   if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255 || pageCount > 128) throw new TypeError('saved transaction ledger PDF')
   return { fileName, rowCount, pageCount, byteSize }
+}
+
+function parseEvidenceDossierSaved(value: unknown): EvidenceDossierSavedDto {
+  const item = record(value, 'saved evidence dossier')
+  const fileName = string(item.fileName, 'saved evidence dossier')
+  const sourceCount = nonNegativeInteger(item.sourceCount, 'saved evidence dossier')
+  const byteSize = positiveInteger(item.byteSize, 'saved evidence dossier')
+  if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255 || sourceCount > 40) throw new TypeError('saved evidence dossier')
+  return { fileName, sourceCount, byteSize }
 }
 
 function record(value: unknown, label: string): Record<string, unknown> {

@@ -3301,5 +3301,8 @@
   "手入力のみ": "Chỉ nhập tay",
   "の支出に根拠があります": "chi tiêu có căn cứ",
   "この月の支出はまだありません。": "Tháng này chưa có khoản chi.",
-  "読み込めませんでした。": "Không tải được."
+  "読み込めませんでした。": "Không tải được.",
+  "証拠書類PDFを保存しました。": "Đã lưu PDF hồ sơ bằng chứng.",
+  "証拠書類PDFを作成できませんでした。": "Không thể tạo PDF hồ sơ bằng chứng.",
+  "証拠書類PDF": "PDF hồ sơ bằng chứng"
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an evidence dossier PDF to the transaction detail (desktop): the entry, its journal lines and, for every linked source, the original file's name, type, size, SHA-256, import time and the source row's hash, so the original can be re-hashed and compared. States provenance only; it does not vouch for the amount.
+
 - Add "Evidence behind spending" to the desktop monthly report: for the month's posted spending (expenses, card purchases, fees) it shows how much, by count and yen, has a receipt or scan (image/PDF) linked, an imported statement row linked, both, or nothing (typed by hand), and the share that has any evidence. It reports provenance only: a linked document is not proof an amount is right, and nothing claims a transaction was matched to a bank statement. Read-only (`data_confidence_query`).
 - Add tax return support (確定申告) to the account-free PWA, under More: pick a year (this year and the two before) and list medical-expense, hometown-tax and other donation candidates from the encrypted vault, with the 医療費控除 reference amount when the annual income is typed, and download the CSV (BOM, formula-safe). It reuses the desktop report, so the same candidate rules apply; candidates only, nothing is filed. The PWA catalog generator now also scans the shared tax panel so the strings appear in en/vi.
 - Upgrade the React stack to React 19.3 (react, react-dom, types, testing-library). No production code changed; five tests that raced React 18's eager state flushing now wait for the state they assert on (stored dashboard layout, async checkbox state, quick-add sheet fields). Typecheck, lint, build and the full suite pass three runs in a row.

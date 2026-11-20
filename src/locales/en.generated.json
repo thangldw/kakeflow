@@ -3301,5 +3301,8 @@
   "手入力のみ": "Typed by hand only",
   "の支出に根拠があります": "of spending has evidence",
   "この月の支出はまだありません。": "No spending in this month yet.",
-  "読み込めませんでした。": "Could not load."
+  "読み込めませんでした。": "Could not load.",
+  "証拠書類PDFを保存しました。": "Evidence dossier PDF saved.",
+  "証拠書類PDFを作成できませんでした。": "Could not create the evidence dossier PDF.",
+  "証拠書類PDF": "Evidence dossier PDF"
 }
