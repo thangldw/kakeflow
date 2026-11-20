@@ -23,6 +23,7 @@ import type {
   HouseholdDto,
   HouseholdMemberDto,
   LedgerAuditReportDto,
+  PaymentReminderDto,
   LocalSyncFoundationStatusDto,
   DesktopRelayStatusDto,
   DesktopRelayPreparedDeliveryDto,
@@ -150,6 +151,19 @@ export function parseLedgerAuditReport(value: unknown): LedgerAuditReportDto {
   })
   if (record.ok !== (findings.length === 0)) throw new TypeError('ledger audit consistency')
   return { postedTransactions: asSafeInteger(record.postedTransactions), journalEntries: asSafeInteger(record.journalEntries), findings, truncated: record.truncated, ok: record.ok }
+}
+
+export function parsePaymentReminder(value: unknown): PaymentReminderDto {
+  const record = asRecord(value)
+  if (typeof record.done !== 'boolean') throw new TypeError('payment reminder')
+  const dueOn = asRequiredString(record.dueOn)
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(dueOn)) throw new TypeError('payment reminder date')
+  return { id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), dueOn, label: asRequiredString(record.label), amountJpy: asNullableSafeInteger(record.amountJpy), done: record.done }
+}
+
+export function parsePaymentReminders(value: unknown): readonly PaymentReminderDto[] {
+  if (!Array.isArray(value)) throw new TypeError('payment reminders')
+  return value.map(parsePaymentReminder)
 }
 
 export function parseLocalSyncFoundationStatus(value: unknown): LocalSyncFoundationStatusDto {
