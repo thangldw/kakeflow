@@ -37,7 +37,7 @@ pub struct CategoryHistoryDto {
     pub categories: Vec<CategoryHistoryRowDto>,
 }
 
-fn parse_month(value: &str) -> Option<(i32, u32)> {
+pub(crate) fn parse_month(value: &str) -> Option<(i32, u32)> {
     let bytes = value.as_bytes();
     if bytes.len() != 7 || bytes[4] != b'-' {
         return None;
@@ -47,7 +47,7 @@ fn parse_month(value: &str) -> Option<(i32, u32)> {
     ((2000..=2100).contains(&year) && (1..=12).contains(&month)).then_some((year, month))
 }
 
-fn month_list(through: (i32, u32), count: u32) -> Vec<String> {
+pub(crate) fn month_list(through: (i32, u32), count: u32) -> Vec<String> {
     let (mut year, mut month) = through;
     let mut months = Vec::with_capacity(count as usize);
     for _ in 0..count {
