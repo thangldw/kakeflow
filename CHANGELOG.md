@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- List, under "Evidence behind spending" in the monthly report (desktop), the month's largest posted spending (¥3,000 and over, up to eight) that has no receipt or scan linked, marking whether an imported statement row is linked, so you know which receipts to attach. Read-only; it reports what is linked, not whether the amount is right.
+
 - Add "What if…? A look back" to the monthly report (desktop): pick a percentage to spend less on a category and see, from your real posted history over the last 3, 6 or 12 months, how much would have stayed with you. Plain arithmetic on actual transactions, not a forecast; refunds count as no spending and amounts are floored to whole yen.
 
 - Add "This month's to-do" to the Calendar report (desktop): up to three actions, most urgent first — overdue or soon-due bills and card payments (with their amounts), imports waiting for review, categories already over budget, a clearly labelled straight-line spending pace once the month is under way, and goals due soon. Every figure comes from data already on the page.

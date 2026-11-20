@@ -25,6 +25,7 @@ import type {
   LedgerAuditReportDto,
   PaymentReminderDto,
   DataConfidenceDto,
+  MissingReceiptDto,
   CategoryHistoryDto,
   EvidenceLevelDto,
   LocalSyncFoundationStatusDto,
@@ -182,6 +183,17 @@ export function parseCategoryHistory(value: unknown): CategoryHistoryDto {
     return { accountId: asRequiredString(row.accountId), name: asRequiredString(row.name), monthlyJpy, totalJpy }
   })
   return { months, categories }
+}
+
+export function parseMissingReceipts(value: unknown): readonly MissingReceiptDto[] {
+  if (!Array.isArray(value)) throw new TypeError('missing receipts')
+  return value.map((item) => {
+    const row = asRecord(item)
+    if (typeof row.hasImport !== 'boolean') throw new TypeError('missing receipt')
+    const occurredOn = asRequiredString(row.occurredOn)
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(occurredOn)) throw new TypeError('missing receipt date')
+    return { transactionId: asRequiredString(row.transactionId), occurredOn, payee: row.payee === null || row.payee === undefined ? null : asRequiredString(row.payee), amountJpy: asSafeInteger(row.amountJpy), hasImport: row.hasImport }
+  })
 }
 
 export function parseDataConfidence(value: unknown): DataConfidenceDto {
