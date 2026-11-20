@@ -200,6 +200,7 @@ vi.mock('./platform', async () => {
       queryCardSettlementBalanceCoverage: desktop.queryCardSettlementBalanceCoverage,
       createBackup: vi.fn(),
       stageBackupRestore: desktop.stageBackupRestore,
+      listPaymentReminders: vi.fn(async () => []),
       queryDataConfidence: vi.fn(async () => ({ month: '2026-11', totalTransactions: 0, totalAmountJpy: 0, evidencedShareBps: 0, buckets: (['DOCUMENT_AND_IMPORT', 'DOCUMENT', 'IMPORT', 'MANUAL'] as const).map((level) => ({ level, transactions: 0, amountJpy: 0 })) })),
       restartForRestore: desktop.restartForRestore,
       extractDocument: vi.fn(),
