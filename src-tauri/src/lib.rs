@@ -20,6 +20,7 @@ pub mod connector_refresh;
 mod connector_refresh_worker;
 pub mod dashboard_preferences;
 pub mod data_confidence;
+pub mod decision_journal;
 pub mod document_extract;
 pub mod document_pdf_ocr;
 pub mod document_vault;
@@ -683,6 +684,67 @@ fn payment_reminder_delete(
             payment_reminders::delete(connection, &household_id, &id).map_err(reminder_error)
         })
         .map_err(|_| "Payment reminder could not be deleted".to_owned())
+}
+
+fn decision_error(error: decision_journal::DecisionJournalError) -> persistence::PersistenceError {
+    match error {
+        decision_journal::DecisionJournalError::Database(source) => {
+            persistence::PersistenceError::Database(source)
+        }
+        _ => persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery),
+    }
+}
+
+#[tauri::command]
+fn decision_journal_list(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+) -> Result<Vec<decision_journal::DecisionDto>, String> {
+    state
+        .with_connection(|connection| {
+            decision_journal::list(connection, &household_id).map_err(decision_error)
+        })
+        .map_err(|_| "The decision journal is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn decision_journal_create(
+    state: tauri::State<'_, AppState>,
+    input: decision_journal::DecisionInput,
+) -> Result<decision_journal::DecisionDto, String> {
+    state
+        .with_connection(|connection| {
+            decision_journal::create(connection, &input).map_err(decision_error)
+        })
+        .map_err(|_| "The decision could not be saved".to_owned())
+}
+
+#[tauri::command]
+fn decision_journal_record_outcome(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    id: String,
+    outcome: String,
+) -> Result<(), String> {
+    state
+        .with_connection(|connection| {
+            decision_journal::record_outcome(connection, &household_id, &id, &outcome)
+                .map_err(decision_error)
+        })
+        .map_err(|_| "The outcome could not be saved".to_owned())
+}
+
+#[tauri::command]
+fn decision_journal_delete(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    id: String,
+) -> Result<(), String> {
+    state
+        .with_connection(|connection| {
+            decision_journal::delete(connection, &household_id, &id).map_err(decision_error)
+        })
+        .map_err(|_| "The decision could not be deleted".to_owned())
 }
 
 #[tauri::command]
@@ -5326,6 +5388,10 @@ pub fn run() {
             payment_reminder_create,
             payment_reminder_set_done,
             payment_reminder_delete,
+            decision_journal_list,
+            decision_journal_create,
+            decision_journal_record_outcome,
+            decision_journal_delete,
             data_confidence_query,
             duplicate_charges_query,
             account_ledger_balances_query,

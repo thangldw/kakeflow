@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a big-decisions journal to the Calendar report (desktop): write down a decision with its reason, expectation and a review date (six months by default), then record how it turned out once the date has come. Stored only on this device (migration 0077) and never touches the ledger.
+
 - Add "Check against the real balance" to the monthly report (desktop): type the balance your bank app or purse shows today and see whether KakeFlow's ledger agrees, and if not, by how much and which way. Nothing typed is saved and the ledger is never changed.
 
 - Add a furusato nozei limit estimator to the Annual report: enter the taxable income and the resident tax income portion and get a rough yearly limit (and what is left after donations already made). It is labelled an estimate throughout and tells you to confirm with a simulator before donating.

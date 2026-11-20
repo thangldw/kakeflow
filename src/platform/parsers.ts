@@ -25,6 +25,7 @@ import type {
   HouseholdMemberDto,
   LedgerAuditReportDto,
   PaymentReminderDto,
+  DecisionDto,
   DataConfidenceDto,
   MissingReceiptDto,
   DuplicateChargeDto,
@@ -166,6 +167,21 @@ export function parsePaymentReminder(value: unknown): PaymentReminderDto {
   const dueOn = asRequiredString(record.dueOn)
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(dueOn)) throw new TypeError('payment reminder date')
   return { id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), dueOn, label: asRequiredString(record.label), amountJpy: asNullableSafeInteger(record.amountJpy), done: record.done }
+}
+
+export function parseDecision(value: unknown): DecisionDto {
+  const record = asRecord(value)
+  const decidedOn = asRequiredString(record.decidedOn)
+  const reviewOn = asRequiredString(record.reviewOn)
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(decidedOn) || !/^\d{4}-\d{2}-\d{2}$/u.test(reviewOn)) throw new TypeError('decision date')
+  if (typeof record.reason !== 'string' || typeof record.expectation !== 'string') throw new TypeError('decision text')
+  const outcome = record.outcome === null || record.outcome === undefined ? null : asRequiredString(record.outcome)
+  return { id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), decidedOn, title: asRequiredString(record.title), amountJpy: asNullableSafeInteger(record.amountJpy), reason: record.reason, expectation: record.expectation, reviewOn, outcome }
+}
+
+export function parseDecisions(value: unknown): readonly DecisionDto[] {
+  if (!Array.isArray(value)) throw new TypeError('decisions')
+  return value.map(parseDecision)
 }
 
 export function parsePaymentReminders(value: unknown): readonly PaymentReminderDto[] {

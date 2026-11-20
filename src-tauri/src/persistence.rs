@@ -185,6 +185,7 @@ const MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../migrations/0074_transfer_pair_merges.sql")),
     M::up(include_str!("../migrations/0075_payment_reminders.sql")),
     M::up(include_str!("../migrations/0076_backup_fingerprints.sql")),
+    M::up(include_str!("../migrations/0077_decision_journal.sql")),
 ];
 
 const MAX_RESTORED_SOURCE_DOCUMENT_ROWS: u64 = 100_000;
