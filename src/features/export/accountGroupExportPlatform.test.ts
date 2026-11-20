@@ -93,4 +93,21 @@ describe('account group and export platform', () => {
       await expect(createAccountGroupExportPlatform(async () => malformed).saveTransactionLedgerPdf(request)).rejects.toThrow(TypeError)
     }
   })
+
+  it('saves an evidence dossier with the transaction identity and date', async () => {
+    const saved = { fileName: 'kakeflow-dossier-2026-11-03-tx1.pdf', sourceCount: 1, byteSize: 9_000 }
+    const invoke = vi.fn(async () => saved)
+    await expect(createAccountGroupExportPlatform(invoke).saveEvidenceDossier('home', 'tx1', '2026-11-20')).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('evidence_dossier_save', { householdId: 'home', transactionId: 'tx1', generatedOn: '2026-11-20' })
+    await expect(createAccountGroupExportPlatform(async () => null).saveEvidenceDossier('home', 'tx1', '2026-11-20')).resolves.toBeNull()
+    for (const malformed of [
+      { ...saved, fileName: '../d.pdf' },
+      { ...saved, fileName: 'd.csv' },
+      { ...saved, byteSize: 0 },
+      { ...saved, sourceCount: 41 },
+      { ...saved, sourceCount: -1 },
+    ]) {
+      await expect(createAccountGroupExportPlatform(async () => malformed).saveEvidenceDossier('home', 'tx1', '2026-11-20')).rejects.toThrow(TypeError)
+    }
+  })
 })
