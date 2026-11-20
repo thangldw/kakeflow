@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Remind you to test-restore a backup (desktop): if this device has written backups but none has been proven restorable with "Verify backup" for 90 days, a quiet toast points to Settings, then waits two weeks before asking again. It never asks for or stores a passphrase.
+
 - Add "Check against the real balance" to the monthly report (desktop): type the balance your bank app or purse shows today and see whether KakeFlow's ledger agrees, and if not, by how much and which way. Nothing typed is saved and the ledger is never changed.
 
 - Add a furusato nozei limit estimator to the Annual report: enter the taxable income and the resident tax income portion and get a rough yearly limit (and what is left after donations already made). It is labelled an estimate throughout and tells you to confirm with a simulator before donating.
