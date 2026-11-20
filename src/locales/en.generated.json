@@ -3292,5 +3292,14 @@
   "このバックアップは復元できます。": "This backup can be restored.",
   "復元はできますが、帳簿に確認が必要な取引があります。": "It can be restored, but some transactions in the books need attention.",
   "件の原本を確認": "source documents checked",
-  "件の要確認": "need attention"
+  "件の要確認": "need attention",
+  "支出の根拠": "Evidence behind spending",
+  "今月の支出に、原本や取り込み明細がどれだけ紐づいているかを示します。金額が正しいことの証明ではありません。": "Shows how much of this month's spending has a receipt or an imported statement row behind it. This is not proof that an amount is correct.",
+  "原本と取り込みの両方あり": "Receipt and imported row",
+  "原本（レシート・スキャン）あり": "Receipt or scan",
+  "取り込み明細あり": "Imported statement row",
+  "手入力のみ": "Typed by hand only",
+  "の支出に根拠があります": "of spending has evidence",
+  "この月の支出はまだありません。": "No spending in this month yet.",
+  "読み込めませんでした。": "Could not load."
 }

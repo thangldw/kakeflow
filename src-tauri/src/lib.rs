@@ -16,6 +16,7 @@ pub mod connector_projection;
 pub mod connector_refresh;
 mod connector_refresh_worker;
 pub mod dashboard_preferences;
+pub mod data_confidence;
 pub mod document_extract;
 pub mod document_pdf_ocr;
 pub mod document_vault;
@@ -584,6 +585,28 @@ fn ledger_audit_run(
             })
         })
         .map_err(|_| "Ledger audit is unavailable".to_owned())
+}
+
+#[tauri::command]
+fn data_confidence_query(
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    month: String,
+) -> Result<data_confidence::DataConfidenceDto, String> {
+    state
+        .with_connection(|connection| {
+            data_confidence::confidence_for_month(connection, &household_id, &month).map_err(
+                |error| match error {
+                    data_confidence::DataConfidenceError::Database(source) => {
+                        persistence::PersistenceError::Database(source)
+                    }
+                    data_confidence::DataConfidenceError::InvalidRequest => {
+                        persistence::PersistenceError::Database(rusqlite::Error::InvalidQuery)
+                    }
+                },
+            )
+        })
+        .map_err(|_| "Data confidence is unavailable".to_owned())
 }
 
 #[tauri::command]
@@ -4984,6 +5007,7 @@ pub fn run() {
             connector_commands::connector_refresh_active_batch_get,
             connector_commands::connector_refresh_batch_get,
             ledger_audit_run,
+            data_confidence_query,
             local_sync_foundation_status,
             principal_member_binding_update,
             relay_status,

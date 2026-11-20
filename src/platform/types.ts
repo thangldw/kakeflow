@@ -1049,6 +1049,7 @@ export type AppCommand =
   | 'app_status'
   | 'local_sync_foundation_status'
   | 'ledger_audit_run'
+  | 'data_confidence_query'
   | 'principal_member_binding_update'
   | 'relay_status'
   | 'relay_connection_save'
@@ -1243,6 +1244,14 @@ export interface LedgerAuditFindingDto {
   readonly creditTotalJpy: number
 }
 
+export type EvidenceLevelDto = 'DOCUMENT_AND_IMPORT' | 'DOCUMENT' | 'IMPORT' | 'MANUAL'
+export interface DataConfidenceDto {
+  readonly month: string
+  readonly buckets: readonly { readonly level: EvidenceLevelDto; readonly transactions: number; readonly amountJpy: number }[]
+  readonly totalTransactions: number
+  readonly totalAmountJpy: number
+  readonly evidencedShareBps: number
+}
 export interface LedgerAuditReportDto {
   readonly postedTransactions: number
   readonly journalEntries: number
@@ -1260,6 +1269,7 @@ export interface PlatformClient {
   status(): Promise<AppStatusDto>
   getLocalSyncFoundationStatus(householdId: string): Promise<LocalSyncFoundationStatusDto>
   runLedgerAudit(householdId: string): Promise<LedgerAuditReportDto>
+  queryDataConfidence(householdId: string, month: string): Promise<DataConfidenceDto>
   updatePrincipalMemberBinding(input: UpdatePrincipalMemberBindingInputDto): Promise<LocalSyncFoundationStatusDto>
   getDesktopRelayStatus(householdId: string): Promise<DesktopRelayStatusDto>
   saveDesktopRelayConnection(input: SaveDesktopRelayConnectionInputDto): Promise<DesktopRelayStatusDto>
