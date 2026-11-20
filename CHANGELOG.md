@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an emergency sheet to Settings (desktop): a one-page PDF listing the household's accounts and confirmed regular payments, how to restore a backup, and blank handwritten fields for contacts and where the backup and passphrase are kept. It never contains a passphrase or key.
+
 - Add synthetic household profiles (single, family, freelancer; two years each, with refunds, transfers, drafts, voids and receipts) to the Rust test suite. Each is generated deterministically into the real migrated schema and checked against an independent in-memory oracle: the ledger audit, the category history and the evidence summary must match it to the yen. Test-only; no shipped behaviour changes.
 
 - List, under "Evidence behind spending" in the monthly report (desktop), the month's largest posted spending (¥3,000 and over, up to eight) that has no receipt or scan linked, marking whether an imported statement row is linked, so you know which receipts to attach. Read-only; it reports what is linked, not whether the amount is right.

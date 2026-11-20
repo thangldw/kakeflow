@@ -3337,5 +3337,11 @@
   "割合を選ぶと、実際の履歴にもとづく差額が表示されます。": "Pick a percentage to see the difference based on your real history.",
   "この期間の支出はまだありません。": "There is no spending in this period yet.",
   "レシートを添付したい支出": "Spending worth attaching a receipt to",
-  "取り込み明細のみ": "Imported statement row only"
+  "取り込み明細のみ": "Imported statement row only",
+  "緊急時シート": "Emergency sheet",
+  "万一のときに家族が困らないよう、口座・定期的な支払い・復元方法を1枚にまとめます。パスフレーズや鍵は含まれません。手書き欄に「保管場所」だけを書いてください。": "Puts accounts, regular payments and how to restore on one page so family are not stuck if something happens. No passphrase or key is included; write only where they are kept in the handwritten fields.",
+  "緊急時シートをPDFで保存": "Save the emergency sheet as PDF",
+  "保存しました。": "Saved.",
+  "緊急時シートを作成できませんでした。": "Could not create the emergency sheet.",
+  "緊急時シートはデスクトップ版で作成できます。": "The emergency sheet is created in the desktop app."
 }

@@ -84,6 +84,11 @@ export interface EvidenceDossierSavedDto {
   readonly byteSize: number
 }
 
+export interface EmergencySheetSavedDto {
+  readonly fileName: string
+  readonly byteSize: number
+}
+
 export type AccountGroupExportInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvoke = tauriInvoke) {
@@ -119,6 +124,10 @@ export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvok
     saveTransactionLedgerPdf: async (request: ExportCsvRequestDto): Promise<TransactionLedgerPdfSavedDto | null> => {
       const value = await invoke('transaction_ledger_pdf_save', { request })
       return value === null ? null : parseTransactionLedgerPdfSaved(value)
+    },
+    saveEmergencySheet: async (householdId: string, generatedOn: string): Promise<EmergencySheetSavedDto | null> => {
+      const value = await invoke('emergency_sheet_save', { householdId, generatedOn })
+      return value === null ? null : parseEmergencySheetSaved(value)
     },
     saveEvidenceDossier: async (householdId: string, transactionId: string, generatedOn: string): Promise<EvidenceDossierSavedDto | null> => {
       const value = await invoke('evidence_dossier_save', { householdId, transactionId, generatedOn })
@@ -184,6 +193,14 @@ function parseTransactionLedgerPdfSaved(value: unknown): TransactionLedgerPdfSav
   const byteSize = positiveInteger(item.byteSize, 'saved transaction ledger PDF')
   if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255 || pageCount > 128) throw new TypeError('saved transaction ledger PDF')
   return { fileName, rowCount, pageCount, byteSize }
+}
+
+function parseEmergencySheetSaved(value: unknown): EmergencySheetSavedDto {
+  const item = record(value, 'saved emergency sheet')
+  const fileName = string(item.fileName, 'saved emergency sheet')
+  const byteSize = positiveInteger(item.byteSize, 'saved emergency sheet')
+  if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255) throw new TypeError('saved emergency sheet')
+  return { fileName, byteSize }
 }
 
 function parseEvidenceDossierSaved(value: unknown): EvidenceDossierSavedDto {

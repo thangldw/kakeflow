@@ -16,9 +16,9 @@ use thiserror::Error;
 const MAX_SOURCES: usize = 40;
 const MAX_JOURNAL_LINES: usize = 40;
 const MAX_PDF_BYTES: usize = 8 * 1024 * 1024;
-const PAGE_W: f32 = 210.0;
-const PAGE_H: f32 = 297.0;
-const MARGIN: f32 = 15.0;
+pub(crate) const PAGE_W: f32 = 210.0;
+pub(crate) const PAGE_H: f32 = 297.0;
+pub(crate) const MARGIN: f32 = 15.0;
 const BOTTOM: f32 = 18.0;
 
 #[derive(Debug, Error)]
@@ -195,14 +195,14 @@ pub fn load_dossier(
     })
 }
 
-struct Layout {
-    finished: Vec<Vec<printpdf::Op>>,
-    current: Vec<printpdf::Op>,
-    y: f32,
+pub(crate) struct Layout {
+    pub(crate) finished: Vec<Vec<printpdf::Op>>,
+    pub(crate) current: Vec<printpdf::Op>,
+    pub(crate) y: f32,
 }
 
 impl Layout {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             finished: Vec::new(),
             current: Vec::new(),
@@ -210,11 +210,11 @@ impl Layout {
         }
     }
 
-    fn ops(&mut self) -> &mut Vec<printpdf::Op> {
+    pub(crate) fn ops(&mut self) -> &mut Vec<printpdf::Op> {
         &mut self.current
     }
 
-    fn ensure(&mut self, height: f32) {
+    pub(crate) fn ensure(&mut self, height: f32) {
         if self.y - height < BOTTOM {
             self.finished.push(std::mem::take(&mut self.current));
             self.y = PAGE_H - MARGIN;
@@ -222,7 +222,13 @@ impl Layout {
     }
 }
 
-fn line(layout: &mut Layout, font: &printpdf::FontId, size: f32, text: &str, indent: f32) {
+pub(crate) fn line(
+    layout: &mut Layout,
+    font: &printpdf::FontId,
+    size: f32,
+    text: &str,
+    indent: f32,
+) {
     let step = size * 0.5 + 1.6;
     // A4 portrait at ~3mm/char for 9pt Latin: about 150 units across the usable width.
     let units = (((PAGE_W - 2.0 * MARGIN - indent) / (size * 0.18)) as usize).max(20);
@@ -242,7 +248,7 @@ fn line(layout: &mut Layout, font: &printpdf::FontId, size: f32, text: &str, ind
     }
 }
 
-fn heading(layout: &mut Layout, font: &printpdf::FontId, text: &str) {
+pub(crate) fn heading(layout: &mut Layout, font: &printpdf::FontId, text: &str) {
     layout.ensure(14.0);
     layout.y -= 4.0;
     let y = layout.y - 6.0;

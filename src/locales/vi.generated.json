@@ -3337,5 +3337,11 @@
   "割合を選ぶと、実際の履歴にもとづく差額が表示されます。": "Chọn một tỷ lệ để xem chênh lệch dựa trên lịch sử thật.",
   "この期間の支出はまだありません。": "Chưa có chi tiêu trong giai đoạn này.",
   "レシートを添付したい支出": "Khoản chi nên đính kèm biên lai",
-  "取り込み明細のみ": "Chỉ có dòng sao kê đã nhập"
+  "取り込み明細のみ": "Chỉ có dòng sao kê đã nhập",
+  "緊急時シート": "Tờ thông tin khẩn cấp",
+  "万一のときに家族が困らないよう、口座・定期的な支払い・復元方法を1枚にまとめます。パスフレーズや鍵は含まれません。手書き欄に「保管場所」だけを書いてください。": "Gom tài khoản, khoản trả định kỳ và cách khôi phục vào một trang để gia đình không bị bí khi có chuyện. Không chứa mật khẩu hay khóa; chỉ ghi nơi cất giữ vào ô viết tay.",
+  "緊急時シートをPDFで保存": "Lưu tờ khẩn cấp dạng PDF",
+  "保存しました。": "Đã lưu.",
+  "緊急時シートを作成できませんでした。": "Không thể tạo tờ thông tin khẩn cấp.",
+  "緊急時シートはデスクトップ版で作成できます。": "Tờ thông tin khẩn cấp được tạo trên bản desktop."
 }
