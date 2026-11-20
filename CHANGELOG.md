@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a self-prepared income and spending summary PDF to Settings (desktop): income and spending by month for the last 3, 6 or 12 months, and the largest income entries each with the original file name and SHA-256 when one is linked. The document states it is the household's own record, not a third-party certificate.
+
 - Add an emergency sheet to Settings (desktop): a one-page PDF listing the household's accounts and confirmed regular payments, how to restore a backup, and blank handwritten fields for contacts and where the backup and passphrase are kept. It never contains a passphrase or key.
 
 - Add synthetic household profiles (single, family, freelancer; two years each, with refunds, transfers, drafts, voids and receipts) to the Rust test suite. Each is generated deterministically into the real migrated schema and checked against an independent in-memory oracle: the ledger audit, the category history and the evidence summary must match it to the yen. Test-only; no shipped behaviour changes.

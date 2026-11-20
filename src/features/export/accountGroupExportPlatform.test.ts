@@ -121,4 +121,15 @@ describe('account group and export platform', () => {
       await expect(createAccountGroupExportPlatform(async () => malformed).saveEmergencySheet('home', '2026-11-20')).rejects.toThrow(TypeError)
     }
   })
+
+  it('saves an income statement with the household, window and date', async () => {
+    const saved = { fileName: 'kakeflow-income-statement-2025-12-2026-11.pdf', byteSize: 6_000 }
+    const invoke = vi.fn(async () => saved)
+    await expect(createAccountGroupExportPlatform(invoke).saveIncomeStatement('home', '2026-11', 12, '2026-11-20')).resolves.toEqual(saved)
+    expect(invoke).toHaveBeenCalledWith('income_statement_save', { householdId: 'home', throughMonth: '2026-11', months: 12, generatedOn: '2026-11-20' })
+    await expect(createAccountGroupExportPlatform(async () => null).saveIncomeStatement('home', '2026-11', 12, '2026-11-20')).resolves.toBeNull()
+    for (const malformed of [{ ...saved, fileName: '../s.pdf' }, { ...saved, fileName: 's.csv' }, { ...saved, byteSize: 0 }]) {
+      await expect(createAccountGroupExportPlatform(async () => malformed).saveIncomeStatement('home', '2026-11', 12, '2026-11-20')).rejects.toThrow(TypeError)
+    }
+  })
 })

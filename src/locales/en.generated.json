@@ -3343,5 +3343,10 @@
   "緊急時シートをPDFで保存": "Save the emergency sheet as PDF",
   "保存しました。": "Saved.",
   "緊急時シートを作成できませんでした。": "Could not create the emergency sheet.",
-  "緊急時シートはデスクトップ版で作成できます。": "The emergency sheet is created in the desktop app."
+  "緊急時シートはデスクトップ版で作成できます。": "The emergency sheet is created in the desktop app.",
+  "収支のまとめ（自己作成）": "Income and spending summary (self-prepared)",
+  "月ごとの収入と支出を、主な収入の原本ファイルのハッシュ付きでPDFにします。世帯自身が作成した記録であり、第三者の証明書ではありません。": "Makes a PDF of income and spending by month, with the original file hash behind each major income. It is a record the household prepared itself, not a third-party certificate.",
+  "収支のまとめをPDFで保存": "Save the summary as PDF",
+  "収支のまとめはデスクトップ版で作成できます。": "The summary is created in the desktop app.",
+  "収支のまとめを作成できませんでした。": "Could not create the summary."
 }

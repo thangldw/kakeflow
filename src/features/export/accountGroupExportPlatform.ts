@@ -89,6 +89,11 @@ export interface EmergencySheetSavedDto {
   readonly byteSize: number
 }
 
+export interface IncomeStatementSavedDto {
+  readonly fileName: string
+  readonly byteSize: number
+}
+
 export type AccountGroupExportInvoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 
 export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvoke = tauriInvoke) {
@@ -124,6 +129,10 @@ export function createAccountGroupExportPlatform(invoke: AccountGroupExportInvok
     saveTransactionLedgerPdf: async (request: ExportCsvRequestDto): Promise<TransactionLedgerPdfSavedDto | null> => {
       const value = await invoke('transaction_ledger_pdf_save', { request })
       return value === null ? null : parseTransactionLedgerPdfSaved(value)
+    },
+    saveIncomeStatement: async (householdId: string, throughMonth: string, months: number, generatedOn: string): Promise<IncomeStatementSavedDto | null> => {
+      const value = await invoke('income_statement_save', { householdId, throughMonth, months, generatedOn })
+      return value === null ? null : parseIncomeStatementSaved(value)
     },
     saveEmergencySheet: async (householdId: string, generatedOn: string): Promise<EmergencySheetSavedDto | null> => {
       const value = await invoke('emergency_sheet_save', { householdId, generatedOn })
@@ -193,6 +202,14 @@ function parseTransactionLedgerPdfSaved(value: unknown): TransactionLedgerPdfSav
   const byteSize = positiveInteger(item.byteSize, 'saved transaction ledger PDF')
   if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255 || pageCount > 128) throw new TypeError('saved transaction ledger PDF')
   return { fileName, rowCount, pageCount, byteSize }
+}
+
+function parseIncomeStatementSaved(value: unknown): IncomeStatementSavedDto {
+  const item = record(value, 'saved income statement')
+  const fileName = string(item.fileName, 'saved income statement')
+  const byteSize = positiveInteger(item.byteSize, 'saved income statement')
+  if (!/\.pdf$/i.test(fileName) || /[\\/]/.test(fileName) || fileName.length > 255) throw new TypeError('saved income statement')
+  return { fileName, byteSize }
 }
 
 function parseEmergencySheetSaved(value: unknown): EmergencySheetSavedDto {

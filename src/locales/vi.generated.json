@@ -3343,5 +3343,10 @@
   "緊急時シートをPDFで保存": "Lưu tờ khẩn cấp dạng PDF",
   "保存しました。": "Đã lưu.",
   "緊急時シートを作成できませんでした。": "Không thể tạo tờ thông tin khẩn cấp.",
-  "緊急時シートはデスクトップ版で作成できます。": "Tờ thông tin khẩn cấp được tạo trên bản desktop."
+  "緊急時シートはデスクトップ版で作成できます。": "Tờ thông tin khẩn cấp được tạo trên bản desktop.",
+  "収支のまとめ（自己作成）": "Tổng hợp thu chi (tự lập)",
+  "月ごとの収入と支出を、主な収入の原本ファイルのハッシュ付きでPDFにします。世帯自身が作成した記録であり、第三者の証明書ではありません。": "Tạo PDF thu chi theo tháng, kèm hash tệp gốc cho các khoản thu lớn. Đây là bản ghi hộ gia đình tự lập, không phải giấy chứng nhận của bên thứ ba.",
+  "収支のまとめをPDFで保存": "Lưu bản tổng hợp dạng PDF",
+  "収支のまとめはデスクトップ版で作成できます。": "Bản tổng hợp được tạo trên bản desktop.",
+  "収支のまとめを作成できませんでした。": "Không thể tạo bản tổng hợp."
 }

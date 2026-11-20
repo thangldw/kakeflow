@@ -61,6 +61,7 @@ mod google_drive_scheduler;
 pub mod google_drive_store;
 pub mod google_drive_sync_adapter;
 pub mod import_workflow;
+pub mod income_statement;
 pub mod investment_fx;
 pub mod investment_market;
 pub mod investment_performance;
@@ -3429,6 +3430,46 @@ async fn emergency_sheet_save(
 }
 
 #[tauri::command]
+async fn income_statement_save(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    household_id: String,
+    through_month: String,
+    months: u32,
+    generated_on: String,
+) -> Result<Option<income_statement::IncomeStatementSavedDto>, String> {
+    let result = state.with_connection(|connection| {
+        Ok(income_statement::generate_income_statement(
+            connection,
+            &household_id,
+            &through_month,
+            months,
+            &generated_on,
+        ))
+    });
+    let document = match result {
+        Ok(Ok(value)) => value,
+        Ok(Err(error)) => return Err(error.public_message().to_owned()),
+        Err(_) => return Err("The income statement is temporarily unavailable".to_owned()),
+    };
+    let Some(selected) = app
+        .dialog()
+        .file()
+        .add_filter("PDF document", &["pdf"])
+        .set_file_name(&document.file_name)
+        .blocking_save_file()
+    else {
+        return Ok(None);
+    };
+    let destination = selected
+        .into_path()
+        .map_err(|_| "Selected income statement destination is unavailable".to_owned())?;
+    income_statement::save_income_statement(&document, &destination)
+        .map(Some)
+        .map_err(|error| error.public_message().to_owned())
+}
+
+#[tauri::command]
 async fn annual_household_review_csv_save(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
@@ -5357,6 +5398,7 @@ pub fn run() {
             transaction_ledger_pdf_save,
             evidence_dossier_save,
             emergency_sheet_save,
+            income_statement_save,
             annual_household_review_csv_save,
             monthly_household_review_csv_save,
             annual_household_review_xlsx_save,
