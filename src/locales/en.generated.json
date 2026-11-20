@@ -3383,5 +3383,6 @@
   "実際のほうが多い": "Real balance is higher by",
   "記録していない収入や入金がないか確認してください。": "Check for income or deposits you have not recorded.",
   "実際のほうが少ない": "Real balance is lower by",
-  "記録していない支出や引き出し、二重の記録がないか確認してください。": "Check for spending or withdrawals you have not recorded, or a duplicated entry."
+  "記録していない支出や引き出し、二重の記録がないか確認してください。": "Check for spending or withdrawals you have not recorded, or a duplicated entry.",
+  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "You have not test-restored a backup in a while. Try \"Verify a chosen backup\" in Settings."
 }

@@ -3383,5 +3383,6 @@
   "実際のほうが多い": "Số dư thực cao hơn",
   "記録していない収入や入金がないか確認してください。": "Hãy kiểm tra xem có khoản thu hoặc tiền gửi nào chưa ghi lại không.",
   "実際のほうが少ない": "Số dư thực thấp hơn",
-  "記録していない支出や引き出し、二重の記録がないか確認してください。": "Hãy kiểm tra xem có khoản chi, rút tiền chưa ghi lại hoặc bản ghi bị trùng không."
+  "記録していない支出や引き出し、二重の記録がないか確認してください。": "Hãy kiểm tra xem có khoản chi, rút tiền chưa ghi lại hoặc bản ghi bị trùng không.",
+  "しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。": "Đã lâu bạn chưa thử khôi phục một bản sao lưu. Hãy thử \"Chọn bản sao lưu để kiểm tra\" trong Cài đặt."
 }

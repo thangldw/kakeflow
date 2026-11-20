@@ -92,6 +92,7 @@ import { IncomeStatementPanel } from './features/income-statement/IncomeStatemen
 import { EmergencySheetPanel } from './features/emergency-sheet/EmergencySheetPanel'
 import { BackupIntegrityPanel } from './features/backup-integrity/BackupIntegrityPanel'
 import { useBackgroundBackupCheck } from './features/backup-integrity/useBackgroundBackupCheck'
+import { useRestoreTestReminder } from './features/backup-verify/restoreTestReminder'
 import { BackupVerifyPanel } from './features/backup-verify/BackupVerifyPanel'
 import { AnnualMilestonesPanel } from './features/reports/AnnualMilestonesPanel'
 import { MonthCloseChecklistPanel } from './features/reports/MonthCloseChecklistPanel'
@@ -3517,6 +3518,11 @@ function App() {
   const reportBackupProblems = useCallback(() => {
     showToast(localize("バックアップファイルに確認が必要なものがあります。"), 'info', { label: localize("詳細を見る"), onAction: () => setPage('settings') })
   }, [])
+  const hasBackups = useCallback(async () => (await platformClient.checkBackupFiles()).length > 0, [])
+  const remindRestoreTest = useCallback(() => {
+    showToast(localize("しばらくバックアップの復元テストをしていません。設定で「バックアップを選んで検証」を試してみてください。"), 'info', { label: localize("設定を開く"), onAction: () => setPage('settings') })
+  }, [])
+  useRestoreTestReminder(platformClient.runtime === 'tauri', { hasBackups, onDue: remindRestoreTest })
   useBackgroundBackupCheck(platformClient.runtime === 'tauri', { run: runBackgroundBackupCheck, onProblems: reportBackupProblems })
   useBackgroundLedgerAudit(activeHouseholdId ?? null, platformClient.runtime === 'tauri', { run: runBackgroundAudit, onFindings: reportBackgroundAudit })
   // More belongs to Simple mode; in Full mode it renders as the Home, so the More list never shows there, even for one frame.

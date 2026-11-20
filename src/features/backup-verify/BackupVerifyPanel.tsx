@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { localize } from '../../i18n'
 import type { BackupVerificationDto } from '../../platform/types'
+import { markBackupVerified } from './restoreTestReminder'
 
 export interface BackupVerifyPanelProps {
   readonly verify: (passphrase: string) => Promise<BackupVerificationDto | null>
@@ -20,7 +21,7 @@ export function BackupVerifyPanel({ verify, available }: BackupVerifyPanelProps)
     setBusy(true); setFailed(false); setReport(null)
     try {
       const result = await verify(passphrase)
-      if (result) { setReport(result); setPassphrase('') }
+      if (result) { setReport(result); setPassphrase(''); markBackupVerified() }
     } catch { setFailed(true) } finally { setBusy(false) }
   }
 
