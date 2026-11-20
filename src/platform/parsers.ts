@@ -6,6 +6,7 @@ import type {
   AppStatusDto,
   AccountDto,
   BackupSummaryDto,
+  BackupFileCheckDto,
   BackupVerificationDto,
   CommitSummaryDto,
   CardMatchConfirmationDto,
@@ -1023,6 +1024,19 @@ export function parseCommitSummary(value: unknown): CommitSummaryDto {
   const record = asRecord(value)
   if (typeof record.runId !== 'string') throw new TypeError('commit summary')
   return { runId: record.runId, postedCount: asSafeInteger(record.postedCount) }
+}
+
+export function parseBackupFileChecks(value: unknown): readonly BackupFileCheckDto[] {
+  if (!Array.isArray(value)) throw new TypeError('backup file checks')
+  const statuses = ['OK', 'MISSING', 'CHANGED', 'UNREADABLE'] as const
+  return value.map((item) => {
+    const row = asRecord(item)
+    const status = statuses.find((candidate) => candidate === row.status)
+    if (!status) throw new TypeError('backup file status')
+    const byteSize = asSafeInteger(row.byteSize)
+    if (byteSize < 0) throw new TypeError('backup file size')
+    return { path: asRequiredString(row.path), fileName: asRequiredString(row.fileName), recordedAt: asRequiredString(row.recordedAt), byteSize, status }
+  })
 }
 
 export function parseBackupSummary(value: unknown): BackupSummaryDto {

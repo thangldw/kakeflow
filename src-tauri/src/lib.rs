@@ -5,6 +5,7 @@ pub mod aggregate_asset_history;
 pub mod annual_review_pdf;
 pub mod annual_review_xlsx;
 pub mod backup;
+pub mod backup_integrity;
 pub mod backup_verify;
 pub mod brokerage;
 pub mod card_settlement_mapping;
@@ -4531,6 +4532,10 @@ async fn backup_create(
                 passphrase.as_str(),
                 &backup_key.0,
             ));
+            if matches!(backup_result, Some(Ok(_))) {
+                // Remembering the fingerprint is best effort: a failure must not turn a good backup into an error.
+                let _ = backup_integrity::record(connection, &archive_path);
+            }
             Ok(())
         })
         .map_err(|_| "Backup database checkpoint failed".to_owned())?;
@@ -4546,6 +4551,19 @@ async fn backup_create(
         entry_count: summary.entry_count,
         plaintext_bytes: summary.plaintext_bytes,
     }))
+}
+
+#[tauri::command]
+async fn backup_files_check(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<backup_integrity::BackupFileCheckDto>, String> {
+    let fingerprints = state
+        .with_connection(|connection| Ok(backup_integrity::list(connection)))
+        .map_err(|_| "Backup check is unavailable".to_owned())?
+        .map_err(|_| "Backup check is unavailable".to_owned())?;
+    tauri::async_runtime::spawn_blocking(move || backup_integrity::check(&fingerprints))
+        .await
+        .map_err(|_| "Backup check is unavailable".to_owned())
 }
 
 #[tauri::command]
@@ -5519,6 +5537,7 @@ pub fn run() {
             backup_create,
             backup_restore_stage,
             backup_verify,
+            backup_files_check,
             app_restart_for_restore,
             document_extract,
             document_extract_attempt,

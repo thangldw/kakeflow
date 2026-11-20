@@ -122,6 +122,7 @@ describe('platform client', () => {
     await expect(client.createBackup('long secure passphrase')).rejects.toMatchObject({ command: 'backup_create' })
     await expect(client.stageBackupRestore('long secure passphrase')).rejects.toMatchObject({ command: 'backup_restore_stage' })
     await expect(client.verifyBackup('long secure passphrase')).rejects.toMatchObject({ command: 'backup_verify' })
+    await expect(client.checkBackupFiles()).rejects.toMatchObject({ command: 'backup_files_check' })
     await expect(client.restartForRestore()).rejects.toMatchObject({ command: 'app_restart_for_restore' })
     await expect(client.extractDocument(new Uint8Array([1]), 'application/pdf')).rejects.toMatchObject({ command: 'document_extract' })
     await expect(client.ocrDocument(new Uint8Array([1]), 'image/png')).rejects.toMatchObject({ command: 'document_ocr' })
@@ -551,6 +552,7 @@ describe('platform client', () => {
       import_rollback: null,
       backup_create: { formatVersion: 2, entryCount: 4, plaintextBytes: 4096 },
       backup_restore_stage: { formatVersion: 2, entryCount: 4, plaintextBytes: 4096 },
+      backup_files_check: [{ path: '/b/a.kakeflow-backup', fileName: 'a.kakeflow-backup', recordedAt: '2026-11-01T00:00:00.000Z', byteSize: 10, status: 'OK' }],
       backup_verify: { entryCount: 4, plaintextBytes: 4096, schemaVersion: 74, householdCount: 1, documentsChecked: 2, postedTransactions: 10, journalEntries: 20, ledgerFindings: 0, ok: true },
       app_restart_for_restore: null,
       document_extract: { method: 'EMBEDDED_TEXT', text: 'STORE TOTAL 1200', confidenceBps: 9000, issues: [] },
@@ -698,6 +700,7 @@ describe('platform client', () => {
     await expect(client.createBackup('long secure passphrase')).resolves.toEqual(responses.backup_create)
     await expect(client.stageBackupRestore('long secure passphrase')).resolves.toEqual(responses.backup_restore_stage)
     await expect(client.verifyBackup('long secure passphrase')).resolves.toEqual(responses.backup_verify)
+    await expect(client.checkBackupFiles()).resolves.toEqual(responses.backup_files_check)
     await expect(client.restartForRestore()).resolves.toBeUndefined()
     await expect(client.extractDocument(new Uint8Array([37, 80, 68, 70]), 'application/pdf')).resolves.toEqual(responses.document_extract)
     await expect(client.ocrDocument(new Uint8Array([1, 2, 3]), 'image/png')).resolves.toEqual(responses.document_ocr)
@@ -762,6 +765,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('backup_create', { passphrase: 'long secure passphrase' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_restore_stage', { passphrase: 'long secure passphrase' })
     expect(invokeSpy).toHaveBeenCalledWith('backup_verify', { passphrase: 'long secure passphrase' })
+    expect(invokeSpy).toHaveBeenCalledWith('backup_files_check', undefined)
     expect(invokeSpy).toHaveBeenCalledWith('app_restart_for_restore', undefined)
     expect(invokeSpy).toHaveBeenCalledWith('document_extract', { fileBytes: [37, 80, 68, 70], mediaType: 'application/pdf' })
     expect(invokeSpy).toHaveBeenCalledWith('document_ocr', { fileBytes: [1, 2, 3], mediaType: 'image/png' })
@@ -777,7 +781,7 @@ describe('platform client', () => {
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_bank_mapping_delete', { input: { householdId: 'family', cardAccountId: 'family-rakuten-card' } })
     expect(invokeSpy).toHaveBeenCalledWith('card_settlement_balance_coverage_query', { request: coverageRequest })
     expect(invokeSpy).toHaveBeenCalledWith('transaction_metadata_bulk_update', { input: metadataInput })
-    expect(invokeSpy).toHaveBeenCalledTimes(69)
+    expect(invokeSpy).toHaveBeenCalledTimes(70)
   })
 
   it('rejects inconsistent cumulative card-payment rows', async () => {
