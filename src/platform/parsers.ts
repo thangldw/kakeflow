@@ -26,6 +26,7 @@ import type {
   LedgerAuditReportDto,
   PaymentReminderDto,
   DecisionDto,
+  WarrantyDto,
   DataConfidenceDto,
   MissingReceiptDto,
   DuplicateChargeDto,
@@ -177,6 +178,21 @@ export function parseDecision(value: unknown): DecisionDto {
   if (typeof record.reason !== 'string' || typeof record.expectation !== 'string') throw new TypeError('decision text')
   const outcome = record.outcome === null || record.outcome === undefined ? null : asRequiredString(record.outcome)
   return { id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), decidedOn, title: asRequiredString(record.title), amountJpy: asNullableSafeInteger(record.amountJpy), reason: record.reason, expectation: record.expectation, reviewOn, outcome }
+}
+
+export function parseWarranty(value: unknown): WarrantyDto {
+  const record = asRecord(value)
+  const purchasedOn = asRequiredString(record.purchasedOn)
+  const expiresOn = asRequiredString(record.expiresOn)
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(purchasedOn) || !/^\d{4}-\d{2}-\d{2}$/u.test(expiresOn)) throw new TypeError('warranty date')
+  if (typeof record.store !== 'string' || typeof record.note !== 'string') throw new TypeError('warranty text')
+  if (typeof record.warrantyMonths !== 'number' || !Number.isSafeInteger(record.warrantyMonths) || record.warrantyMonths < 1) throw new TypeError('warranty months')
+  return { id: asRequiredString(record.id), householdId: asRequiredString(record.householdId), item: asRequiredString(record.item), store: record.store, purchasedOn, warrantyMonths: record.warrantyMonths, expiresOn, amountJpy: asNullableSafeInteger(record.amountJpy), note: record.note }
+}
+
+export function parseWarranties(value: unknown): readonly WarrantyDto[] {
+  if (!Array.isArray(value)) throw new TypeError('warranties')
+  return value.map(parseWarranty)
 }
 
 export function parseDecisions(value: unknown): readonly DecisionDto[] {
