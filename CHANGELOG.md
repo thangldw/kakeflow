@@ -1,35 +1,81 @@
 # KakeFlow changelog / Lịch sử thay đổi / 変更履歴
 
-## Unreleased
+## 1.3.0 — 2026-11-20
+
+### English
+
+- Added desktop checks that read the ledger without changing it: a ledger integrity check (also run quietly once a week), "Evidence behind spending", duplicate-charge flags, "Check against the real balance", backup-file integrity, "Verify a backup", and a reminder to test-restore a backup. None asks for or stores a passphrase.
+- Added planning aids: "What you can spend until month end", "This month's to-do", month-end close checklist, payment reminders, "What if…? A look back", credit-card payment envelopes, transfer-pair review and merge, and budget copy/move.
+- Added a warranty list, a big-decisions journal, a furusato nozei limit estimator, a 高額療養費 estimate and tax return (確定申告) support. Estimates are labelled as such and must be confirmed.
+- Added printable PDFs: an evidence dossier per transaction, a self-prepared income and spending summary, and an emergency sheet. None contains a passphrase.
+- Added Simple mode, passkey quick unlock and backup reminders to the account-free PWA, and a Cmd/Ctrl+K command palette on the desktop.
+- Quality: React 19.3, frontend coverage measured in CI, fuzzing of all import adapters, a PWA UI contract test, synthetic household profiles, and `unwrap()`/`expect()` forbidden in production Rust. Database migrations extend to 0078; the newest tables (reminders, backup fingerprints, decisions, warranties) are device-local.
+- The detailed English list of these changes follows the three summaries below.
+
+- Rotated the updater key after loss of the previous private key. All earlier desktop versions, including v1.2.1, require one manual installation of v1.3.0; future releases use the new trust root. Application identity and data locations are unchanged by the rotation.
+
+- Added a read-only Connector Control Center that inventories native sources and makes account bindings an explicit posting-authorization boundary.
+- Added durable refresh batches with per-source cursors, backoff, version and generation fencing, fail-closed recovery, and redacted operational summaries.
+- Hardened the isolated macOS ARM64 release wrapper with canonical path checks, atomic physical-path locks, source/resource identity digests, and packaged artifact verification.
+- Removed two test-only CodeQL data flows at their source and documented the remaining generated-macro false positive; the Linux-only `glib` advisory remains disclosed.
+- Kept connector provider clients and credentials out of the PWA. This release does not claim direct bank aggregation or Money Forward parity.
+- Published the macOS ARM64 desktop build as an ad-hoc-signed, non-notarized community artifact; the account-free PWA remains the no-Gatekeeper option.
+
+### Tiếng Việt
+
+- Bổ sung các kiểm tra trên desktop chỉ đọc sổ mà không thay đổi: kiểm tra toàn vẹn sổ (cũng chạy ngầm mỗi tuần), "Bằng chứng cho chi tiêu", cảnh báo khoản chi trùng, "Đối chiếu với số dư thực", toàn vẹn tệp sao lưu, "Kiểm tra bản sao lưu" và nhắc thử khôi phục sao lưu. Không tính năng nào hỏi hay lưu mật khẩu.
+- Bổ sung công cụ lập kế hoạch: "Số tiền có thể tiêu đến cuối tháng", "Việc cần làm tháng này", checklist chốt tháng, nhắc thanh toán, "Nếu… thì sao? Nhìn lại", phong bì thanh toán thẻ, rà soát và gộp cặp chuyển khoản, sao chép/chuyển ngân sách.
+- Bổ sung danh sách bảo hành, nhật ký quyết định lớn, ước tính hạn mức furusato nozei, ước tính 高額療養費 và hỗ trợ khai thuế (確定申告). Các ước tính đều được ghi rõ là ước tính và cần xác nhận lại.
+- Bổ sung PDF có thể in: hồ sơ bằng chứng cho từng giao dịch, bản tổng hợp thu chi tự lập và phiếu khẩn cấp. Không có mật khẩu trong các tệp này.
+- Bổ sung chế độ Đơn giản, mở khóa nhanh bằng passkey và nhắc sao lưu cho PWA không cần tài khoản; bảng lệnh Cmd/Ctrl+K trên desktop.
+- Chất lượng: React 19.3, đo độ phủ test frontend trong CI, fuzz toàn bộ adapter nhập, test hợp đồng UI cho PWA, hồ sơ hộ gia đình tổng hợp, cấm `unwrap()`/`expect()` trong Rust production. Migration cơ sở dữ liệu tới 0078; các bảng mới nhất (nhắc nhở, dấu vân tay sao lưu, quyết định, bảo hành) chỉ nằm trên thiết bị.
+
+- Đổi khóa updater do mất private key cũ. Mọi bản desktop trước đó, kể cả v1.2.1, cần cài v1.3.0 thủ công một lần; các bản tiếp theo dùng khóa mới. Việc đổi khóa giữ nguyên định danh ứng dụng và vị trí dữ liệu.
+
+- Bổ sung Connector Control Center chỉ đọc để kiểm kê nguồn native và dùng account binding làm ranh giới cấp quyền ghi sổ rõ ràng.
+- Bổ sung refresh batch bền vững với cursor/backoff theo nguồn, version/generation fencing, khôi phục fail-closed và summary vận hành đã che dữ liệu nhạy cảm.
+- Củng cố wrapper release macOS ARM64 cô lập bằng kiểm tra canonical path, khóa nguyên tử theo physical path, digest nhận dạng source/resource và xác minh artifact đã đóng gói.
+- Loại hai data flow CodeQL chỉ xuất hiện trong test và ghi lại false positive còn lại từ macro sinh mã; advisory `glib` chỉ áp dụng Linux vẫn được công khai.
+- Không đưa provider client hoặc credential connector vào PWA. Bản này không tuyên bố kết nối ngân hàng trực tiếp hay tương đương Money Forward.
+- Phát hành desktop macOS ARM64 dưới dạng community artifact được ký ad-hoc và chưa notarize; PWA không cần account vẫn là lựa chọn không gặp Gatekeeper.
+
+### 日本語
+
+- 台帳を変更せずに読み取るデスクトップの検査を追加しました: 台帳の整合性チェック（週1回の静かなバックグラウンド実行を含む）、「支出の裏付け」、二重請求の可能性の表示、「実際の残高との照合」、バックアップファイルの完全性、「バックアップの検証」、復元テストのリマインダー。いずれもパスフレーズを求めたり保存したりしません。
+- 計画支援を追加しました: 「月末まで使える額」、「今月のやること」、月末締めチェックリスト、支払いリマインダー、「もしも…？ 振り返り」、カード支払い用の封筒、振替ペアの確認と統合、予算のコピー／移動。
+- 保証期間の一覧、大きな決断の記録、ふるさと納税の上限額の目安、高額療養費の目安、確定申告のサポートを追加しました。目安はその旨を明記しており、必ず確認が必要です。
+- 印刷用 PDF を追加しました: 取引ごとの証跡資料、自分で作成する収支のまとめ、緊急シート。いずれにもパスフレーズは含まれません。
+- アカウント不要の PWA にシンプルモード、パスキーによるクイックロック解除、バックアップのリマインダーを追加し、デスクトップに Cmd/Ctrl+K のコマンドパレットを追加しました。
+- 品質面: React 19.3、CI でのフロントエンドのカバレッジ計測、全インポートアダプターのファジング、PWA の UI コントラクトテスト、合成世帯プロファイル、本番 Rust での `unwrap()`/`expect()` 禁止。データベースのマイグレーションは 0078 まで拡張され、最新のテーブル（リマインダー、バックアップのフィンガープリント、決断、保証）はこの端末のみに保存されます。
+
+- 旧秘密鍵の紛失により updater 鍵を更新しました。v1.2.1 を含む旧 desktop 版からは v1.3.0 の手動インストールが一度必要です。以降の更新は新しい鍵を使用し、今回の鍵更新によるアプリ識別子とデータ保存先の変更はありません。
+
+- native source を一覧化し、account binding を明示的な記帳承認境界として扱う read-only Connector Control Center を追加しました。
+- source ごとの cursor／backoff、version／generation fencing、fail-closed recovery、秘匿化済み運用 summary を備えた durable refresh batch を追加しました。
+- canonical path 検査、physical path 単位の atomic lock、source／resource identity digest、packaged artifact 検証により、分離された macOS ARM64 release wrapper を強化しました。
+- test のみに存在した CodeQL data flow を 2 件除去し、生成 macro に残る false positive を記録しました。Linux のみ該当する `glib` advisory は引き続き開示します。
+- PWA には connector provider client と credential を含めません。本 release は銀行への直接接続や Money Forward 同等性を主張しません。
+- macOS ARM64 desktop build を ad-hoc 署名済み・未公証の community artifact として公開しました。account 不要の PWA は Gatekeeper を必要としない選択肢です。
+
+### Detailed changes (English)
 
 - Add a warranty list to the Calendar report (desktop): record an item, where and when you bought it and the warranty length in months; KakeFlow works out the last day of cover and flags cover that has ended or ends within 60 days. Stored only on this device (migration 0078) and never touches the ledger.
 - Add a big-decisions journal to the Calendar report (desktop): write down a decision with its reason, expectation and a review date (six months by default), then record how it turned out once the date has come. Stored only on this device (migration 0077) and never touches the ledger.
 - Remind you to test-restore a backup (desktop): if this device has written backups but none has been proven restorable with "Verify backup" for 90 days, a quiet toast points to Settings, then waits two weeks before asking again. It never asks for or stores a passphrase.
-
 - Add "Check against the real balance" to the monthly report (desktop): type the balance your bank app or purse shows today and see whether KakeFlow's ledger agrees, and if not, by how much and which way. Nothing typed is saved and the ledger is never changed.
-
 - Add a furusato nozei limit estimator to the Annual report: enter the taxable income and the resident tax income portion and get a rough yearly limit (and what is left after donations already made). It is labelled an estimate throughout and tells you to confirm with a simulator before donating.
 - Check that backup files are still intact without a passphrase (desktop): each backup's SHA-256 and size are remembered when it is created, Settings can re-read them on demand (unchanged, missing, changed, unreadable), and the app does so quietly once a week, speaking up only about a problem. This proves the file is intact, not that the passphrase is remembered; "Verify backup" still does that.
-
 - Flag possible duplicate charges in the monthly report (desktop): two posted spending entries with the same payee and amount (¥1,000 or more) within 3 days. It only points them out; nothing is changed or merged.
-
 - Add a self-prepared income and spending summary PDF to Settings (desktop): income and spending by month for the last 3, 6 or 12 months, and the largest income entries each with the original file name and SHA-256 when one is linked. The document states it is the household's own record, not a third-party certificate.
-
 - Add an emergency sheet to Settings (desktop): a one-page PDF listing the household's accounts and confirmed regular payments, how to restore a backup, and blank handwritten fields for contacts and where the backup and passphrase are kept. It never contains a passphrase or key.
 - Add "What you can spend from today to month end" to the Calendar report (desktop): cash on hand minus the card payments and amounted payment reminders already on record, spread over the days left (or the shortfall when they exceed cash). It counts known commitments only — not income still to come or bills with no amount — and says so.
-
 - Add synthetic household profiles (single, family, freelancer; two years each, with refunds, transfers, drafts, voids and receipts) to the Rust test suite. Each is generated deterministically into the real migrated schema and checked against an independent in-memory oracle: the ledger audit, the category history and the evidence summary must match it to the yen. Test-only; no shipped behaviour changes.
-
 - List, under "Evidence behind spending" in the monthly report (desktop), the month's largest posted spending (¥3,000 and over, up to eight) that has no receipt or scan linked, marking whether an imported statement row is linked, so you know which receipts to attach. Read-only; it reports what is linked, not whether the amount is right.
-
 - Add "What if…? A look back" to the monthly report (desktop): pick a percentage to spend less on a category and see, from your real posted history over the last 3, 6 or 12 months, how much would have stayed with you. Plain arithmetic on actual transactions, not a forecast; refunds count as no spending and amounts are floored to whole yen.
-
 - Add "This month's to-do" to the Calendar report (desktop): up to three actions, most urgent first — overdue or soon-due bills and card payments (with their amounts), imports waiting for review, categories already over budget, a clearly labelled straight-line spending pace once the month is under way, and goals due soon. Every figure comes from data already on the page.
 - Check the ledger quietly in the background (desktop, at most once a week while the app is open) using the existing read-only ledger audit. Nothing is shown when it is clean; if it finds a problem a notice links to Settings. Backup verification is not run in the background because it needs your passphrase.
-
 - Add an evidence dossier PDF to the transaction detail (desktop): the entry, its journal lines and, for every linked source, the original file's name, type, size, SHA-256, import time and the source row's hash, so the original can be re-hashed and compared. States provenance only; it does not vouch for the amount.
 - Add payment reminders to the Calendar report: confirm a bill's deadline (and optional amount) and see days left or overdue. When a scanned bill's text has a deadline such as お支払期限 or 振替日 (including Reiwa dates), the import row offers to add it; nothing is added automatically. Reminders are stored on this device only and never change the ledger.
-
 - Add "Evidence behind spending" to the desktop monthly report: for the month's posted spending (expenses, card purchases, fees) it shows how much, by count and yen, has a receipt or scan (image/PDF) linked, an imported statement row linked, both, or nothing (typed by hand), and the share that has any evidence. It reports provenance only: a linked document is not proof an amount is right, and nothing claims a transaction was matched to a bank statement. Read-only (`data_confidence_query`).
 - Add tax return support (確定申告) to the account-free PWA, under More: pick a year (this year and the two before) and list medical-expense, hometown-tax and other donation candidates from the encrypted vault, with the 医療費控除 reference amount when the annual income is typed, and download the CSV (BOM, formula-safe). It reuses the desktop report, so the same candidate rules apply; candidates only, nothing is filed. The PWA catalog generator now also scans the shared tax panel so the strings appear in en/vi.
 - Upgrade the React stack to React 19.3 (react, react-dom, types, testing-library). No production code changed; five tests that raced React 18's eager state flushing now wait for the state they assert on (stored dashboard layout, async checkbox state, quick-add sheet fields). Typecheck, lint, build and the full suite pass three runs in a row.
@@ -62,41 +108,6 @@
 - Add fail-closed OFX/QFX (bank `STMTRS`, JPY only, durable FITID identity) and QIF (`!Type:Bank`, file-proven date order) import adapters; credit-card/investment statements, multi-account files, fractional yen, splits and corrections are blocked for review.
 - Upgrade the Vite/React-plugin/jsdom toolchain as a compatible group and align the development Node baseline.
 - Upgrade ZIP and X25519/ChaCha dependencies; use fixed-size nonce construction and verify legacy cipher/key compatibility.
-
-## 1.3.0 — 2026-09-11
-
-### English
-
-- Rotated the updater key after loss of the previous private key. All earlier desktop versions, including v1.2.1, require one manual installation of v1.3.0; future releases use the new trust root. Application identity and data locations are unchanged by the rotation.
-
-- Added a read-only Connector Control Center that inventories native sources and makes account bindings an explicit posting-authorization boundary.
-- Added durable refresh batches with per-source cursors, backoff, version and generation fencing, fail-closed recovery, and redacted operational summaries.
-- Hardened the isolated macOS ARM64 release wrapper with canonical path checks, atomic physical-path locks, source/resource identity digests, and packaged artifact verification.
-- Removed two test-only CodeQL data flows at their source and documented the remaining generated-macro false positive; the Linux-only `glib` advisory remains disclosed.
-- Kept connector provider clients and credentials out of the PWA. This release does not claim direct bank aggregation or Money Forward parity.
-- Published the macOS ARM64 desktop build as an ad-hoc-signed, non-notarized community artifact; the account-free PWA remains the no-Gatekeeper option.
-
-### Tiếng Việt
-
-- Đổi khóa updater do mất private key cũ. Mọi bản desktop trước đó, kể cả v1.2.1, cần cài v1.3.0 thủ công một lần; các bản tiếp theo dùng khóa mới. Việc đổi khóa giữ nguyên định danh ứng dụng và vị trí dữ liệu.
-
-- Bổ sung Connector Control Center chỉ đọc để kiểm kê nguồn native và dùng account binding làm ranh giới cấp quyền ghi sổ rõ ràng.
-- Bổ sung refresh batch bền vững với cursor/backoff theo nguồn, version/generation fencing, khôi phục fail-closed và summary vận hành đã che dữ liệu nhạy cảm.
-- Củng cố wrapper release macOS ARM64 cô lập bằng kiểm tra canonical path, khóa nguyên tử theo physical path, digest nhận dạng source/resource và xác minh artifact đã đóng gói.
-- Loại hai data flow CodeQL chỉ xuất hiện trong test và ghi lại false positive còn lại từ macro sinh mã; advisory `glib` chỉ áp dụng Linux vẫn được công khai.
-- Không đưa provider client hoặc credential connector vào PWA. Bản này không tuyên bố kết nối ngân hàng trực tiếp hay tương đương Money Forward.
-- Phát hành desktop macOS ARM64 dưới dạng community artifact được ký ad-hoc và chưa notarize; PWA không cần account vẫn là lựa chọn không gặp Gatekeeper.
-
-### 日本語
-
-- 旧秘密鍵の紛失により updater 鍵を更新しました。v1.2.1 を含む旧 desktop 版からは v1.3.0 の手動インストールが一度必要です。以降の更新は新しい鍵を使用し、今回の鍵更新によるアプリ識別子とデータ保存先の変更はありません。
-
-- native source を一覧化し、account binding を明示的な記帳承認境界として扱う read-only Connector Control Center を追加しました。
-- source ごとの cursor／backoff、version／generation fencing、fail-closed recovery、秘匿化済み運用 summary を備えた durable refresh batch を追加しました。
-- canonical path 検査、physical path 単位の atomic lock、source／resource identity digest、packaged artifact 検証により、分離された macOS ARM64 release wrapper を強化しました。
-- test のみに存在した CodeQL data flow を 2 件除去し、生成 macro に残る false positive を記録しました。Linux のみ該当する `glib` advisory は引き続き開示します。
-- PWA には connector provider client と credential を含めません。本 release は銀行への直接接続や Money Forward 同等性を主張しません。
-- macOS ARM64 desktop build を ad-hoc 署名済み・未公証の community artifact として公開しました。account 不要の PWA は Gatekeeper を必要としない選択肢です。
 
 ## 1.2.1 — 2026-08-25
 
