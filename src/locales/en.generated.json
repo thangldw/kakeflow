@@ -3343,5 +3343,11 @@
   "緊急時シートをPDFで保存": "Save the emergency sheet as PDF",
   "保存しました。": "Saved.",
   "緊急時シートを作成できませんでした。": "Could not create the emergency sheet.",
-  "緊急時シートはデスクトップ版で作成できます。": "The emergency sheet is created in the desktop app."
+  "緊急時シートはデスクトップ版で作成できます。": "The emergency sheet is created in the desktop app.",
+  "今日から月末まで使える額": "What you can spend from today to month end",
+  "手元の現金から、支払いが決まっているものを引いた金額です。これから入る収入や、金額が未入力の請求は含みません。": "Cash on hand minus the payments already on record. It does not count income still to come or bills with no amount entered.",
+  "月末までに決まっている支払いが、手元の現金を上回っています。": "Payments already due by month end exceed the cash on hand.",
+  "／日": "/ day",
+  "手元の現金": "Cash on hand",
+  "カードの支払い": "Card payments"
 }
