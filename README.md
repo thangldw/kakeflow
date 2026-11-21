@@ -29,7 +29,7 @@ flowchart LR
 
 ## English
 
-Published desktop downloads remain at [v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1); the [live website](https://thangldw.github.io/kakeflow/) and [PWA](https://thangldw.github.io/kakeflow/app/) are deployed independently from `main`. A dependency or website update does not publish a new signed native installer.
+The v1.3.0 macOS Apple Silicon desktop build is published at [v1.3.0](https://github.com/thangldw/kakeflow/releases/tag/v1.3.0) (ad-hoc signed, not notarized; SHA-256 sums are attached). The [live website](https://thangldw.github.io/kakeflow/) and [PWA](https://thangldw.github.io/kakeflow/app/) are deployed independently from `main`. A dependency or website update does not publish a new signed native installer.
 
 KakeFlow imports user-provided bank, card, wallet, brokerage, spreadsheet, PDF, email and receipt data into an auditable double-entry ledger only after review. It keeps source evidence and row-level lineage, handles card settlement and investment snapshots, and provides Japanese, English and Vietnamese UI catalogs.
 
@@ -55,7 +55,7 @@ KakeFlow does not initiate payments or treat extracted records as confirmed acco
 
 ## Tiếng Việt
 
-Bản desktop đã phát hành vẫn là [v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1); [website](https://thangldw.github.io/kakeflow/) và [PWA](https://thangldw.github.io/kakeflow/app/) deploy riêng từ `main`. Cập nhật dependency hoặc website không đồng nghĩa đã phát hành installer native có chữ ký mới.
+Bản desktop macOS Apple Silicon v1.3.0 đã phát hành tại [v1.3.0](https://github.com/thangldw/kakeflow/releases/tag/v1.3.0) (ký ad-hoc, chưa notarize, có kèm SHA-256); [website](https://thangldw.github.io/kakeflow/) và [PWA](https://thangldw.github.io/kakeflow/app/) deploy riêng từ `main`. Cập nhật dependency hoặc website không đồng nghĩa đã phát hành installer native có chữ ký mới.
 
 KakeFlow nhập dữ liệu ngân hàng, thẻ, ví, chứng khoán, bảng tính, PDF, email và hóa đơn do người dùng cung cấp vào sổ kép có thể kiểm toán, nhưng chỉ sau bước duyệt. Hệ thống giữ bằng chứng nguồn và lineage theo từng dòng, hỗ trợ đối soát thẻ, snapshot đầu tư và giao diện Nhật–Anh–Việt.
 
@@ -69,7 +69,7 @@ Bản v1.3.0 bổ sung Connector Control Center chỉ đọc và cơ chế refre
 
 ## 日本語
 
-公開済み desktop は [v1.2.1](https://github.com/thangldw/kakeflow/releases/tag/v1.2.1) です。[Website](https://thangldw.github.io/kakeflow/) と [PWA](https://thangldw.github.io/kakeflow/app/) は `main` から個別に deploy します。Dependency や website の更新は新しい署名済み native installer の公開を意味しません。
+macOS Apple Silicon 向け desktop v1.3.0 を [v1.3.0](https://github.com/thangldw/kakeflow/releases/tag/v1.3.0) で公開済みです（アドホック署名・未公証、SHA-256 付き）。[Website](https://thangldw.github.io/kakeflow/) と [PWA](https://thangldw.github.io/kakeflow/app/) は `main` から個別に deploy します。Dependency や website の更新は新しい署名済み native installer の公開を意味しません。
 
 KakeFlow は、ユーザーが提供した銀行、カード、ウォレット、証券、表計算、PDF、メール、レシートのデータを、確認後にのみ監査可能な複式簿記台帳へ取り込みます。ソース証拠と行単位の来歴を保持し、カード決済照合、投資スナップショット、日本語・英語・ベトナム語 UI を提供します。
 
