@@ -9,8 +9,8 @@ This directory contains the current project documentation for the canonical repo
 | [PWA storyboard](demo/KakeFlow-90-second-storyboard.md) | Timing and claim boundary for the reviewed receipt-to-provenance video. |
 | [Operations](OPERATIONS.md) | Build, release, updater, Pages and repository maintenance procedures. |
 | [Security](SECURITY.md) | Supported versions, private reporting and prohibited data. |
-| [v1.3.0 release notes](releases/v1.3.0.md) | Prepared release candidate; publication and installed-upgrade evidence remain gated. |
-| [v1.2.1 release notes](releases/v1.2.1.md) | Published desktop installation, release scope and verification evidence; separate from newer main/PWA changes. |
+| [v1.3.0 release notes](releases/v1.3.0.md) | Published 2026-11-21: macOS arm64 desktop installation, manual-upgrade steps and verification evidence. Installed-upgrade proof on a real profile remains to be recorded. |
+| [v1.2.1 release notes](releases/v1.2.1.md) | Previous desktop release; v1.2.1 installations must upgrade to v1.3.0 manually. |
 | [v1.2.0 release notes](releases/v1.2.0.md) | Historical installation and updater boundary. |
 
 Project-wide policies remain at the repository root: [README](../README.md), [Contributing](../CONTRIBUTING.md), [Code of Conduct](../CODE_OF_CONDUCT.md), [Changelog](../CHANGELOG.md) and [Apache License 2.0](../LICENSE).
