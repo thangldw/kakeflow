@@ -1,0 +1,88 @@
+/* Opt-in footer shared by the portfolio and its product sites. */
+body:where(.portfolio-catalog, .not-found-page, [data-page-kind="content"]):has(> .compact-footer) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+body > .compact-footer {
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 var(--space-24);
+  width: 100%;
+  max-width: 1600px;
+  margin: auto auto 0;
+  flex: none;
+  padding: var(--space-8) var(--space-56);
+  border-top: 1px solid var(--color-section-divider);
+  background: var(--color-canvas);
+  color: var(--color-neutral-control-text);
+  font: var(--weight-regular) var(--text-body-sm)/var(--leading-body) var(--font-ui);
+  text-align: start;
+}
+.compact-footer .footer-id, .compact-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-16);
+  margin: 0;
+  color: inherit;
+}
+.compact-footer .footer-id { gap: var(--space-8); }
+.compact-footer .footer-id strong { color: var(--color-text); font-weight: var(--weight-semibold); }
+.compact-footer #supportSlot { color: inherit; }
+.compact-footer a, .compact-footer button {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-size-touch);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  text-underline-offset: .2em;
+  cursor: pointer;
+}
+.compact-footer :is(a, button):is(:hover, :focus-visible) {
+  color: var(--color-neutral-control-ink);
+  text-decoration: underline;
+}
+.compact-footer :is(a, button):focus-visible {
+  outline: var(--focus-width) solid currentColor;
+  outline-offset: var(--focus-offset);
+}
+/* The shared dialog sets aria-controls when it binds the trigger. */
+.compact-footer [data-support-open]:not([aria-controls]) { display: none; }
+@media (max-width: 1100px) {
+  body > .compact-footer { padding-inline: var(--space-32); }
+}
+@media (max-width: 600px) {
+  body > .compact-footer { padding-inline: var(--space-16); }
+  .compact-footer nav { flex-basis: 100%; gap: 0 var(--space-12); }
+}
+@media (max-width: 360px) {
+  .compact-footer nav { column-gap: var(--space-8); }
+}
+
+.compact-footer .footer-signature {
+  width: 100%;
+  margin: 0;
+  padding-block: var(--space-8);
+  font: inherit;
+  color: inherit;
+  text-align: center;
+}
+.compact-footer .footer-signature > span { display: inline-block; max-width: 100%; color: inherit; }
+.compact-footer .footer-signature [data-footer-year] { color: inherit; }
+.compact-footer .footer-signature strong { color: var(--color-text); font-weight: var(--weight-semibold); }
+.compact-footer .footer-signature a { display: inline; min-height: 0; }
+
+/* At tablet widths the centered signature can reach the fixed support button. */
+@media (min-width: 681px) and (max-width: 960px) {
+  body > .compact-footer:has(~ .support-floating-trigger) {
+    padding-bottom: calc(var(--space-24) + var(--control-size-touch));
+  }
+}
