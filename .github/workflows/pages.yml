@@ -1,56 +1,34 @@
 name: Deploy GitHub Pages
 
+# The kakeflow website has been retired. This workflow replaces the published site
+# with a single 404 page so the old URLs no longer serve any content.
 on:
   push:
     branches: [main]
-    # Workflow policy edits can be exercised with an explicit dispatch.
-    paths-ignore:
-      - ".github/dependabot.yml"
-      - ".github/workflows/pages.yml"
-      - ".github/workflows/quality.yml"
-      # The browser build uses the separate kakeflow-core workspace.
-      - "src-tauri/Cargo.toml"
-      - "src-tauri/Cargo.lock"
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: Build landing page and PWA
+    name: Build retired-site placeholder
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: read
-    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22.22.2
-          cache: npm
-      - run: npm ci
-      - run: npm run build:pwa
-      - name: Assemble one Pages artifact
+      - name: Write 404 page
         run: |
-          mkdir -p pages-site/app
-          cp -R docs/. pages-site/
-          cp -R dist/. pages-site/app/
+          mkdir -p pages-site
+          printf '%s\n' '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="robots" content="noindex"><title>Not found</title><p>This site has been retired. Source and releases: <a href="https://github.com/thangldw/kakeflow">github.com/thangldw/kakeflow</a></p></html>' > pages-site/404.html
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: pages-site
 
   deploy:
-    # A source-only maintenance merge can defer publication until the next release.
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[defer pages]')
     name: Deploy GitHub Pages
     needs: build
     runs-on: ubuntu-latest
